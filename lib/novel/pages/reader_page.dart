@@ -1,0 +1,487 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+
+import '../core/models.dart';
+import '../novel_module.dart';
+
+class ReaderPage extends StatefulWidget {
+  const ReaderPage({
+    super.key,
+    required this.detail,
+    required this.initialChapterIndex,
+  });
+
+  final NovelDetail detail;
+  final int initialChapterIndex;
+
+  @override
+  State<ReaderPage> createState() => _ReaderPageState();
+}
+
+class _ReaderPageState extends State<ReaderPage> {
+  late final ScrollController _scrollController;
+  Timer? _saveDebounce;
+
+  late int _chapterIndex;
+  bool _loading = true;
+  bool _isError = false;
+  bool _fromCache = false;
+
+  String _title = '';
+  String _content = '';
+  ReaderSettings _settings = const ReaderSettings();
+
+  @override
+  void initState() {
+    super.initState();
+    _chapterIndex = widget.initialChapterIndex;
+    _scrollController = ScrollController()..addListener(_onScroll);
+    _bootstrap();
+  }
+
+  @override
+  void dispose() {
+    _saveDebounce?.cancel();
+    _saveProgress();
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _bootstrap() async {
+    final settings = await NovelModule.repository.getReaderSettings();
+    if (!mounted) return;
+    setState(() => _settings = settings);
+    await _loadChapter(forceRefresh: false, restoreScroll: true);
+  }
+
+  void _onScroll() {
+    _saveDebounce?.cancel();
+    _saveDebounce = Timer(const Duration(milliseconds: 400), _saveProgress);
+  }
+
+  Future<void> _saveProgress() async {
+    if (!_scrollController.hasClients) return;
+    final chapter = widget.detail.chapters[_chapterIndex];
+    await NovelModule.repository.saveProgress(
+      ReadingProgress(
+        bookId: widget.detail.book.id,
+        chapterIndex: _chapterIndex,
+        chapterTitle: chapter.title,
+        scrollOffset: _scrollController.offset,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+  }
+
+  Future<void> _restoreScrollIfNeeded() async {
+    final progress = await NovelModule.repository.getProgress(widget.detail.book.id);
+    if (!mounted || progress == null) return;
+    if (progress.chapterIndex != _chapterIndex) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      final max = _scrollController.position.maxScrollExtent;
+      final target = progress.scrollOffset.clamp(0.0, max);
+      if (target > 0) _scrollController.jumpTo(target);
+    });
+  }
+
+  Future<void> _loadChapter({
+    required bool forceRefresh,
+    required bool restoreScroll,
+  }) async {
+    setState(() {
+      _loading = true;
+      _isError = false;
+    });
+
+    try {
+      final data = await NovelModule.repository.fetchChapter(
+        detail: widget.detail,
+        chapterIndex: _chapterIndex,
+        forceRefresh: forceRefresh,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _title = data.title;
+        _content = data.content;
+        _fromCache = data.fromCache;
+      });
+
+      if (restoreScroll) {
+        await _restoreScrollIfNeeded();
+      } else {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollController.hasClients) _scrollController.jumpTo(0);
+        });
+      }
+
+      await _saveProgress();
+
+      final nextIndex = _chapterIndex + 1;
+      if (nextIndex < widget.detail.chapters.length) {
+        NovelModule.repository.prefetchChapter(
+          detail: widget.detail,
+          chapterIndex: nextIndex,
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isError = true;
+        _content = '章节加载失败：$e';
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _switchChapter(int index) async {
+    if (index < 0 || index >= widget.detail.chapters.length) return;
+    setState(() {
+      _chapterIndex = index;
+      _content = '';
+    });
+    await _loadChapter(forceRefresh: false, restoreScroll: false);
+  }
+
+  Future<void> _openDirectory() async {
+    final selected = await showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1A1D24),
+      builder: (context) {
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.75,
+            child: Column(
+              children: [
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '目录',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                const Divider(height: 1, color: Colors.white12),
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: widget.detail.chapters.length,
+                    separatorBuilder: (_, __) =>
+                        const Divider(height: 1, color: Colors.white12),
+                    itemBuilder: (_, i) {
+                      final chapter = widget.detail.chapters[i];
+                      final current = i == _chapterIndex;
+                      return ListTile(
+                        selected: current,
+                        selectedTileColor: Colors.white10,
+                        title: Text(
+                          chapter.title,
+                          style: TextStyle(
+                            color: current ? Colors.tealAccent : Colors.white,
+                          ),
+                        ),
+                        onTap: () => Navigator.pop(context, i),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (selected != null) {
+      await _switchChapter(selected);
+    }
+  }
+
+  Future<void> _updateSettings(ReaderSettings next) async {
+    setState(() => _settings = next);
+    await NovelModule.repository.saveReaderSettings(next);
+  }
+
+  Future<void> _openSettings() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1A1D24),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (_, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Wrap(
+                  runSpacing: 16,
+                  children: [
+                    const Text(
+                      '阅读设置',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('字体大小', style: TextStyle(color: Colors.white70)),
+                        Slider(
+                          value: _settings.fontSize,
+                          min: 14,
+                          max: 30,
+                          divisions: 16,
+                          onChanged: (v) {
+                            final next = _settings.copyWith(fontSize: v);
+                            setSheetState(() {});
+                            _updateSettings(next);
+                          },
+                        ),
+                      ],
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('行距', style: TextStyle(color: Colors.white70)),
+                        Slider(
+                          value: _settings.lineHeight,
+                          min: 1.4,
+                          max: 2.4,
+                          divisions: 10,
+                          onChanged: (v) {
+                            final next = _settings.copyWith(lineHeight: v);
+                            setSheetState(() {});
+                            _updateSettings(next);
+                          },
+                        ),
+                      ],
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        ElevatedButton(
+                          onPressed: () => _updateSettings(
+                            _settings.copyWith(themeMode: ReaderThemeMode.warm),
+                          ),
+                          child: const Text('护眼'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => _updateSettings(
+                            _settings.copyWith(themeMode: ReaderThemeMode.paper),
+                          ),
+                          child: const Text('纸张'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => _updateSettings(
+                            _settings.copyWith(themeMode: ReaderThemeMode.dark),
+                          ),
+                          child: const Text('夜间'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Color get _bgColor {
+    switch (_settings.themeMode) {
+      case ReaderThemeMode.warm:
+        return const Color(0xFFF1E9CE);
+      case ReaderThemeMode.paper:
+        return const Color(0xFFF7F3E8);
+      case ReaderThemeMode.dark:
+        return const Color(0xFF121417);
+    }
+  }
+
+  Color get _textColor {
+    switch (_settings.themeMode) {
+      case ReaderThemeMode.dark:
+        return Colors.white;
+      case ReaderThemeMode.warm:
+      case ReaderThemeMode.paper:
+        return const Color(0xFF2C2C2C);
+    }
+  }
+
+  Widget _action(IconData icon, String text, VoidCallback? onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Opacity(
+        opacity: onTap == null ? 0.35 : 1,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.black87, width: 1.2),
+              ),
+              child: Icon(icon, size: 22, color: Colors.black87),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              text,
+              style: const TextStyle(
+                fontSize: 12,
+                color: Colors.black87,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final total = widget.detail.chapters.length;
+    final current = widget.detail.chapters[_chapterIndex];
+
+    return Scaffold(
+      backgroundColor: _bgColor,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapUp: (d) {
+                final width = MediaQuery.of(context).size.width;
+                final x = d.globalPosition.dx;
+                if (x < width * 0.33) {
+                  _switchChapter(_chapterIndex - 1);
+                } else if (x > width * 0.66) {
+                  _switchChapter(_chapterIndex + 1);
+                }
+              },
+              child: _loading
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(color: Colors.brown),
+                          const SizedBox(height: 14),
+                          Text(
+                            '正在加载章节...',
+                            style: TextStyle(color: Colors.brown[400]),
+                          ),
+                        ],
+                      ),
+                    )
+                  : _isError
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Text(
+                              _content,
+                              style: const TextStyle(color: Colors.red, fontSize: 16),
+                            ),
+                          ),
+                        )
+                      : SingleChildScrollView(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.fromLTRB(20, 20, 20, 110),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      _title.isNotEmpty ? _title : current.title,
+                                      style: TextStyle(
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.bold,
+                                        color: _textColor,
+                                      ),
+                                    ),
+                                  ),
+                                  if (_fromCache)
+                                    const Text(
+                                      '缓存',
+                                      style: TextStyle(fontSize: 12, color: Colors.brown),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                '${_chapterIndex + 1}/$total',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: _textColor.withOpacity(0.7),
+                                ),
+                              ),
+                              const SizedBox(height: 24),
+                              SelectionArea(
+                                child: Text(
+                                  _content,
+                                  style: TextStyle(
+                                    fontSize: _settings.fontSize,
+                                    height: _settings.lineHeight,
+                                    letterSpacing: 0.4,
+                                    color: _textColor,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: _bgColor.withOpacity(0.96),
+                  border: const Border(
+                    top: BorderSide(color: Colors.black12, width: 0.5),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _action(Icons.format_list_bulleted, '目录', _openDirectory),
+                    _action(
+                      Icons.arrow_back,
+                      '上一章',
+                      _chapterIndex > 0 ? () => _switchChapter(_chapterIndex - 1) : null,
+                    ),
+                    _action(
+                      Icons.arrow_forward,
+                      '下一章',
+                      _chapterIndex < total - 1 ? () => _switchChapter(_chapterIndex + 1) : null,
+                    ),
+                    _action(Icons.settings_outlined, '设置', _openSettings),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

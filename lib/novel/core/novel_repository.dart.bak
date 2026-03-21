@@ -1,0 +1,132 @@
+import 'cache_store.dart';
+import 'models.dart';
+import 'novel_source.dart';
+
+class NovelRepository {
+  NovelRepository({
+    required this.source,
+    required this.cache,
+  });
+
+  final NovelSource source;
+  final CacheStore cache;
+
+  static const Duration _searchTtl = Duration(minutes: 20);
+  static const Duration _detailTtl = Duration(hours: 8);
+  static const Duration _chapterTtl = Duration(days: 30);
+
+  Future<List<NovelBook>> searchBooks(
+    String keyword, {
+    bool forceRefresh = false,
+  }) async {
+    final key = 'search:${keyword.trim()}';
+
+    if (!forceRefresh) {
+      final cached = await cache.read(key);
+      if (cached is List) {
+        return cached
+            .map((e) => NovelBook.fromJson(Map<String, dynamic>.from(e as Map)))
+            .toList();
+      }
+    }
+
+    final books = await source.searchBooks(keyword);
+    await cache.write(
+      key,
+      books.map((e) => e.toJson()).toList(),
+      ttl: _searchTtl,
+    );
+    return books;
+  }
+
+  Future<NovelDetail> fetchDetail(
+    String bookId, {
+    bool forceRefresh = false,
+  }) async {
+    final key = 'detail:$bookId';
+
+    if (!forceRefresh) {
+      final cached = await cache.read(key);
+      if (cached is Map) {
+        return NovelDetail.fromJson(Map<String, dynamic>.from(cached));
+      }
+    }
+
+    final detail = await source.fetchDetail(bookId);
+    await cache.write(key, detail.toJson(), ttl: _detailTtl);
+    return detail;
+  }
+
+  Future<ChapterContent> fetchChapter({
+    required NovelDetail detail,
+    required int chapterIndex,
+    bool forceRefresh = false,
+  }) async {
+    final chapter = detail.chapters[chapterIndex];
+    final key = 'chapter:${chapter.url}';
+
+    if (!forceRefresh) {
+      final cached = await cache.read(key);
+      if (cached is Map) {
+        return ChapterContent.fromJson(
+          Map<String, dynamic>.from(cached),
+          fromCache: true,
+        );
+      }
+    }
+
+    try {
+      final chapterContent = await source.fetchChapter(
+        detail: detail,
+        chapterIndex: chapterIndex,
+      );
+      await cache.write(key, chapterContent.toJson(), ttl: _chapterTtl);
+      return chapterContent;
+    } catch (_) {
+      final cached = await cache.read(key);
+      if (cached is Map) {
+        return ChapterContent.fromJson(
+          Map<String, dynamic>.from(cached),
+          fromCache: true,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> prefetchChapter({
+    required NovelDetail detail,
+    required int chapterIndex,
+  }) async {
+    if (chapterIndex < 0 || chapterIndex >= detail.chapters.length) return;
+    await fetchChapter(
+      detail: detail,
+      chapterIndex: chapterIndex,
+      forceRefresh: false,
+    );
+  }
+
+  Future<void> saveProgress(ReadingProgress progress) async {
+    await cache.write('progress:${progress.bookId}', progress.toJson());
+  }
+
+  Future<ReadingProgress?> getProgress(String bookId) async {
+    final data = await cache.read('progress:$bookId');
+    if (data is Map) {
+      return ReadingProgress.fromJson(Map<String, dynamic>.from(data));
+    }
+    return null;
+  }
+
+  Future<void> saveReaderSettings(ReaderSettings settings) async {
+    await cache.write('reader_settings', settings.toJson());
+  }
+
+  Future<ReaderSettings> getReaderSettings() async {
+    final data = await cache.read('reader_settings');
+    if (data is Map) {
+      return ReaderSettings.fromJson(Map<String, dynamic>.from(data));
+    }
+    return const ReaderSettings();
+  }
+}

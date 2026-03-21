@@ -1,0 +1,70 @@
+import 'core/cache_store.dart';
+import 'core/html_novel_source.dart';
+import 'core/models.dart';
+import 'core/novel_repository.dart';
+import 'core/novel_source.dart';
+import 'core/source_rules.dart';
+
+class NovelModule {
+  static NovelRepository? _repository;
+
+  static NovelRepository get repository {
+    _repository ??= NovelRepository(
+      source: const _NotConfiguredSource(),
+      cache: CacheStore(namespace: 'novel_module'),
+    );
+    return _repository!;
+  }
+
+  static void configure({
+    required NovelSource source,
+    CacheStore? cache,
+  }) {
+    _repository = NovelRepository(
+      source: source,
+      cache: cache ?? CacheStore(namespace: 'novel_module'),
+    );
+  }
+
+  static void configureHtml({
+    required String baseUrl,
+    SourceRules? rules,
+    Map<String, String>? headers,
+  }) {
+    configure(
+      source: HtmlNovelSource(
+        baseUrl: baseUrl,
+        rules: rules ?? SourceRules.generic(),
+        headers: headers,
+      ),
+    );
+  }
+}
+
+class _NotConfiguredSource implements NovelSource {
+  const _NotConfiguredSource();
+
+  @override
+  Future<List<NovelBook>> searchBooks(String keyword) {
+    return Future.error(
+      StateError('NovelModule 未配置。请先在 main() 中调用 NovelModule.configureHtml(...)'),
+    );
+  }
+
+  @override
+  Future<NovelDetail> fetchDetail(String bookId) {
+    return Future.error(
+      StateError('NovelModule 未配置。请先在 main() 中调用 NovelModule.configureHtml(...)'),
+    );
+  }
+
+  @override
+  Future<ChapterContent> fetchChapter({
+    required NovelDetail detail,
+    required int chapterIndex,
+  }) {
+    return Future.error(
+      StateError('NovelModule 未配置。请先在 main() 中调用 NovelModule.configureHtml(...)'),
+    );
+  }
+}
