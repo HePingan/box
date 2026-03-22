@@ -72,13 +72,57 @@ class _NovelListPageState extends State<NovelListPage> {
 
   Future<List<NovelBook>> _fetchPage(int page, {required bool forceRefresh}) async {
     if (_searchMode) {
-      return NovelModule.repository.searchBooks(
-        _searchKeyword,
-        page: page,
-        forceRefresh: forceRefresh,
-      );
+      List<NovelBook> rawResults = [];
+
+      // 🚀 深海打捞机制：如果用户是搜第 1 页，我们直接并发向服务器讨要前 3 页！
+      if (page == 1) {
+        try {
+          // Future.wait 会同时发出三个请求，速度极快，不增加用户等待时间
+          final res = await Future.wait([
+            NovelModule.repository.searchBooks(_searchKeyword, page: 1, forceRefresh: forceRefresh),
+            NovelModule.repository.searchBooks(_searchKeyword, page: 2, forceRefresh: forceRefresh),
+            NovelModule.repository.searchBooks(_searchKeyword, page: 3, forceRefresh: forceRefresh),
+          ]);
+          
+          // 把三页（大概60本书）全部汇聚到一个池子里
+          rawResults.addAll(res[0]);
+          rawResults.addAll(res[1]);
+          rawResults.addAll(res[2]);
+
+          // 去除可能重复的书籍（通过 detailUrl 唯一标识）
+          final seen = <String>{};
+          rawResults.retainWhere((book) => seen.add(book.detailUrl));
+        } catch (e) {
+          // 如果某页碰巧网络出错，做个保底：乖乖只拿第1页
+          rawResults = await NovelModule.repository.searchBooks(_searchKeyword, page: 1, forceRefresh: forceRefresh);
+        }
+      } else {
+        // 由于我们在第1页已经把服务器的前3页榨干了
+        // 所以当用户在手机上滑，需要拉取第 2 页数据时，我们实际跟服务器要第 4 页的数据。
+        final serverPage = page + 2; 
+        rawResults = await NovelModule.repository.searchBooks(_searchKeyword, page: serverPage, forceRefresh: forceRefresh);
+      }
+
+      // 👉 开始在 60 本书中执行降维打击，把作者强行抓到最前面
+      final sortedResults = List<NovelBook>.from(rawResults);
+      sortedResults.sort((a, b) {
+        final keyword = _searchKeyword;
+        
+        final aExact = a.author == keyword ? 1 : 0;
+        final bExact = b.author == keyword ? 1 : 0;
+        if (aExact != bExact) return bExact.compareTo(aExact);
+
+        final aContains = a.author.contains(keyword) ? 1 : 0;
+        final bContains = b.author.contains(keyword) ? 1 : 0;
+        if (aContains != bContains) return bContains.compareTo(aContains);
+
+        return 0; 
+      });
+
+      return sortedResults;
     }
 
+    // 默认的分类获取逻辑不变
     final route = _selectedRoute;
     if (route == null) return const <NovelBook>[];
     return NovelModule.repository.fetchByPath(

@@ -4,6 +4,10 @@ import 'globals.dart';
 import 'daily_news_page.dart'; 
 import 'novel_module.dart';
 
+// 👉 新增的两个引入：本地书架管理、小说列表/详情页（如果有红波浪线，在VSCode里按 Alt+Enter 修复一下路径即可）
+import 'novel/core/bookshelf_manager.dart';
+import 'novel/pages/novel_detail_page.dart'; 
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -97,7 +101,7 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin 
                 const Center(child: Text("音乐功能区开发中...")),
                 _buildVideoGrid(),
                 const Center(child: Text("漫画功能区开发中...")),
-                _buildNovelGrid(), 
+                const NovelTabArea(), // 独立的小说书架与书源控制区
               ],
             ),
           ),
@@ -122,8 +126,8 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin 
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('简助手', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                Text('一寸相思千万绪。人间没个安排处。', style: TextStyle(fontSize: 12, color: Colors.grey[600]), maxLines: 1, overflow: TextOverflow.ellipsis),
+                const Text('Geek工具箱', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                Text('计划赶不上变化😭', style: TextStyle(fontSize: 12, color: Colors.grey[600]), maxLines: 1, overflow: TextOverflow.ellipsis),
               ],
             ),
           ),
@@ -157,41 +161,28 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin 
                 else
                   ..._newsList.take(3).map((newsText) => Padding(
                     padding: const EdgeInsets.only(bottom: 8.0),
-                    child: _newsItem(newsText),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.radio_button_checked, color: Colors.white70, size: 14),
+                        const SizedBox(width: 8),
+                        Expanded(child: Tooltip(message: newsText, child: Text(newsText, style: const TextStyle(color: Colors.white, fontSize: 14), maxLines: 1, overflow: TextOverflow.ellipsis))),
+                      ],
+                    ),
                   )).toList(),
               ],
             ),
           ),
           Positioned(
-            top: -8, 
-            right: -8,
+            top: -8, right: -8,
             child: GestureDetector(
               onTap: () {
                 Navigator.push(context, MaterialPageRoute(builder: (context) => const DailyNewsPage()));
               },
-              child: const Padding(
-                padding: EdgeInsets.all(8.0),
-                child: Icon(Icons.remove_red_eye_outlined, color: Colors.white70, size: 20),
-              ),
+              child: const Padding(padding: EdgeInsets.all(8.0), child: Icon(Icons.remove_red_eye_outlined, color: Colors.white70, size: 20)),
             ),
           )
         ],
       ),
-    );
-  }
-
-  Widget _newsItem(String text) {
-    return Row(
-      children: [
-        const Icon(Icons.radio_button_checked, color: Colors.white70, size: 14),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Tooltip(
-            message: text,
-            child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 14), maxLines: 1, overflow: TextOverflow.ellipsis),
-          ),
-        ),
-      ],
     );
   }
 
@@ -246,67 +237,11 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin 
       },
     );
   }
-
-  Widget _buildNovelGrid() {
-    final List<Map<String, dynamic>> items = [
-      {'title': '七猫小说', 'sub': '七猫旗下\n免费小说平台', 'code': 'qimao'},
-      {'title': '香书小说', 'sub': '多种分类\n免费小说平台', 'code': 'xiangshu'},
-      {'title': '唐三小说', 'sub': '多种分类\n免费小说平台', 'code': 'tangsan'},
-      {'title': '小说下载', 'sub': '全本完结\nTXT小说下载', 'code': 'download'},
-    ];
-
-    final Map<String, IconData> iconMap = {
-      'qimao': Icons.pets, 
-      'xiangshu': Icons.auto_stories,
-      'tangsan': Icons.menu_book,
-      'download': Icons.file_download
-    };
-
-    return GridView.builder(
-      padding: const EdgeInsets.all(16.0),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2, crossAxisSpacing: 12.0, mainAxisSpacing: 12.0, childAspectRatio: 2.1,
-      ),
-      itemCount: items.length,
-      itemBuilder: (context, index) {
-        final item = items[index];
-        return GestureDetector(
-          onTap: () {
-            if (item['code'] == 'qimao') {
-              Navigator.push(context, MaterialPageRoute(builder: (context) => const NovelListPage()));
-            } else {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('开发中...'), duration: Duration(milliseconds: 1000)));
-            }
-          },
-          child: Container(
-            decoration: BoxDecoration(color: const Color(0xFFEDEEF0), borderRadius: BorderRadius.circular(16.0)),
-            child: Stack(
-              children: [
-                Positioned(
-                  left: 12, top: 12,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(item['title'], style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black87)),
-                      const SizedBox(height: 4),
-                      Text(item['sub'], style: TextStyle(fontSize: 11, color: Colors.grey[600], height: 1.2)),
-                    ],
-                  ),
-                ),
-                Positioned(right: 8, bottom: 8, child: Icon(iconMap[item['code']] ?? Icons.book, size: 36, color: Colors.blueGrey[300]))
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
 }
 
 class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
   _SliverAppBarDelegate(this._tabBar);
   final TabBar _tabBar;
-
   @override
   double get minExtent => _tabBar.preferredSize.height;
   @override
@@ -315,4 +250,235 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
   Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) => Container(color: const Color(0xFFF7F8FA), child: _tabBar);
   @override
   bool shouldRebuild(_SliverAppBarDelegate oldDelegate) => false;
+}
+
+
+// =========================================================================
+// 👇 全新升级版：支持动画折叠的独立小说板块组件（已接入真实书架数据）
+// =========================================================================
+
+class NovelTabArea extends StatefulWidget {
+  const NovelTabArea({super.key});
+
+  @override
+  State<NovelTabArea> createState() => _NovelTabAreaState();
+}
+
+class _NovelTabAreaState extends State<NovelTabArea> {
+  List<Map<String, dynamic>> _savedBooks = [];
+  bool _isLoadingBooks = true;
+
+  bool _isBookshelfExpanded = true;
+  bool _isSourcesExpanded = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBookshelf();
+  }
+
+  // 👉 获取真实的本地书架，并关联阅读进度
+  Future<void> _loadBookshelf() async {
+    setState(() => _isLoadingBooks = true);
+    
+    try {
+      // 1. 获取通过详情页“加入书架”存储的所有书籍
+      final books = await BookshelfManager.getBookshelf();
+      final List<Map<String, dynamic>> displayList = [];
+
+      // 2. 遍历获取阅读进度记录
+      for (var book in books) {
+        final progress = await NovelModule.repository.getProgress(book.id);
+        displayList.add({
+          'bookId': book.id,
+          'title': book.title,
+          'cover': book.coverUrl,
+          'chapter': progress != null ? progress.chapterTitle : '未读此书',
+          'rawBook': book, 
+        });
+      }
+
+      if (mounted) {
+        setState(() {
+          _savedBooks = displayList;
+          _isLoadingBooks = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoadingBooks = false);
+    }
+  }
+
+  Widget _buildSectionHeader({
+    required String title, required bool isExpanded, required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      splashColor: Colors.transparent, highlightColor: Colors.transparent,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+            AnimatedRotation(
+              turns: isExpanded ? 0.25 : 0.0,
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeInOut,
+              child: const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildBookshelfSection(),
+          _buildNovelSourcesSection(),
+          const SizedBox(height: 30), 
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBookshelfSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+         _buildSectionHeader(
+           title: '我的书架', isExpanded: _isBookshelfExpanded,
+           onTap: () => setState(() => _isBookshelfExpanded = !_isBookshelfExpanded),
+         ),
+         AnimatedSize(
+           duration: const Duration(milliseconds: 300), curve: Curves.easeOutCubic, alignment: Alignment.topCenter,
+           child: _isBookshelfExpanded
+              ? (_isLoadingBooks
+                  ? const SizedBox(height: 160, child: Center(child: CircularProgressIndicator()))
+                  : (_savedBooks.isEmpty ? _buildEmptyBookshelf() : _buildBookshelfList()))
+              : const SizedBox(width: double.infinity, height: 0), 
+         ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyBookshelf() {
+    return Container(
+      height: 120, margin: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey[200]!)),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.auto_stories_outlined, size: 36, color: Colors.grey[400]),
+            const SizedBox(height: 8),
+            Text('书架空空如也，快去寻宝吧', style: TextStyle(color: Colors.grey[500], fontSize: 13)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBookshelfList() {
+    return SizedBox(
+      height: 170, 
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        scrollDirection: Axis.horizontal, physics: const BouncingScrollPhysics(),
+        itemCount: _savedBooks.length,
+        itemBuilder: (context, index) {
+          final bookMap = _savedBooks[index];
+          return GestureDetector(
+            onTap: () {
+               // 👉 重点突破：点击书架上的书，跳转到详情页，返回时刷新书架信息（以便最新阅读进度更新）
+               Navigator.push(
+                 context, 
+                 MaterialPageRoute(builder: (_) => NovelDetailPage(entryBook: bookMap['rawBook']))
+               ).then((_) => _loadBookshelf()); 
+            },
+            child: Container(
+              width: 100, margin: const EdgeInsets.symmetric(horizontal: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(6), color: Colors.grey[300],
+                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 4, offset: const Offset(2, 2))],
+                        image: DecorationImage(image: NetworkImage(bookMap['cover']), onError: (e, s) {}, fit: BoxFit.cover),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(bookMap['title'], style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 2),
+                  Text(bookMap['chapter'], style: TextStyle(fontSize: 11, color: Colors.blueGrey[500]), maxLines: 1, overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildNovelSourcesSection() {
+    final List<Map<String, dynamic>> items = [
+      {'title': '猫眼看书', 'sub': '猫眼看书🐱\n免费小说平台', 'code': 'qimao'},
+      {'title': '等待添加', 'sub': '多种分类\n免费小说平台', 'code': 'xiangshu'},
+      {'title': '等待添加', 'sub': '多种分类\n免费小说平台', 'code': 'tangsan'},
+      {'title': '等待添加', 'sub': '全本完结\nTXT小说下载', 'code': 'download'},
+    ];
+    final Map<String, IconData> iconMap = {
+      'qimao': Icons.pets, 'xiangshu': Icons.auto_stories, 'tangsan': Icons.menu_book, 'download': Icons.file_download
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionHeader(title: '精选书源', isExpanded: _isSourcesExpanded, onTap: () => setState(() => _isSourcesExpanded = !_isSourcesExpanded)),
+        
+        AnimatedSize(
+          duration: const Duration(milliseconds: 300), curve: Curves.easeOutCubic, alignment: Alignment.topCenter,
+          child: _isSourcesExpanded
+              ? GridView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                  shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), 
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 12.0, mainAxisSpacing: 12.0, childAspectRatio: 2.1),
+                  itemCount: items.length,
+                  itemBuilder: (context, index) {
+                    final item = items[index];
+                    return GestureDetector(
+                      onTap: () {
+                        if (item['code'] == 'qimao') {
+                          // 👉 进入书源找书，退出来时也会重刷下书架，保证新添加的书出现
+                          Navigator.push(context, MaterialPageRoute(builder: (context) => const NovelListPage())).then((_) => _loadBookshelf());
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('开发中...')));
+                        }
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(color: const Color(0xFFEDEEF0), borderRadius: BorderRadius.circular(16.0)),
+                        child: Stack(
+                          children: [
+                            Positioned(left: 12, top: 12, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(item['title'], style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black87)), const SizedBox(height: 4), Text(item['sub'], style: TextStyle(fontSize: 11, color: Colors.grey[600], height: 1.2))])),
+                            Positioned(right: 8, bottom: 8, child: Icon(iconMap[item['code']] ?? Icons.book, size: 36, color: Colors.blueGrey[300]))
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                )
+              : const SizedBox(width: double.infinity, height: 0),
+        ),
+      ],
+    );
+  }
 }
