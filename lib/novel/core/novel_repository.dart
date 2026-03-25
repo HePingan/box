@@ -1,5 +1,6 @@
 import 'cache_store.dart';
 import 'models.dart';
+import 'novel_cache_keys.dart';
 import 'novel_source.dart';
 
 class NovelRepository {
@@ -16,20 +17,52 @@ class NovelRepository {
   static const Duration _detailTtl = Duration(hours: 8);
   static const Duration _chapterTtl = Duration(days: 30);
 
+  List<NovelBook>? _decodeBooks(dynamic cached) {
+    if (cached is! List) return null;
+
+    try {
+      return cached
+          .whereType<Map>()
+          .map((e) => NovelBook.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  NovelDetail? _decodeDetail(dynamic cached) {
+    if (cached is! Map) return null;
+
+    try {
+      return NovelDetail.fromJson(Map<String, dynamic>.from(cached));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  ChapterContent? _decodeChapter(dynamic cached) {
+    if (cached is! Map) return null;
+
+    try {
+      return ChapterContent.fromJson(
+        Map<String, dynamic>.from(cached),
+        fromCache: true,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<List<NovelBook>> searchBooks(
     String keyword, {
     int page = 1,
     bool forceRefresh = false,
   }) async {
-    final key = 'search:${keyword.trim()}:$page';
+    final key = NovelCacheKeys.search(keyword, page);
 
     if (!forceRefresh) {
-      final cached = await cache.read(key);
-      if (cached is List) {
-        return cached
-            .map((e) => NovelBook.fromJson(Map<String, dynamic>.from(e as Map)))
-            .toList();
-      }
+      final cached = _decodeBooks(await cache.read(key));
+      if (cached != null) return cached;
     }
 
     try {
@@ -41,12 +74,8 @@ class NovelRepository {
       );
       return books;
     } catch (_) {
-      final cached = await cache.read(key);
-      if (cached is List) {
-        return cached
-            .map((e) => NovelBook.fromJson(Map<String, dynamic>.from(e as Map)))
-            .toList();
-      }
+      final cached = _decodeBooks(await cache.read(key));
+      if (cached != null) return cached;
       rethrow;
     }
   }
@@ -55,15 +84,11 @@ class NovelRepository {
     String path, {
     bool forceRefresh = false,
   }) async {
-    final key = 'path:$path';
+    final key = NovelCacheKeys.path(path);
 
     if (!forceRefresh) {
-      final cached = await cache.read(key);
-      if (cached is List) {
-        return cached
-            .map((e) => NovelBook.fromJson(Map<String, dynamic>.from(e as Map)))
-            .toList();
-      }
+      final cached = _decodeBooks(await cache.read(key));
+      if (cached != null) return cached;
     }
 
     try {
@@ -75,12 +100,8 @@ class NovelRepository {
       );
       return books;
     } catch (_) {
-      final cached = await cache.read(key);
-      if (cached is List) {
-        return cached
-            .map((e) => NovelBook.fromJson(Map<String, dynamic>.from(e as Map)))
-            .toList();
-      }
+      final cached = _decodeBooks(await cache.read(key));
+      if (cached != null) return cached;
       rethrow;
     }
   }
@@ -90,13 +111,14 @@ class NovelRepository {
     String? detailUrl,
     bool forceRefresh = false,
   }) async {
-    final key = 'detail:${detailUrl ?? bookId}';
+    final key = NovelCacheKeys.detail(
+      bookId: bookId,
+      detailUrl: detailUrl,
+    );
 
     if (!forceRefresh) {
-      final cached = await cache.read(key);
-      if (cached is Map) {
-        return NovelDetail.fromJson(Map<String, dynamic>.from(cached));
-      }
+      final cached = _decodeDetail(await cache.read(key));
+      if (cached != null) return cached;
     }
 
     try {
@@ -104,13 +126,12 @@ class NovelRepository {
         bookId: bookId,
         detailUrl: detailUrl,
       );
+
       await cache.write(key, detail.toJson(), ttl: _detailTtl);
       return detail;
     } catch (_) {
-      final cached = await cache.read(key);
-      if (cached is Map) {
-        return NovelDetail.fromJson(Map<String, dynamic>.from(cached));
-      }
+      final cached = _decodeDetail(await cache.read(key));
+      if (cached != null) return cached;
       rethrow;
     }
   }
@@ -121,16 +142,11 @@ class NovelRepository {
     bool forceRefresh = false,
   }) async {
     final chapter = detail.chapters[chapterIndex];
-    final key = 'chapter:${chapter.url}';
+    final key = NovelCacheKeys.chapter(chapter.url);
 
     if (!forceRefresh) {
-      final cached = await cache.read(key);
-      if (cached is Map) {
-        return ChapterContent.fromJson(
-          Map<String, dynamic>.from(cached),
-          fromCache: true,
-        );
-      }
+      final cached = _decodeChapter(await cache.read(key));
+      if (cached != null) return cached;
     }
 
     try {
@@ -138,16 +154,12 @@ class NovelRepository {
         detail: detail,
         chapterIndex: chapterIndex,
       );
+
       await cache.write(key, chapterContent.toJson(), ttl: _chapterTtl);
       return chapterContent;
     } catch (_) {
-      final cached = await cache.read(key);
-      if (cached is Map) {
-        return ChapterContent.fromJson(
-          Map<String, dynamic>.from(cached),
-          fromCache: true,
-        );
-      }
+      final cached = _decodeChapter(await cache.read(key));
+      if (cached != null) return cached;
       rethrow;
     }
   }
@@ -157,6 +169,7 @@ class NovelRepository {
     required int chapterIndex,
   }) async {
     if (chapterIndex < 0 || chapterIndex >= detail.chapters.length) return;
+
     await fetchChapter(
       detail: detail,
       chapterIndex: chapterIndex,
@@ -165,11 +178,14 @@ class NovelRepository {
   }
 
   Future<void> saveProgress(ReadingProgress progress) async {
-    await cache.write('progress:${progress.bookId}', progress.toJson());
+    await cache.write(
+      NovelCacheKeys.progress(progress.bookId),
+      progress.toJson(),
+    );
   }
 
   Future<ReadingProgress?> getProgress(String bookId) async {
-    final data = await cache.read('progress:$bookId');
+    final data = await cache.read(NovelCacheKeys.progress(bookId));
     if (data is Map) {
       return ReadingProgress.fromJson(Map<String, dynamic>.from(data));
     }
@@ -177,11 +193,14 @@ class NovelRepository {
   }
 
   Future<void> saveReaderSettings(ReaderSettings settings) async {
-    await cache.write('reader_settings', settings.toJson());
+    await cache.write(
+      NovelCacheKeys.readerSettings,
+      settings.toJson(),
+    );
   }
 
   Future<ReaderSettings> getReaderSettings() async {
-    final data = await cache.read('reader_settings');
+    final data = await cache.read(NovelCacheKeys.readerSettings);
     if (data is Map) {
       return ReaderSettings.fromJson(Map<String, dynamic>.from(data));
     }

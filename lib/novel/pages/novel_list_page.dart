@@ -5,6 +5,8 @@ import '../core/models.dart';
 import '../novel_module.dart';
 import 'novel_detail_page.dart';
 
+enum SearchTarget { all, title, author }
+
 class NovelListPage extends StatefulWidget {
   const NovelListPage({super.key});
 
@@ -23,6 +25,9 @@ class _NovelListPageState extends State<NovelListPage> {
 
   bool _searchMode = false;
   String _searchKeyword = '';
+  
+  // 💡 新增的模式控制状态
+  SearchTarget _searchTarget = SearchTarget.all;
 
   int _page = 1;
   bool _loading = false;
@@ -58,71 +63,32 @@ class _NovelListPageState extends State<NovelListPage> {
     }
   }
 
-  String _bookKey(NovelBook b) => '${b.id}|${b.detailUrl}';
+  String _bookKey(NovelBook b) {
+    if (b.detailUrl.isNotEmpty) return b.detailUrl;
+    if (b.id.isNotEmpty) return b.id;
+    return '${b.title}_${b.author}';
+  }
 
   List<NovelBook> _mergeBooks(List<NovelBook> oldList, List<NovelBook> nextList) {
-    final keys = oldList.map(_bookKey).toSet();
-    final result = List<NovelBook>.from(oldList);
-    for (final b in nextList) {
-      final k = _bookKey(b);
-      if (keys.add(k)) result.add(b);
+    final seen = <String>{};
+    final result = <NovelBook>[];
+    for (final b in [...oldList, ...nextList]) {
+      final key = _bookKey(b);
+      if (key.isNotEmpty && seen.add(key)) result.add(b);
     }
     return result;
   }
 
   Future<List<NovelBook>> _fetchPage(int page, {required bool forceRefresh}) async {
     if (_searchMode) {
-      List<NovelBook> rawResults = [];
-
-      // 🚀 深海打捞机制：如果用户是搜第 1 页，我们直接并发向服务器讨要前 3 页！
-      if (page == 1) {
-        try {
-          // Future.wait 会同时发出三个请求，速度极快，不增加用户等待时间
-          final res = await Future.wait([
-            NovelModule.repository.searchBooks(_searchKeyword, page: 1, forceRefresh: forceRefresh),
-            NovelModule.repository.searchBooks(_searchKeyword, page: 2, forceRefresh: forceRefresh),
-            NovelModule.repository.searchBooks(_searchKeyword, page: 3, forceRefresh: forceRefresh),
-          ]);
-          
-          // 把三页（大概60本书）全部汇聚到一个池子里
-          rawResults.addAll(res[0]);
-          rawResults.addAll(res[1]);
-          rawResults.addAll(res[2]);
-
-          // 去除可能重复的书籍（通过 detailUrl 唯一标识）
-          final seen = <String>{};
-          rawResults.retainWhere((book) => seen.add(book.detailUrl));
-        } catch (e) {
-          // 如果某页碰巧网络出错，做个保底：乖乖只拿第1页
-          rawResults = await NovelModule.repository.searchBooks(_searchKeyword, page: 1, forceRefresh: forceRefresh);
-        }
-      } else {
-        // 由于我们在第1页已经把服务器的前3页榨干了
-        // 所以当用户在手机上滑，需要拉取第 2 页数据时，我们实际跟服务器要第 4 页的数据。
-        final serverPage = page + 2; 
-        rawResults = await NovelModule.repository.searchBooks(_searchKeyword, page: serverPage, forceRefresh: forceRefresh);
-      }
-
-      // 👉 开始在 60 本书中执行降维打击，把作者强行抓到最前面
-      final sortedResults = List<NovelBook>.from(rawResults);
-      sortedResults.sort((a, b) {
-        final keyword = _searchKeyword;
-        
-        final aExact = a.author == keyword ? 1 : 0;
-        final bExact = b.author == keyword ? 1 : 0;
-        if (aExact != bExact) return bExact.compareTo(aExact);
-
-        final aContains = a.author.contains(keyword) ? 1 : 0;
-        final bContains = b.author.contains(keyword) ? 1 : 0;
-        if (aContains != bContains) return bContains.compareTo(aContains);
-
-        return 0; 
-      });
-
-      return sortedResults;
+      final keyword = _searchKeyword.trim();
+      return await NovelModule.repository.searchBooks(
+        keyword, 
+        page: page, 
+        forceRefresh: forceRefresh
+      );
     }
 
-    // 默认的分类获取逻辑不变
     final route = _selectedRoute;
     if (route == null) return const <NovelBook>[];
     return NovelModule.repository.fetchByPath(
@@ -151,14 +117,10 @@ class _NovelListPageState extends State<NovelListPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _error = '加载失败：$e';
-      });
+      setState(() => _error = '加载失败：$e');
     } finally {
       if (!mounted) return;
-      setState(() {
-        _loading = false;
-      });
+      setState(() => _loading = false);
     }
   }
 
@@ -183,19 +145,16 @@ class _NovelListPageState extends State<NovelListPage> {
         _books
           ..clear()
           ..addAll(merged);
+        
         _page = nextPage;
         _hasMore = books.isNotEmpty && added > 0;
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _error = '加载更多失败：$e';
-      });
+      setState(() => _error = '没有更多数据了');
     } finally {
       if (!mounted) return;
-      setState(() {
-        _loadingMore = false;
-      });
+      setState(() => _loadingMore = false);
     }
   }
 
@@ -208,6 +167,7 @@ class _NovelListPageState extends State<NovelListPage> {
       _selectedRoute = _groups.first.routes.first;
       _searchMode = false;
       _searchKeyword = '';
+      _searchTarget = SearchTarget.all;
     });
     _reload(forceRefresh: false);
   }
@@ -219,6 +179,7 @@ class _NovelListPageState extends State<NovelListPage> {
       _selectedRoute = _groups[index].routes.first;
       _searchMode = false;
       _searchKeyword = '';
+      _searchTarget = SearchTarget.all;
     });
     _reload(forceRefresh: false);
   }
@@ -229,6 +190,7 @@ class _NovelListPageState extends State<NovelListPage> {
       _selectedRoute = route;
       _searchMode = false;
       _searchKeyword = '';
+      _searchTarget = SearchTarget.all;
     });
     _reload(forceRefresh: false);
   }
@@ -240,7 +202,8 @@ class _NovelListPageState extends State<NovelListPage> {
       _searchMode = true;
       _searchKeyword = keyword;
     });
-    _reload(forceRefresh: false);
+    FocusScope.of(context).unfocus(); 
+    _reload(forceRefresh: true); 
   }
 
   void _cancelSearch() {
@@ -248,6 +211,8 @@ class _NovelListPageState extends State<NovelListPage> {
     setState(() {
       _searchMode = false;
       _searchKeyword = '';
+      _searchController.clear();
+      _searchTarget = SearchTarget.all;
     });
     _reload(forceRefresh: false);
   }
@@ -309,7 +274,7 @@ class _NovelListPageState extends State<NovelListPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      book.title,
+                      book.title.isNotEmpty ? book.title : '未知书名',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -319,14 +284,14 @@ class _NovelListPageState extends State<NovelListPage> {
                     ),
                     const Spacer(),
                     Text(
-                      meta,
+                      meta.isNotEmpty ? meta : '暂无信息',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 12.5, color: Colors.grey),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      book.intro,
+                      book.intro.isNotEmpty ? book.intro : '还没有简介哦。',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 12.5, color: Colors.black54),
@@ -341,6 +306,23 @@ class _NovelListPageState extends State<NovelListPage> {
     );
   }
 
+  // 💡 重点提纯逻辑：根据你选择的模式实时筛选列表
+  List<NovelBook> get _displayBooks {
+    if (!_searchMode || _searchTarget == SearchTarget.all) return _books;
+    
+    // 只保留汉字和字母比对，提高过滤容错率
+    String cleanRaw(String s) => s.replaceAll(RegExp(r'[^\w\u4e00-\u9fa5]'), '').toLowerCase();
+    final cleanKeyword = cleanRaw(_searchKeyword);
+    
+    return _books.where((b) {
+      if (_searchTarget == SearchTarget.title) {
+        return cleanRaw(b.title).contains(cleanKeyword);
+      } else {
+        return cleanRaw(b.author).contains(cleanKeyword);
+      }
+    }).toList();
+  }
+
   Widget _buildListBody() {
     if (_loading && _books.isEmpty) {
       return ListView(
@@ -352,14 +334,44 @@ class _NovelListPageState extends State<NovelListPage> {
       );
     }
 
+    final displayList = _displayBooks;
+
+    // 💡 处理源站有数据，但过滤后没数据的尴尬情况（防止无法滑动）
+    if (displayList.isEmpty && _books.isNotEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          const SizedBox(height: 100),
+          Center(
+            child: Text(
+              _searchTarget == SearchTarget.title ? '当前页面没有名字为“$_searchKeyword”的书' : '当前页面没找到作者“$_searchKeyword”',
+              style: const TextStyle(color: Colors.black54),
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (_hasMore)
+            Center(
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[600]),
+                onPressed: _loadingMore ? null : _loadMore,
+                icon: _loadingMore 
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : const Icon(Icons.arrow_downward, size: 16, color: Colors.white),
+                label: Text(_loadingMore ? '正在深网打捞...' : '绕过这页，继续深挖', style: const TextStyle(color: Colors.white)),
+              ),
+            ),
+        ],
+      );
+    }
+
     if (_books.isEmpty) {
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
-          const SizedBox(height: 180),
-          Center(
+           const SizedBox(height: 180),
+           Center(
             child: Text(
-              _error.isNotEmpty ? _error : '暂无数据',
+              _error.isNotEmpty ? _error : '暂无相关数据',
               style: TextStyle(
                 color: _error.isNotEmpty ? Colors.redAccent : Colors.black54,
               ),
@@ -373,10 +385,10 @@ class _NovelListPageState extends State<NovelListPage> {
       controller: _scrollController,
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-      itemCount: _books.length + 1,
+      itemCount: displayList.length + 1,
       itemBuilder: (context, index) {
-        if (index < _books.length) {
-          return _buildBookCard(_books[index]);
+        if (index < displayList.length) {
+          return _buildBookCard(displayList[index]);
         }
         if (_loadingMore) {
           return const Padding(
@@ -388,7 +400,7 @@ class _NovelListPageState extends State<NovelListPage> {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 16),
             child: Center(
-              child: Text('没有更多了', style: TextStyle(color: Colors.black45)),
+              child: Text('到底了', style: TextStyle(color: Colors.black45)),
             ),
           );
         }
@@ -433,7 +445,7 @@ class _NovelListPageState extends State<NovelListPage> {
                     textInputAction: TextInputAction.search,
                     onSubmitted: (_) => _doSearch(),
                     decoration: InputDecoration(
-                      hintText: '搜索书名 / 作者',
+                      hintText: '输入书名或作者名进行搜索',
                       prefixIcon: const Icon(Icons.search),
                       suffixIcon: _searchMode
                           ? IconButton(
@@ -443,6 +455,7 @@ class _NovelListPageState extends State<NovelListPage> {
                           : null,
                       filled: true,
                       fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 0),
                       border: OutlineInputBorder(
                         borderSide: BorderSide.none,
                         borderRadius: BorderRadius.circular(12),
@@ -452,41 +465,72 @@ class _NovelListPageState extends State<NovelListPage> {
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[50],
+                    foregroundColor: Colors.blue[700],
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
+                  ),
                   onPressed: _doSearch,
                   child: const Text('搜索'),
                 ),
               ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Row(
-              children: [
-                ChoiceChip(
-                  label: const Text('男频'),
-                  selected: _channel == NovelChannel.male,
-                  onSelected: (_) => _switchChannel(NovelChannel.male),
-                ),
-                const SizedBox(width: 8),
-                ChoiceChip(
-                  label: const Text('女频'),
-                  selected: _channel == NovelChannel.female,
-                  onSelected: (_) => _switchChannel(NovelChannel.female),
-                ),
-                const Spacer(),
-                if (_searchMode)
-                  Text(
-                    '搜索: $_searchKeyword',
-                    style: const TextStyle(
-                      color: Colors.teal,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-              ],
+
+          // 💡 前端零延迟过滤条，只在搜索模式下出现！
+          if (_searchMode)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Row(
+                children: [
+                   const Text('模式：', style: TextStyle(fontSize: 13, color: Colors.black54)),
+                   const SizedBox(width: 8),
+                   ChoiceChip(
+                     label: const Text('综合', style: TextStyle(fontSize: 12)),
+                     selected: _searchTarget == SearchTarget.all,
+                     showCheckmark: false,
+                     onSelected: (_) => setState(() => _searchTarget = SearchTarget.all),
+                   ),
+                   const SizedBox(width: 8),
+                   ChoiceChip(
+                     label: const Text('搜书名', style: TextStyle(fontSize: 12)),
+                     selected: _searchTarget == SearchTarget.title,
+                     showCheckmark: false,
+                     onSelected: (_) => setState(() => _searchTarget = SearchTarget.title),
+                   ),
+                   const SizedBox(width: 8),
+                   ChoiceChip(
+                     label: const Text('搜作者', style: TextStyle(fontSize: 12)),
+                     selected: _searchTarget == SearchTarget.author,
+                     showCheckmark: false,
+                     onSelected: (_) => setState(() => _searchTarget = SearchTarget.author),
+                   ),
+                ],
+              ),
             ),
-          ),
+
           if (!_searchMode) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Row(
+                children: [
+                  ChoiceChip(
+                    label: const Text('男频'),
+                    selected: _channel == NovelChannel.male,
+                    showCheckmark: false,
+                    onSelected: (_) => _switchChannel(NovelChannel.male),
+                  ),
+                  const SizedBox(width: 8),
+                  ChoiceChip(
+                    label: const Text('女频'),
+                    selected: _channel == NovelChannel.female,
+                    showCheckmark: false,
+                    onSelected: (_) => _switchChannel(NovelChannel.female),
+                  ),
+                ],
+              ),
+            ),
             SizedBox(
               height: 42,
               child: ListView.separated(
@@ -524,23 +568,8 @@ class _NovelListPageState extends State<NovelListPage> {
               ),
             ),
             const SizedBox(height: 6),
-          ] else
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Row(
-                children: [
-                  Text(
-                    '当前为搜索结果，点击右侧返回发现',
-                    style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                  ),
-                  const Spacer(),
-                  TextButton(
-                    onPressed: _cancelSearch,
-                    child: const Text('返回发现'),
-                  ),
-                ],
-              ),
-            ),
+          ],
+          
           if (_error.isNotEmpty && _books.isNotEmpty)
             Container(
               width: double.infinity,

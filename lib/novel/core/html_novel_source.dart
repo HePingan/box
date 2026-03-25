@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 import 'package:http/http.dart' as http;
@@ -11,12 +12,9 @@ class HtmlNovelSource implements NovelSource {
     required this.baseUrl,
     required this.rules,
     Map<String, String>? headers,
-  }) : headers = headers ??
-            const {
-              'User-Agent':
-                  'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
-              'Accept':
-                  'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+  }) : headers = headers ?? const {
+              'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             };
 
   final String baseUrl;
@@ -36,7 +34,8 @@ class HtmlNovelSource implements NovelSource {
   }
 
   Future<dom.Document> _fetchDoc(String urlOrPath) async {
-    final response = await http.get(_resolve(urlOrPath), headers: headers);
+    // 加入 timeout 防止挂死
+    final response = await http.get(_resolve(urlOrPath), headers: headers).timeout(const Duration(seconds: 15));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('网络请求失败: ${response.statusCode}');
     }
@@ -60,15 +59,13 @@ class HtmlNovelSource implements NovelSource {
   }
 
   String _text(dynamic root, List<String> selectors, {String fallback = ''}) {
-    final node = _first(root, selectors);
-    final value = node?.text.trim() ?? '';
+    final value = _first(root, selectors)?.text.trim() ?? '';
     return value.isEmpty ? fallback : value;
   }
 
   String _attr(dynamic root, List<String> selectors, String name) {
     for (final selector in selectors) {
-      final node = root.querySelector(selector);
-      final value = node?.attributes[name]?.trim() ?? '';
+      final value = root.querySelector(selector)?.attributes[name]?.trim() ?? '';
       if (value.isNotEmpty) return value;
     }
     return '';
@@ -83,39 +80,23 @@ class HtmlNovelSource implements NovelSource {
   }
 
   bool _isValidChapterLink(String title, String href) {
-    if (title.isEmpty || href.isEmpty) return false;
-    if (href == '#' || href.startsWith('javascript:')) return false;
-    if (RegExp(r'^(上一章|下一章|目录|首页|返回|书架|登录)$').hasMatch(title)) {
-      return false;
-    }
+    if (title.isEmpty || href.isEmpty || href == '#' || href.startsWith('javascript:')) return false;
+    if (RegExp(r'^(上一章|下一章|目录|首页|返回|书架|登录)$').hasMatch(title)) return false;
     return true;
   }
 
   String _cleanContent(String html) {
-    var text = html;
-    text = text.replaceAll(RegExp(r'(?i)<br\s*/?>'), '\n');
-    text = text.replaceAll(RegExp(r'(?i)</p>'), '\n');
-    text = text.replaceAll(RegExp(r'(?i)<p[^>]*>'), '');
-    text = text.replaceAll(RegExp(r'(?is)<script.*?</script>'), '');
-    text = text.replaceAll(RegExp(r'(?is)<style.*?</style>'), '');
-    text = text.replaceAll(RegExp(r'<[^>]+>'), '');
+    var text = html.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+                   .replaceAll(RegExp(r'</p>', caseSensitive: false), '\n')
+                   .replaceAll(RegExp(r'<p[^>]*>', caseSensitive: false), '')
+                   .replaceAll(RegExp(r'<script.*?</script>', caseSensitive: false, dotAll: true), '')
+                   .replaceAll(RegExp(r'<style.*?</style>', caseSensitive: false, dotAll: true), '')
+                   .replaceAll(RegExp(r'<[^>]+>'), '');
 
-    final decoded = html_parser.parseFragment(text).text;
-    final lines = decoded
-        .replaceAll('\u00A0', ' ')
-        .replaceAll('\r\n', '\n')
-        .split('\n');
-
+    final decoded = html_parser.parseFragment(text).text ?? '';
+    final lines = decoded.replaceAll('\u00A0', ' ').replaceAll('\r\n', '\n').split('\n');
     final result = <String>[];
-    final noisePatterns = <RegExp>[
-      RegExp(r'^\s*$'),
-      RegExp(r'^请收藏'),
-      RegExp(r'^最新章节'),
-      RegExp(r'^本章未完'),
-      RegExp(r'^广告'),
-      RegExp(r'^手机用户请'),
-      RegExp(r'^下载.*阅读'),
-    ];
+    final noisePatterns = [RegExp(r'^\s*$'), RegExp(r'^请收藏'), RegExp(r'^最新章节'), RegExp(r'^本章未完'), RegExp(r'^广告'), RegExp(r'^手机用户请'), RegExp(r'^下载.*阅读')];
 
     for (final raw in lines) {
       final line = raw.trim();
@@ -126,16 +107,15 @@ class HtmlNovelSource implements NovelSource {
       if (noisePatterns.any((p) => p.hasMatch(line))) continue;
       result.add(line);
     }
-
+    // 移除连续多行空行
     return result.join('\n').replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
   }
 
-  @override
-  Future<List<NovelBook>> searchBooks(String keyword) async {
-    final doc = await _fetchDoc(rules.searchPathBuilder(keyword));
+  /// 公共抽取的列表解析逻辑
+  List<NovelBook> _parseBookListFromDoc(dom.Document doc) {
     final items = _all(doc, rules.searchItemSelectors);
-
     final books = <NovelBook>[];
+
     for (final item in items) {
       final linkNode = _first(item, rules.searchLinkSelectors) ?? item.querySelector('a');
       if (linkNode == null) continue;
@@ -146,27 +126,47 @@ class HtmlNovelSource implements NovelSource {
       final title = _text(item, rules.searchTitleSelectors, fallback: linkNode.text.trim());
       if (title.isEmpty) continue;
 
-      books.add(
-        NovelBook(
-          id: _deriveId(href),
-          title: title,
-          author: _text(item, rules.searchAuthorSelectors, fallback: '未知作者'),
-          intro: _text(item, rules.searchIntroSelectors),
-          coverUrl: _absUrl(_attr(item, rules.searchCoverSelectors, 'src')),
-          detailUrl: _absUrl(href),
-          category: _text(item, rules.searchCategorySelectors),
-          status: _text(item, rules.searchStatusSelectors),
-          wordCount: _text(item, rules.searchWordCountSelectors),
-        ),
-      );
+      books.add(NovelBook(
+        id: _deriveId(href),
+        title: title,
+        author: _text(item, rules.searchAuthorSelectors, fallback: '未知作者'),
+        intro: _text(item, rules.searchIntroSelectors),
+        coverUrl: _absUrl(_attr(item, rules.searchCoverSelectors, 'src')),
+        detailUrl: _absUrl(href),
+        category: _text(item, rules.searchCategorySelectors),
+        status: _text(item, rules.searchStatusSelectors),
+        wordCount: _text(item, rules.searchWordCountSelectors),
+      ));
     }
-
     return books;
   }
 
+  // 1. 修复：补充了缺失的 searchBooks 可选参数 {int page = 1}
   @override
-  Future<NovelDetail> fetchDetail(String bookId) async {
-    final doc = await _fetchDoc(rules.detailPathBuilder(bookId));
+  Future<List<NovelBook>> searchBooks(String keyword, {int page = 1}) async {
+    final doc = await _fetchDoc(rules.searchPathBuilder(keyword));
+    return _parseBookListFromDoc(doc);
+  }
+
+  // 2. 修复：补充了缺失的 fetchByPath 实现
+  @override
+  Future<List<NovelBook>> fetchByPath(String path) async {
+    final doc = await _fetchDoc(path);
+    return _parseBookListFromDoc(doc);
+  }
+
+  // 3. 修复：恢复了与接口一致的命名参数 {required String bookId, String? detailUrl}
+  @override
+  Future<NovelDetail> fetchDetail({
+    required String bookId,
+    String? detailUrl,
+  }) async {
+    // 优先使用给定的详情页 URL 进行请求
+    final requestUrl = detailUrl != null && detailUrl.isNotEmpty 
+        ? detailUrl 
+        : rules.detailPathBuilder(bookId);
+
+    final doc = await _fetchDoc(requestUrl);
 
     final book = NovelBook(
       id: bookId,
@@ -174,29 +174,26 @@ class HtmlNovelSource implements NovelSource {
       author: _text(doc, rules.detailAuthorSelectors, fallback: '未知作者'),
       intro: _text(doc, rules.detailIntroSelectors),
       coverUrl: _absUrl(_attr(doc, rules.detailCoverSelectors, 'src')),
-      detailUrl: _absUrl(rules.detailPathBuilder(bookId)),
+      detailUrl: _absUrl(requestUrl),
       category: _text(doc, rules.detailCategorySelectors),
       status: _text(doc, rules.detailStatusSelectors),
       wordCount: _text(doc, rules.detailWordCountSelectors),
     );
 
     final chapterRoot = _first(doc, rules.chapterListSelectors) ?? doc;
-    final anchors = chapterRoot.querySelectorAll('a');
-
     final seen = <String>{};
     final chapters = <NovelChapter>[];
 
-    for (final a in anchors) {
+    for (final a in chapterRoot.querySelectorAll('a')) {
       final href = a.attributes['href']?.trim() ?? '';
       final title = a.text.trim();
 
       if (!_isValidChapterLink(title, href)) continue;
 
       final url = _absUrl(href);
-      if (seen.contains(url)) continue;
-      seen.add(url);
-
-      chapters.add(NovelChapter(title: title, url: url));
+      if (seen.add(url)) {
+        chapters.add(NovelChapter(title: title, url: url));
+      }
     }
 
     return NovelDetail(book: book, chapters: chapters);
