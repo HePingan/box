@@ -1,5 +1,8 @@
-// lib/globals.dart
 import 'package:flutter/material.dart';
 
-// 把全局控制抽屉的钥匙拿出来单独放这里，断绝循环依赖！
+// 全局 Drawer Key
 final GlobalKey<ScaffoldState> appScaffoldKey = GlobalKey<ScaffoldState>();
+
+// 路由观察器：用于视频首页从详情/播放器返回时刷新“最近播放”
+final RouteObserver<PageRoute<dynamic>> appRouteObserver =
+    RouteObserver<PageRoute<dynamic>>();
