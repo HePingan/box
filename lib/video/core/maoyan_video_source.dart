@@ -1,13 +1,13 @@
-// 文件路径: lib/video/core/maoyan_video_source.dart
-
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
+
 import 'models.dart';
 import 'video_source.dart';
 
 class MaoyanVideoSource implements VideoSource {
-  // 使用一个稳定、免费、国内可访问的模拟 API
   final String _baseUrl = 'https://api.netsep.io/api/v1';
+  static const String _providerKey = 'maoyan_mock';
 
   @override
   String get sourceName => '猫眼电影 (模拟)';
@@ -28,91 +28,109 @@ class MaoyanVideoSource implements VideoSource {
         ),
       ];
 
-  // API 不支持搜索，所以我们返回一个提示
   @override
   Future<List<VideoItem>> searchVideos(String keyword, {int page = 1}) async {
-    // 这个模拟 API 不直接支持关键词搜索，但我们可以通过获取列表并手动筛选来模拟
-    if (page > 1) return [];
+    if (page > 1) return const [];
+
     final movies = await fetchByPath('/movie/list?type=hot', page: 1);
-    if (keyword.isEmpty) return movies;
-    
+    if (keyword.trim().isEmpty) return movies;
+
     final lowerKeyword = keyword.toLowerCase();
     return movies.where((m) => m.title.toLowerCase().contains(lowerKeyword)).toList();
   }
 
   @override
   Future<List<VideoItem>> fetchByPath(String path, {int page = 1}) async {
-    if (page > 1) return []; // 此 API 不支持分页
+    if (page > 1) return const [];
 
     final uri = Uri.parse('$_baseUrl$path');
     final response = await http.get(uri);
 
     if (response.statusCode != 200) {
-      throw '网络请求失败: ${response.statusCode}';
+      throw Exception('网络请求失败: ${response.statusCode}');
     }
 
     final decoded = jsonDecode(utf8.decode(response.bodyBytes));
     final result = decoded['result'];
-    if (result is! List) return [];
+    if (result is! List) return const [];
 
-    return result.map((item) {
-      return _toVideoItem(Map<String, dynamic>.from(item)); // <--- 进行类型转换
-    }).toList();
+    return result
+        .map((item) => _toVideoItem(Map<String, dynamic>.from(item)))
+        .toList();
   }
 
   @override
   Future<VideoDetail> fetchDetail({
-    required String videoId,
-    String? detailUrl,
+    required VideoItem item,
   }) async {
-    final uri = Uri.parse('$_baseUrl/movie/detail?id=$videoId');
+    final rawId = _extractRawId(item.id);
+    final uri = Uri.parse('$_baseUrl/movie/detail?id=$rawId');
     final response = await http.get(uri);
 
     if (response.statusCode != 200) {
-      throw '获取详情失败: ${response.statusCode}';
+      throw Exception('获取详情失败: ${response.statusCode}');
     }
 
     final decoded = jsonDecode(utf8.decode(response.bodyBytes));
     final detail = decoded['result'];
-    if (detail is! Map) throw '详情数据格式错误';
+    if (detail is! Map) throw Exception('详情数据格式错误');
 
-    final item = _toVideoItem(Map<String, dynamic>.from(detail)); // <--- 在这里也进行类型转换
-    
+    final detailMap = Map<String, dynamic>.from(detail);
+    final detailItem = _toVideoItem(detailMap);
+
     return VideoDetail(
-      item: item,
-      creator: _asString(detail['director']),
-      description: _asString(detail['desc']),
-      tags: (_asString(detail['cat']).split(',') as List<String>).map((s) => s.trim()).toList(),
-      sourceUrl: 'https://maoyan.com/films/$videoId',
-      episodes: [
-        // **关键点**: 因为没有真实播放地址，我们借用一个样片地址来确保能播放
-        const VideoEpisode(
-          title: '正片 (样例播放)',
-          url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-          index: 0,
+      item: detailItem,
+      cover: detailItem.cover,
+      creator: _asString(detailMap['director']),
+      description: _asString(detailMap['desc']),
+      tags: _asString(detailMap['cat'])
+          .split(',')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList(),
+      sourceUrl: 'https://maoyan.com/films/$rawId',
+      playSources: const [
+        VideoPlaySource(
+          name: '样例线路',
+          episodes: [
+            VideoEpisode(
+              title: '正片 (样例播放)',
+              url:
+                  'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+              index: 0,
+            ),
+          ],
         ),
       ],
     );
   }
 
-  // --- Helper 方法 ---
-
   VideoItem _toVideoItem(Map<String, dynamic> item) {
-    final id = _asString(item['id']);
+    final rawId = _asString(item['id']);
     return VideoItem(
-      id: id,
+      id: '$_providerKey::$rawId',
       title: _asString(item['name']),
-      coverUrl: _asString(item['poster']),
-      detailUrl: 'https://maoyan.com/films/$id', // 只是一个示意 URL
+      cover: _asString(item['poster']),
+      detailUrl: 'https://maoyan.com/films/$rawId',
       intro: _asString(item['desc']),
       category: _asString(item['cat']),
       yearText: _asString(item['year']),
       sourceName: sourceName,
+      providerKey: _providerKey,
     );
+  }
+
+  String _extractRawId(String id) {
+    final idx = id.lastIndexOf('::');
+    if (idx >= 0 && idx + 2 < id.length) {
+      return id.substring(idx + 2);
+    }
+    return id;
   }
 
   String _asString(dynamic value, [String fallback = '']) {
     if (value == null) return fallback;
-    return value.toString();
+    final text = value.toString().trim();
+    return text.isEmpty ? fallback : text;
   }
 }

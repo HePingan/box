@@ -1,448 +1,551 @@
 import 'package:flutter/material.dart';
 
-import '../../globals.dart';
 import '../core/models.dart';
 import '../video_module.dart';
-import 'video_detail_page.dart';
 import 'video_list_page.dart';
 
-class VideoHomePage extends StatelessWidget {
+class VideoHomePage extends StatefulWidget {
   const VideoHomePage({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      body: SafeArea(child: VideoTabArea()),
-    );
-  }
+  State<VideoHomePage> createState() => _VideoHomePageState();
 }
 
-class VideoTabArea extends StatefulWidget {
-  const VideoTabArea({super.key});
-
-  @override
-  State<VideoTabArea> createState() => _VideoTabAreaState();
-}
-
-class _VideoTabAreaState extends State<VideoTabArea>
-    with AutomaticKeepAliveClientMixin, RouteAware {
+class _VideoHomePageState extends State<VideoHomePage> {
   final TextEditingController _searchController = TextEditingController();
 
-  List<VideoItem> _recentItems = [];
-  bool _loadingRecent = true;
-  PageRoute<dynamic>? _route;
-
-  @override
-  bool get wantKeepAlive => true;
+  List<VideoCategory> _categories = const [];
 
   @override
   void initState() {
     super.initState();
-    _loadRecent();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final route = ModalRoute.of(context);
-    if (route is PageRoute && route != _route) {
-      if (_route != null) {
-        appRouteObserver.unsubscribe(this);
-      }
-      _route = route;
-      appRouteObserver.subscribe(this, route);
-    }
-  }
-
-  @override
-  void didPopNext() {
-    _loadRecent();
+    _reloadCategories();
   }
 
   @override
   void dispose() {
-    if (_route != null) {
-      appRouteObserver.unsubscribe(this);
-    }
     _searchController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadRecent() async {
-    setState(() => _loadingRecent = true);
-    try {
-      final list = await VideoModule.repository.getRecentItems();
-      if (!mounted) return;
-      setState(() {
-        _recentItems = list;
-        _loadingRecent = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _loadingRecent = false);
-    }
+  void _reloadCategories() {
+    final raw = VideoModule.repository.source.categories;
+    setState(() {
+      _categories = _dedupeCategories(raw);
+    });
   }
 
-  void _openListByCategory(VideoCategory category) {
+  List<VideoCategory> _dedupeCategories(List<VideoCategory> raw) {
+    final map = <String, VideoCategory>{};
+    for (final item in raw) {
+      final key = '${item.title.trim()}|${item.query.trim()}';
+      map.putIfAbsent(key, () => item);
+    }
+    return map.values.toList();
+  }
+
+  List<VideoCategory> get _featuredCategories {
+    final matched = <VideoCategory>[];
+    final used = <String>{};
+
+    void pick(bool Function(VideoCategory c) test) {
+      for (final category in _categories) {
+        final key = '${category.title}|${category.query}';
+        if (used.contains(key)) continue;
+        if (test(category)) {
+          matched.add(category);
+          used.add(key);
+          return;
+        }
+      }
+    }
+
+    bool containsAny(VideoCategory c, List<String> words) {
+      final text = '${c.title} ${c.description}'.toLowerCase();
+      return words.any((e) => text.contains(e.toLowerCase()));
+    }
+
+    pick((c) => containsAny(c, ['最新', '推荐', '首页', '最近', '全部']));
+    pick((c) => containsAny(c, ['电影', 'movie']));
+    pick((c) => containsAny(c, ['电视剧', '剧集', '连续剧', 'tv']));
+    pick((c) => containsAny(c, ['动漫', '动画', '番剧', 'anime']));
+    pick((c) => containsAny(c, ['综艺', 'variety']));
+    pick((c) => containsAny(c, ['短剧', '微短剧', '竖屏', '爽剧']));
+
+    if (matched.length < 6) {
+      for (final category in _categories) {
+        final key = '${category.title}|${category.query}';
+        if (used.add(key)) {
+          matched.add(category);
+          if (matched.length >= 6) break;
+        }
+      }
+    }
+
+    return matched;
+  }
+
+  List<String> get _hotKeywords => const [
+        '短剧',
+        '热播电视剧',
+        '动漫',
+        '综艺',
+        '动作电影',
+        '悬疑',
+        '古装',
+        '喜剧',
+      ];
+
+  void _openSearch([String? keyword]) {
+    final text = (keyword ?? _searchController.text).trim();
+    if (text.isEmpty) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VideoListPage(
+          initialKeyword: text,
+        ),
+      ),
+    );
+  }
+
+  void _openCategory(VideoCategory category) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => VideoListPage(category: category),
       ),
-    ).then((_) => _loadRecent());
+    );
   }
 
-  void _openSearch() {
-    final keyword = _searchController.text.trim();
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => VideoListPage(
-          initialKeyword: keyword.isEmpty ? null : keyword,
-        ),
-      ),
-    ).then((_) => _loadRecent());
-  }
+  Widget _buildHeroHeader() {
+    final sourceName = VideoModule.repository.source.sourceName;
 
-  void _openRecent(VideoItem item) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => VideoDetailPage(item: item),
-      ),
-    ).then((_) => _loadRecent());
-  }
-
-  IconData _iconForCategory(String id) {
-    switch (id) {
-      case 'classic-film':
-        return Icons.local_movies_outlined;
-      case 'documentary':
-        return Icons.travel_explore_outlined;
-      case 'tv-series':
-        return Icons.live_tv_outlined;
-      case 'short-film':
-        return Icons.movie_filter_outlined;
-      case 'sample':
-        return Icons.play_circle_outline;
-      default:
-        return Icons.video_library_outlined;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-
-    final categories = VideoModule.repository.source.categories;
-
-    return SingleChildScrollView(
-      primary: false,
-      physics: const BouncingScrollPhysics(),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildHeader(),
-            const SizedBox(height: 16),
-            _buildSearchCard(),
-            const SizedBox(height: 16),
-            _buildCategorySection(categories),
-            const SizedBox(height: 16),
-            _buildRecentSection(),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFF2D5EA8),
+            const Color(0xFF4B7BC8),
+            const Color(0xFF6B96D8),
           ],
         ),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '影视聚合',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 28,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '当前片源：$sourceName',
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 13,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: TextField(
+              controller: _searchController,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => _openSearch(),
+              decoration: InputDecoration(
+                hintText: '搜电影、电视剧、动漫、综艺、短剧',
+                border: InputBorder.none,
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: IconButton(
+                  onPressed: _openSearch,
+                  icon: const Icon(Icons.arrow_forward_rounded),
+                ),
+                contentPadding: const EdgeInsets.symmetric(vertical: 16),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _hotKeywords.map((word) {
+              return InkWell(
+                borderRadius: BorderRadius.circular(999),
+                onTap: () => _openSearch(word),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.16),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(0.14),
+                    ),
+                  ),
+                  child: Text(
+                    word,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildHeader() {
+  IconData _categoryIcon(String title) {
+    final text = title.toLowerCase();
+    if (text.contains('电影')) return Icons.movie_creation_outlined;
+    if (text.contains('电视剧') || text.contains('剧')) return Icons.live_tv_outlined;
+    if (text.contains('动漫') || text.contains('动画') || text.contains('番')) {
+      return Icons.animation_outlined;
+    }
+    if (text.contains('综艺')) return Icons.theaters_outlined;
+    if (text.contains('短剧') || text.contains('微短剧') || text.contains('竖屏')) {
+      return Icons.stay_current_portrait_outlined;
+    }
+    if (text.contains('最新') || text.contains('推荐') || text.contains('首页')) {
+      return Icons.auto_awesome_outlined;
+    }
+    return Icons.grid_view_rounded;
+  }
+
+  List<Color> _categoryColors(String title) {
+    final text = title.toLowerCase();
+    if (text.contains('电影')) return [const Color(0xFFFF8A65), const Color(0xFFFFB74D)];
+    if (text.contains('电视剧') || text.contains('剧')) {
+      return [const Color(0xFF42A5F5), const Color(0xFF7E57C2)];
+    }
+    if (text.contains('动漫') || text.contains('动画') || text.contains('番')) {
+      return [const Color(0xFF26A69A), const Color(0xFF66BB6A)];
+    }
+    if (text.contains('综艺')) return [const Color(0xFFEC407A), const Color(0xFFAB47BC)];
+    if (text.contains('短剧') || text.contains('微短剧') || text.contains('竖屏')) {
+      return [const Color(0xFF5C6BC0), const Color(0xFF29B6F6)];
+    }
+    return [const Color(0xFF607D8B), const Color(0xFF90A4AE)];
+  }
+
+  Widget _buildFeaturedGrid() {
+    final items = _featuredCategories;
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    return GridView.builder(
+      itemCount: items.length,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+        childAspectRatio: 1.55,
+      ),
+      itemBuilder: (context, index) {
+        final category = items[index];
+        final colors = _categoryColors(category.title);
+
+        return InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: () => _openCategory(category),
+          child: Ink(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: colors,
+              ),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x14000000),
+                  blurRadius: 12,
+                  offset: Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.18),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      _categoryIcon(category.title),
+                      color: Colors.white,
+                      size: 22,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      category.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        height: 1.2,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _sectionTitle(String title, {String? subtitle}) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        const CircleAvatar(
-          radius: 22,
-          child: Icon(Icons.play_circle_fill_rounded),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '影视播放器',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              Text(
-                '公共版权视频源 / 免费样例兜底 / 支持进度记忆',
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 21,
+            fontWeight: FontWeight.w800,
           ),
         ),
+        if (subtitle != null) ...[
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
 
-  Widget _buildSearchCard() {
+  Widget _buildSourceInfoCard() {
+    final source = VideoModule.repository.source;
+    final categories = _categories;
+
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFFF7FAFF),
         borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE4ECF8)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          const Text(
-            '搜索影视',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _searchController,
-            textInputAction: TextInputAction.search,
-            onSubmitted: (_) => _openSearch(),
-            decoration: InputDecoration(
-              hintText: '输入电影 / 纪录片 / 电视剧关键词',
-              prefixIcon: const Icon(Icons.search),
-              filled: true,
-              fillColor: const Color(0xFFF6F7F9),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide.none,
-              ),
+          Container(
+            width: 46,
+            height: 46,
+            decoration: const BoxDecoration(
+              color: Color(0xFFEAF2FF),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.hub_outlined,
+              color: Color(0xFF3567B7),
             ),
           ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: _openSearch,
-                  icon: const Icon(Icons.search),
-                  label: const Text('搜索'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              OutlinedButton.icon(
-                onPressed: _loadRecent,
-                icon: const Icon(Icons.refresh),
-                label: const Text('刷新'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCategorySection(List<VideoCategory> categories) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '精选分类',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-          if (categories.isEmpty)
-            const Text('当前没有可用分类，请确认 VideoModule 已配置。')
-          else
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: categories.length,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 2.1,
-              ),
-              itemBuilder: (context, index) {
-                final category = categories[index];
-                return InkWell(
-                  borderRadius: BorderRadius.circular(16),
-                  onTap: () => _openListByCategory(category),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF1F3F5),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Stack(
-                      children: [
-                        Positioned(
-                          left: 12,
-                          top: 12,
-                          right: 48,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                category.title,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                category.description,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey[600],
-                                  height: 1.2,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-                        Positioned(
-                          right: 8,
-                          bottom: 8,
-                          child: CircleAvatar(
-                            backgroundColor: Colors.blue.shade100,
-                            child: Icon(
-                              _iconForCategory(category.id),
-                              color: Colors.blue[700],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  source.sourceName,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
                   ),
-                );
-              },
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '当前共 ${categories.length} 个可浏览分类，支持多源搜索与自动聚合',
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.4,
+                    color: Colors.grey[700],
+                  ),
+                ),
+              ],
             ),
+          ),
+          IconButton(
+            onPressed: _reloadCategories,
+            icon: const Icon(Icons.refresh),
+            tooltip: '刷新分类',
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildRecentSection() {
+  Widget _buildCategoryWrap() {
+    if (_categories.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8F9FB),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Text('当前没有可用分类'),
+      );
+    }
+
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: _categories.map((category) {
+        return InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => _openCategory(category),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF7F8FA),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFEEF1F4)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _categoryIcon(category.title),
+                  size: 16,
+                  color: const Color(0xFF5471A8),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  category.title,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildQuickSearchPanel() {
+    const suggestions = <String>[
+      '最新短剧',
+      '古装',
+      '悬疑',
+      '喜剧',
+      '动作',
+      '爱情',
+      '动漫新番',
+      '热播综艺',
+    ];
+
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFFF9FBFD),
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            '最近播放',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            '快速搜索',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
           ),
           const SizedBox(height: 12),
-          if (_loadingRecent)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.symmetric(vertical: 20),
-                child: CircularProgressIndicator(),
-              ),
-            )
-          else if (_recentItems.isEmpty)
-            Container(
-              height: 120,
-              decoration: BoxDecoration(
-                color: const Color(0xFFF6F7F9),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.history_outlined, size: 36, color: Colors.grey[400]),
-                    const SizedBox(height: 8),
-                    Text(
-                      '播放过的视频会显示在这里',
-                      style: TextStyle(color: Colors.grey[600]),
-                    ),
-                  ],
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: suggestions.map((word) {
+              return ActionChip(
+                label: Text(word),
+                onPressed: () => _openSearch(word),
+                backgroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
+                  side: const BorderSide(color: Color(0xFFE6EBF2)),
                 ),
-              ),
-            )
-          else
-            SizedBox(
-              height: 170,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: _recentItems.length,
-                itemBuilder: (context, index) {
-                  final item = _recentItems[index];
-                  return GestureDetector(
-                    onTap: () => _openRecent(item),
-                    child: SizedBox(
-                      width: 110,
-                      child: Container(
-                        margin: const EdgeInsets.only(right: 12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: item.coverUrl.isNotEmpty
-                                    ? Image.network(
-                                        item.coverUrl,
-                                        width: double.infinity,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, __, ___) => _coverPlaceholder(),
-                                      )
-                                    : _coverPlaceholder(),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              item.title,
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              item.category,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Colors.grey[600],
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
+              );
+            }).toList(),
+          ),
         ],
       ),
     );
   }
 
-  Widget _coverPlaceholder() {
-    return Container(
-      color: const Color(0xFFE9ECEF),
-      child: Center(
-        child: Icon(
-          Icons.movie_outlined,
-          size: 36,
-          color: Colors.grey[500],
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F7FB),
+      appBar: AppBar(
+        title: const Text('影视'),
+        centerTitle: false,
+        actions: [
+          IconButton(
+            onPressed: _reloadCategories,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: () async => _reloadCategories(),
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
+          children: [
+            _buildHeroHeader(),
+            const SizedBox(height: 18),
+            _buildSourceInfoCard(),
+            const SizedBox(height: 24),
+            _sectionTitle('快捷入口', subtitle: '常用分类优先展示'),
+            const SizedBox(height: 14),
+            _buildFeaturedGrid(),
+            const SizedBox(height: 24),
+            _buildQuickSearchPanel(),
+            const SizedBox(height: 24),
+            _sectionTitle('全部分类', subtitle: '点击进入聚合列表浏览'),
+            const SizedBox(height: 14),
+            _buildCategoryWrap(),
+          ],
         ),
       ),
     );

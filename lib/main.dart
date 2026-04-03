@@ -1,19 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-// 模块与组件导入
 import 'app_drawer.dart';
 import 'globals.dart';
 import 'home_page.dart';
 import 'novel/novel_module.dart';
+import 'plugin_tab.dart';
 import 'tool_page.dart';
 import 'video_module.dart';
+import 'warehouse_tab.dart';
 
 Future<void> main() async {
-  // 1. 确保 Flutter 引擎初始化
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 2. 设置系统 UI 样式 (沉浸式状态栏)
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.dark,
@@ -21,7 +20,6 @@ Future<void> main() async {
     systemNavigationBarIconBrightness: Brightness.dark,
   ));
 
-  // 3. 小说模块配置 (七猫源)
   NovelModule.configureQimao(
     baseUrl: 'http://api.lemiyigou.com',
     headers: const {
@@ -36,10 +34,18 @@ Future<void> main() async {
     },
   );
 
-  // 4. 视频模块配置 (使用最新的 TVBox 聚合源)
-  VideoModule.configurePublicVideoSource();
+  // 4. 视频模块配置 (注入你指定的授权 JSON 接口)
+  VideoModule.configureLicensedCatalogSource(
+    catalogName: 'OuonnkiTV',
+    catalogUrls: const [
+      // 优先使用加速链接，防止国内直连 GitHub raw 失败
+      'https://gh-proxy.org/https://raw.githubusercontent.com/ZhuBaiwan-oOZZXX/OuonnkiTV-Source/main/tv_source/OuonnkiTV/full-noadult.json',
+      'https://ghfast.top/https://raw.githubusercontent.com/ZhuBaiwan-oOZZXX/OuonnkiTV-Source/main/tv_source/OuonnkiTV/full-noadult.json',
+      // 原链接作为最后兜底
+      'https://raw.githubusercontent.com/ZhuBaiwan-oOZZXX/OuonnkiTV-Source/main/tv_source/OuonnkiTV/full-noadult.json',
+    ],
+  );
 
-  // 5. 启动应用
   runApp(const MyApp());
 }
 
@@ -54,12 +60,10 @@ class MyApp extends StatelessWidget {
       navigatorObservers: [appRouteObserver],
       theme: ThemeData(
         useMaterial3: true,
-        // 基于蓝色种子生成全套色彩方案
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.blueAccent,
           brightness: Brightness.light,
         ),
-        // --- 修复位置: 使用 CardThemeData 而不是 CardTheme ---
         cardTheme: const CardThemeData(
           elevation: 0.5,
           margin: EdgeInsets.symmetric(vertical: 8),
@@ -67,7 +71,6 @@ class MyApp extends StatelessWidget {
             borderRadius: BorderRadius.all(Radius.circular(12)),
           ),
         ),
-        // ---------------------------------------------
         scaffoldBackgroundColor: const Color(0xFFF8F9FA),
       ),
       home: const MainAppShell(),
@@ -86,11 +89,27 @@ class _MainAppShellState extends State<MainAppShell> {
   int _currentIndex = 0;
   late final PageController _pageController;
 
-  // 底部导航栏配置
   final List<Map<String, dynamic>> _tabs = [
-    {'title': '首页', 'icon': Icons.home_rounded, 'widget': const HomePage()},
-    {'title': '工具', 'icon': Icons.grid_view_rounded, 'widget': const ToolPage()},
-    {'title': '仓库', 'icon': Icons.inventory_2_rounded, 'widget': const Center(child: Text('核心仓库正在筹备中...'))},
+    {
+      'title': '首页',
+      'icon': Icons.home_rounded,
+      'widget': const HomePage(),
+    },
+    {
+      'title': '工具',
+      'icon': Icons.grid_view_rounded,
+      'widget': const ToolPage(),
+    },
+    {
+      'title': '仓库',
+      'icon': Icons.inventory_2_rounded,
+      'widget': const WarehouseTab(),
+    },
+    {
+      'title': '插件',
+      'icon': Icons.extension_rounded,
+      'widget': const PluginTab(),
+    },
   ];
 
   @override
@@ -149,13 +168,19 @@ class _MainAppShellState extends State<MainAppShell> {
           showUnselectedLabels: true,
           elevation: 0,
           type: BottomNavigationBarType.fixed,
-          selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+          selectedLabelStyle: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 12,
+          ),
           unselectedLabelStyle: const TextStyle(fontSize: 12),
           items: _tabs.map((tab) {
             return BottomNavigationBarItem(
-              icon: Icon(tab['icon']),
-              label: tab['title'],
-              activeIcon: Icon(tab['icon'], color: Theme.of(context).colorScheme.primary),
+              icon: Icon(tab['icon'] as IconData),
+              label: tab['title'] as String,
+              activeIcon: Icon(
+                tab['icon'] as IconData,
+                color: Theme.of(context).colorScheme.primary,
+              ),
             );
           }).toList(),
         ),

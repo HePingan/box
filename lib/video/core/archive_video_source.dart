@@ -22,6 +22,8 @@ class ArchiveVideoSource implements VideoSource {
   final int pageSize;
   final Map<String, String> _headers;
 
+  static const String _providerKey = 'archive';
+
   @override
   String get sourceName => 'Internet Archive';
 
@@ -67,12 +69,9 @@ class ArchiveVideoSource implements VideoSource {
 
   @override
   Future<VideoDetail> fetchDetail({
-    required String videoId,
-    String? detailUrl,
+    required VideoItem item,
   }) async {
-    final identifier = videoId.trim().isNotEmpty
-        ? videoId.trim()
-        : _extractIdentifier(detailUrl);
+    final identifier = _extractIdentifier(item);
 
     if (identifier.isEmpty) {
       throw StateError('视频标识为空，无法获取详情');
@@ -103,9 +102,14 @@ class ArchiveVideoSource implements VideoSource {
             .toList()
         : <Map<String, dynamic>>[];
 
-    final item = _itemFromMetadata(identifier, metadata, detailUrl);
-    final episodes = _buildEpisodes(identifier, files);
+    final mergedItem = _itemFromMetadata(identifier, metadata, item.detailUrl).copyWith(
+      title: item.title.isNotEmpty ? item.title : _readText(metadata['title'], fallback: item.title),
+      intro: _stripHtml(_readText(metadata['description'])).isNotEmpty
+          ? _stripHtml(_readText(metadata['description']))
+          : item.intro,
+    );
 
+    final episodes = _buildEpisodes(identifier, files);
     if (episodes.isEmpty) {
       throw StateError('未找到可播放文件');
     }
@@ -123,14 +127,18 @@ class ArchiveVideoSource implements VideoSource {
     }.toList();
 
     return VideoDetail(
-      item: item.copyWith(
-        intro: description.isNotEmpty ? description : item.intro,
-      ),
+      item: mergedItem,
+      cover: mergedItem.cover,
       creator: creator,
-      description: description.isNotEmpty ? description : item.intro,
+      description: description.isNotEmpty ? description : mergedItem.intro,
       tags: tags,
-      episodes: episodes,
-      sourceUrl: detailUrl ?? '$baseUrl/details/$identifier',
+      playSources: [
+        VideoPlaySource(
+          name: '主片源',
+          episodes: episodes,
+        ),
+      ],
+      sourceUrl: item.detailUrl.isNotEmpty ? item.detailUrl : '$baseUrl/details/$identifier',
     );
   }
 
@@ -170,13 +178,11 @@ class ArchiveVideoSource implements VideoSource {
       final docs = resp['docs'];
       if (docs is! List) return const [];
 
-      final items = docs
+      return docs
           .whereType<Map>()
           .map((e) => _docToItem(Map<String, dynamic>.from(e)))
           .whereType<VideoItem>()
           .toList();
-
-      return items;
     } catch (_) {
       return const [];
     }
@@ -201,14 +207,15 @@ class ArchiveVideoSource implements VideoSource {
         _firstText(doc['subject']) ?? _firstText(doc['collection']) ?? '公共版权视频';
 
     return VideoItem(
-      id: identifier,
+      id: '$_providerKey::$identifier',
       title: title,
       intro: intro,
-      coverUrl: 'https://archive.org/services/img/$identifier',
+      cover: 'https://archive.org/services/img/$identifier',
       detailUrl: '$baseUrl/details/$identifier',
       category: category,
       yearText: yearText,
       sourceName: sourceName,
+      providerKey: _providerKey,
     );
   }
 
@@ -224,14 +231,15 @@ class ArchiveVideoSource implements VideoSource {
         _firstText(metadata['subject']) ?? _firstText(metadata['collection']) ?? '公共版权视频';
 
     return VideoItem(
-      id: identifier,
+      id: '$_providerKey::$identifier',
       title: title,
       intro: intro,
-      coverUrl: 'https://archive.org/services/img/$identifier',
+      cover: 'https://archive.org/services/img/$identifier',
       detailUrl: detailUrl ?? '$baseUrl/details/$identifier',
       category: category,
       yearText: yearText,
       sourceName: sourceName,
+      providerKey: _providerKey,
     );
   }
 
@@ -318,10 +326,7 @@ class ArchiveVideoSource implements VideoSource {
   }
 
   String _encodePath(String raw) {
-    return raw
-        .split('/')
-        .map(Uri.encodeComponent)
-        .join('/');
+    return raw.split('/').map(Uri.encodeComponent).join('/');
   }
 
   int _toInt(dynamic value) {
@@ -330,11 +335,10 @@ class ArchiveVideoSource implements VideoSource {
     return int.tryParse(_readText(value)) ?? 0;
   }
 
-String _stripHtml(String text) {
+  String _stripHtml(String text) {
     if (text.trim().isEmpty) return '';
     try {
-      // 加上 ?. 和 ?? '' 处理可空的情况
-      return html_parser.parseFragment(text).text?.trim() ?? text.trim(); 
+      return html_parser.parseFragment(text).text?.trim() ?? text.trim();
     } catch (_) {
       return text.trim();
     }
@@ -386,10 +390,13 @@ String _stripHtml(String text) {
     return const [];
   }
 
-  String _extractIdentifier(String? detailUrl) {
-    if (detailUrl == null || detailUrl.trim().isEmpty) return '';
+  String _extractIdentifier(VideoItem item) {
+    if (item.id.contains('::')) {
+      return item.id.split('::').last.trim();
+    }
 
-    final uri = Uri.tryParse(detailUrl);
+    if (item.detailUrl.trim().isEmpty) return '';
+    final uri = Uri.tryParse(item.detailUrl);
     if (uri == null) return '';
 
     final segments = uri.pathSegments;

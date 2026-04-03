@@ -4,61 +4,68 @@ import 'video_source.dart';
 class SampleVideoSource implements VideoSource {
   const SampleVideoSource();
 
+  static const String _providerKey = 'sample';
+
   static const List<VideoItem> _items = [
     VideoItem(
-      id: 'sample_big_buck_bunny',
+      id: 'sample::sample_big_buck_bunny',
       title: 'Big Buck Bunny',
       intro: '开放版权示例视频，适合测试播放、拖动、倍速和进度记忆。',
-      coverUrl: '',
+      cover: '',
       detailUrl:
           'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
       category: '示例视频',
       yearText: '2008',
       sourceName: '免费样例',
+      providerKey: _providerKey,
     ),
     VideoItem(
-      id: 'sample_elephants_dream',
+      id: 'sample::sample_elephants_dream',
       title: 'Elephants Dream',
       intro: '开放版权动画短片，适合测试播放器。',
-      coverUrl: '',
+      cover: '',
       detailUrl:
           'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
       category: '示例视频',
       yearText: '2006',
       sourceName: '免费样例',
+      providerKey: _providerKey,
     ),
     VideoItem(
-      id: 'sample_sintel',
+      id: 'sample::sample_sintel',
       title: 'Sintel',
       intro: '开放版权短片，画面和音轨都适合播放器测试。',
-      coverUrl: '',
+      cover: '',
       detailUrl:
           'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
       category: '示例视频',
       yearText: '2010',
       sourceName: '免费样例',
+      providerKey: _providerKey,
     ),
     VideoItem(
-      id: 'sample_tears_of_steel',
+      id: 'sample::sample_tears_of_steel',
       title: 'Tears of Steel',
       intro: 'Blender 开放版权短片，可用于测试长视频播放。',
-      coverUrl: '',
+      cover: '',
       detailUrl:
           'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
       category: '示例视频',
       yearText: '2012',
       sourceName: '免费样例',
+      providerKey: _providerKey,
     ),
     VideoItem(
-      id: 'sample_for_bigger_blazes',
+      id: 'sample::sample_for_bigger_blazes',
       title: 'For Bigger Blazes',
       intro: 'Google 提供的公开视频样例。',
-      coverUrl: '',
+      cover: '',
       detailUrl:
           'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
       category: '示例视频',
       yearText: '2016',
       sourceName: '免费样例',
+      providerKey: _providerKey,
     ),
   ];
 
@@ -102,27 +109,32 @@ class SampleVideoSource implements VideoSource {
 
   @override
   Future<VideoDetail> fetchDetail({
-    required String videoId,
-    String? detailUrl,
+    required VideoItem item,
   }) async {
-    final item = _items.firstWhere(
-      (e) => e.id == videoId || e.detailUrl == detailUrl,
-      orElse: () => throw StateError('未找到示例视频：$videoId'),
+    final target = _items.firstWhere(
+      (e) => e.id == item.id || e.detailUrl == item.detailUrl,
+      orElse: () => throw StateError('未找到示例视频：${item.id}'),
     );
 
     return VideoDetail(
-      item: item,
+      item: target,
+      cover: target.cover,
       creator: 'Open Sample',
-      description: item.intro,
+      description: target.intro,
       tags: const ['示例', '公开视频'],
-      episodes: [
-        VideoEpisode(
-          title: '${item.title} 正片',
-          url: item.detailUrl,
-          index: 0,
+      playSources: [
+        VideoPlaySource(
+          name: '默认线路',
+          episodes: [
+            VideoEpisode(
+              title: '${target.title} 正片',
+              url: target.detailUrl,
+              index: 0,
+            ),
+          ],
         ),
       ],
-      sourceUrl: item.detailUrl,
+      sourceUrl: target.detailUrl,
     );
   }
 }
