@@ -9,7 +9,8 @@ import 'plugin_tab.dart';
 import 'tool_page.dart';
 import 'video_module.dart';
 import 'warehouse_tab.dart';
-
+import 'package:flutter/foundation.dart';
+import 'update/update_bootstrap_page.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -73,7 +74,14 @@ class MyApp extends StatelessWidget {
         ),
         scaffoldBackgroundColor: const Color(0xFFF8F9FA),
       ),
-      home: const MainAppShell(),
+    home: UpdateBootstrapPage(
+  nextPage: const MainAppShell(),
+  appId: 'box',
+  checkUrl: 'http://47.109.97.1:8000/api/v1/app-updates/check',
+  platform: 'android',
+  channel: 'release',
+  allowProceedOnCheckFailure: true,
+),
     );
   }
 }

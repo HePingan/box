@@ -4,12 +4,17 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 允许应用获取网络状态（视频播放器判断网络环境需要） -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 存储权限：用来把下载的 APK 存到手机里以便安装 -->    
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />    
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />        
 
     <application
         android:label="box"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"> <!-- ★ 核心修改：允许 HTTP 明文协议的视频流正常播放 ★ -->
+        
         <activity
             android:name=".MainActivity"
             android:exported="true"
