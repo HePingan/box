@@ -1,5 +1,8 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:provider/provider.dart';
 
 import 'app_drawer.dart';
 import 'globals.dart';
@@ -9,10 +12,12 @@ import 'plugin_tab.dart';
 import 'tool_page.dart';
 import 'video_module.dart';
 import 'warehouse_tab.dart';
-import 'package:flutter/foundation.dart';
 import 'update/update_bootstrap_page.dart';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await Hive.initFlutter();
 
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -31,23 +36,39 @@ Future<void> main() async {
       'client-name': 'app.maoyankanshu.novel',
       'client-source': 'android',
       'Authorization':
-          'bearereyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwOlwvXC9hcGkuanhndHp4Yy5jb21cL2F1dGhcL3RoaXJkIiwiaWF0IjoxNjgzODkxNjUyLCJleHAiOjE3NzcyMDM2NTIsIm5iZiI6MTY4Mzg5MTY1MiwianRpIjoiR2JxWmI4bGZkbTVLYzBIViIsInN1YiI6Njg3ODYyLCJwcnYiOiJhMWNiMDM3MTgwMjk2YzZhMTkzOGVmMzBiNDM3OTQ2NzJkZDAxNmM1In0.mMxaC2SVyZKyjC6rdUqFVv5d9w_X36o0AdKD7szvE_Q',
+          'bearereyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwOlwvXC9hcGkuanhndHp4Yy5jb20cL2F1dGhcL3RoaXJkIiwiaWF0IjoxNjgzODkxNjUyLCJleHAiOjE3NzcyMDM2NTIsIm5iZiI6MTY4Mzg5MTY1MiwianRpIjoiR2JxWmI4bGZkbTVLYzBIViIsInN1YiI6Njg3ODYyLCJwcnYiOiJhMWNiMDM3MTgwMjk2YzZhMTkzOGVmMzBiNDM3OTQ2NzJkZDAxNmM1In0.mMxaC2SVyZKyjC6rdUqFVv5d9w_X36o0AdKD7szvE_Q',
     },
   );
 
-  // 4. 视频模块配置 (注入你指定的授权 JSON 接口)
   VideoModule.configureLicensedCatalogSource(
     catalogName: 'OuonnkiTV',
     catalogUrls: const [
-      // 优先使用加速链接，防止国内直连 GitHub raw 失败
       'https://gh-proxy.org/https://raw.githubusercontent.com/ZhuBaiwan-oOZZXX/OuonnkiTV-Source/main/tv_source/OuonnkiTV/full-noadult.json',
       'https://ghfast.top/https://raw.githubusercontent.com/ZhuBaiwan-oOZZXX/OuonnkiTV-Source/main/tv_source/OuonnkiTV/full-noadult.json',
-      // 原链接作为最后兜底
       'https://raw.githubusercontent.com/ZhuBaiwan-oOZZXX/OuonnkiTV-Source/main/tv_source/OuonnkiTV/full-noadult.json',
     ],
   );
 
-  runApp(const MyApp());
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider<VideoController>(
+          create: (_) => VideoController(),
+        ),
+        ChangeNotifierProvider<HistoryController>(
+          create: (_) {
+            final controller = HistoryController();
+            controller.loadHistory();
+            return controller;
+          },
+        ),
+        ChangeNotifierProvider<AggregateSearchController>(
+          create: (_) => AggregateSearchController(),
+        ),
+      ],
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -74,14 +95,14 @@ class MyApp extends StatelessWidget {
         ),
         scaffoldBackgroundColor: const Color(0xFFF8F9FA),
       ),
-    home: UpdateBootstrapPage(
-  nextPage: const MainAppShell(),
-  appId: 'box',
-  checkUrl: 'http://47.109.97.1:8000/api/v1/app-updates/check',
-  platform: 'android',
-  channel: 'release',
-  allowProceedOnCheckFailure: true,
-),
+      home: UpdateBootstrapPage(
+        nextPage: const MainAppShell(),
+        appId: 'box',
+        checkUrl: 'http://47.109.97.1:8000/api/v1/app-updates/check',
+        platform: 'android',
+        channel: 'release',
+        allowProceedOnCheckFailure: true,
+      ),
     );
   }
 }
@@ -117,6 +138,11 @@ class _MainAppShellState extends State<MainAppShell> {
       'title': '插件',
       'icon': Icons.extension_rounded,
       'widget': const PluginTab(),
+    },
+    {
+      'title': '视频',
+      'icon': Icons.smart_display_rounded,
+      'widget': const VideoListPage(),
     },
   ];
 

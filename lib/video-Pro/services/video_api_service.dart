@@ -1,76 +1,146 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
+
 import '../models/video_source.dart';
 import '../models/vod_item.dart';
-
-/// 文件功能：视频模块统一 API 请求类
+import 'package:flutter/foundation.dart';
 class VideoApiService {
-  
-  // 1. 从 GitHub 或镜像获取所有资源站配置 (截图 2)
+  static String _withQuery(String baseUrl, List<String> params) {
+    if (params.isEmpty) return baseUrl;
+    final separator = baseUrl.contains('?') ? '&' : '?';
+    return '$baseUrl$separator${params.join('&')}';
+  }
+
+  static List<dynamic> _extractList(dynamic decoded) {
+    if (decoded is List) return decoded;
+
+    if (decoded is Map<String, dynamic>) {
+      for (final key in const [
+        'list',
+        'data',
+        'results',
+        'sources',
+        'items',
+        'rows',
+      ]) {
+        final value = decoded[key];
+        if (value is List) return value;
+        if (value is Map && value['list'] is List) {
+          return value['list'] as List;
+        }
+      }
+    }
+
+    return const [];
+  }
+
   static Future<List<VideoSource>> fetchSources(String configUrl) async {
+    if (configUrl.trim().isEmpty) return [];
+
     try {
       final response = await http.get(Uri.parse(configUrl));
       if (response.statusCode == 200) {
-        List<dynamic> data = jsonDecode(response.body);
-        return data.map((e) => VideoSource.fromJson(e)).toList();
+        final decoded = jsonDecode(response.body);
+        final list = _extractList(decoded);
+        return list
+            .whereType<Map<String, dynamic>>()
+            .map(VideoSource.fromJson)
+            .toList();
       }
     } catch (e) {
-      print("加载源配置失败: $e");
+      debugPrint('加载源配置失败: $e');
     }
     return [];
   }
 
-  // 2. 获取具体资源站的视频列表 (截图 3)
-  // ac=list 是列表，ac=detail 是获取包含播放链接的详情
   static Future<List<VodItem>> fetchVideoList({
     required String baseUrl,
     int page = 1,
     int? typeId,
   }) async {
-    // 拼接苹果CMS标准接口参数
-    String url = "$baseUrl?ac=list&pg=$page";
-    if (typeId != null) url += "&t=$typeId";
+    final params = <String>['ac=list', 'pg=$page'];
+    if (typeId != null) {
+      params.add('t=$typeId');
+    }
+    final url = _withQuery(baseUrl, params);
 
     try {
       final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
-        Map<String, dynamic> data = jsonDecode(response.body);
-        List<dynamic> list = data['list'];
-        return list.map((e) => VodItem.fromJson(e)).toList();
+        final decoded = jsonDecode(response.body);
+        final list = _extractList(decoded);
+        return list
+            .whereType<Map<String, dynamic>>()
+            .map(VodItem.fromJson)
+            .toList();
       }
     } catch (e) {
-      print("获取视频列表失败: $e");
+      debugPrint('获取视频列表失败: $e');
     }
     return [];
   }
 
-  // 3. 搜索视频
-  static Future<List<VodItem>> searchVideo(String baseUrl, String keyword) async {
-    String url = "$baseUrl?ac=list&wd=${Uri.encodeComponent(keyword)}";
+  static Future<List<VodItem>> searchVideo(
+    String baseUrl,
+    String keyword,
+  ) async {
+    final query = keyword.trim();
+    if (query.isEmpty) return [];
+
+    final url = _withQuery(baseUrl, [
+      'ac=list',
+      'wd=${Uri.encodeQueryComponent(query)}',
+    ]);
+
     try {
       final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
-        Map<String, dynamic> data = jsonDecode(response.body);
-        List<dynamic> list = data['list'];
-        return list.map((e) => VodItem.fromJson(e)).toList();
+        final decoded = jsonDecode(response.body);
+        final list = _extractList(decoded);
+        return list
+            .whereType<Map<String, dynamic>>()
+            .map(VodItem.fromJson)
+            .toList();
       }
     } catch (e) {
-      print("搜索失败: $e");
+      debugPrint('搜索失败: $e');
     }
     return [];
   }
 
-  // 4. 获取视频播放详情 (只有 detail 接口才有 vod_play_url)
   static Future<VodItem?> fetchDetail(String baseUrl, int vodId) async {
-    String url = "$baseUrl?ac=detail&ids=$vodId";
+    if (baseUrl.trim().isEmpty) return null;
+
+    final url = _withQuery(baseUrl, ['ac=detail', 'ids=$vodId']);
+
     try {
       final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
-        Map<String, dynamic> data = jsonDecode(response.body);
-        return VodItem.fromJson(data['list'][0]);
+        final decoded = jsonDecode(response.body);
+
+        if (decoded is Map<String, dynamic>) {
+          final list = _extractList(decoded).whereType<Map<String, dynamic>>().toList();
+          if (list.isNotEmpty) {
+            return VodItem.fromJson(list.first);
+          }
+
+          if (decoded.containsKey('vod_id') ||
+              decoded.containsKey('vodId') ||
+              decoded.containsKey('vod_name') ||
+              decoded.containsKey('vodName')) {
+            return VodItem.fromJson(decoded);
+          }
+        }
+
+        if (decoded is List &&
+            decoded.isNotEmpty &&
+            decoded.first is Map<String, dynamic>) {
+          return VodItem.fromJson(decoded.first as Map<String, dynamic>);
+        }
       }
     } catch (e) {
-      print("获取详情失败: $e");
+      debugPrint('获取详情失败: $e');
     }
     return null;
   }

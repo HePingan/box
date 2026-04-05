@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+
 import '../models/video_source.dart';
-import '../controller/video_search_controller.dart';
+import '../models/vod_item.dart';
+import '../services/video_api_service.dart';
 import 'video_detail_page.dart';
 
-/// 文件功能：搜索页面 UI
-/// 实现：输入框交互、搜索结果展示、点击跳转至详情页
 class VideoSearchPage extends StatefulWidget {
-  final VideoSource currentSource; // 从主页传入当前选中的源
+  final VideoSource currentSource;
 
   const VideoSearchPage({super.key, required this.currentSource});
 
@@ -16,112 +15,111 @@ class VideoSearchPage extends StatefulWidget {
 }
 
 class _VideoSearchPageState extends State<VideoSearchPage> {
-  final TextEditingController _searchEditController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
+  List<VodItem> _results = [];
+  bool _isLoading = false;
+  bool _hasSearched = false;
 
-  @override
-  void dispose() {
-    _searchEditController.dispose();
-    super.dispose();
+  Future<void> _performSearch() async {
+    final keyword = _searchController.text.trim();
+    if (keyword.isEmpty) return;
+
+    FocusScope.of(context).unfocus(); // 收起键盘
+    setState(() {
+      _isLoading = true;
+      _hasSearched = true;
+    });
+
+    final res = await VideoApiService.searchVideo(widget.currentSource.url, keyword);
+
+    if (mounted) {
+      setState(() {
+        _results = res;
+        _isLoading = false;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // 建议在外部配置好 Provider，或者在此处局部创建
-    return ChangeNotifierProvider(
-      create: (_) => VideoSearchController(),
-      child: Consumer<VideoSearchController>(
-        builder: (context, searchCtrl, child) {
-          return Scaffold(
-            appBar: AppBar(
-              title: Container(
-                height: 40,
-                decoration: BoxDecoration(
-                  color: Colors.grey[200],
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: TextField(
-                  controller: _searchEditController,
-                  autofocus: true,
-                  textInputAction: TextInputAction.search,
-                  decoration: const InputDecoration(
-                    hintText: "搜索影片、综艺...",
-                    prefixIcon: Icon(Icons.search),
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(vertical: 8),
-                  ),
-                  onSubmitted: (value) {
-                    searchCtrl.search(widget.currentSource, value);
-                  },
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => searchCtrl.search(widget.currentSource, _searchEditController.text),
-                  child: const Text("确定"),
-                )
-              ],
-            ),
-            body: _buildSearchBody(searchCtrl),
-          );
-        },
+    final screenWidth = MediaQuery.of(context).size.width;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: TextField(
+          controller: _searchController,
+          autofocus: true,
+          decoration: InputDecoration(
+            hintText: '在 ${widget.currentSource.name} 中搜索...',
+            border: InputBorder.none,
+            hintStyle: const TextStyle(fontSize: 15),
+          ),
+          textInputAction: TextInputAction.search,
+          onSubmitted: (_) => _performSearch(),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.search),
+            onPressed: _performSearch,
+          ),
+        ],
       ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : (!_hasSearched)
+              ? Center(child: Text('输入关键字开始搜索', style: TextStyle(color: Colors.grey.shade500)))
+              : _results.isEmpty
+                  ? Center(child: Text('未找到相关视频', style: TextStyle(color: Colors.grey.shade500)))
+                  : GridView.builder(
+                      padding: const EdgeInsets.all(12),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: screenWidth > 600 ? 6 : 3, // 宽屏适配
+                        childAspectRatio: 0.55,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10,
+                      ),
+                      itemCount: _results.length,
+                      itemBuilder: (context, index) {
+                        final video = _results[index];
+                        return _buildResultCard(video);
+                      },
+                    ),
     );
   }
 
-  // 构建搜索主体内容
-  Widget _buildSearchBody(VideoSearchController searchCtrl) {
-    if (searchCtrl.isSearching) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    if (searchCtrl.searchResults.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.search_off, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text("在 [${widget.currentSource.name}] 下未找到资源", 
-                 style: const TextStyle(color: Colors.grey)),
-          ],
-        ),
-      );
-    }
-
-    return ListView.separated(
-      padding: const EdgeInsets.all(16),
-      itemCount: searchCtrl.searchResults.length,
-      separatorBuilder: (context, index) => const Divider(),
-      itemBuilder: (context, index) {
-        final video = searchCtrl.searchResults[index];
-        return ListTile(
-          leading: ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: Image.network(
-              video.vodPic ?? "",
-              width: 50,
-              height: 70,
-              fit: BoxFit.cover,
-              errorBuilder: (context, _, __) => Container(width: 50, color: Colors.grey),
-            ),
+  Widget _buildResultCard(VodItem video) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VideoDetailPage(source: widget.currentSource, vodId: video.vodId),
           ),
-          title: Text(video.vodName, style: const TextStyle(fontWeight: FontWeight.bold)),
-          subtitle: Text("${video.typeName ?? ''} | ${video.vodRemarks ?? ''}"),
-          trailing: const Icon(Icons.arrow_forward_ios, size: 14),
-          onTap: () {
-            // 点击搜索结果，直接跳转到我们上一节定义的详情页
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => VideoDetailPage(
-                  source: widget.currentSource,
-                  vodId: video.vodId,
-                ),
-              ),
-            );
-          },
         );
       },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: SizedBox(
+              width: double.infinity,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  color: Colors.grey.shade200,
+                  alignment: Alignment.center,
+                  child: const Icon(Icons.movie_outlined, size: 30, color: Colors.grey),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(video.vodName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          const SizedBox(height: 2),
+          Text(video.typeName ?? '未知', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+        ],
+      ),
     );
   }
 }

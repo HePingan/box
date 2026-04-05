@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../controller/video_controller.dart';
-import '../controller/aggregate_search_controller.dart';
+import '../models/video_source.dart';
+import '../models/vod_item.dart';
+import '../services/video_api_service.dart';
 import 'video_detail_page.dart';
 
-/// 文件功能：聚合搜索页面 UI
-/// 实现：全屏聚合检索、展示来源标签(Tag)、点击精准跳转
 class AggregateSearchPage extends StatefulWidget {
   const AggregateSearchPage({super.key});
 
@@ -13,116 +14,147 @@ class AggregateSearchPage extends StatefulWidget {
   State<AggregateSearchPage> createState() => _AggregateSearchPageState();
 }
 
+class _AggregateResult {
+  final VideoSource source;
+  final List<VodItem> items;
+  _AggregateResult(this.source, this.items);
+}
+
 class _AggregateSearchPageState extends State<AggregateSearchPage> {
-  final TextEditingController _searchEditController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
+  List<_AggregateResult> _results = [];
+  bool _isLoading = false;
+  bool _hasSearched = false;
+
+  Future<void> _performAggregateSearch() async {
+    final keyword = _searchController.text.trim();
+    if (keyword.isEmpty) return;
+
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _isLoading = true;
+      _hasSearched = true;
+      _results = [];
+    });
+
+    final sources = context.read<VideoController>().sources;
+    if (sources.isEmpty) {
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    // 并发请求所有源进行搜索
+    final futures = sources.map((source) async {
+      final items = await VideoApiService.searchVideo(source.url, keyword);
+      if (items.isNotEmpty) {
+        return _AggregateResult(source, items);
+      }
+      return null;
+    });
+
+    final List<_AggregateResult?> responses = await Future.wait(futures);
+    
+    if (mounted) {
+      setState(() {
+        _results = responses.whereType<_AggregateResult>().toList();
+        _isLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    // 获取由 VideoController 加载好的源列表
-    final allSources = context.read<VideoController>().sources;
-
-    return ChangeNotifierProvider(
-      create: (_) => AggregateSearchController(),
-      child: Consumer<AggregateSearchController>(
-        builder: (context, aggCtrl, child) {
-          return Scaffold(
-            appBar: AppBar(
-              title: TextField(
-                controller: _searchEditController,
-                autofocus: true,
-                decoration: const InputDecoration(
-                  hintText: "全网资源并发搜...",
-                  border: InputBorder.none,
-                ),
-                onSubmitted: (val) => aggCtrl.searchAllSources(allSources, val),
-              ),
-              actions: [
-                IconButton(
-                  icon: const Icon(Icons.send),
-                  onPressed: () => aggCtrl.searchAllSources(allSources, _searchEditController.text),
-                )
-              ],
-            ),
-            body: _buildList(aggCtrl),
-          );
-        },
+    return Scaffold(
+      appBar: AppBar(
+        title: TextField(
+          controller: _searchController,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: '全网多源聚合搜索...',
+            border: InputBorder.none,
+          ),
+          textInputAction: TextInputAction.search,
+          onSubmitted: (_) => _performAggregateSearch(),
+        ),
+        actions: [
+          IconButton(icon: const Icon(Icons.search), onPressed: _performAggregateSearch),
+        ],
       ),
+      body: _isLoading
+          ? const Center(child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('正在全网搜寻，请稍候...')
+              ],
+            ))
+          : (!_hasSearched)
+              ? Center(child: Text('输入影片名称，回车全网搜索', style: TextStyle(color: Colors.grey.shade500)))
+              : _results.isEmpty
+                  ? Center(child: Text('全网未找到相关资源', style: TextStyle(color: Colors.grey.shade500)))
+                  : ListView.builder(
+                      itemCount: _results.length,
+                      itemBuilder: (context, index) {
+                        final res = _results[index];
+                        return _buildSourceSection(res.source, res.items);
+                      },
+                    ),
     );
   }
 
-  Widget _buildList(AggregateSearchController aggCtrl) {
-    if (aggCtrl.isSearching) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 20),
-            Text("正在飞速检索几十个资源站，请稍后..."),
-          ],
+  Widget _buildSourceSection(VideoSource source, List<VodItem> items) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          color: Colors.grey.shade100,
+          child: Row(
+            children: [
+              const Icon(Icons.source_rounded, size: 18),
+              const SizedBox(width: 8),
+              Text(source.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const Spacer(),
+              Text('共 ${items.length} 个结果', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            ],
+          ),
         ),
-      );
-    }
-
-    if (aggCtrl.allResults.isEmpty) {
-      return const Center(child: Text("搜一下，万千资源即刻呈现"));
-    }
-
-    return ListView.builder(
-      itemCount: aggCtrl.allResults.length,
-      itemBuilder: (context, index) {
-        final item = aggCtrl.allResults[index];
-        return Card(
-          margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          child: ListTile(
-            leading: _buildPoster(item.video.vodPic),
-            title: Text(item.video.vodName, style: const TextStyle(fontWeight: FontWeight.bold)),
-            // 关键：在这里展示来源标签，让用户知道这个结果是从哪个站搜出来的
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text("${item.video.typeName} · ${item.video.vodRemarks}"),
-                const SizedBox(height: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    "源自: ${item.source.name}",
-                    style: const TextStyle(fontSize: 10, color: Colors.blue),
-                  ),
-                ),
-              ],
-            ),
-            isThreeLine: true,
-            onTap: () {
-              // 跳转：这里必须传 item.source 而不是全局 source
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => VideoDetailPage(
-                    source: item.source,
-                    vodId: item.video.id, // 这里通常是 int，按 model 适配
+        SizedBox(
+          height: 160,
+          child: ListView.separated(
+            padding: const EdgeInsets.all(12),
+            scrollDirection: Axis.horizontal,
+            itemCount: items.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemBuilder: (context, idx) {
+              final video = items[idx];
+              return InkWell(
+                onTap: () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => VideoDetailPage(source: source, vodId: video.vodId)));
+                },
+                child: SizedBox(
+                  width: 90,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(color: Colors.grey.shade200, borderRadius: BorderRadius.circular(8)),
+                          alignment: Alignment.center,
+                          child: const Icon(Icons.movie_outlined, color: Colors.grey),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(video.vodName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    ],
                   ),
                 ),
               );
             },
           ),
-        );
-      },
-    );
-  }
-
-  // 海报组件
-  Widget _buildPoster(String? url) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(4),
-      child: (url != null && url.isNotEmpty)
-          ? Image.network(url, width: 50, height: 75, fit: BoxFit.cover, 
-              errorBuilder: (_,__,___) => Container(width: 50, color: Colors.grey))
-          : Container(width: 50, color: Colors.grey),
+        ),
+      ],
     );
   }
 }
