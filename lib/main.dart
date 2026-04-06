@@ -1,4 +1,6 @@
-import 'package:flutter/foundation.dart';
+import 'dart:async';
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -10,14 +12,42 @@ import 'home_page.dart';
 import 'novel/novel_module.dart';
 import 'plugin_tab.dart';
 import 'tool_page.dart';
+import 'update/update_bootstrap_page.dart';
 import 'video_module.dart';
 import 'warehouse_tab.dart';
-import 'update/update_bootstrap_page.dart';
+
+import 'pages/debug_log_page.dart';
+import 'utils/app_logger.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Hive.initFlutter();
+
+  // 初始化日志系统
+  try {
+    await AppLogger.instance.init();
+  } catch (e) {
+    // 日志系统本身异常时，不要影响主流程
+  }
+
+  // Flutter 框架错误捕获
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    AppLogger.instance.log(
+      'FlutterError: ${details.exceptionAsString()}',
+      tag: 'FLUTTER',
+    );
+    if (details.stack != null) {
+      AppLogger.instance.log(details.stack.toString(), tag: 'FLUTTER');
+    }
+  };
+
+  // Dart 运行时错误捕获
+  PlatformDispatcher.instance.onError = (error, stack) {
+    AppLogger.instance.logError(error, stack, 'DART');
+    return true;
+  };
 
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -26,6 +56,7 @@ Future<void> main() async {
     systemNavigationBarIconBrightness: Brightness.dark,
   ));
 
+  // 你的小说模块配置
   NovelModule.configureQimao(
     baseUrl: 'http://api.lemiyigou.com',
     headers: const {
@@ -40,6 +71,7 @@ Future<void> main() async {
     },
   );
 
+  // 你的视频源配置
   VideoModule.configureLicensedCatalogSource(
     catalogName: 'OuonnkiTV',
     catalogUrls: const [
@@ -49,25 +81,32 @@ Future<void> main() async {
     ],
   );
 
-  runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider<VideoController>(
-          create: (_) => VideoController(),
+  runZonedGuarded(
+    () {
+      runApp(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<VideoController>(
+              create: (_) => VideoController(),
+            ),
+            ChangeNotifierProvider<HistoryController>(
+              create: (_) {
+                final controller = HistoryController();
+                controller.loadHistory();
+                return controller;
+              },
+            ),
+            ChangeNotifierProvider<AggregateSearchController>(
+              create: (_) => AggregateSearchController(),
+            ),
+          ],
+          child: const MyApp(),
         ),
-        ChangeNotifierProvider<HistoryController>(
-          create: (_) {
-            final controller = HistoryController();
-            controller.loadHistory();
-            return controller;
-          },
-        ),
-        ChangeNotifierProvider<AggregateSearchController>(
-          create: (_) => AggregateSearchController(),
-        ),
-      ],
-      child: const MyApp(),
-    ),
+      );
+    },
+    (error, stack) {
+      AppLogger.instance.logError(error, stack, 'ZONE');
+    },
   );
 }
 
@@ -80,6 +119,9 @@ class MyApp extends StatelessWidget {
       title: 'Geek工具箱',
       debugShowCheckedModeBanner: false,
       navigatorObservers: [appRouteObserver],
+      routes: {
+        '/debug-log': (_) => const DebugLogPage(),
+      },
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
@@ -93,7 +135,7 @@ class MyApp extends StatelessWidget {
             borderRadius: BorderRadius.all(Radius.circular(12)),
           ),
         ),
-        scaffoldBackgroundColor: const Color(0xFFF8F9FA),
+        scaffoldBackgroundColor: Color(0xFFF8F9FA),
       ),
       home: UpdateBootstrapPage(
         nextPage: const MainAppShell(),

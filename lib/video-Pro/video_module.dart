@@ -34,6 +34,7 @@ class VideoModule {
   }
 
   /// 依次尝试 catalogUrls，返回第一个可用 JSON 地址
+  /// 如果全部失败，返回 null，让页面使用自己的 fallback
   static Future<String?> resolveWorkingCatalogUrl({
     Duration timeout = const Duration(seconds: 8),
   }) async {
@@ -44,19 +45,26 @@ class VideoModule {
     for (final candidate in catalogUrls) {
       try {
         final response = await http.get(Uri.parse(candidate)).timeout(timeout);
-        if (response.statusCode != 200 || response.body.trim().isEmpty) {
+        if (response.statusCode != 200) {
           continue;
         }
 
-        jsonDecode(response.body);
+        final body = response.body.trim();
+        if (body.isEmpty) {
+          continue;
+        }
+
+        // 只要能被成功解析成 JSON，就认为这个地址可用
+        jsonDecode(body);
+
         _resolvedCatalogUrl = candidate;
         return candidate;
       } catch (_) {
-        // 继续尝试下一个镜像
+        // 继续尝试下一个候选地址
       }
     }
 
-    return preferredCatalogUrl;
+    return null;
   }
 
   static void resetForTest() {

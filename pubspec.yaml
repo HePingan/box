@@ -53,6 +53,7 @@ dependencies:
   chewie: ^1.13.0
 
 
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

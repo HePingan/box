@@ -4,9 +4,12 @@ import 'package:provider/provider.dart';
 import '../controller/video_controller.dart';
 import '../models/video_source.dart';
 import '../models/vod_item.dart';
+import '../services/video_api_service.dart';
 import '../video_module.dart';
-import 'video_detail_page.dart';
 import '../widgets/history_quick_view.dart';
+import 'aggregate_search_page.dart';
+import 'video_detail_page.dart';
+import 'video_search_page.dart';
 
 class VideoSliverHome extends StatefulWidget {
   final String title;
@@ -28,6 +31,9 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
   static const String _fallbackCatalogUrl =
       'https://raw.githubusercontent.com/ZhuBaiwan-oOZZXX/OuonnkiTV-Source/main/tv_source/OuonnkiTV/full-noadult.json';
 
+  /// 缓存“某个源 + 某个视频ID”的封面请求结果，避免重复拉详情
+  final Map<String, Future<String?>> _coverFutureCache = {};
+
   @override
   void initState() {
     super.initState();
@@ -36,18 +42,118 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
     });
   }
 
-  Future<void> _bootstrapCatalogIfNeeded() async {
+  /// 首次初始化：如果已经有数据就不重复加载
+  Future<void> _bootstrapCatalogIfNeeded({bool force = false}) async {
     final controller = context.read<VideoController>();
 
-    if (controller.sources.isNotEmpty || controller.videoList.isNotEmpty) {
+    if (!force &&
+        (controller.sources.isNotEmpty || controller.videoList.isNotEmpty)) {
       return;
     }
 
     final resolvedUrl = await VideoModule.resolveWorkingCatalogUrl();
-    final catalogUrl = resolvedUrl ?? VideoModule.preferredCatalogUrl ?? _fallbackCatalogUrl;
+    final catalogUrl = resolvedUrl ?? _fallbackCatalogUrl;
 
     if (!mounted) return;
     await controller.initSources(catalogUrl);
+  }
+
+  /// 刷新当前源：优先刷新当前选中的视频源
+  Future<void> _reloadCurrentSource() async {
+    final controller = context.read<VideoController>();
+
+    if (controller.currentSource != null) {
+      await controller.refreshCurrentSource();
+      return;
+    }
+
+    await _bootstrapCatalogIfNeeded(force: true);
+  }
+
+  Future<String?> _coverUrlFor(VodItem video, VideoSource source) {
+    final cacheKey = '${source.id}_${video.vodId}';
+
+    final cachedFuture = _coverFutureCache[cacheKey];
+    if (cachedFuture != null) {
+      return cachedFuture;
+    }
+
+    final future = _loadCoverUrl(video, source);
+    _coverFutureCache[cacheKey] = future;
+    return future;
+  }
+
+  Future<String?> _loadCoverUrl(VodItem video, VideoSource source) async {
+    // 1) 先尝试列表里直接带的封面
+    final direct = _resolveImageUrl(video.vodPic, source);
+    if (direct != null && direct.isNotEmpty) {
+      return direct;
+    }
+
+    // 2) 列表没有封面，就去详情页里拿
+    try {
+      final detailBaseUrl =
+          source.detailUrl.trim().isNotEmpty ? source.detailUrl : source.url;
+
+      final detail = await VideoApiService.fetchDetail(
+        detailBaseUrl,
+        video.vodId,
+      );
+
+      if (detail == null) {
+        return null;
+      }
+
+      final detailCover = _resolveImageUrl(detail.vodPic, source);
+      if (detailCover != null && detailCover.isNotEmpty) {
+        return detailCover;
+      }
+
+      return null;
+    } catch (e) {
+      debugPrint('加载封面失败: ${video.vodName} -> $e');
+      return null;
+    }
+  }
+
+  String? _resolveImageUrl(String? rawUrl, VideoSource source) {
+    if (rawUrl == null) return null;
+
+    var url = rawUrl.trim().replaceAll('\\', '');
+    if (url.isEmpty) return null;
+
+    // 协议相对地址：//img.xxx.com/a.jpg
+    if (url.startsWith('//')) {
+      return 'https:$url';
+    }
+
+    // 已经是绝对地址
+    final parsed = Uri.tryParse(url);
+    if (parsed != null && parsed.hasScheme) {
+      return url;
+    }
+
+    // 相对路径：尝试用源地址补全
+    final bases = <String>[
+      source.detailUrl.trim(),
+      source.url.trim(),
+    ];
+
+    for (final base in bases) {
+      if (base.isEmpty) continue;
+
+      final baseUri = Uri.tryParse(base);
+      if (baseUri == null || !baseUri.hasScheme) continue;
+
+      try {
+        return baseUri.resolve(url).toString();
+      } catch (_) {
+        // 继续尝试下一个 base
+      }
+    }
+
+    // 兜底原样返回
+    return url;
   }
 
   @override
@@ -56,93 +162,103 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
     final source = controller.currentSource;
     final screenWidth = MediaQuery.of(context).size.width;
 
-    return CustomScrollView(
-      slivers: [
-        SliverToBoxAdapter(
-          child: _buildHeader(context, controller, source),
-        ),
-
-        if (widget.showHistory)
-          const SliverToBoxAdapter(
+    return RefreshIndicator(
+      onRefresh: _reloadCurrentSource,
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(
+            child: _buildHeader(context, controller, source),
+          ),
+          if (widget.showHistory)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(12, 4, 12, 8),
+                child: HistoryQuickView(),
+              ),
+            ),
+          SliverToBoxAdapter(
             child: Padding(
-              padding: EdgeInsets.fromLTRB(12, 4, 12, 8),
-              child: HistoryQuickView(),
-            ),
-          ),
-
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-            child: Row(
-              children: [
-                Text(
-                  source == null ? '视频推荐' : '正在浏览 · ${source.name}',
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.bold,
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: Row(
+                children: [
+                  Text(
+                    source == null ? '视频推荐' : '正在浏览 · ${source.name}',
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                ),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: controller.sources.isEmpty
-                      ? null
-                      : () => _showSourcePicker(context, controller),
-                  icon: const Icon(Icons.source_outlined, size: 18),
-                  label: const Text('切源'),
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        if (controller.isLoading && controller.videoList.isEmpty)
-          const SliverFillRemaining(
-            hasScrollBody: false,
-            child: Center(child: CircularProgressIndicator()),
-          )
-        else if (controller.videoList.isEmpty)
-          SliverFillRemaining(
-            hasScrollBody: false,
-            child: _buildEmptyState(context, controller),
-          )
-        else
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            sliver: SliverGrid(
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final video = controller.videoList[index];
-                  return _VideoCard(
-                    video: video,
-                    onTap: source == null
+                  const Spacer(),
+                  IconButton(
+                    tooltip: '刷新当前源',
+                    onPressed: _reloadCurrentSource,
+                    icon: const Icon(Icons.refresh_rounded, size: 20),
+                  ),
+                  TextButton.icon(
+                    onPressed: controller.sources.isEmpty
                         ? null
-                        : () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => VideoDetailPage(
-                                  source: source,
-                                  vodId: video.vodId,
-                                ),
-                              ),
-                            );
-                          },
-                  );
-                },
-                childCount: controller.videoList.length,
-              ),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                // 同样做网页宽屏防拉伸和手机端适配
-                crossAxisCount: screenWidth > 600 ? 6 : 3,
-                mainAxisSpacing: 10,
-                crossAxisSpacing: 10,
-                childAspectRatio: 0.55, // 给底部文字保留充分的绘制空间
+                        : () => _showSourcePicker(context, controller),
+                    icon: const Icon(Icons.source_outlined, size: 18),
+                    label: const Text('切源'),
+                  ),
+                ],
               ),
             ),
           ),
+          if (controller.isLoading && controller.videoList.isEmpty)
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (controller.videoList.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _buildEmptyState(context, controller),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              sliver: SliverGrid(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final video = controller.videoList[index];
+                    final currentSource = source;
 
-        const SliverToBoxAdapter(child: SizedBox(height: 24)),
-      ],
+                    return _VideoCard(
+                      video: video,
+                      source: currentSource,
+                      coverUrlFuture: currentSource == null
+                          ? null
+                          : _coverUrlFor(video, currentSource),
+                      onTap: currentSource == null
+                          ? null
+                          : () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => VideoDetailPage(
+                                    source: currentSource,
+                                    vodId: video.vodId,
+                                  ),
+                                ),
+                              );
+                            },
+                    );
+                  },
+                  childCount: controller.videoList.length,
+                ),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: screenWidth > 600 ? 6 : 3,
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                  childAspectRatio: 0.55,
+                ),
+              ),
+            ),
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
+        ],
+      ),
     );
   }
 
@@ -178,6 +294,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
             ),
           ),
           const SizedBox(width: 12),
+
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -204,20 +321,54 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
               ],
             ),
           ),
-          IconButton(
-            onPressed: widget.onSearchTap ??
-                (source == null
+
+          const SizedBox(width: 8),
+
+          // 右侧操作区：当前源搜索 + 聚合搜索 + 刷新
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 4,
+            runSpacing: 4,
+            children: [
+              IconButton(
+                tooltip: '当前源搜索',
+                onPressed: source == null
                     ? null
                     : () {
+                        if (widget.onSearchTap != null) {
+                          widget.onSearchTap!.call();
+                          return;
+                        }
+
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => _VideoSearchBridgePage(currentSource: source),
+                            builder: (_) => VideoSearchPage(
+                              currentSource: source,
+                            ),
                           ),
                         );
-                      }),
-            icon: const Icon(Icons.search_rounded),
-            tooltip: '搜索',
+                      },
+                icon: const Icon(Icons.search_rounded),
+              ),
+              IconButton(
+                tooltip: '聚合搜索',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const AggregateSearchPage(),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.public_rounded),
+              ),
+              IconButton(
+                tooltip: '刷新',
+                onPressed: _reloadCurrentSource,
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+            ],
           ),
         ],
       ),
@@ -225,6 +376,9 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
   }
 
   Widget _buildEmptyState(BuildContext context, VideoController controller) {
+    final hasSource = controller.currentSource != null;
+    final errorText = controller.errorMessage;
+
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
@@ -237,21 +391,33 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
         const SizedBox(height: 12),
         Center(
           child: Text(
-            controller.currentSource == null
-                ? '暂无可用视频源'
-                : '当前源暂无视频数据',
+            hasSource ? '当前源暂无视频数据' : '暂无可用视频源',
             style: TextStyle(
               color: Colors.grey.shade600,
               fontSize: 15,
             ),
           ),
         ),
+        if (errorText != null) ...[
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Text(
+              errorText,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.red.shade400,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 16),
         Center(
           child: ElevatedButton.icon(
-            onPressed: () => _bootstrapCatalogIfNeeded(),
+            onPressed: _reloadCurrentSource,
             icon: const Icon(Icons.refresh_rounded),
-            label: const Text('重新加载'),
+            label: Text(hasSource ? '重试当前源' : '重新加载视频源'),
           ),
         ),
       ],
@@ -273,7 +439,9 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
 
             return ListTile(
               leading: Icon(
-                selected ? Icons.check_circle_rounded : Icons.radio_button_unchecked,
+                selected
+                    ? Icons.check_circle_rounded
+                    : Icons.radio_button_unchecked,
                 color: selected ? Theme.of(context).colorScheme.primary : null,
               ),
               title: Text(s.name),
@@ -296,10 +464,14 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
 
 class _VideoCard extends StatelessWidget {
   final VodItem video;
+  final VideoSource? source;
+  final Future<String?>? coverUrlFuture;
   final VoidCallback? onTap;
 
   const _VideoCard({
     required this.video,
+    required this.source,
+    required this.coverUrlFuture,
     required this.onTap,
   });
 
@@ -311,30 +483,38 @@ class _VideoCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Expanded 自动撑开，防止文字越界
           Expanded(
             child: SizedBox(
               width: double.infinity,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(10),
-                child: Image.network(
-                  // ✨ 加上 Uri.encodeComponent 进行终极安全编码
-                  (video.vodPic != null && video.vodPic!.isNotEmpty)
-                      ? 'https://images.weserv.nl/?url=${Uri.encodeComponent(video.vodPic!)}'
-                      : '',
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    color: Colors.grey.shade300,
-                    child: const Center(
-                      child: Icon(Icons.movie_outlined, size: 30),
-                    ),
-                  ),
-                  loadingBuilder: (context, child, progress) {
-                    if (progress == null) return child;
-                    return Container(
-                      color: Colors.grey.shade200,
+                child: FutureBuilder<String?>(
+                  future: coverUrlFuture,
+                  builder: (context, snapshot) {
+                    final imageUrl = snapshot.data?.trim();
+
+                    if (imageUrl == null || imageUrl.isEmpty) {
+                      return _buildPlaceholder();
+                    }
+
+                    return Image.network(
+                      imageUrl,
+                      fit: BoxFit.cover,
                       alignment: Alignment.center,
-                      child: const CircularProgressIndicator(strokeWidth: 2),
+                      errorBuilder: (context, error, stackTrace) {
+                        debugPrint('封面加载失败: ${video.vodName} -> $imageUrl');
+                        return _buildPlaceholder();
+                      },
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return Container(
+                          color: Colors.grey.shade200,
+                          alignment: Alignment.center,
+                          child: const CircularProgressIndicator(
+                            strokeWidth: 2,
+                          ),
+                        );
+                      },
                     );
                   },
                 ),
@@ -365,24 +545,15 @@ class _VideoCard extends StatelessWidget {
       ),
     );
   }
-}
 
-class _VideoSearchBridgePage extends StatelessWidget {
-  final VideoSource currentSource;
-
-  const _VideoSearchBridgePage({
-    required this.currentSource,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('搜索')),
-      body: Center(
-        child: Text(
-          '请在项目中接入你的 VideoSearchPage。\n当前源：${currentSource.name}',
-          textAlign: TextAlign.center,
-        ),
+  Widget _buildPlaceholder() {
+    return Container(
+      color: Colors.grey.shade300,
+      alignment: Alignment.center,
+      child: Icon(
+        Icons.movie_outlined,
+        size: 34,
+        color: Colors.grey.shade600,
       ),
     );
   }
