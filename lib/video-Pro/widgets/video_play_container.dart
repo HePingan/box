@@ -21,16 +21,12 @@ class VideoPlayContainer extends StatefulWidget {
   final String episodeName;
   final int initialPosition;
 
-  /// 推荐传入详情页或来源页地址，播放器会自动补 Referer / Origin
+  final VoidCallback? onPreviousEpisode;
+  final VoidCallback? onNextEpisode;
+
   final String? referer;
-
-  /// 额外请求头，例如 Cookie
   final Map<String, String>? httpHeaders;
-
-  /// 自定义 UA
   final String userAgent;
-
-  /// 是否显示调试信息
   final bool showDebugInfo;
 
   const VideoPlayContainer({
@@ -43,6 +39,8 @@ class VideoPlayContainer extends StatefulWidget {
     this.sourceName = '',
     this.episodeName = '正片',
     this.initialPosition = 0,
+    this.onPreviousEpisode,
+    this.onNextEpisode,
     this.referer,
     this.httpHeaders,
     this.userAgent =
@@ -55,6 +53,9 @@ class VideoPlayContainer extends StatefulWidget {
 }
 
 class _VideoPlayContainerState extends State<VideoPlayContainer> {
+  static const String _fallbackUserAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
   VideoPlayerController? _videoPlayerController;
   ChewieController? _chewieController;
   Timer? _saveTimer;
@@ -62,7 +63,6 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
   bool _isError = false;
   bool _isBuffering = true;
   String? _errorMessage;
-
   int _initToken = 0;
 
   @override
@@ -74,7 +74,6 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
   @override
   void didUpdateWidget(covariant VideoPlayContainer oldWidget) {
     super.didUpdateWidget(oldWidget);
-
     if (oldWidget.url != widget.url ||
         oldWidget.referer != widget.referer ||
         oldWidget.userAgent != widget.userAgent ||
@@ -87,178 +86,327 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
   }
 
   Map<String, String> _buildRequestHeaders() {
-    // Web 端不能自定义 User-Agent / Referer / Origin / Cookie 等危险请求头
-    if (kIsWeb) {
-      return const {};
-    }
+    if (kIsWeb) return const {};
 
-    final headers = <String, String>{};
+    final userAgent = widget.userAgent.trim().isNotEmpty
+        ? widget.userAgent.trim()
+        : _fallbackUserAgent;
 
-    final ua = widget.userAgent.trim();
-    if (ua.isNotEmpty) {
-      headers['User-Agent'] = ua;
-    }
+    final headers = <String, String>{
+      'User-Agent': userAgent,
+      'Accept': '*/*',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      'Accept-Encoding': 'identity',
+      'Connection': 'keep-alive',
+    };
 
-    final referer = widget.referer?.trim() ?? '';
-    if (referer.isNotEmpty) {
-      headers['Referer'] = referer;
+    final extraHeaders = widget.httpHeaders;
+    if (extraHeaders != null && extraHeaders.isNotEmpty) {
+      for (final entry in extraHeaders.entries) {
+        final key = entry.key.trim();
+        final value = entry.value.trim();
+        if (key.isEmpty || value.isEmpty) continue;
 
-      final uri = Uri.tryParse(referer);
-      if (uri != null && uri.hasScheme) {
-        final origin = uri.origin;
-        if (origin.isNotEmpty && origin.toLowerCase() != 'null') {
-          headers['Origin'] = origin;
+        final lowerKey = key.toLowerCase();
+        if (lowerKey == 'host' ||
+            lowerKey == 'content-length' ||
+            lowerKey == 'referer') {
+          continue;
         }
+
+        headers[key] = value;
       }
-    }
-
-    headers['Accept'] = '*/*';
-    headers['Connection'] = 'keep-alive';
-
-    if (widget.httpHeaders != null && widget.httpHeaders!.isNotEmpty) {
-      headers.addAll(widget.httpHeaders!);
     }
 
     return headers;
   }
 
-  void _logBlock(String title, String content, {String tag = 'PLAYER'}) {
-    AppLogger.instance.logBlock(title, content, tag: tag);
-  }
-
-  bool _looksLikeHls(Uri uri) {
+  bool _isInvalidWebPageUrl(Uri uri) {
     final path = uri.path.toLowerCase();
-    return path.endsWith('.m3u8') || path.contains('.m3u8?');
-  }
+    final host = uri.host.toLowerCase();
 
-  String? _extractFirstVariantUrlFromM3u8(String body) {
-    final lines = const LineSplitter().convert(body);
+    if (path.endsWith('.html') || path.endsWith('.htm')) return true;
 
-    for (var i = 0; i < lines.length; i++) {
-      final line = lines[i].trim();
-
-      if (line.startsWith('#EXT-X-STREAM-INF')) {
-        // 找到它下面的第一个非注释、非空行
-        for (var j = i + 1; j < lines.length; j++) {
-          final next = lines[j].trim();
-          if (next.isEmpty) continue;
-          if (next.startsWith('#')) continue;
-          return next;
-        }
-      }
+    if ((host.contains('iqiyi.com') ||
+            host.contains('v.qq.com') ||
+            host.contains('mgtv.com') ||
+            host.contains('youku.com')) &&
+        !path.endsWith('.m3u8') &&
+        !path.endsWith('.mp4') &&
+        !path.endsWith('.flv')) {
+      return true;
     }
 
-    return null;
+    return false;
   }
 
-  String? _extractFirstMediaSegmentFromM3u8(String body) {
-    final lines = const LineSplitter().convert(body);
-
-    for (final rawLine in lines) {
-      final line = rawLine.trim();
-      if (line.isEmpty) continue;
-      if (line.startsWith('#')) continue;
-      return line;
-    }
-
-    return null;
+  List<String> _playlistLines(String text) {
+    return const LineSplitter()
+        .convert(text)
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
   }
 
-  Future<Uri> _resolvePlayableHlsUri(Uri uri) async {
-    // 非 HLS 地址直接返回
-    if (!_looksLikeHls(uri)) {
-      return uri;
-    }
+  String? _extractQuotedAttr(String line, String key) {
+    final match = RegExp('$key="([^"]+)"').firstMatch(line);
+    return match?.group(1);
+  }
 
+  String _hexPreview(List<int> bytes, {int count = 8}) {
+    if (bytes.isEmpty) return '';
+    return bytes
+        .take(count)
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join(' ');
+  }
+
+  Future<http.Response> _httpGetWithTimeout(
+    http.Client client,
+    Uri uri, {
+    Map<String, String>? headers,
+  }) {
+    return client
+        .get(uri, headers: headers)
+        .timeout(const Duration(seconds: 8));
+  }
+
+  Future<Uri> _resolveDirectM3u8(Uri uri) async {
+    if (!uri.path.toLowerCase().contains('.m3u8')) return uri;
+
+    Uri currentUri = uri;
     final headers = _buildRequestHeaders();
-    Uri current = uri;
+    final client = http.Client();
 
-    // 最多递归 3 层：
-    // master.m3u8 -> variant.m3u8 -> maybe another variant.m3u8
-    for (var depth = 0; depth < 3; depth++) {
-      try {
-        final res = await http.get(
-          current,
-          headers: headers,
-        );
+    try {
+      for (int i = 0; i < 2; i++) {
+        final res = await client
+            .get(currentUri, headers: headers)
+            .timeout(const Duration(milliseconds: 2500));
 
-        final bodyText = utf8.decode(
-          res.bodyBytes,
-          allowMalformed: true,
-        );
-
-        final preview = bodyText.length > 300
-            ? bodyText.substring(0, 300)
-            : bodyText;
-
-        _logBlock(
-          'HLS 解析层级 $depth',
-          'uri: $current\n'
-              'statusCode: ${res.statusCode}\n'
-              'content-type: ${res.headers['content-type']}\n'
-              'location: ${res.headers['location']}\n'
-              'body preview:\n$preview',
-        );
-
-        // 请求失败就直接返回当前层，避免死循环
-        if (res.statusCode != 200) {
-          return current;
-        }
-
-        final nextVariant = _extractFirstVariantUrlFromM3u8(bodyText);
-
-        // 如果不是 master playlist，说明已经到了最终 media playlist
-        if (nextVariant == null) {
-          final firstSegment = _extractFirstMediaSegmentFromM3u8(bodyText);
-
-          if (firstSegment != null) {
-            final segmentUri = current.resolve(firstSegment);
-            AppLogger.instance.log(
-              '已解析为 media playlist，首个分片: $segmentUri',
-              tag: 'PLAYER',
-            );
-          }
-
-          return current;
-        }
-
-        final nextUri = current.resolve(nextVariant);
-
+        final finalUrl = res.request?.url ?? currentUri;
         AppLogger.instance.log(
-          'HLS master -> variant: $current -> $nextUri',
+          'HLS检查: code=${res.statusCode}, final=$finalUrl, ct=${res.headers['content-type']}',
           tag: 'PLAYER',
         );
 
-        current = nextUri;
-      } catch (e, st) {
-        AppLogger.instance.logError(e, st, 'PLAYER');
-        return current;
+        if (res.statusCode != 200) {
+          break;
+        }
+
+        final body = utf8.decode(res.bodyBytes, allowMalformed: true);
+        final lines = _playlistLines(body);
+
+        String? childPath;
+        for (int k = 0; k < lines.length; k++) {
+          if (lines[k].startsWith('#EXT-X-STREAM-INF')) {
+            for (int j = k + 1; j < lines.length; j++) {
+              final nextLine = lines[j];
+              if (!nextLine.startsWith('#')) {
+                childPath = nextLine;
+                break;
+              }
+            }
+            if (childPath != null) break;
+          }
+        }
+
+        if (childPath == null || childPath.isEmpty) {
+          break;
+        }
+
+        final nextUri = finalUrl.resolve(childPath);
+        if (nextUri == currentUri) {
+          break;
+        }
+
+        AppLogger.instance.log(
+          'HLS Master 降维成功，切入内核直连 -> $nextUri',
+          tag: 'PLAYER',
+        );
+        currentUri = nextUri;
       }
+    } catch (e, st) {
+      AppLogger.instance.logError(e, st, 'PLAYER');
+    } finally {
+      client.close();
     }
 
-    return current;
+    return currentUri;
   }
 
-  VideoPlayerController _createController(Uri uri) {
-    if (kIsWeb) {
-      return VideoPlayerController.networkUrl(
-        uri,
-        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-      );
-    }
+  Future<void> _probeHls(Uri uri) async {
+    if (kIsWeb) return;
+    if (!uri.path.toLowerCase().contains('.m3u8')) return;
 
+    final client = http.Client();
     final headers = _buildRequestHeaders();
 
-    return VideoPlayerController.networkUrl(
-      uri,
-      httpHeaders: headers,
-      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-    );
+    try {
+      Uri mediaPlaylistUri = uri;
+      AppLogger.instance.log('HLS探测开始 -> $uri', tag: 'PLAYER');
+
+      final entryRes = await _httpGetWithTimeout(
+        client,
+        uri,
+        headers: headers,
+      );
+
+      final entryFinalUrl = entryRes.request?.url ?? uri;
+      AppLogger.instance.log(
+        'HLS探测 entry: code=${entryRes.statusCode}, final=$entryFinalUrl, ct=${entryRes.headers['content-type']}, len=${entryRes.bodyBytes.length}',
+        tag: 'PLAYER',
+      );
+
+      if (entryRes.statusCode != 200) {
+        AppLogger.instance.log('HLS探测终止: entry 非 200', tag: 'PLAYER');
+        return;
+      }
+
+      String body = utf8.decode(entryRes.bodyBytes, allowMalformed: true);
+      List<String> lines = _playlistLines(body);
+      final isMaster = lines.any((e) => e.startsWith('#EXT-X-STREAM-INF'));
+
+      if (isMaster) {
+        String? childPath;
+        for (int i = 0; i < lines.length; i++) {
+          if (lines[i].startsWith('#EXT-X-STREAM-INF')) {
+            for (int j = i + 1; j < lines.length; j++) {
+              final next = lines[j];
+              if (!next.startsWith('#')) {
+                childPath = next;
+                break;
+              }
+            }
+            if (childPath != null) break;
+          }
+        }
+
+        if (childPath == null || childPath.isEmpty) {
+          AppLogger.instance.log('HLS探测: master playlist 未找到子线路', tag: 'PLAYER');
+          return;
+        }
+
+        mediaPlaylistUri = entryFinalUrl.resolve(childPath);
+
+        final mediaRes = await _httpGetWithTimeout(
+          client,
+          mediaPlaylistUri,
+          headers: headers,
+        );
+
+        mediaPlaylistUri = mediaRes.request?.url ?? mediaPlaylistUri;
+        AppLogger.instance.log(
+          'HLS探测 media: code=${mediaRes.statusCode}, final=$mediaPlaylistUri, ct=${mediaRes.headers['content-type']}, len=${mediaRes.bodyBytes.length}',
+          tag: 'PLAYER',
+        );
+
+        if (mediaRes.statusCode != 200) {
+          AppLogger.instance.log('HLS探测终止: media 非 200', tag: 'PLAYER');
+          return;
+        }
+
+        body = utf8.decode(mediaRes.bodyBytes, allowMalformed: true);
+        lines = _playlistLines(body);
+      } else {
+        mediaPlaylistUri = entryFinalUrl;
+        AppLogger.instance.log('HLS探测: 入口本身就是 media playlist', tag: 'PLAYER');
+      }
+
+      String? keyLine;
+      for (final line in lines) {
+        if (line.startsWith('#EXT-X-KEY')) {
+          keyLine = line;
+          break;
+        }
+      }
+
+      if (keyLine != null) {
+        final keyPath = _extractQuotedAttr(keyLine, 'URI');
+        if (keyPath != null && keyPath.isNotEmpty) {
+          final keyUri = mediaPlaylistUri.resolve(keyPath);
+          final keyRes = await _httpGetWithTimeout(
+            client,
+            keyUri,
+            headers: {
+              ...headers,
+              'Range': 'bytes=0-15',
+            },
+          );
+
+          AppLogger.instance.log(
+            'HLS探测 key: code=${keyRes.statusCode}, final=${keyRes.request?.url ?? keyUri}, ct=${keyRes.headers['content-type']}, len=${keyRes.bodyBytes.length}, hex=${_hexPreview(keyRes.bodyBytes)}',
+            tag: 'PLAYER',
+          );
+        }
+      }
+
+      String? mapLine;
+      for (final line in lines) {
+        if (line.startsWith('#EXT-X-MAP')) {
+          mapLine = line;
+          break;
+        }
+      }
+
+      if (mapLine != null) {
+        final mapPath = _extractQuotedAttr(mapLine, 'URI');
+        if (mapPath != null && mapPath.isNotEmpty) {
+          final mapUri = mediaPlaylistUri.resolve(mapPath);
+          final mapRes = await _httpGetWithTimeout(
+            client,
+            mapUri,
+            headers: {
+              ...headers,
+              'Range': 'bytes=0-63',
+            },
+          );
+
+          AppLogger.instance.log(
+            'HLS探测 map: code=${mapRes.statusCode}, final=${mapRes.request?.url ?? mapUri}, ct=${mapRes.headers['content-type']}, len=${mapRes.bodyBytes.length}, hex=${_hexPreview(mapRes.bodyBytes)}',
+            tag: 'PLAYER',
+          );
+        }
+      }
+
+      String? firstSegment;
+      for (final line in lines) {
+        if (!line.startsWith('#')) {
+          firstSegment = line;
+          break;
+        }
+      }
+
+      if (firstSegment == null || firstSegment.isEmpty) {
+        AppLogger.instance.log('HLS探测: media playlist 没有找到分片行', tag: 'PLAYER');
+        return;
+      }
+
+      final segUri = mediaPlaylistUri.resolve(firstSegment);
+      final segRes = await _httpGetWithTimeout(
+        client,
+        segUri,
+        headers: {
+          ...headers,
+          'Range': 'bytes=0-63',
+        },
+      );
+
+      AppLogger.instance.log(
+        'HLS探测 seg: code=${segRes.statusCode}, final=${segRes.request?.url ?? segUri}, ct=${segRes.headers['content-type']}, len=${segRes.bodyBytes.length}, hex=${_hexPreview(segRes.bodyBytes)}',
+        tag: 'PLAYER',
+      );
+
+      AppLogger.instance.log('HLS探测结束', tag: 'PLAYER');
+    } catch (e, st) {
+      AppLogger.instance.logError(e, st, 'PLAYER');
+    } finally {
+      client.close();
+    }
   }
 
   Future<void> _initPlayer() async {
     if (!mounted) return;
-
     final int token = ++_initToken;
 
     setState(() {
@@ -269,58 +417,67 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
 
     final rawUrl = widget.url.trim();
     if (rawUrl.isEmpty) {
-      if (!mounted) return;
-      setState(() {
-        _isError = true;
-        _errorMessage = '播放地址为空';
-      });
-      AppLogger.instance.log('播放地址为空', tag: 'PLAYER');
+      _failFast('播放地址为空');
       return;
     }
 
     var normalizedUrl = rawUrl.replaceAll('\\', '');
-
     if (normalizedUrl.startsWith('//')) {
       normalizedUrl = 'https:$normalizedUrl';
     }
 
     final uri = Uri.tryParse(normalizedUrl);
     if (uri == null || !uri.hasScheme) {
-      if (!mounted) return;
-      setState(() {
-        _isError = true;
-        _errorMessage = '播放地址格式不正确';
-      });
-      AppLogger.instance.log('播放地址格式不正确: $normalizedUrl', tag: 'PLAYER');
+      _failFast('播放地址格式不正确');
+      return;
+    }
+
+    if (_isInvalidWebPageUrl(uri)) {
+      _failFast('该资源为网页跳转链接，无法直接播放\n请尝试切换其他播放源或线路');
       return;
     }
 
     try {
-      AppLogger.instance.log(
-        '原始播放地址: $uri',
-        tag: 'PLAYER',
-      );
+      AppLogger.instance.log('原始播放地址: $uri', tag: 'PLAYER');
+      AppLogger.instance.log('执行极速 HLS 检查...', tag: 'PLAYER');
 
-      final playableUri = await _resolvePlayableHlsUri(uri);
+      final playableUri = await _resolveDirectM3u8(uri);
+      AppLogger.instance.log('最终播放地址: $playableUri', tag: 'PLAYER');
 
-      AppLogger.instance.log(
-        '最终用于播放的 URI: $playableUri',
-        tag: 'PLAYER',
-      );
+      if (!mounted || token != _initToken) return;
 
-      final controller = _createController(playableUri);
+      if (!kIsWeb && playableUri.path.toLowerCase().contains('.m3u8')) {
+        await _probeHls(playableUri);
+      }
+
+      if (!mounted || token != _initToken) return;
+
+      final headers = _buildRequestHeaders();
+
+      final controller = kIsWeb
+          ? VideoPlayerController.networkUrl(
+              playableUri,
+              formatHint: VideoFormat.hls,
+              videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+            )
+          : VideoPlayerController.networkUrl(
+              playableUri,
+              formatHint: VideoFormat.hls,
+              httpHeaders: headers,
+              videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+            );
+
       _videoPlayerController = controller;
 
       controller.addListener(() {
         if (!mounted || token != _initToken) return;
-
         final value = controller.value;
 
         if (value.hasError) {
           final msg = value.errorDescription ?? '视频播放失败';
           AppLogger.instance.log('视频播放器错误: $msg', tag: 'PLAYER');
 
-          if (mounted) {
+          if (!_isError && mounted) {
             setState(() {
               _isError = true;
               _errorMessage = msg;
@@ -339,7 +496,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
         }
       });
 
-      AppLogger.instance.log('开始初始化播放器...', tag: 'PLAYER');
+      AppLogger.instance.log('开始初始化底层播放器...', tag: 'PLAYER');
       await controller.initialize();
       AppLogger.instance.log('播放器初始化完成', tag: 'PLAYER');
 
@@ -363,22 +520,14 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
         allowMuting: true,
         allowFullScreen: true,
         showControlsOnInitialize: false,
-        aspectRatio: controller.value.aspectRatio > 0
-            ? controller.value.aspectRatio
-            : 16 / 9,
-        materialProgressColors: ChewieProgressColors(
-          playedColor: Theme.of(context).colorScheme.primary,
-          handleColor: Theme.of(context).colorScheme.primary,
-          backgroundColor: Colors.grey.withOpacity(0.5),
-          bufferedColor: Colors.white.withOpacity(0.5),
+        customControls: _CustomVideoControls(
+          title: widget.title,
+          episodeName: widget.episodeName,
+          onPrevious: widget.onPreviousEpisode,
+          onNext: widget.onNextEpisode,
         ),
-        errorBuilder: (context, errorMessage) {
-          return _buildErrorOverlay(
-            errorMessage: errorMessage.isNotEmpty
-                ? errorMessage
-                : '视频加载失败，请切换选集或重试',
-          );
-        },
+        aspectRatio:
+            controller.value.aspectRatio > 0 ? controller.value.aspectRatio : 16 / 9,
       );
 
       if (mounted && token == _initToken) {
@@ -397,28 +546,33 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
     } catch (e, st) {
       AppLogger.instance.logError(e, st, 'PLAYER');
       _disposePlayer();
-
       if (mounted && token == _initToken) {
         setState(() {
           _isError = true;
-          _errorMessage = '播放器初始化失败：$e';
+          _errorMessage = '播放器启动失败：请检测网络或更换线路';
         });
       }
     }
   }
 
+  void _failFast(String msg) {
+    if (!mounted) return;
+    setState(() {
+      _isError = true;
+      _errorMessage = msg;
+    });
+    AppLogger.instance.log('异常阻断: $msg', tag: 'PLAYER');
+  }
+
   Future<void> _retry() async {
     _saveCurrentHistory();
     _disposePlayer();
-
     if (!mounted) return;
-
     setState(() {
       _isError = false;
       _errorMessage = null;
       _isBuffering = true;
     });
-
     await _initPlayer();
   }
 
@@ -473,38 +627,45 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: Colors.black,
-      child: _buildPlayerContent(),
-    );
-  }
-
-  Widget _buildPlayerContent() {
     if (_isError) {
-      return _buildErrorOverlay(
-        errorMessage: _errorMessage ?? '视频资源失效',
+      return AspectRatio(
+        aspectRatio: 16 / 9,
+        child: Container(
+          color: Colors.black,
+          child: _buildErrorOverlay(
+            errorMessage: _errorMessage ?? '资源失效',
+          ),
+        ),
       );
     }
 
     if (_videoPlayerController == null ||
         _chewieController == null ||
         !_videoPlayerController!.value.isInitialized) {
-      return _buildLoadingOverlay();
+      return AspectRatio(
+        aspectRatio: 16 / 9,
+        child: Container(
+          color: Colors.black,
+          child: const Center(
+            child: CircularProgressIndicator(color: Colors.blueAccent),
+          ),
+        ),
+      );
     }
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        Chewie(controller: _chewieController!),
-        if (_isBuffering) _buildBufferingOverlay(),
-        if (widget.showDebugInfo) _buildDebugOverlay(),
-      ],
-    );
-  }
-
-  Widget _buildLoadingOverlay() {
-    return const Center(
-      child: CircularProgressIndicator(color: Colors.white),
+    return AspectRatio(
+      aspectRatio: 16 / 9,
+      child: Container(
+        color: Colors.black,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Chewie(controller: _chewieController!),
+            if (_isBuffering) _buildBufferingOverlay(),
+            if (widget.showDebugInfo) _buildDebugOverlay(),
+          ],
+        ),
+      ),
     );
   }
 
@@ -514,25 +675,25 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
         color: Colors.transparent,
         alignment: Alignment.center,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.55),
-            borderRadius: BorderRadius.circular(999),
+            color: Colors.black.withOpacity(0.6),
+            borderRadius: BorderRadius.circular(12),
           ),
           child: const Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               SizedBox(
-                width: 16,
-                height: 16,
+                width: 18,
+                height: 18,
                 child: CircularProgressIndicator(
-                  strokeWidth: 2,
+                  strokeWidth: 2.5,
                   color: Colors.white,
                 ),
               ),
-              SizedBox(width: 10),
+              SizedBox(width: 12),
               Text(
-                '缓冲中…',
+                '拼命缓冲中...',
                 style: TextStyle(color: Colors.white, fontSize: 13),
               ),
             ],
@@ -543,35 +704,39 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
   }
 
   Widget _buildErrorOverlay({required String errorMessage}) {
-    return Container(
-      color: Colors.black,
-      alignment: Alignment.center,
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(
-            Icons.error_outline_rounded,
-            color: Colors.white,
-            size: 46,
-          ),
-          const SizedBox(height: 10),
-          Text(
-            errorMessage,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-              height: 1.4,
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.videocam_off_rounded,
+              color: Colors.white54,
+              size: 46,
             ),
-          ),
-          const SizedBox(height: 16),
-          ElevatedButton.icon(
-            onPressed: _retry,
-            icon: const Icon(Icons.refresh_rounded),
-            label: const Text('重试播放'),
-          ),
-        ],
+            const SizedBox(height: 12),
+            Text(
+              errorMessage,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 14,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blueAccent,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: _retry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('重试线路'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -582,7 +747,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
     final dur = controller?.value.duration.inSeconds ?? 0;
 
     return Positioned(
-      left: 12,
+      right: 12,
       top: 12,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -592,12 +757,467 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
         ),
         child: Text(
           'pos: $pos s / $dur s',
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 12,
-          ),
+          style: const TextStyle(color: Colors.white, fontSize: 12),
         ),
       ),
+    );
+  }
+}
+
+class _CustomVideoControls extends StatefulWidget {
+  final String title;
+  final String episodeName;
+  final VoidCallback? onPrevious;
+  final VoidCallback? onNext;
+
+  const _CustomVideoControls({
+    required this.title,
+    required this.episodeName,
+    this.onPrevious,
+    this.onNext,
+  });
+
+  @override
+  State<_CustomVideoControls> createState() => _CustomVideoControlsState();
+}
+
+class _CustomVideoControlsState extends State<_CustomVideoControls>
+    with SingleTickerProviderStateMixin {
+  late VideoPlayerController _controller;
+  ChewieController? _chewieController;
+
+  bool _showControls = true;
+  bool _isLocked = false;
+  bool _isSpeeding = false;
+  Timer? _hideTimer;
+
+  Offset? _tapPosition;
+  String? _skipFeedbackText;
+
+  bool _isScrubbing = false;
+  Duration _baseScrubPosition = Duration.zero;
+  Duration _currentScrubPosition = Duration.zero;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _chewieController = ChewieController.of(context);
+    _controller = _chewieController!.videoPlayerController;
+    _startHideTimer();
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    super.dispose();
+  }
+
+  void _playPause() {
+    setState(() {
+      if (_controller.value.isPlaying) {
+        _controller.pause();
+        _showControls = true;
+        _hideTimer?.cancel();
+      } else {
+        _controller.play();
+        _startHideTimer();
+      }
+    });
+  }
+
+  void _startHideTimer() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted &&
+          _controller.value.isPlaying &&
+          !_isSpeeding &&
+          !_isScrubbing) {
+        setState(() => _showControls = false);
+      }
+    });
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = twoDigits(duration.inHours);
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return duration.inHours > 0
+        ? '$hours:$minutes:$seconds'
+        : '$minutes:$seconds';
+  }
+
+  void _skipTime(Duration offset) {
+    final duration = _controller.value.duration;
+    final newPos = _controller.value.position + offset;
+    final clampedPos = newPos < Duration.zero
+        ? Duration.zero
+        : (newPos > duration ? duration : newPos);
+
+    _controller.seekTo(clampedPos);
+
+    setState(() {
+      _skipFeedbackText = offset.isNegative ? '⏪  -10s' : '⏩  +10s';
+    });
+
+    _startHideTimer();
+
+    Timer(const Duration(milliseconds: 600), () {
+      if (mounted) {
+        setState(() => _skipFeedbackText = null);
+      }
+    });
+  }
+
+  void _onHorizontalDragStart(DragStartDetails details) {
+    if (_isLocked) return;
+    _baseScrubPosition = _controller.value.position;
+    _currentScrubPosition = _baseScrubPosition;
+    setState(() {
+      _isScrubbing = true;
+      _hideTimer?.cancel();
+    });
+  }
+
+  void _onHorizontalDragUpdate(DragUpdateDetails details) {
+    if (_isLocked || !_isScrubbing) return;
+
+    final screenWidth = MediaQuery.of(context).size.width;
+    final dragRatio = details.delta.dx / screenWidth;
+    final dragSeconds = (dragRatio * 300).toInt();
+
+    var newPosition = _currentScrubPosition + Duration(seconds: dragSeconds);
+    final duration = _controller.value.duration;
+
+    if (newPosition < Duration.zero) {
+      newPosition = Duration.zero;
+    }
+    if (newPosition > duration) {
+      newPosition = duration;
+    }
+
+    setState(() => _currentScrubPosition = newPosition);
+  }
+
+  void _onHorizontalDragEnd(DragEndDetails details) {
+    if (_isLocked || !_isScrubbing) return;
+
+    _controller.seekTo(_currentScrubPosition);
+
+    setState(() {
+      _isScrubbing = false;
+    });
+
+    _startHideTimer();
+
+    if (!_controller.value.isPlaying) {
+      _controller.play();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_chewieController == null) return const SizedBox.shrink();
+
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (details) => _tapPosition = details.localPosition,
+            onTap: () {
+              setState(() => _showControls = !_showControls);
+              if (_showControls) {
+                _startHideTimer();
+              }
+            },
+            onDoubleTap: () {
+              if (_isLocked || _tapPosition == null) return;
+
+              final width = MediaQuery.of(context).size.width;
+              final dx = _tapPosition!.dx;
+
+              if (dx < width * 0.35) {
+                _skipTime(const Duration(seconds: -10));
+              } else if (dx > width * 0.65) {
+                _skipTime(const Duration(seconds: 10));
+              } else {
+                _playPause();
+              }
+            },
+            onLongPressStart: (_) {
+              if (_isLocked) return;
+              setState(() => _isSpeeding = true);
+              _controller.setPlaybackSpeed(2.0);
+            },
+            onLongPressEnd: (_) {
+              if (_isLocked) return;
+              setState(() => _isSpeeding = false);
+              _controller.setPlaybackSpeed(1.0);
+            },
+            onHorizontalDragStart: _onHorizontalDragStart,
+            onHorizontalDragUpdate: _onHorizontalDragUpdate,
+            onHorizontalDragEnd: _onHorizontalDragEnd,
+          ),
+        ),
+        if (_isSpeeding)
+          const Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: EdgeInsets.only(top: 20),
+              child: Chip(
+                backgroundColor: Colors.black87,
+                avatar: Icon(
+                  Icons.fast_forward_rounded,
+                  color: Colors.blueAccent,
+                  size: 18,
+                ),
+                label: Text(
+                  '2.0X 极速播放中',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (_skipFeedbackText != null)
+          Align(
+            alignment: _skipFeedbackText!.contains('⏪')
+                ? Alignment.centerLeft
+                : Alignment.centerRight,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.7),
+                  borderRadius: BorderRadius.circular(30),
+                ),
+                child: Text(
+                  _skipFeedbackText!,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (_isScrubbing)
+          Align(
+            alignment: Alignment.center,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.75),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _currentScrubPosition > _baseScrubPosition
+                        ? Icons.fast_forward_rounded
+                        : Icons.fast_rewind_rounded,
+                    color: Colors.blueAccent,
+                    size: 32,
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    '${_formatDuration(_currentScrubPosition)} / ${_formatDuration(_controller.value.duration)}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        AnimatedOpacity(
+          opacity: _showControls && !_isScrubbing ? 1.0 : 0.0,
+          duration: const Duration(milliseconds: 300),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 20),
+              child: IgnorePointer(
+                ignoring: !_showControls || _isScrubbing,
+                child: IconButton(
+                  icon: Icon(
+                    _isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.black.withOpacity(0.5),
+                  ),
+                  onPressed: () {
+                    setState(() => _isLocked = !_isLocked);
+                    _startHideTimer();
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (!_isLocked)
+          AnimatedOpacity(
+            opacity: _showControls && !_isScrubbing ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 300),
+            child: IgnorePointer(
+              ignoring: !_showControls || _isScrubbing,
+              child: Stack(
+                children: [
+                  Align(
+                    alignment: Alignment.topCenter,
+                    child: Container(
+                      height: 80,
+                      padding: const EdgeInsets.only(top: 10),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.black.withOpacity(0.8),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          if (_chewieController!.isFullScreen)
+                            IconButton(
+                              icon: const Icon(
+                                Icons.arrow_back_ios_new_rounded,
+                                color: Colors.white,
+                              ),
+                              onPressed: () =>
+                                  _chewieController!.toggleFullScreen(),
+                            )
+                          else
+                            const SizedBox(width: 16),
+                          Expanded(
+                            child: Text(
+                              '${widget.title} - ${widget.episodeName}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.bottomCenter,
+                          end: Alignment.topCenter,
+                          colors: [
+                            Colors.black.withOpacity(0.9),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                      padding: const EdgeInsets.only(
+                        bottom: 20,
+                        top: 40,
+                        left: 16,
+                        right: 16,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            children: [
+                              IconButton(
+                                icon: Icon(
+                                  _controller.value.isPlaying
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                  color: Colors.white,
+                                  size: 32,
+                                ),
+                                onPressed: _playPause,
+                              ),
+                              if (widget.onPrevious != null)
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.skip_previous_rounded,
+                                    color: Colors.white,
+                                  ),
+                                  onPressed: widget.onPrevious,
+                                ),
+                              if (widget.onNext != null)
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.skip_next_rounded,
+                                    color: Colors.white,
+                                  ),
+                                  onPressed: widget.onNext,
+                                ),
+                              const SizedBox(width: 8),
+                              ValueListenableBuilder<VideoPlayerValue>(
+                                valueListenable: _controller,
+                                builder: (context, value, child) {
+                                  return Text(
+                                    '${_formatDuration(value.position)} / ${_formatDuration(value.duration)}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                    ),
+                                  );
+                                },
+                              ),
+                              const Spacer(),
+                              IconButton(
+                                icon: Icon(
+                                  _chewieController!.isFullScreen
+                                      ? Icons.fullscreen_exit_rounded
+                                      : Icons.fullscreen_rounded,
+                                  color: Colors.white,
+                                  size: 28,
+                                ),
+                                onPressed: () =>
+                                    _chewieController!.toggleFullScreen(),
+                              ),
+                            ],
+                          ),
+                          SizedBox(
+                            height: 20,
+                            child: VideoProgressIndicator(
+                              _controller,
+                              allowScrubbing: true,
+                              colors: VideoProgressColors(
+                                playedColor: Colors.blueAccent,
+                                bufferedColor: Colors.white38,
+                                backgroundColor: Colors.white24,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

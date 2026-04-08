@@ -62,10 +62,6 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
         setState(() {
           _fullDetail = null;
           _playLines = const [];
-          _selectedLineIndex = 0;
-          _selectedEpisodeIndex = 0;
-          _currentEpisodeUrl = null;
-          _currentEpisodeName = null;
           _isLoading = false;
           _errorMessage = '视频详情加载失败';
         });
@@ -89,21 +85,12 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _fullDetail = null;
-        _playLines = const [];
-        _selectedLineIndex = 0;
-        _selectedEpisodeIndex = 0;
-        _currentEpisodeUrl = null;
-        _currentEpisodeName = null;
         _isLoading = false;
         _errorMessage = '加载失败：$e';
       });
     }
   }
 
-  /// 兼容：
-  /// 1. 你现在的 VodItem.parsePlayUrls -> List<PlaySourceGroup>
-  /// 2. 老版本 -> List<Map<String, String>>
   dynamic _extractRawPlayUrls(VodItem detail) {
     try {
       return detail.parsePlayUrls;
@@ -116,14 +103,10 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
     }
   }
 
-  /// 把各种 parsePlayUrls 形式统一转成：
-  /// [ _PlayLine(name: '线路1', episodes: [...]), ... ]
   List<_PlayLine> _normalizePlayLines(dynamic rawValue) {
-    final rawList =
-        rawValue is Iterable ? List<dynamic>.from(rawValue) : <dynamic>[];
+    final rawList = rawValue is Iterable ? List<dynamic>.from(rawValue) : <dynamic>[];
     if (rawList.isEmpty) return const [];
 
-    // 如果元素里有“分组结构”，就按分组处理
     final groupedLines = <_PlayLine>[];
 
     for (var i = 0; i < rawList.length; i++) {
@@ -132,120 +115,62 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
 
       if (nestedEpisodes.isNotEmpty) {
         final episodes = <_PlayEpisode>[];
-
         for (var j = 0; j < nestedEpisodes.length; j++) {
-          final ep = _normalizeEpisode(
-            nestedEpisodes[j],
-            fallbackName: '第${j + 1}集',
-          );
-          if (ep != null) {
-            episodes.add(ep);
-          }
+          final ep = _normalizeEpisode(nestedEpisodes[j], fallbackName: '第${j + 1}集');
+          if (ep != null) episodes.add(ep);
         }
-
         if (episodes.isNotEmpty) {
-          groupedLines.add(
-            _PlayLine(
-              name: _extractLineName(item, index: i),
-              episodes: episodes,
-            ),
-          );
+          groupedLines.add(_PlayLine(name: _extractLineName(item, index: i), episodes: episodes));
         }
       }
     }
 
-    if (groupedLines.isNotEmpty) {
-      return groupedLines;
-    }
+    if (groupedLines.isNotEmpty) return groupedLines;
 
-    // 如果没有分组结构，就把整个列表当成单线路“正片”处理
     final flatEpisodes = <_PlayEpisode>[];
     for (var i = 0; i < rawList.length; i++) {
-      final ep = _normalizeEpisode(
-        rawList[i],
-        fallbackName: '第${i + 1}集',
-      );
-      if (ep != null) {
-        flatEpisodes.add(ep);
-      }
+      final ep = _normalizeEpisode(rawList[i], fallbackName: '第${i + 1}集');
+      if (ep != null) flatEpisodes.add(ep);
     }
 
     if (flatEpisodes.isNotEmpty) {
-      return <_PlayLine>[
-        _PlayLine(name: '正片', episodes: flatEpisodes),
-      ];
+      return <_PlayLine>[_PlayLine(name: '正片', episodes: flatEpisodes)];
     }
 
     return const [];
   }
 
-  /// 抽取某个线路里的 episodes/items/playItems/playUrls
   List<dynamic> _extractNestedEpisodes(dynamic item) {
     if (item == null) return const [];
-
     if (item is Map) {
       for (final key in const ['episodes', 'items', 'playItems', 'playUrls']) {
         final value = item[key];
-        if (value is Iterable) {
-          return List<dynamic>.from(value);
-        }
+        if (value is Iterable) return List<dynamic>.from(value);
       }
       return const [];
     }
-
     for (final key in const ['episodes', 'items', 'playItems', 'playUrls']) {
       final value = _readDynamicProperty(item, key);
-      if (value is Iterable) {
-        return List<dynamic>.from(value);
-      }
+      if (value is Iterable) return List<dynamic>.from(value);
     }
-
     return const [];
   }
 
-  /// 抽取线路名称
   String _extractLineName(dynamic item, {required int index}) {
-    final name = _readDynamicText(
-      item,
-      const ['name', 'title', 'sourceName', 'lineName'],
-    );
+    final name = _readDynamicText(item, const ['name', 'title', 'sourceName', 'lineName']);
     return name ?? '线路${index + 1}';
   }
 
-  /// 抽取单个播放条目并标准化
-  _PlayEpisode? _normalizeEpisode(
-    dynamic item, {
-    required String fallbackName,
-  }) {
+  _PlayEpisode? _normalizeEpisode(dynamic item, {required String fallbackName}) {
     if (item == null) return null;
-
-    final name = _readDynamicText(
-          item,
-          const ['name', 'title', 'episodeName'],
-        ) ??
-        fallbackName;
-
-    final rawUrl = _readDynamicText(
-      item,
-      const ['url', 'playUrl', 'link', 'href'],
-    );
-
-    if (rawUrl == null || rawUrl.trim().isEmpty) {
-      return null;
-    }
-
-    final resolvedUrl = _resolvePlayUrl(rawUrl.trim());
-
-    return _PlayEpisode(
-      name: name,
-      url: resolvedUrl,
-    );
+    final name = _readDynamicText(item, const ['name', 'title', 'episodeName']) ?? fallbackName;
+    final rawUrl = _readDynamicText(item, const ['url', 'playUrl', 'link', 'href']);
+    if (rawUrl == null || rawUrl.trim().isEmpty) return null;
+    return _PlayEpisode(name: name, url: _resolvePlayUrl(rawUrl.trim()));
   }
 
-  /// 从 Map 或动态对象中读取文本字段
   String? _readDynamicText(dynamic item, List<String> keys) {
     if (item == null) return null;
-
     if (item is Map) {
       for (final key in keys) {
         final value = item[key];
@@ -254,55 +179,33 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
       }
       return null;
     }
-
     for (final key in keys) {
       final value = _readDynamicProperty(item, key);
       final text = _asText(value);
       if (text != null) return text;
     }
-
     return null;
   }
 
-  /// 从动态对象中读取属性
   dynamic _readDynamicProperty(dynamic item, String key) {
     try {
       switch (key) {
-        case 'name':
-          return item.name;
-        case 'title':
-          return item.title;
-        case 'sourceName':
-          return item.sourceName;
-        case 'lineName':
-          return item.lineName;
-
-        case 'episodes':
-          return item.episodes;
-        case 'items':
-          return item.items;
-        case 'playItems':
-          return item.playItems;
-        case 'playUrls':
-          return item.playUrls;
-
-        case 'url':
-          return item.url;
-        case 'playUrl':
-          return item.playUrl;
-        case 'link':
-          return item.link;
-        case 'href':
-          return item.href;
-
-        case 'episodeName':
-          return item.episodeName;
-        default:
-          return null;
+        case 'name': return item.name;
+        case 'title': return item.title;
+        case 'sourceName': return item.sourceName;
+        case 'lineName': return item.lineName;
+        case 'episodes': return item.episodes;
+        case 'items': return item.items;
+        case 'playItems': return item.playItems;
+        case 'playUrls': return item.playUrls;
+        case 'url': return item.url;
+        case 'playUrl': return item.playUrl;
+        case 'link': return item.link;
+        case 'href': return item.href;
+        case 'episodeName': return item.episodeName;
+        default: return null;
       }
-    } catch (_) {
-      return null;
-    }
+    } catch (_) { return null; }
   }
 
   String? _asText(dynamic value) {
@@ -312,47 +215,21 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
     return text;
   }
 
-  /// 默认选中第一条可播放线路的第一集
   _PlaybackSelection _pickDefaultSelection(List<_PlayLine> playLines) {
-    if (playLines.isEmpty) {
-      return const _PlaybackSelection(
-        lineIndex: 0,
-        episodeIndex: 0,
-        url: null,
-        name: null,
-      );
-    }
-
+    if (playLines.isEmpty) return const _PlaybackSelection(lineIndex: 0, episodeIndex: 0, url: null, name: null);
     final lineIndex = playLines.indexWhere((line) => line.episodes.isNotEmpty);
     final safeLineIndex = lineIndex >= 0 ? lineIndex : 0;
     final line = playLines[safeLineIndex];
-
-    if (line.episodes.isEmpty) {
-      return const _PlaybackSelection(
-        lineIndex: 0,
-        episodeIndex: 0,
-        url: null,
-        name: null,
-      );
-    }
-
+    if (line.episodes.isEmpty) return const _PlaybackSelection(lineIndex: 0, episodeIndex: 0, url: null, name: null);
     final firstEpisode = line.episodes.first;
-    return _PlaybackSelection(
-      lineIndex: safeLineIndex,
-      episodeIndex: 0,
-      url: firstEpisode.url,
-      name: firstEpisode.name,
-    );
+    return _PlaybackSelection(lineIndex: safeLineIndex, episodeIndex: 0, url: firstEpisode.url, name: firstEpisode.name);
   }
 
   void _selectLine(int index) {
     if (index < 0 || index >= _playLines.length) return;
-
     final line = _playLines[index];
     if (line.episodes.isEmpty) return;
-
     final firstEpisode = line.episodes.first;
-
     setState(() {
       _selectedLineIndex = index;
       _selectedEpisodeIndex = 0;
@@ -363,17 +240,11 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
 
   void _selectEpisode(int index) {
     if (_playLines.isEmpty) return;
-
     final safeLineIndex = _selectedLineIndex.clamp(0, _playLines.length - 1);
     final line = _playLines[safeLineIndex];
-
     if (index < 0 || index >= line.episodes.length) return;
-
     final episode = line.episodes[index];
-
-    if (_currentEpisodeUrl == episode.url) {
-      return;
-    }
+    if (_currentEpisodeUrl == episode.url) return;
 
     setState(() {
       _selectedLineIndex = safeLineIndex;
@@ -383,80 +254,76 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
     });
   }
 
+  // ✨ 核心逻辑：播放上一集
+  void _playPreviousEpisode() {
+    if (_selectedEpisodeIndex > 0) {
+      _selectEpisode(_selectedEpisodeIndex - 1);
+    }
+  }
+
+  // ✨ 核心逻辑：播放下一集
+  void _playNextEpisode() {
+    if (_playLines.isEmpty) return;
+    final safeLineIndex = _selectedLineIndex.clamp(0, _playLines.length - 1);
+    final line = _playLines[safeLineIndex];
+    if (_selectedEpisodeIndex < line.episodes.length - 1) {
+      _selectEpisode(_selectedEpisodeIndex + 1);
+    }
+  }
+
+  // 检测是否可以显示“上一集”按钮
+  bool _canPlayPrevious() {
+    if (_playLines.isEmpty) return false;
+    return _selectedEpisodeIndex > 0;
+  }
+
+  // 检测是否可以显示“下一集”按钮
+  bool _canPlayNext() {
+    if (_playLines.isEmpty) return false;
+    final safeLineIndex = _selectedLineIndex.clamp(0, _playLines.length - 1);
+    return _selectedEpisodeIndex < _playLines[safeLineIndex].episodes.length - 1;
+  }
+
   String _resolvePlayUrl(String rawUrl) {
     var url = rawUrl.trim().replaceAll('\\', '');
     if (url.isEmpty) return url;
-
-    if (url.startsWith('//')) {
-      return 'https:$url';
-    }
-
+    if (url.startsWith('//')) return 'https:$url';
     final uri = Uri.tryParse(url);
-    if (uri != null && uri.hasScheme) {
-      return url;
-    }
-
+    if (uri != null && uri.hasScheme) return url;
     for (final base in [widget.source.detailUrl, widget.source.url]) {
       final baseUri = Uri.tryParse(base.trim());
       if (baseUri == null || !baseUri.hasScheme) continue;
-
-      try {
-        return baseUri.resolve(url).toString();
-      } catch (_) {
-        // 继续尝试下一个 base
-      }
+      try { return baseUri.resolve(url).toString(); } catch (_) {}
     }
-
     return url;
   }
 
   String? _resolveImageUrl(String? rawUrl) {
     if (rawUrl == null) return null;
-
     var url = rawUrl.trim().replaceAll('\\', '');
     if (url.isEmpty) return null;
-
-    if (url.startsWith('//')) {
-      return 'https:$url';
-    }
-
+    if (url.startsWith('//')) return 'https:$url';
     final uri = Uri.tryParse(url);
-    if (uri != null && uri.hasScheme) {
-      return url;
-    }
-
+    if (uri != null && uri.hasScheme) return url;
     for (final base in [widget.source.detailUrl, widget.source.url]) {
       final baseUri = Uri.tryParse(base.trim());
       if (baseUri == null || !baseUri.hasScheme) continue;
-
-      try {
-        return baseUri.resolve(url).toString();
-      } catch (_) {
-        // 继续尝试下一个 base
-      }
+      try { return baseUri.resolve(url).toString(); } catch (_) {}
     }
-
     return url;
   }
 
   int _totalEpisodeCount() {
-    return _playLines.fold<int>(
-      0,
-      (sum, line) => sum + line.episodes.length,
-    );
+    return _playLines.fold<int>(0, (sum, line) => sum + line.episodes.length);
   }
 
   @override
   Widget build(BuildContext context) {
     final title = _fullDetail?.vodName ?? widget.source.name;
-    final screenHeight = MediaQuery.of(context).size.height;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          title,
-          style: const TextStyle(fontSize: 16),
-        ),
+        title: Text(title, style: const TextStyle(fontSize: 16)),
         actions: [
           IconButton(
             tooltip: '调试日志',
@@ -465,11 +332,7 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
             },
             icon: const Icon(Icons.bug_report_outlined),
           ),
-          IconButton(
-            tooltip: '重新加载',
-            onPressed: _isLoading ? null : _loadDetail,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
+          IconButton(tooltip: '重新加载', onPressed: _isLoading ? null : _loadDetail, icon: const Icon(Icons.refresh_rounded)),
         ],
       ),
       body: _isLoading
@@ -478,43 +341,32 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
               ? _buildErrorView()
               : Column(
                   children: [
-                    // 播放器区域
+                    // 1. 播放器区域
                     Container(
                       width: double.infinity,
                       color: Colors.black,
-                      constraints: BoxConstraints(
-                        maxHeight: screenHeight * 0.45,
-                      ),
-                      child: Center(
-                        child: AspectRatio(
-                          aspectRatio: 16 / 9,
-                          child: _currentEpisodeUrl != null
-                              ? VideoPlayContainer(
-                                  url: _currentEpisodeUrl!,
-                                  title: _fullDetail!.vodName,
-                                  vodId: widget.vodId.toString(),
-                                  vodPic: _fullDetail?.vodPic ?? '',
-                                  sourceId: widget.source.id,
-                                  sourceName: widget.source.name,
-                                  episodeName: _currentEpisodeName ?? '正片',
-                                  referer: widget.source.detailUrl
-                                          .trim()
-                                          .isNotEmpty
-                                      ? widget.source.detailUrl
-                                      : widget.source.url,
-                                  showDebugInfo: true,
-                                )
-                              : const Center(
-                                  child: Text(
-                                    '无可播放资源',
-                                    style: TextStyle(color: Colors.white),
-                                  ),
-                                ),
-                        ),
+                      child: AspectRatio(
+                        aspectRatio: 16 / 9,
+                        child: _currentEpisodeUrl != null
+                            ? VideoPlayContainer(
+                                url: _currentEpisodeUrl!,
+                                title: _fullDetail!.vodName,
+                                vodId: widget.vodId.toString(),
+                                vodPic: _fullDetail?.vodPic ?? '',
+                                sourceId: widget.source.id,
+                                sourceName: widget.source.name,
+                                episodeName: _currentEpisodeName ?? '正片',
+                                referer: widget.source.detailUrl.trim().isNotEmpty ? widget.source.detailUrl : widget.source.url,
+                                showDebugInfo: false, // 关掉左上角的调试黑块
+                                // ✨ 注入上下集切换回调
+                                onPreviousEpisode: _canPlayPrevious() ? _playPreviousEpisode : null,
+                                onNextEpisode: _canPlayNext() ? _playNextEpisode : null,
+                              )
+                            : const Center(child: Text('无可播放资源', style: TextStyle(color: Colors.white))),
                       ),
                     ),
 
-                    // 下方详情和选集区域
+                    // 2. 下方详情和选集区域
                     Expanded(
                       child: RefreshIndicator(
                         onRefresh: _loadDetail,
@@ -524,27 +376,15 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
                           children: [
                             _buildInfoCard(),
                             const SizedBox(height: 16),
-                            const Text(
-                              '线路 / 选集',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
                             if (_playLines.isEmpty)
-                              const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 24),
-                                child: Center(
-                                  child: Text('暂无选集数据'),
-                                ),
-                              )
+                              const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: Center(child: Text('暂无选集数据')))
                             else ...[
                               if (_playLines.length > 1) ...[
                                 _buildLineSelector(),
-                                const SizedBox(height: 12),
+                                const SizedBox(height: 4),
                               ],
-                              _buildEpisodeSelector(),
+                              // ✨ 使用我们专属手搓的展开/排序高级选集组件
+                              _buildEpisodeSection(),
                             ],
                             const SizedBox(height: 40),
                           ],
@@ -556,35 +396,27 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
     );
   }
 
+  Widget _buildEpisodeSection() {
+    final safeLineIndex = _playLines.isEmpty ? 0 : _selectedLineIndex.clamp(0, _playLines.length - 1).toInt();
+    final episodes = _playLines.isEmpty ? const <_PlayEpisode>[] : _playLines[safeLineIndex].episodes;
+
+    return _ExpandableEpisodeSection(
+      episodes: episodes,
+      currentIndex: _selectedEpisodeIndex,
+      onEpisodeTap: _selectEpisode,
+    );
+  }
+
   Widget _buildErrorView() {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
         const SizedBox(height: 120),
-        Icon(
-          Icons.error_outline_rounded,
-          size: 72,
-          color: Colors.grey.shade400,
-        ),
+        Icon(Icons.error_outline_rounded, size: 72, color: Colors.grey.shade400),
         const SizedBox(height: 12),
-        Center(
-          child: Text(
-            _errorMessage ?? '视频详情加载失败',
-            style: TextStyle(
-              color: Colors.grey.shade700,
-              fontSize: 15,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ),
+        Center(child: Text(_errorMessage ?? '视频详情加载失败', style: TextStyle(color: Colors.grey.shade700, fontSize: 15), textAlign: TextAlign.center)),
         const SizedBox(height: 16),
-        Center(
-          child: ElevatedButton.icon(
-            onPressed: _loadDetail,
-            icon: const Icon(Icons.refresh_rounded),
-            label: const Text('重试'),
-          ),
-        ),
+        Center(child: ElevatedButton.icon(onPressed: _loadDetail, icon: const Icon(Icons.refresh_rounded), label: const Text('重试'))),
       ],
     );
   }
@@ -599,9 +431,7 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.grey.shade200,
-        ),
+        border: Border.all(color: Colors.grey.shade200),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -612,40 +442,14 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
               width: 92,
               height: 132,
               child: coverUrl == null
-                  ? Container(
-                      color: Colors.grey.shade300,
-                      alignment: Alignment.center,
-                      child: Icon(
-                        Icons.movie_outlined,
-                        size: 36,
-                        color: Colors.grey.shade600,
-                      ),
-                    )
+                  ? Container(color: Colors.grey.shade100, alignment: Alignment.center, child: Icon(Icons.movie_outlined, size: 36, color: Colors.grey.shade400))
                   : Image.network(
                       coverUrl,
                       fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          color: Colors.grey.shade300,
-                          alignment: Alignment.center,
-                          child: Icon(
-                            Icons.movie_outlined,
-                            size: 36,
-                            color: Colors.grey.shade600,
-                          ),
-                        );
-                      },
+                      errorBuilder: (context, error, stackTrace) => Container(color: Colors.grey.shade100, alignment: Alignment.center, child: Icon(Icons.movie_outlined, size: 36, color: Colors.grey.shade400)),
                       loadingBuilder: (context, child, loadingProgress) {
                         if (loadingProgress == null) return child;
-                        return Container(
-                          color: Colors.grey.shade200,
-                          alignment: Alignment.center,
-                          child: const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        );
+                        return Container(color: Colors.grey.shade100, alignment: Alignment.center, child: const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)));
                       },
                     ),
             ),
@@ -655,39 +459,22 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  detail.vodName,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                Text(detail.vodName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold), maxLines: 2, overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 10),
                 Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
                     _buildTag('来源：${widget.source.name}'),
-                    if ((detail.typeName ?? '').trim().isNotEmpty)
-                      _buildTag('分类：${detail.typeName}'),
-                    if ((detail.vodRemarks ?? '').trim().isNotEmpty)
-                      _buildTag('更新：${detail.vodRemarks}'),
-                    if ((detail.vodTime ?? '').trim().isNotEmpty)
-                      _buildTag('时间：${detail.vodTime}'),
+                    if ((detail.typeName ?? '').trim().isNotEmpty) _buildTag('分类：${detail.typeName}'),
+                    if ((detail.vodRemarks ?? '').trim().isNotEmpty) _buildTag('更新：${detail.vodRemarks}'),
+                    if ((detail.vodTime ?? '').trim().isNotEmpty) _buildTag('时间：${detail.vodTime}'),
                     _buildTag('线路：${_playLines.length}'),
                     _buildTag('集数：$totalEpisodes'),
                   ],
                 ),
                 const SizedBox(height: 10),
-                Text(
-                  '当前播放：${_currentEpisodeName ?? '未选择'}',
-                  style: TextStyle(
-                    color: Colors.grey.shade700,
-                    fontSize: 13,
-                  ),
-                ),
+                Text('当前播放：${_currentEpisodeName ?? '未选择'}', style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
               ],
             ),
           ),
@@ -698,19 +485,9 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
 
   Widget _buildTag(String text) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primary.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 12,
-          color: Theme.of(context).colorScheme.primary,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary.withOpacity(0.08), borderRadius: BorderRadius.circular(6)),
+      child: Text(text, style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold)),
     );
   }
 
@@ -718,41 +495,25 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          '播放线路',
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-          ),
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 8),
+          child: Text('播放线路', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         ),
-        const SizedBox(height: 8),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
             children: List.generate(_playLines.length, (index) {
               final line = _playLines[index];
               final selected = index == _selectedLineIndex;
-
               return Padding(
-                padding: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.only(right: 8, bottom: 8),
                 child: ChoiceChip(
-                  label: Text(
-                    line.name,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: selected
-                          ? Colors.white
-                          : Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
+                  label: Text(line.name, style: TextStyle(fontSize: 13, color: selected ? Colors.white : Colors.black87, fontWeight: selected ? FontWeight.bold : FontWeight.normal)),
                   selected: selected,
                   selectedColor: Theme.of(context).colorScheme.primary,
-                  backgroundColor:
-                      Theme.of(context).colorScheme.primary.withOpacity(0.08),
-                  side: BorderSide(
-                    color:
-                        Theme.of(context).colorScheme.primary.withOpacity(0.2),
-                  ),
+                  backgroundColor: Colors.grey.shade100,
+                  side: BorderSide.none,
+                  showCheckmark: false,
                   onSelected: (_) => _selectLine(index),
                 ),
               );
@@ -762,102 +523,149 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
       ],
     );
   }
-
-  Widget _buildEpisodeSelector() {
-    final safeLineIndex = _playLines.isEmpty
-        ? 0
-        : _selectedLineIndex
-            .clamp(0, _playLines.length - 1)
-            .toInt();
-
-    final episodes = _playLines.isEmpty
-        ? const <_PlayEpisode>[]
-        : _playLines[safeLineIndex].episodes;
-
-    if (episodes.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
-        child: Center(
-          child: Text('当前线路暂无可播放集数'),
-        ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          '选集',
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: List.generate(episodes.length, (index) {
-            final episode = episodes[index];
-            final selected =
-                index == _selectedEpisodeIndex && safeLineIndex == _selectedLineIndex;
-
-            return ChoiceChip(
-              label: Text(
-                episode.name,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: selected
-                      ? Colors.white
-                      : Theme.of(context).colorScheme.primary,
-                ),
-              ),
-              selected: selected,
-              selectedColor: Theme.of(context).colorScheme.primary,
-              backgroundColor:
-                  Theme.of(context).colorScheme.primary.withOpacity(0.08),
-              side: BorderSide(
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.2),
-              ),
-              onSelected: (_) => _selectEpisode(index),
-            );
-          }),
-        ),
-      ],
-    );
-  }
 }
 
+// ==== 数据结构类 ====
 class _PlayLine {
   final String name;
   final List<_PlayEpisode> episodes;
-
-  const _PlayLine({
-    required this.name,
-    required this.episodes,
-  });
+  const _PlayLine({required this.name, required this.episodes});
 }
-
 class _PlayEpisode {
   final String name;
   final String url;
-
-  const _PlayEpisode({
-    required this.name,
-    required this.url,
-  });
+  const _PlayEpisode({required this.name, required this.url});
 }
-
 class _PlaybackSelection {
   final int lineIndex;
   final int episodeIndex;
   final String? url;
   final String? name;
+  const _PlaybackSelection({required this.lineIndex, required this.episodeIndex, required this.url, required this.name});
+}
 
-  const _PlaybackSelection({
-    required this.lineIndex,
-    required this.episodeIndex,
-    required this.url,
-    required this.name,
+// ============================================================================
+// ✨ 高级独立组件：支持正倒序、自动折叠展开的选集网格
+// ============================================================================
+class _ExpandableEpisodeSection extends StatefulWidget {
+  final List<_PlayEpisode> episodes;
+  final int currentIndex;
+  final ValueChanged<int> onEpisodeTap;
+
+  const _ExpandableEpisodeSection({
+    required this.episodes,
+    required this.currentIndex,
+    required this.onEpisodeTap,
   });
+
+  @override
+  State<_ExpandableEpisodeSection> createState() => _ExpandableEpisodeSectionState();
+}
+
+class _ExpandableEpisodeSectionState extends State<_ExpandableEpisodeSection> {
+  bool _isExpanded = false;
+  bool _isReversed = false;
+
+  // 当用户切换了不同的线路，重置展开和倒序状态
+  @override
+  void didUpdateWidget(covariant _ExpandableEpisodeSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.episodes != widget.episodes) {
+      _isExpanded = false;
+      _isReversed = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.episodes.isEmpty) {
+      return const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: Center(child: Text('当前线路暂无可播放集数')));
+    }
+
+    final int total = widget.episodes.length;
+    // 默认折叠状态下只展示 12 集
+    final int displayCount = _isExpanded ? total : (total > 12 ? 12 : total);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('选集', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            if (total > 1)
+              TextButton.icon(
+                onPressed: () => setState(() => _isReversed = !_isReversed),
+                icon: const Icon(Icons.sort_rounded, size: 16, color: Colors.blueAccent),
+                label: Text(_isReversed ? '切为正序' : '切为倒序', style: const TextStyle(fontSize: 13, color: Colors.blueAccent, fontWeight: FontWeight.bold)),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                  minimumSize: const Size(0, 32),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              )
+          ],
+        ),
+        const SizedBox(height: 12),
+        GridView.builder(
+          padding: EdgeInsets.zero,
+          physics: const NeverScrollableScrollPhysics(),
+          shrinkWrap: true,
+          itemCount: displayCount,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 4,     // 一行显示4个集数按钮
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 2.2, // 药丸形比例
+          ),
+          itemBuilder: (context, index) {
+            // 通过倒序变量计算真实索引
+            final realIndex = _isReversed ? total - 1 - index : index;
+            final episode = widget.episodes[realIndex];
+            final isSelected = realIndex == widget.currentIndex;
+
+            return InkWell(
+              onTap: () => widget.onEpisodeTap(realIndex),
+              borderRadius: BorderRadius.circular(6),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: isSelected ? Colors.blueAccent : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Text(
+                  episode.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isSelected ? Colors.white : Colors.black87,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+        // 展开全部集数的按钮
+        if (!_isExpanded && total > 12)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(top: 16),
+            child: OutlinedButton.icon(
+              onPressed: () => setState(() => _isExpanded = true),
+              icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 18),
+              label: const Text('展开全部集数'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                side: BorderSide(color: Colors.grey.shade300),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 }

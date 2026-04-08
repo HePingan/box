@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io'; // 👇 新增：用于处理底层网络证书的系统库
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart'; // 👇 新增：用于判断是否是 Web 端 (kIsWeb)
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -19,8 +21,24 @@ import 'warehouse_tab.dart';
 import 'pages/debug_log_page.dart';
 import 'utils/app_logger.dart';
 
+// ============================================================================
+// 🔥 新增：全局忽略 HTTPS 证书校验拦截器 (解决私人影视站免费或过期证书导致直接切断连接的问题)
+// ============================================================================
+class MyHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true; // 强行放行所有有瑕疵的HTTPS证书
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 🔥 新增：注入全局 HTTPS 证书通行证 (仅限非 Web 环境，因为 Web 的跨域由浏览器控制)
+  if (!kIsWeb) {
+    HttpOverrides.global = MyHttpOverrides();
+  }
 
   await Hive.initFlutter();
 
@@ -67,7 +85,7 @@ Future<void> main() async {
       'client-name': 'app.maoyankanshu.novel',
       'client-source': 'android',
       'Authorization':
-          'bearereyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwOlwvXC9hcGkuanhndHp4Yy5jb20cL2F1dGhcL3RoaXJkIiwiaWF0IjoxNjgzODkxNjUyLCJleHAiOjE3NzcyMDM2NTIsIm5iZiI6MTY4Mzg5MTY1MiwianRpIjoiR2JxWmI4bGZkbTVLYzBIViIsInN1YiI6Njg3ODYyLCJwcnYiOiJhMWNiMDM3MTgwMjk2YzZhMTkzOGVmMzBiNDM3OTQ2NzJkZDAxNmM1In0.mMxaC2SVyZKyjC6rdUqFVv5d9w_X36o0AdKD7szvE_Q',
+          'bearereyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwOlwvXC9hcGkuanhndHp4Yy5jb20cL2F1dGhcL3RoaXJkIiwiaWF0IjoxNjgzODkxNjUyLCJleHAiOjE3NzcyMDM2NTIsIm5ibfI6MTY4Mzg5MTY1MiwianRpIjoiR2JxWmI4bGZkbTVLYzBIViIsInN1YiI6Njg3ODYyLCJwcnYiOiJhMWNiMDM3MTgwMjk2YzZhMTkzOGVmMzBiNDM3OTQ2NzJkZDAxNmM1In0.mMxaC2SVyZKyjC6rdUqFVv5d9w_X36o0AdKD7szvE_Q',
     },
   );
 
@@ -135,12 +153,12 @@ class MyApp extends StatelessWidget {
             borderRadius: BorderRadius.all(Radius.circular(12)),
           ),
         ),
-        scaffoldBackgroundColor: Color(0xFFF8F9FA),
+        scaffoldBackgroundColor: const Color(0xFFF8F9FA),
       ),
       home: UpdateBootstrapPage(
         nextPage: const MainAppShell(),
         appId: 'box',
-        checkUrl: 'http://47.109.97.1:8000/api/v1/app-updates/check',
+        checkUrl: 'https://box.hpa888.top/api/v1/app-updates/check',
         platform: 'android',
         channel: 'release',
         allowProceedOnCheckFailure: true,
