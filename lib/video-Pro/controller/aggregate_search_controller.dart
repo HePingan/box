@@ -1,56 +1,93 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+
+import '../models/aggregate_result.dart';
 import '../models/video_source.dart';
 import '../models/vod_item.dart';
-import '../models/aggregate_result.dart';
 import '../services/video_api_service.dart';
 
-/// 文件功能：多源聚合搜索控制
-/// 实现：高并发请求、结果汇总、自动过滤无效源
+/// 多源聚合搜索控制器
 class AggregateSearchController extends ChangeNotifier {
   List<AggregateResult> _allResults = [];
-  List<AggregateResult> get allResults => _allResults;
+  List<AggregateResult> get allResults => List.unmodifiable(_allResults);
 
   bool _isSearching = false;
   bool get isSearching => _isSearching;
 
-  // 核心方法：并发搜索所有源
-  Future<void> searchAllSources(List<VideoSource> sources, String keyword) async {
-    if (keyword.isEmpty) return;
+  int _requestVersion = 0;
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  bool _isCurrent(int version) => !_disposed && version == _requestVersion;
+
+  void _safeNotify() {
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
+
+  Future<void> searchAllSources(
+    List<VideoSource> sources,
+    String keyword,
+  ) async {
+    final query = keyword.trim();
+    if (query.isEmpty) {
+      _requestVersion++;
+      _allResults = [];
+      _isSearching = false;
+      _safeNotify();
+      return;
+    }
+
+    final activeSources = sources
+        .where((s) => s.isEnabled && s.url.trim().isNotEmpty)
+        .toList(growable: false);
+
+    final version = ++_requestVersion;
 
     _isSearching = true;
     _allResults = [];
-    notifyListeners();
+    _safeNotify();
 
-    // 1. 构造并发任务列表
-    // 只对已启用的源发起请求
-    final activeSources = sources.where((s) => s.isEnabled).toList();
+    try {
+      final tasks = activeSources.map((source) async {
+        try {
+          final items = await VideoApiService.searchVideo(source.url, query)
+              .timeout(const Duration(seconds: 8));
 
-    // 2. 使用 Future.wait 同时启动所有 HTTP 请求
-    // 我们将每个源的搜索包装成一个能容错的小任务
-    List<Future<List<AggregateResult>>> searchTasks = activeSources.map((source) async {
-      try {
-        // 每个源的请求设置超时或捕获异常，防止一个坏站拖慢全局
-        List<VodItem> results = await VideoApiService.searchVideo(source.url, keyword)
-            .timeout(const Duration(seconds: 8)); // 8秒内没返回就放弃该源站
-        
-        // 将 VodItem 转换为带 Source 信息的 AggregateResult
-        return results.map((v) => AggregateResult(source: source, video: v)).toList();
-      } catch (e) {
-        debugPrint("${source.name} 搜索失败或超时: $e");
-        return <AggregateResult>[]; // 失败则返回空列表，不中断全局请求
+          return items
+              .map((video) => AggregateResult(source: source, video: video))
+              .toList();
+        } catch (e) {
+          debugPrint('${source.name} 搜索失败: $e');
+          return <AggregateResult>[];
+        }
+      }).toList();
+
+      final nested = await Future.wait(tasks);
+
+      if (!_isCurrent(version)) return;
+
+      final merged = nested.expand((e) => e).toList();
+
+      merged.sort((a, b) {
+        final sourceCmp = a.source.name.compareTo(b.source.name);
+        if (sourceCmp != 0) return sourceCmp;
+        return b.video.vodId.compareTo(a.video.vodId);
+      });
+
+      _allResults = merged;
+    } finally {
+      if (_isCurrent(version)) {
+        _isSearching = false;
+        _safeNotify();
       }
-    }).toList();
-
-    // 3. 并行执行并汇总结果
-    List<List<AggregateResult>> allSubLists = await Future.wait(searchTasks);
-    
-    // 4. 将多维列表展平为单一结果集
-    _allResults = allSubLists.expand((list) => list).toList();
-
-    // 5. 排序优化（可选）：比如按更新时间排序，或按匹配度排序
-    _allResults.sort((a, b) => (b.video.vodTime ?? "").compareTo(a.video.vodTime ?? ""));
-
-    _isSearching = false;
-    notifyListeners();
+    }
   }
 }

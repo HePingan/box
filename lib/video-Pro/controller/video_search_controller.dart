@@ -1,36 +1,75 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+
 import '../models/video_source.dart';
 import '../models/vod_item.dart';
 import '../services/video_api_service.dart';
 
-/// 文件功能：搜索模块状态管理
-/// 实现：针对指定源进行关键词检索、保存搜索历史（可选）
+/// 单源搜索控制器
 class VideoSearchController extends ChangeNotifier {
   List<VodItem> _searchResults = [];
-  List<VodItem> get searchResults => _searchResults;
+  List<VodItem> get searchResults => List.unmodifiable(_searchResults);
 
   bool _isSearching = false;
   bool get isSearching => _isSearching;
 
-  // 执行搜索
-  Future<void> search(VideoSource source, String keyword) async {
-    if (keyword.isEmpty) return;
+  int _requestVersion = 0;
+  bool _disposed = false;
 
-    _isSearching = true;
-    _searchResults = []; // 开始新搜索前清空旧结果
-    notifyListeners();
-
-    // 调用之前在 VideoApiService 中定义的 searchVideo 方法
-    // 苹果CMS 标准：baseUrl?ac=list&wd=关键词
-    _searchResults = await VideoApiService.searchVideo(source.url, keyword);
-
-    _isSearching = false;
-    notifyListeners();
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 
-  // 清空搜索结果
-  void clearSearch() {
+  bool _isCurrent(int version) => !_disposed && version == _requestVersion;
+
+  void _safeNotify() {
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
+
+  Future<void> search(VideoSource source, String keyword) async {
+    final query = keyword.trim();
+    if (query.isEmpty || source.url.trim().isEmpty) {
+      _requestVersion++;
+      _searchResults = [];
+      _isSearching = false;
+      _safeNotify();
+      return;
+    }
+
+    final version = ++_requestVersion;
+
+    _isSearching = true;
     _searchResults = [];
-    notifyListeners();
+    _safeNotify();
+
+    try {
+      final results = await VideoApiService.searchVideo(source.url, query)
+          .timeout(const Duration(seconds: 10));
+
+      if (!_isCurrent(version)) return;
+
+      _searchResults = results;
+    } catch (e) {
+      if (!_isCurrent(version)) return;
+      debugPrint('搜索失败: $e');
+      _searchResults = [];
+    } finally {
+      if (_isCurrent(version)) {
+        _isSearching = false;
+        _safeNotify();
+      }
+    }
+  }
+
+  void clearSearch() {
+    _requestVersion++;
+    _searchResults = [];
+    _isSearching = false;
+    _safeNotify();
   }
 }

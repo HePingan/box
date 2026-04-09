@@ -5,7 +5,7 @@ class VideoSource {
   final String detailUrl;
   final bool isEnabled;
 
-  VideoSource({
+  const VideoSource({
     required this.id,
     required this.name,
     required this.url,
@@ -17,7 +17,8 @@ class VideoSource {
     String asString(dynamic value, [String fallback = '']) {
       if (value == null) return fallback;
       final text = value.toString().trim();
-      return text.isEmpty ? fallback : text;
+      if (text.isEmpty || text.toLowerCase() == 'null') return fallback;
+      return text;
     }
 
     bool asBool(dynamic value, [bool fallback = true]) {
@@ -49,10 +50,15 @@ class VideoSource {
 
     return VideoSource(
       id: asString(json['id'] ?? json['sourceId'] ?? json['sid'] ?? url),
-      name: asString(json['name'] ?? json['sourceName'] ?? json['title'], '未知源'),
+      name: asString(
+        json['name'] ?? json['sourceName'] ?? json['title'],
+        '未知源',
+      ),
       url: url,
       detailUrl: detailUrl,
-      isEnabled: asBool(json['isEnabled'] ?? json['enabled'] ?? json['status'] ?? true),
+      isEnabled: asBool(
+        json['isEnabled'] ?? json['enabled'] ?? json['status'] ?? true,
+      ),
     );
   }
 

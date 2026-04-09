@@ -20,10 +20,8 @@ class VideoPlayContainer extends StatefulWidget {
   final String sourceName;
   final String episodeName;
   final int initialPosition;
-
   final VoidCallback? onPreviousEpisode;
   final VoidCallback? onNextEpisode;
-
   final String? referer;
   final Map<String, String>? httpHeaders;
   final String userAgent;
@@ -52,48 +50,86 @@ class VideoPlayContainer extends StatefulWidget {
   State<VideoPlayContainer> createState() => _VideoPlayContainerState();
 }
 
-class _VideoPlayContainerState extends State<VideoPlayContainer> {
+class _VideoPlayContainerState extends State<VideoPlayContainer>
+    with WidgetsBindingObserver {
   static const String _fallbackUserAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
+  static const Duration _probeTimeout = Duration(seconds: 5);
+  static const Duration _initTimeout = Duration(seconds: 8);
+
   VideoPlayerController? _videoPlayerController;
   ChewieController? _chewieController;
-  Timer? _saveTimer;
+
+  Timer? _historyTimer;
 
   bool _isError = false;
   bool _isBuffering = true;
+  bool _wasPlayingBeforePause = false;
+  bool _wasPlayingLastTick = false;
+  bool _playbackFailed = false;
+
   String? _errorMessage;
   int _initToken = 0;
+
+  int _lastSavedPositionMs = -1;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initPlayer();
   }
 
   @override
   void didUpdateWidget(covariant VideoPlayContainer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.url != widget.url ||
+
+    final shouldRebuildPlayer = oldWidget.url != widget.url ||
         oldWidget.referer != widget.referer ||
         oldWidget.userAgent != widget.userAgent ||
         oldWidget.initialPosition != widget.initialPosition ||
-        !mapEquals(oldWidget.httpHeaders, widget.httpHeaders)) {
-      _saveCurrentHistory();
+        oldWidget.vodId != widget.vodId ||
+        oldWidget.vodPic != widget.vodPic ||
+        oldWidget.sourceId != widget.sourceId ||
+        oldWidget.sourceName != widget.sourceName ||
+        !mapEquals(oldWidget.httpHeaders, widget.httpHeaders);
+
+    if (shouldRebuildPlayer) {
+      _saveCurrentHistory(force: true);
       _disposePlayer();
       _initPlayer();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final controller = _videoPlayerController;
+    if (controller == null) return;
+
+    if (state == AppLifecycleState.paused) {
+      _wasPlayingBeforePause = controller.value.isPlaying;
+      _saveCurrentHistory(force: true);
+      if (controller.value.isPlaying) {
+        controller.pause();
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      if (_wasPlayingBeforePause) {
+        controller.play();
+      }
+      _wasPlayingBeforePause = false;
     }
   }
 
   Map<String, String> _buildRequestHeaders() {
     if (kIsWeb) return const {};
 
-    final userAgent = widget.userAgent.trim().isNotEmpty
+    final ua = widget.userAgent.trim().isNotEmpty
         ? widget.userAgent.trim()
         : _fallbackUserAgent;
 
     final headers = <String, String>{
-      'User-Agent': userAgent,
+      'User-Agent': ua,
       'Accept': '*/*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       'Accept-Encoding': 'identity',
@@ -110,7 +146,8 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
         final lowerKey = key.toLowerCase();
         if (lowerKey == 'host' ||
             lowerKey == 'content-length' ||
-            lowerKey == 'referer') {
+            lowerKey == 'referer' ||
+            lowerKey == 'origin') {
           continue;
         }
 
@@ -118,7 +155,35 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
       }
     }
 
+    final referer = widget.referer?.trim();
+    if (referer != null && referer.isNotEmpty) {
+      headers['Referer'] = referer;
+
+      final origin = _originFromUrl(referer);
+      if (origin != null && origin.isNotEmpty) {
+        headers['Origin'] = origin;
+      }
+    }
+
     return headers;
+  }
+
+  String? _originFromUrl(String raw) {
+    try {
+      final uri = Uri.parse(raw);
+      if (!uri.hasScheme || uri.host.isEmpty) return null;
+      return '${uri.scheme}://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}';
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _normalizeUrl(String raw) {
+    var url = raw.trim().replaceAll('\\', '');
+    if (url.startsWith('//')) {
+      url = 'https:$url';
+    }
+    return url;
   }
 
   bool _isInvalidWebPageUrl(Uri uri) {
@@ -165,12 +230,12 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
     http.Client client,
     Uri uri, {
     Map<String, String>? headers,
+    Duration timeout = _probeTimeout,
   }) {
-    return client
-        .get(uri, headers: headers)
-        .timeout(const Duration(seconds: 8));
+    return client.get(uri, headers: headers).timeout(timeout);
   }
 
+  /// 把 m3u8 的 master playlist 尽量降到 media playlist
   Future<Uri> _resolveDirectM3u8(Uri uri) async {
     if (!uri.path.toLowerCase().contains('.m3u8')) return uri;
 
@@ -191,11 +256,16 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
         );
 
         if (res.statusCode != 200) {
-          break;
+          return currentUri;
         }
 
         final body = utf8.decode(res.bodyBytes, allowMalformed: true);
         final lines = _playlistLines(body);
+
+        final isMaster = lines.any((e) => e.startsWith('#EXT-X-STREAM-INF'));
+        if (!isMaster) {
+          return finalUrl;
+        }
 
         String? childPath;
         for (int k = 0; k < lines.length; k++) {
@@ -212,12 +282,12 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
         }
 
         if (childPath == null || childPath.isEmpty) {
-          break;
+          return finalUrl;
         }
 
         final nextUri = finalUrl.resolve(childPath);
         if (nextUri == currentUri) {
-          break;
+          return finalUrl;
         }
 
         AppLogger.instance.log(
@@ -228,6 +298,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
       }
     } catch (e, st) {
       AppLogger.instance.logError(e, st, 'PLAYER');
+      return uri;
     } finally {
       client.close();
     }
@@ -235,21 +306,31 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
     return currentUri;
   }
 
-  Future<void> _probeHls(Uri uri) async {
-    if (kIsWeb) return;
-    if (!uri.path.toLowerCase().contains('.m3u8')) return;
+  /// HLS 预探测：
+  /// 1. 拉 m3u8
+  /// 2. 如果是 master playlist，再拉子 playlist
+  /// 3. 找首个分片
+  /// 4. 只探测首个分片
+  ///
+  /// 任何一步失败都直接返回 false，
+  /// 这样播放器不会傻等到底层超时。
+  Future<bool> _probeHls(Uri uri) async {
+    if (kIsWeb) return true;
+    if (!uri.path.toLowerCase().contains('.m3u8')) return true;
 
     final client = http.Client();
     final headers = _buildRequestHeaders();
 
     try {
       Uri mediaPlaylistUri = uri;
+
       AppLogger.instance.log('HLS探测开始 -> $uri', tag: 'PLAYER');
 
       final entryRes = await _httpGetWithTimeout(
         client,
         uri,
         headers: headers,
+        timeout: _probeTimeout,
       );
 
       final entryFinalUrl = entryRes.request?.url ?? uri;
@@ -260,7 +341,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
 
       if (entryRes.statusCode != 200) {
         AppLogger.instance.log('HLS探测终止: entry 非 200', tag: 'PLAYER');
-        return;
+        return false;
       }
 
       String body = utf8.decode(entryRes.bodyBytes, allowMalformed: true);
@@ -283,8 +364,11 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
         }
 
         if (childPath == null || childPath.isEmpty) {
-          AppLogger.instance.log('HLS探测: master playlist 未找到子线路', tag: 'PLAYER');
-          return;
+          AppLogger.instance.log(
+            'HLS探测: master playlist 未找到子线路',
+            tag: 'PLAYER',
+          );
+          return false;
         }
 
         mediaPlaylistUri = entryFinalUrl.resolve(childPath);
@@ -293,6 +377,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
           client,
           mediaPlaylistUri,
           headers: headers,
+          timeout: _probeTimeout,
         );
 
         mediaPlaylistUri = mediaRes.request?.url ?? mediaPlaylistUri;
@@ -303,7 +388,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
 
         if (mediaRes.statusCode != 200) {
           AppLogger.instance.log('HLS探测终止: media 非 200', tag: 'PLAYER');
-          return;
+          return false;
         }
 
         body = utf8.decode(mediaRes.bodyBytes, allowMalformed: true);
@@ -313,6 +398,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
         AppLogger.instance.log('HLS探测: 入口本身就是 media playlist', tag: 'PLAYER');
       }
 
+      /// 可选：探一下 KEY / MAP，帮助更早发现异常，但失败不直接判死
       String? keyLine;
       for (final line in lines) {
         if (line.startsWith('#EXT-X-KEY')) {
@@ -369,6 +455,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
         }
       }
 
+      /// 找首个分片
       String? firstSegment;
       for (final line in lines) {
         if (!line.startsWith('#')) {
@@ -378,10 +465,14 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
       }
 
       if (firstSegment == null || firstSegment.isEmpty) {
-        AppLogger.instance.log('HLS探测: media playlist 没有找到分片行', tag: 'PLAYER');
-        return;
+        AppLogger.instance.log(
+          'HLS探测: media playlist 没有找到分片行',
+          tag: 'PLAYER',
+        );
+        return true;
       }
 
+      /// 只探测首个分片，拿不到就直接失败
       final segUri = mediaPlaylistUri.resolve(firstSegment);
       final segRes = await _httpGetWithTimeout(
         client,
@@ -397,9 +488,19 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
         tag: 'PLAYER',
       );
 
+      if (segRes.statusCode != 200 && segRes.statusCode != 206) {
+        return false;
+      }
+
+      if (segRes.bodyBytes.isEmpty) {
+        return false;
+      }
+
       AppLogger.instance.log('HLS探测结束', tag: 'PLAYER');
+      return true;
     } catch (e, st) {
       AppLogger.instance.logError(e, st, 'PLAYER');
+      return false;
     } finally {
       client.close();
     }
@@ -407,108 +508,166 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
 
   Future<void> _initPlayer() async {
     if (!mounted) return;
+
     final int token = ++_initToken;
 
     setState(() {
       _isError = false;
       _errorMessage = null;
       _isBuffering = true;
+      _playbackFailed = false;
     });
 
-    final rawUrl = widget.url.trim();
+    final rawUrl = _normalizeUrl(widget.url);
     if (rawUrl.isEmpty) {
       _failFast('播放地址为空');
       return;
     }
 
-    var normalizedUrl = rawUrl.replaceAll('\\', '');
-    if (normalizedUrl.startsWith('//')) {
-      normalizedUrl = 'https:$normalizedUrl';
-    }
-
-    final uri = Uri.tryParse(normalizedUrl);
+    final uri = Uri.tryParse(rawUrl);
     if (uri == null || !uri.hasScheme) {
       _failFast('播放地址格式不正确');
       return;
     }
 
     if (_isInvalidWebPageUrl(uri)) {
-      _failFast('该资源为网页跳转链接，无法直接播放\n请尝试切换其他播放源或线路');
+      _failFast('该资源更像网页跳转链接，无法直接播放\n请尝试切换其他播放源或线路');
       return;
     }
 
     try {
       AppLogger.instance.log('原始播放地址: $uri', tag: 'PLAYER');
-      AppLogger.instance.log('执行极速 HLS 检查...', tag: 'PLAYER');
+      AppLogger.instance.log('开始解析播放地址...', tag: 'PLAYER');
 
       final playableUri = await _resolveDirectM3u8(uri);
-      AppLogger.instance.log('最终播放地址: $playableUri', tag: 'PLAYER');
 
       if (!mounted || token != _initToken) return;
 
+      AppLogger.instance.log('最终播放地址: $playableUri', tag: 'PLAYER');
+
+      /// 关键改动：
+      /// 只要是 HLS，就先探测首片。
       if (!kIsWeb && playableUri.path.toLowerCase().contains('.m3u8')) {
-        await _probeHls(playableUri);
+        final probeOk = await _probeHls(playableUri);
+        if (!probeOk) {
+          if (mounted && token == _initToken) {
+            _failFast('该线路的分片服务器拒绝了当前设备连接，请切换线路');
+          }
+          return;
+        }
       }
 
       if (!mounted || token != _initToken) return;
 
       final headers = _buildRequestHeaders();
+      final formatHint = playableUri.path.toLowerCase().contains('.m3u8')
+          ? VideoFormat.hls
+          : null;
 
       final controller = kIsWeb
           ? VideoPlayerController.networkUrl(
               playableUri,
-              formatHint: VideoFormat.hls,
+              formatHint: formatHint,
               videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
             )
           : VideoPlayerController.networkUrl(
               playableUri,
-              formatHint: VideoFormat.hls,
+              formatHint: formatHint,
               httpHeaders: headers,
               videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
             );
 
       _videoPlayerController = controller;
+      _wasPlayingLastTick = false;
+      _lastSavedPositionMs = -1;
 
       controller.addListener(() {
         if (!mounted || token != _initToken) return;
+
         final value = controller.value;
 
         if (value.hasError) {
           final msg = value.errorDescription ?? '视频播放失败';
-          AppLogger.instance.log('视频播放器错误: $msg', tag: 'PLAYER');
 
-          if (!_isError && mounted) {
-            setState(() {
-              _isError = true;
-              _errorMessage = msg;
-            });
+          AppLogger.instance.log(
+            '视频播放器错误: $msg | url=${widget.url}',
+            tag: 'PLAYER_ERROR',
+          );
+
+          /// 关键改动：
+          /// 只要播放器本身报错，直接 fail-fast
+          if (!_playbackFailed) {
+            _failFast(msg, value.errorDescription);
           }
           return;
         }
 
-        if (mounted) {
-          final buffering = value.isBuffering;
-          if (buffering != _isBuffering) {
+        final isPlaying = value.isPlaying;
+        if (isPlaying != _wasPlayingLastTick) {
+          _wasPlayingLastTick = isPlaying;
+
+          if (mounted) {
+            setState(() {
+              if (!isPlaying) {
+                _isBuffering = value.isBuffering;
+              }
+            });
+          }
+
+          if (isPlaying) {
+            _scheduleHistoryTimer();
+            _scheduleHideControlsFromChewie();
+          } else {
+            _historyTimer?.cancel();
+            _historyTimer = null;
+          }
+        }
+
+        final buffering = value.isBuffering;
+        if (buffering != _isBuffering) {
+          if (mounted) {
             setState(() {
               _isBuffering = buffering;
             });
+          } else {
+            _isBuffering = buffering;
           }
         }
       });
 
       AppLogger.instance.log('开始初始化底层播放器...', tag: 'PLAYER');
-      await controller.initialize();
-      AppLogger.instance.log('播放器初始化完成', tag: 'PLAYER');
+
+      /// 这里修复了你刚才报错的点：
+      /// 不再对可空 Future<void>? 调用 timeout
+      /// 改成局部非空变量 initFuture
+      final initFuture = controller.initialize();
+
+      await initFuture.timeout(_initTimeout);
 
       if (!mounted || token != _initToken) {
         await controller.dispose();
         return;
       }
 
+      if (controller.value.hasError) {
+        final msg = controller.value.errorDescription ?? '视频初始化失败';
+        await controller.dispose();
+        _failFast(msg, controller.value.errorDescription);
+        return;
+      }
+
       if (widget.initialPosition > 0) {
         final initial = Duration(milliseconds: widget.initialPosition);
-        if (controller.value.duration > initial) {
-          await controller.seekTo(initial);
+        final safeInitial = controller.value.duration > initial
+            ? initial
+            : controller.value.duration;
+
+        if (safeInitial > Duration.zero) {
+          await controller.seekTo(safeInitial);
+          AppLogger.instance.log(
+            '已跳转到历史位置：${safeInitial.inMilliseconds}ms',
+            tag: 'PLAYER',
+          );
         }
       }
 
@@ -526,90 +685,137 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
           onPrevious: widget.onPreviousEpisode,
           onNext: widget.onNextEpisode,
         ),
-        aspectRatio:
-            controller.value.aspectRatio > 0 ? controller.value.aspectRatio : 16 / 9,
+        aspectRatio: controller.value.aspectRatio > 0
+            ? controller.value.aspectRatio
+            : 16 / 9,
       );
 
-      if (mounted && token == _initToken) {
-        setState(() {
-          _isError = false;
-          _errorMessage = null;
-          _isBuffering = false;
-        });
+      if (!mounted || token != _initToken) {
+        _disposePlayer();
+        return;
       }
 
-      _saveTimer?.cancel();
-      _saveTimer = Timer.periodic(
-        const Duration(seconds: 5),
-        (_) => _saveCurrentHistory(),
-      );
+      setState(() {
+        _isError = false;
+        _errorMessage = null;
+        _isBuffering = false;
+      });
+
+      _scheduleHistoryTimer();
+    } on TimeoutException catch (e) {
+      _disposePlayer();
+      _failFast('播放器初始化超时，请切换线路或稍后重试', e);
     } catch (e, st) {
       AppLogger.instance.logError(e, st, 'PLAYER');
       _disposePlayer();
+
       if (mounted && token == _initToken) {
-        setState(() {
-          _isError = true;
-          _errorMessage = '播放器启动失败：请检测网络或更换线路';
-        });
+        _failFast('视频播放失败，请切换线路', e);
       }
     }
   }
 
-  void _failFast(String msg) {
+  void _scheduleHistoryTimer() {
+    _historyTimer?.cancel();
+    _historyTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _saveCurrentHistory(),
+    );
+  }
+
+  void _scheduleHideControlsFromChewie() {
+    final chewie = _chewieController;
+    if (chewie == null) return;
+
+    // 保留接口位，具体隐藏逻辑放在自定义 controls 里
+  }
+
+  void _failFast(String msg, [Object? debugObject]) {
+    if (_playbackFailed) return;
+    _playbackFailed = true;
+
+    AppLogger.instance.log('异常阻断: $msg', tag: 'PLAYER');
+
+    if (debugObject != null && kDebugMode) {
+      AppLogger.instance.log('debug: $debugObject', tag: 'PLAYER');
+    }
+
     if (!mounted) return;
+
     setState(() {
       _isError = true;
       _errorMessage = msg;
+      _isBuffering = false;
     });
-    AppLogger.instance.log('异常阻断: $msg', tag: 'PLAYER');
+
+    _historyTimer?.cancel();
+    _historyTimer = null;
+
+    _disposePlayer();
   }
 
   Future<void> _retry() async {
-    _saveCurrentHistory();
+    _saveCurrentHistory(force: true);
     _disposePlayer();
+
     if (!mounted) return;
+
     setState(() {
       _isError = false;
       _errorMessage = null;
       _isBuffering = true;
+      _playbackFailed = false;
     });
+
     await _initPlayer();
   }
 
-  void _saveCurrentHistory() {
-    if (!mounted || _videoPlayerController == null) return;
-    if (!_videoPlayerController!.value.isInitialized) return;
+  void _saveCurrentHistory({bool force = false}) {
+    final controller = _videoPlayerController;
+    if (!mounted || controller == null) return;
+    if (!controller.value.isInitialized) return;
 
-    final posMs = _videoPlayerController!.value.position.inMilliseconds;
-    final durMs = _videoPlayerController!.value.duration.inMilliseconds;
+    final posMs = controller.value.position.inMilliseconds;
+    final durMs = controller.value.duration.inMilliseconds;
 
-    if (posMs > 0 && durMs > 0 && widget.vodId.isNotEmpty) {
-      try {
+    if (posMs <= 0 || durMs <= 0 || widget.vodId.isEmpty) return;
+
+    if (!force && _lastSavedPositionMs >= 0) {
+      final delta = (posMs - _lastSavedPositionMs).abs();
+      if (delta < 3000) {
+        return;
+      }
+    }
+
+    _lastSavedPositionMs = posMs;
+
+    try {
+      if (kDebugMode || widget.showDebugInfo) {
         AppLogger.instance.log(
           '保存历史: vodId=${widget.vodId}, pos=$posMs, dur=$durMs, episode=${widget.episodeName}',
           tag: 'HISTORY',
         );
-
-        context.read<HistoryController>().saveProgress(
-              vodId: widget.vodId,
-              vodName: widget.title,
-              vodPic: widget.vodPic,
-              sourceId: widget.sourceId,
-              sourceName: widget.sourceName,
-              episodeName: widget.episodeName,
-              episodeUrl: widget.url,
-              position: posMs,
-              duration: durMs,
-            );
-      } catch (e, st) {
-        AppLogger.instance.logError(e, st, 'HISTORY');
       }
+
+      context.read<HistoryController>().saveProgress(
+            vodId: widget.vodId,
+            vodName: widget.title,
+            vodPic: widget.vodPic,
+            sourceId: widget.sourceId,
+            sourceName: widget.sourceName,
+            episodeName: widget.episodeName,
+            episodeUrl: widget.url,
+            position: posMs,
+            duration: durMs,
+          );
+    } catch (e, st) {
+      AppLogger.instance.logError(e, st, 'HISTORY');
     }
   }
 
   void _disposePlayer() {
-    _saveTimer?.cancel();
-    _saveTimer = null;
+    _historyTimer?.cancel();
+    _historyTimer = null;
 
     _chewieController?.dispose();
     _chewieController = null;
@@ -620,7 +826,8 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
 
   @override
   void dispose() {
-    _saveCurrentHistory();
+    WidgetsBinding.instance.removeObserver(this);
+    _saveCurrentHistory(force: true);
     _disposePlayer();
     super.dispose();
   }
@@ -639,9 +846,12 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
       );
     }
 
-    if (_videoPlayerController == null ||
-        _chewieController == null ||
-        !_videoPlayerController!.value.isInitialized) {
+    final controller = _videoPlayerController;
+    final chewieController = _chewieController;
+
+    if (controller == null ||
+        chewieController == null ||
+        !controller.value.isInitialized) {
       return AspectRatio(
         aspectRatio: 16 / 9,
         child: Container(
@@ -660,7 +870,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Chewie(controller: _chewieController!),
+            Chewie(controller: chewieController),
             if (_isBuffering) _buildBufferingOverlay(),
             if (widget.showDebugInfo) _buildDebugOverlay(),
           ],
@@ -693,7 +903,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer> {
               ),
               SizedBox(width: 12),
               Text(
-                '拼命缓冲中...',
+                '拼命缓冲中…',
                 style: TextStyle(color: Colors.white, fontSize: 13),
               ),
             ],
@@ -781,29 +991,34 @@ class _CustomVideoControls extends StatefulWidget {
   State<_CustomVideoControls> createState() => _CustomVideoControlsState();
 }
 
-class _CustomVideoControlsState extends State<_CustomVideoControls>
-    with SingleTickerProviderStateMixin {
-  late VideoPlayerController _controller;
+class _CustomVideoControlsState extends State<_CustomVideoControls> {
   ChewieController? _chewieController;
+  late VideoPlayerController _controller;
 
   bool _showControls = true;
   bool _isLocked = false;
   bool _isSpeeding = false;
+  bool _isScrubbing = false;
+
+  bool _wasPlayingBeforeScrub = false;
+
   Timer? _hideTimer;
 
-  Offset? _tapPosition;
-  String? _skipFeedbackText;
-
-  bool _isScrubbing = false;
   Duration _baseScrubPosition = Duration.zero;
   Duration _currentScrubPosition = Duration.zero;
+
+  double _playbackSpeed = 1.0;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+
     _chewieController = ChewieController.of(context);
     _controller = _chewieController!.videoPlayerController;
-    _startHideTimer();
+
+    if (_controller.value.isPlaying) {
+      _startHideTimer();
+    }
   }
 
   @override
@@ -812,77 +1027,84 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
     super.dispose();
   }
 
-  void _playPause() {
-    setState(() {
-      if (_controller.value.isPlaying) {
-        _controller.pause();
-        _showControls = true;
-        _hideTimer?.cancel();
-      } else {
-        _controller.play();
-        _startHideTimer();
-      }
-    });
-  }
-
   void _startHideTimer() {
     _hideTimer?.cancel();
     _hideTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted &&
-          _controller.value.isPlaying &&
-          !_isSpeeding &&
-          !_isScrubbing) {
+      if (!mounted) return;
+      if (_controller.value.isPlaying && !_isSpeeding && !_isScrubbing) {
         setState(() => _showControls = false);
       }
     });
   }
 
+  void _togglePlayPause() {
+    if (_controller.value.isPlaying) {
+      _controller.pause();
+      setState(() {
+        _showControls = true;
+      });
+      _hideTimer?.cancel();
+    } else {
+      _controller.play();
+      setState(() {
+        _showControls = true;
+      });
+      _startHideTimer();
+    }
+  }
+
   String _formatDuration(Duration duration) {
     String twoDigits(int n) => n.toString().padLeft(2, '0');
-    final hours = twoDigits(duration.inHours);
-    final minutes = twoDigits(duration.inMinutes.remainder(60));
-    final seconds = twoDigits(duration.inSeconds.remainder(60));
-    return duration.inHours > 0
-        ? '$hours:$minutes:$seconds'
-        : '$minutes:$seconds';
+
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
+
+    if (hours > 0) {
+      return '${twoDigits(hours)}:${twoDigits(minutes)}:${twoDigits(seconds)}';
+    }
+    return '${twoDigits(minutes)}:${twoDigits(seconds)}';
   }
 
   void _skipTime(Duration offset) {
     final duration = _controller.value.duration;
     final newPos = _controller.value.position + offset;
+
     final clampedPos = newPos < Duration.zero
         ? Duration.zero
         : (newPos > duration ? duration : newPos);
 
     _controller.seekTo(clampedPos);
-
-    setState(() {
-      _skipFeedbackText = offset.isNegative ? '⏪  -10s' : '⏩  +10s';
-    });
-
     _startHideTimer();
-
-    Timer(const Duration(milliseconds: 600), () {
-      if (mounted) {
-        setState(() => _skipFeedbackText = null);
-      }
-    });
   }
 
   void _onHorizontalDragStart(DragStartDetails details) {
     if (_isLocked) return;
+
     _baseScrubPosition = _controller.value.position;
     _currentScrubPosition = _baseScrubPosition;
+    _wasPlayingBeforeScrub = _controller.value.isPlaying;
+
+    if (_controller.value.isPlaying) {
+      _controller.pause();
+    }
+
     setState(() {
       _isScrubbing = true;
-      _hideTimer?.cancel();
+      _showControls = true;
     });
+
+    _hideTimer?.cancel();
   }
 
   void _onHorizontalDragUpdate(DragUpdateDetails details) {
     if (_isLocked || !_isScrubbing) return;
 
     final screenWidth = MediaQuery.of(context).size.width;
+    if (screenWidth <= 0) return;
+
+    // 保留原本的“左右滑动调进度”逻辑：
+    // 横向拖动一整屏约等于 300 秒
     final dragRatio = details.delta.dx / screenWidth;
     final dragSeconds = (dragRatio * 300).toInt();
 
@@ -896,7 +1118,9 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
       newPosition = duration;
     }
 
-    setState(() => _currentScrubPosition = newPosition);
+    setState(() {
+      _currentScrubPosition = newPosition;
+    });
   }
 
   void _onHorizontalDragEnd(DragEndDetails details) {
@@ -906,60 +1130,148 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
 
     setState(() {
       _isScrubbing = false;
+      _showControls = true;
+    });
+
+    if (_wasPlayingBeforeScrub) {
+      _controller.play();
+    }
+
+    _startHideTimer();
+  }
+
+  Future<void> _setSpeed(double speed) async {
+    await _controller.setPlaybackSpeed(speed);
+
+    setState(() {
+      _playbackSpeed = speed;
     });
 
     _startHideTimer();
+  }
 
-    if (!_controller.value.isPlaying) {
-      _controller.play();
+  Future<void> _showSpeedSheet() async {
+    final speeds = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    '播放速度',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final speed in speeds)
+                      ChoiceChip(
+                        label: Text('${speed}x'),
+                        selected: _playbackSpeed == speed,
+                        onSelected: (_) async {
+                          Navigator.pop(sheetContext);
+                          await _setSpeed(speed);
+                        },
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _toggleControls() {
+    if (_isLocked) return;
+
+    setState(() {
+      _showControls = !_showControls;
+    });
+
+    if (_showControls) {
+      _startHideTimer();
+    } else {
+      _hideTimer?.cancel();
     }
+  }
+
+  String _bottomStateText() {
+    final state = _controller.value.isPlaying ? '播放中' : '已暂停';
+    final buffering = _controller.value.isBuffering ? '缓冲中' : '正常';
+    final speed = _playbackSpeed;
+
+    return '$state · $buffering · ${speed.toStringAsFixed(speed.truncateToDouble() == speed ? 0 : 2)}x';
   }
 
   @override
   Widget build(BuildContext context) {
     if (_chewieController == null) return const SizedBox.shrink();
 
+    final controlsVisible =
+        _showControls || !_controller.value.isPlaying || _isScrubbing || _isLocked;
+
     return Stack(
       children: [
         Positioned.fill(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTapDown: (details) => _tapPosition = details.localPosition,
-            onTap: () {
-              setState(() => _showControls = !_showControls);
-              if (_showControls) {
-                _startHideTimer();
-              }
-            },
-            onDoubleTap: () {
-              if (_isLocked || _tapPosition == null) return;
-
-              final width = MediaQuery.of(context).size.width;
-              final dx = _tapPosition!.dx;
-
-              if (dx < width * 0.35) {
-                _skipTime(const Duration(seconds: -10));
-              } else if (dx > width * 0.65) {
-                _skipTime(const Duration(seconds: 10));
-              } else {
-                _playPause();
-              }
-            },
-            onLongPressStart: (_) {
-              if (_isLocked) return;
-              setState(() => _isSpeeding = true);
-              _controller.setPlaybackSpeed(2.0);
-            },
-            onLongPressEnd: (_) {
-              if (_isLocked) return;
-              setState(() => _isSpeeding = false);
-              _controller.setPlaybackSpeed(1.0);
-            },
+            onTap: _toggleControls,
             onHorizontalDragStart: _onHorizontalDragStart,
             onHorizontalDragUpdate: _onHorizontalDragUpdate,
             onHorizontalDragEnd: _onHorizontalDragEnd,
           ),
         ),
+
+        Positioned(
+          left: 10,
+          top: 0,
+          bottom: 0,
+          child: IgnorePointer(
+            ignoring: false,
+            child: AnimatedOpacity(
+              opacity: controlsVisible ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton(
+                  icon: Icon(
+                    _isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.black.withOpacity(0.5),
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _isLocked = !_isLocked;
+                      _showControls = true;
+                    });
+                    _startHideTimer();
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+
         if (_isSpeeding)
           const Align(
             alignment: Alignment.topCenter,
@@ -983,37 +1295,12 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
               ),
             ),
           ),
-        if (_skipFeedbackText != null)
-          Align(
-            alignment: _skipFeedbackText!.contains('⏪')
-                ? Alignment.centerLeft
-                : Alignment.centerRight,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 40),
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.7),
-                  borderRadius: BorderRadius.circular(30),
-                ),
-                child: Text(
-                  _skipFeedbackText!,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-          ),
+
         if (_isScrubbing)
           Align(
             alignment: Alignment.center,
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
               decoration: BoxDecoration(
                 color: Colors.black.withOpacity(0.75),
                 borderRadius: BorderRadius.circular(12),
@@ -1041,46 +1328,20 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
               ),
             ),
           ),
-        AnimatedOpacity(
-          opacity: _showControls && !_isScrubbing ? 1.0 : 0.0,
-          duration: const Duration(milliseconds: 300),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Padding(
-              padding: const EdgeInsets.only(left: 20),
-              child: IgnorePointer(
-                ignoring: !_showControls || _isScrubbing,
-                child: IconButton(
-                  icon: Icon(
-                    _isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
-                    color: Colors.white,
-                    size: 28,
-                  ),
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.black.withOpacity(0.5),
-                  ),
-                  onPressed: () {
-                    setState(() => _isLocked = !_isLocked);
-                    _startHideTimer();
-                  },
-                ),
-              ),
-            ),
-          ),
-        ),
-        if (!_isLocked)
-          AnimatedOpacity(
-            opacity: _showControls && !_isScrubbing ? 1.0 : 0.0,
-            duration: const Duration(milliseconds: 300),
-            child: IgnorePointer(
-              ignoring: !_showControls || _isScrubbing,
+
+        if (controlsVisible)
+          IgnorePointer(
+            ignoring: false,
+            child: AnimatedOpacity(
+              opacity: controlsVisible ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 220),
               child: Stack(
                 children: [
                   Align(
                     alignment: Alignment.topCenter,
                     child: Container(
                       height: 80,
-                      padding: const EdgeInsets.only(top: 10),
+                      padding: const EdgeInsets.only(top: 10, left: 48, right: 8),
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
                           begin: Alignment.topCenter,
@@ -1093,17 +1354,6 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
                       ),
                       child: Row(
                         children: [
-                          if (_chewieController!.isFullScreen)
-                            IconButton(
-                              icon: const Icon(
-                                Icons.arrow_back_ios_new_rounded,
-                                color: Colors.white,
-                              ),
-                              onPressed: () =>
-                                  _chewieController!.toggleFullScreen(),
-                            )
-                          else
-                            const SizedBox(width: 16),
                           Expanded(
                             child: Text(
                               '${widget.title} - ${widget.episodeName}',
@@ -1111,15 +1361,70 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 color: Colors.white,
-                                fontSize: 16,
+                                fontSize: 15,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                           ),
+                          if (_chewieController!.isFullScreen)
+                            IconButton(
+                              icon: const Icon(
+                                Icons.fullscreen_exit_rounded,
+                                color: Colors.white,
+                              ),
+                              onPressed: () =>
+                                  _chewieController!.toggleFullScreen(),
+                            ),
                         ],
                       ),
                     ),
                   ),
+
+                  Align(
+                    alignment: Alignment.center,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        if (widget.onPrevious != null)
+                          _buildMiddleButton(
+                            icon: Icons.skip_previous_rounded,
+                            label: '上一集',
+                            onTap: widget.onPrevious!,
+                          )
+                        else
+                          const SizedBox(width: 72),
+
+                        GestureDetector(
+                          onTap: _togglePlayPause,
+                          child: Container(
+                            width: 76,
+                            height: 76,
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.35),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              _controller.value.isPlaying
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
+                              color: Colors.white,
+                              size: 42,
+                            ),
+                          ),
+                        ),
+
+                        if (widget.onNext != null)
+                          _buildMiddleButton(
+                            icon: Icons.skip_next_rounded,
+                            label: '下一集',
+                            onTap: widget.onNext!,
+                          )
+                        else
+                          const SizedBox(width: 72),
+                      ],
+                    ),
+                  ),
+
                   Align(
                     alignment: Alignment.bottomCenter,
                     child: Container(
@@ -1152,7 +1457,7 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
                                   color: Colors.white,
                                   size: 32,
                                 ),
-                                onPressed: _playPause,
+                                onPressed: _togglePlayPause,
                               ),
                               if (widget.onPrevious != null)
                                 IconButton(
@@ -1184,6 +1489,13 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
                                 },
                               ),
                               const Spacer(),
+                              TextButton(
+                                onPressed: _showSpeedSheet,
+                                child: Text(
+                                  '${_playbackSpeed.toStringAsFixed(_playbackSpeed.truncateToDouble() == _playbackSpeed ? 0 : 2)}x',
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                              ),
                               IconButton(
                                 icon: Icon(
                                   _chewieController!.isFullScreen
@@ -1209,6 +1521,21 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
                               ),
                             ),
                           ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _bottomStateText(),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ],
                       ),
                     ),
@@ -1218,6 +1545,32 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildMiddleButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 72,
+        height: 72,
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Colors.white, size: 36),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: const TextStyle(color: Colors.white70, fontSize: 10),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
