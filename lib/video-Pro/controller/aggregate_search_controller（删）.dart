@@ -6,6 +6,7 @@ import '../models/aggregate_result.dart';
 import '../models/video_source.dart';
 import '../models/vod_item.dart';
 import '../services/video_api_service.dart';
+import '../video_module.dart';
 
 /// 多源聚合搜索控制器
 class AggregateSearchController extends ChangeNotifier {
@@ -45,9 +46,9 @@ class AggregateSearchController extends ChangeNotifier {
       return;
     }
 
-    final activeSources = sources
-        .where((s) => s.isEnabled && s.url.trim().isNotEmpty)
-        .toList(growable: false);
+    await VideoModule.ensureVisibilityLoaded();
+
+    final activeSources = VideoModule.visibleSourcesOf(sources);
 
     final version = ++_requestVersion;
 

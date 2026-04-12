@@ -150,14 +150,13 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
                           itemCount: _results.length,
                           itemBuilder: (context, index) {
                             final video = _results[index];
-// 在 video_search_page.dart 中使用 SearchResultCard 的地方，改为：
-  return SearchResultCard(
-    title: _titleFor(video),
-    subtitle: _subtitleFor(video),
-    // 👇 就是把这里的属性名从 coverUrlFuture 改为 coverUrl 即可！
-    coverUrl: loadSearchVideoCover(video, widget.currentSource), 
-    onTap: () => _openDetail(video),
-  );
+                            return SearchResultCard(
+                              title: _titleFor(video),
+                              subtitle: _subtitleFor(video),
+                              // 🏆 优化：直接调用方法传递 Future，再也不用耗费内存去缓存它了
+                              coverUrlFuture: loadSearchVideoCover(video, widget.currentSource),
+                              onTap: () => _openDetail(video),
+                            );
                           },
                         ),
     );

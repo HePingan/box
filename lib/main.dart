@@ -1,8 +1,7 @@
 import 'dart:async';
-import 'dart:io'; // 👇 新增：用于处理底层网络证书的系统库
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart'; // 👇 新增：用于判断是否是 Web 端 (kIsWeb)
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -20,25 +19,13 @@ import 'warehouse_tab.dart';
 
 import 'pages/debug_log_page.dart';
 import 'utils/app_logger.dart';
-
-// ============================================================================
-// 🔥 新增：全局忽略 HTTPS 证书校验拦截器 (解决私人影视站免费或过期证书导致直接切断连接的问题)
-// ============================================================================
-class MyHttpOverrides extends HttpOverrides {
-  @override
-  HttpClient createHttpClient(SecurityContext? context) {
-    return super.createHttpClient(context)
-      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true; // 强行放行所有有瑕疵的HTTPS证书
-  }
-}
+import 'utils/http_overrides.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 🔥 新增：注入全局 HTTPS 证书通行证 (仅限非 Web 环境，因为 Web 的跨域由浏览器控制)
-  if (!kIsWeb) {
-    HttpOverrides.global = MyHttpOverrides();
-  }
+  // 证书忽略：IO 端生效，Web 端自动 no-op
+  enableInsecureCertificateOverrides();
 
   await Hive.initFlutter();
 
@@ -46,16 +33,18 @@ Future<void> main() async {
   try {
     await AppLogger.instance.init();
   } catch (e) {
-    // 日志系统本身异常时，不要影响主流程
+    debugPrint('AppLogger init failed: $e');
   }
 
   // Flutter 框架错误捕获
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);
+
     AppLogger.instance.log(
       'FlutterError: ${details.exceptionAsString()}',
       tag: 'FLUTTER',
     );
+
     if (details.stack != null) {
       AppLogger.instance.log(details.stack.toString(), tag: 'FLUTTER');
     }
@@ -74,7 +63,7 @@ Future<void> main() async {
     systemNavigationBarIconBrightness: Brightness.dark,
   ));
 
-  // 你的小说模块配置
+  // 小说模块配置
   NovelModule.configureQimao(
     baseUrl: 'http://api.lemiyigou.com',
     headers: const {
@@ -89,7 +78,7 @@ Future<void> main() async {
     },
   );
 
-  // 你的视频源配置
+  // 视频源配置
   VideoModule.configureLicensedCatalogSource(
     catalogName: 'OuonnkiTV',
     catalogUrls: const [
@@ -114,9 +103,7 @@ Future<void> main() async {
                 return controller;
               },
             ),
-            ChangeNotifierProvider<AggregateSearchController>(
-              create: (_) => AggregateSearchController(),
-            ),
+            // ✅ 这里已经移除了已被我们淘汰的 AggregateSearchController 注入！
           ],
           child: const MyApp(),
         ),

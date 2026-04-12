@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cached_network_image/cached_network_image.dart'; // 🚀 引入高性能图片缓存
 
 import '../controller/history_controller.dart';
 import '../controller/video_controller.dart';
 import '../models/history_item.dart';
 import '../models/video_source.dart';
 import '../pages/video_detail_page.dart';
-
+import '../../utils/proxy_utils.dart'; // 具体路径根据你放哪而定
 class HistoryQuickView extends StatelessWidget {
   const HistoryQuickView({super.key});
 
@@ -222,14 +223,23 @@ class _HistoryCard extends StatelessWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    Image.network(
-                      item.vodPic,
+                    // 🏆 优化的图片加载器，完美应对横向滑动的内存回收与缓存
+                    CachedNetworkImage(
+                      imageUrl: wrapWithProxy(item.vodPic),
                       fit: BoxFit.cover,
-                      headers: const {
+                      httpHeaders: const {
                         'User-Agent':
                             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                       },
-                      errorBuilder: (_, __, ___) => Container(
+                      placeholder: (context, url) => Container(
+                        color: Colors.grey.shade100,
+                        alignment: Alignment.center,
+                        child: const SizedBox(
+                          width: 20, height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                      errorWidget: (context, url, error) => Container(
                         color: Colors.grey.shade100,
                         child: const Center(
                           child: Icon(
