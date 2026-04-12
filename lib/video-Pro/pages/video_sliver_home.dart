@@ -3,8 +3,11 @@ import 'package:provider/provider.dart';
 
 import '../controller/video_controller.dart';
 import '../models/video_source.dart';
-import '../models/vod_item.dart';
+import '../
+models/vod_item.dart';
+import '../../pages/debug_log_page.dart';
 import '../services/video_api_service.dart';
+import '../../utils/app_logger.dart';
 import '../video_module.dart';
 import '../widgets/history_quick_view.dart';
 import 'aggregate_search_page.dart';
@@ -34,6 +37,14 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
   /// 缓存“某个源 + 某个视频ID”的封面请求结果，避免重复拉详情
   final Map<String, Future<String?>> _coverFutureCache = {};
 
+  void _openDebugLogPage() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const DebugLogPage(),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -46,28 +57,70 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
   Future<void> _bootstrapCatalogIfNeeded({bool force = false}) async {
     final controller = context.read<VideoController>();
 
+    AppLogger.instance.log(
+      '_bootstrapCatalogIfNeeded force=$force sources=${controller.sources.length} videos=${controller.videoList.length}',
+      tag: 'VIDEO_UI',
+    );
+
     if (!force &&
         (controller.sources.isNotEmpty || controller.videoList.isNotEmpty)) {
+      AppLogger.instance.log(
+        '_bootstrapCatalogIfNeeded skipped because data already exists',
+        tag: 'VIDEO_UI',
+      );
       return;
     }
 
-    final resolvedUrl = await VideoModule.resolveWorkingCatalogUrl();
-    final catalogUrl = resolvedUrl ?? _fallbackCatalogUrl;
+    try {
+      AppLogger.instance.log(
+        '_bootstrapCatalogIfNeeded resolving catalog url...',
+        tag: 'VIDEO_UI',
+      );
 
-    if (!mounted) return;
-    await controller.initSources(catalogUrl);
+      final resolvedUrl = await VideoModule.resolveWorkingCatalogUrl();
+      final catalogUrl = resolvedUrl ?? _fallbackCatalogUrl;
+
+      AppLogger.instance.log(
+        '_bootstrapCatalogIfNeeded resolvedUrl=$resolvedUrl finalUrl=$catalogUrl',
+        tag: 'VIDEO_UI',
+      );
+
+      if (!mounted) return;
+
+      await controller.initSources(catalogUrl);
+
+      AppLogger.instance.log(
+        '_bootstrapCatalogIfNeeded initSources done sources=${controller.sources.length} videos=${controller.videoList.length}',
+        tag: 'VIDEO_UI',
+      );
+    } catch (e, st) {
+      AppLogger.instance.logError(e, st, 'VIDEO_UI');
+    }
   }
 
   /// 刷新当前源：优先刷新当前选中的视频源
   Future<void> _reloadCurrentSource() async {
     final controller = context.read<VideoController>();
 
-    if (controller.currentSource != null) {
-      await controller.refreshCurrentSource();
-      return;
-    }
+    AppLogger.instance.log(
+      '_reloadCurrentSource currentSource=${controller.currentSource?.name}',
+      tag: 'VIDEO_UI',
+    );
 
-    await _bootstrapCatalogIfNeeded(force: true);
+    try {
+      if (controller.currentSource != null) {
+        await controller.refreshCurrentSource();
+        AppLogger.instance.log(
+          '_reloadCurrentSource refreshCurrentSource done',
+          tag: 'VIDEO_UI',
+        );
+        return;
+      }
+
+      await _bootstrapCatalogIfNeeded(force: true);
+    } catch (e, st) {
+      AppLogger.instance.logError(e, st, 'VIDEO_UI');
+    }
   }
 
   Future<String?> _coverUrlFor(VodItem video, VideoSource source) {
@@ -95,12 +148,21 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
       final detailBaseUrl =
           source.detailUrl.trim().isNotEmpty ? source.detailUrl : source.url;
 
+      AppLogger.instance.log(
+        '_loadCoverUrl fetch detail source=${source.name} vodId=${video.vodId} baseUrl=$detailBaseUrl',
+        tag: 'VIDEO_UI',
+      );
+
       final detail = await VideoApiService.fetchDetail(
         detailBaseUrl,
         video.vodId,
       );
 
       if (detail == null) {
+        AppLogger.instance.log(
+          '_loadCoverUrl detail null source=${source.name} vodId=${video.vodId}',
+          tag: 'VIDEO_UI',
+        );
         return null;
       }
 
@@ -110,7 +172,8 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
       }
 
       return null;
-    } catch (e) {
+    } catch (e, st) {
+      AppLogger.instance.logError(e, st, 'VIDEO_UI');
       debugPrint('加载封面失败: ${video.vodName} -> $e');
       return null;
     }
@@ -194,6 +257,11 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
                     tooltip: '刷新当前源',
                     onPressed: _reloadCurrentSource,
                     icon: const Icon(Icons.refresh_rounded, size: 20),
+                  ),
+                  IconButton(
+                    tooltip: '调试日志',
+                    onPressed: _openDebugLogPage,
+                    icon: const Icon(Icons.bug_report_outlined, size: 20),
                   ),
                   TextButton.icon(
                     onPressed: controller.sources.isEmpty
@@ -294,7 +362,6 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
             ),
           ),
           const SizedBox(width: 12),
-
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -321,10 +388,9 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
               ],
             ),
           ),
-
           const SizedBox(width: 8),
 
-          // 右侧操作区：当前源搜索 + 聚合搜索 + 刷新
+          // 右侧操作区：当前源搜索 + 聚合搜索 + 调试日志 + 刷新
           Wrap(
             alignment: WrapAlignment.end,
             spacing: 4,
@@ -362,6 +428,11 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
                   );
                 },
                 icon: const Icon(Icons.public_rounded),
+              ),
+              IconButton(
+                tooltip: '调试日志',
+                onPressed: _openDebugLogPage,
+                icon: const Icon(Icons.bug_report_outlined),
               ),
               IconButton(
                 tooltip: '刷新',
