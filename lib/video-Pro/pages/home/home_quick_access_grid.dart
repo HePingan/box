@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../controller/video_controller.dart';
-import '../../models/video_category.dart';
 import 'home_utils.dart';
 
 class HomeQuickAccessGrid extends StatelessWidget {
@@ -105,131 +104,222 @@ class HomeQuickAccessGrid extends StatelessWidget {
       ),
     ];
 
-    int crossAxisCount;
-    double aspectRatio;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableWidth =
+            constraints.maxWidth.isFinite && constraints.maxWidth > 0
+                ? constraints.maxWidth
+                : screenWidth;
 
-    if (screenWidth > 1000) {
-      crossAxisCount = 6;
-      aspectRatio = 2.5;
-    } else if (screenWidth > 600) {
-      crossAxisCount = 3;
-      aspectRatio = 2.8;
-    } else {
-      crossAxisCount = 2;
-      aspectRatio = 2.4;
-    }
+        final isMobile = availableWidth < 600;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+        final horizontalPadding = isMobile ? 12.0 : 16.0;
+
+        if (isMobile) {
+          final itemWidth =
+              (availableWidth - horizontalPadding * 2 - 10) / 2;
+
+          return Padding(
+            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    const Text(
+                      '快捷入口',
+                      style: TextStyle(
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '系统猜测的常用大类',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    for (final item in items)
+                      SizedBox(
+                        width: itemWidth,
+                        child: _buildQuickAccessCard(
+                          context: context,
+                          controller: controller,
+                          item: item,
+                          compact: true,
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        }
+
+        int crossAxisCount;
+        double aspectRatio;
+
+        if (availableWidth > 1000) {
+          crossAxisCount = 6;
+          aspectRatio = 2.5;
+        } else {
+          crossAxisCount = 3;
+          aspectRatio = 2.8;
+        }
+
+        return Padding(
+          padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '快捷入口',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  const Text(
+                    '快捷入口',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '系统猜测的常用大类',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade500,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
-              Text(
-                '系统猜测的常用大类',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.grey.shade500,
+              const SizedBox(height: 10),
+              GridView.builder(
+                padding: EdgeInsets.zero,
+                physics: const NeverScrollableScrollPhysics(),
+                shrinkWrap: true,
+                itemCount: items.length,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: crossAxisCount,
+                  childAspectRatio: aspectRatio,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
                 ),
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  return _buildQuickAccessCard(
+                    context: context,
+                    controller: controller,
+                    item: item,
+                    compact: false,
+                  );
+                },
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          GridView.builder(
-            padding: EdgeInsets.zero,
-            physics: const NeverScrollableScrollPhysics(),
-            shrinkWrap: true,
-            itemCount: items.length,
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: crossAxisCount,
-              childAspectRatio: aspectRatio,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
+        );
+      },
+    );
+  }
+
+  Widget _buildQuickAccessCard({
+    required BuildContext context,
+    required VideoController controller,
+    required _QuickAccessItem item,
+    required bool compact,
+  }) {
+    final bool isSelected = item.title == '全部影片'
+        ? controller.currentTypeId == null
+        : controller.currentTypeId == item.typeId && item.typeId != null;
+
+    final radius = compact ? 22.0 : 12.0;
+    final height = compact ? 56.0 : null;
+    final iconSize = compact ? 18.0 : 20.0;
+    final iconBoxSize = compact ? 30.0 : 34.0;
+    final fontSize = compact ? 14.5 : 15.0;
+
+    return GestureDetector(
+      onTap: () {
+        if (item.title != '全部影片' && item.typeId == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('当前片源未映射「${item.title}」分类'),
             ),
-            itemBuilder: (context, index) {
-              final item = items[index];
-              final bool isSelected = item.title == '全部影片'
-                  ? controller.currentTypeId == null
-                  : controller.currentTypeId == item.typeId && item.typeId != null;
+          );
+          return;
+        }
 
-              return GestureDetector(
-                onTap: () {
-                  if (item.title != '全部影片' && item.typeId == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('当前片源未映射「${item.title}」分类'),
-                      ),
-                    );
-                    return;
-                  }
-
-                  controller.setCategory(item.typeId);
-                },
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    gradient: LinearGradient(
-                      colors: item.colors,
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    border: isSelected
-                        ? Border.all(color: Colors.black87, width: 2)
-                        : Border.all(color: Colors.transparent, width: 2),
-                    boxShadow: isSelected
-                        ? [
-                            BoxShadow(
-                              color: item.colors.last.withOpacity(0.5),
-                              blurRadius: 8,
-                              offset: const Offset(0, 4),
-                            ),
-                          ]
-                        : [],
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(5),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.25),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          item.icon,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        item.title,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: isSelected ? FontWeight.w900 : FontWeight.bold,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
+        controller.setCategory(item.typeId);
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        height: height,
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 12 : 16,
+          vertical: compact ? 0 : 0,
+        ),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(radius),
+          gradient: LinearGradient(
+            colors: item.colors,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
-        ],
+          border: isSelected
+              ? Border.all(color: Colors.black87, width: 2)
+              : Border.all(color: Colors.transparent, width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: item.colors.last.withOpacity(isSelected ? 0.28 : 0.16),
+              blurRadius: isSelected ? 12 : 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: iconBoxSize,
+              height: iconBoxSize,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.18),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                item.icon,
+                color: Colors.white,
+                size: iconSize,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                item.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: fontSize,
+                  fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -244,7 +334,7 @@ class _QuickAccessItem {
   const _QuickAccessItem({
     required this.title,
     required this.icon,
-    required this.typeId,
+    required this.typeId, 
     required this.colors,
   });
 }

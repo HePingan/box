@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../utils/app_logger.dart';
 import '../models/video_category.dart';
@@ -12,6 +13,14 @@ class VideoController extends ChangeNotifier {
   }) : _repository = repository ?? const VideoCatalogRepository();
 
   final VideoCatalogRepository _repository;
+
+  static const String _prefLastSourceKey = 'last_video_source_key';
+
+  static const List<String> _preferredDefaultSourceKeywords = [
+    '量子影视',
+    '量子资源',
+    '量子',
+  ];
 
   final List<VideoSource> _sources = <VideoSource>[];
   final List<VideoCategory> _categories = <VideoCategory>[];
@@ -54,7 +63,8 @@ class VideoController extends ChangeNotifier {
         'currentTypeId=${_currentTypeId?.toString() ?? 'all'}, '
         'page=$_currentPage, '
         'hasMore=$hasMore, '
-        'isLoading=$isLoading';
+        'isLoading=$isLoading, '
+        'error=${_errorMessage ?? '-'}';
   }
 
   // =========================
@@ -63,9 +73,11 @@ class VideoController extends ChangeNotifier {
 
   /// 初始化片源目录
   ///
-  /// 典型调用场景：
-  /// - 首页首次进入
-  /// - 手动刷新首页
+  /// 优先级：
+  /// 1. 恢复上次使用的源
+  /// 2. 默认进入“量子影视/量子资源/量子”
+  /// 3. 匹配当前源
+  /// 4. 兜底第一个源
   Future<void> initSources(String catalogUrl) async {
     if (_disposed) return;
 
@@ -96,8 +108,23 @@ class VideoController extends ChangeNotifier {
         return;
       }
 
-      final selectedSource =
-          _findMatchingSource(_sources, _currentSource) ?? _sources.first;
+      // 1) 先尝试恢复上次选择的源
+      final savedSourceKey = await _loadLastSourceKey();
+      if (_isStale(token)) return;
+
+      VideoSource? selectedSource;
+      if (savedSourceKey != null && savedSourceKey.isNotEmpty) {
+        selectedSource = _findSourceByKey(_sources, savedSourceKey);
+      }
+
+      // 2) 再尝试默认源
+      selectedSource ??= _findDefaultSource(_sources);
+
+      // 3) 再尝试匹配当前源
+      selectedSource ??= _findMatchingSource(_sources, _currentSource);
+
+      // 4) 最后兜底第一个
+      selectedSource ??= _sources.first;
 
       await _loadSourceData(
         source: selectedSource,
@@ -107,6 +134,13 @@ class VideoController extends ChangeNotifier {
         append: false,
         page: 1,
       );
+
+      if (_isStale(token)) return;
+
+      // 只有成功加载后再保存，避免把坏源写进缓存
+      if (_errorMessage == null && selectedSource != null) {
+        await _saveLastSourceKey(_sourceKey(selectedSource));
+      }
     } catch (e, st) {
       if (_isStale(token)) return;
 
@@ -128,8 +162,7 @@ class VideoController extends ChangeNotifier {
 
     _currentSource = source;
     _currentTypeId = null;
-    _videoList.clear();       // 瞬间清空旧列表 (如果你的变量没下划线，就填 videos.clear())
-    notifyListeners();
+    _videoList.clear();
     _currentPage = 1;
     _hasMore = false;
     _errorMessage = null;
@@ -144,6 +177,12 @@ class VideoController extends ChangeNotifier {
       append: false,
       page: 1,
     );
+
+    if (_isStale(token)) return;
+
+    if (_errorMessage == null) {
+      await _saveLastSourceKey(_sourceKey(source));
+    }
   }
 
   /// 刷新当前片源
@@ -175,14 +214,14 @@ class VideoController extends ChangeNotifier {
   /// typeId = null 表示全部
   Future<void> setCategory(int? typeId) async {
     if (_disposed) return;
+
     final source = _currentSource;
     if (source == null) return;
 
     final token = _beginRequest();
 
     _currentTypeId = typeId;
-    _videoList.clear();      // 瞬间清空当前分类的旧视频
-    notifyListeners();
+    _videoList.clear();
     _currentPage = 1;
     _hasMore = false;
     _errorMessage = null;
@@ -239,7 +278,8 @@ class VideoController extends ChangeNotifier {
   // =========================
   // 内部实现
   // =========================
-Future<void> _loadSourceData({
+
+  Future<void> _loadSourceData({
     required VideoSource source,
     required int token,
     required bool reloadCategories,
@@ -248,64 +288,122 @@ Future<void> _loadSourceData({
     required int page,
   }) async {
     try {
-      Future<List<VideoCategory>>? categoriesFuture;
       List<VideoCategory> newCategories = _categories;
-      int? selectedTypeId = resetCategory ? null : _currentTypeId;
 
-      // 🏆 优化：如果需要拉取分类，我们先不去 await 它，而是把它变成一个 Future 任务挂起
+      // 1) 先加载分类（如果需要）
       if (reloadCategories) {
-        categoriesFuture = _repository.loadCategories(source);
-      } else {
-        selectedTypeId = _normalizeTypeId(selectedTypeId, _categories);
+        try {
+          newCategories = await _repository.loadCategories(source);
+          if (_isStale(token)) return;
+        } catch (e, st) {
+          // 分类失败不应该阻断视频加载
+          AppLogger.instance.logError(e, st, 'VIDEO_CONTROLLER');
+          newCategories = <VideoCategory>[];
+        }
       }
 
-      // 🏆 优化：并发请求！同时拉取“分类”和“视频列表”
-      // 只有在不用刷新分类，或者重置分类(selectedTypeId为null)时才能完美并发
-      final videosFuture = _repository.loadVideos(source, typeId: selectedTypeId, page: page);
-
-      List<VodItem> videos;
-
-      if (categoriesFuture != null) {
-        // 等待两者同时完成！时间消耗 = max(分类接口时间, 视频列表接口时间)
-        final results = await Future.wait([categoriesFuture, videosFuture]);
-        if (_isStale(token)) return;
-
-        newCategories = results[0] as List<VideoCategory>;
-        videos = results[1] as List<VodItem>;
-        
-        // 并发完之后再统一校准 TypeId
-        if (!resetCategory) selectedTypeId = _normalizeTypeId(selectedTypeId, newCategories);
+      // 2) 决定最终使用的分类 ID
+      int? effectiveTypeId;
+      if (resetCategory) {
+        effectiveTypeId = null;
       } else {
-        videos = await videosFuture;
-        if (_isStale(token)) return;
+        effectiveTypeId = _normalizeTypeId(_currentTypeId, newCategories);
       }
 
-      // ========= 后续数据绑定不变 =========
+      // 3) 拉视频
+      final videos = await _loadVideosWithFallback(
+        source: source,
+        typeId: effectiveTypeId,
+        page: page,
+      );
+
+      if (_isStale(token)) return;
+
       if (append) {
         _videoList.addAll(videos);
       } else {
-        _videoList..clear()..addAll(videos);
+        _videoList
+          ..clear()
+          ..addAll(videos);
       }
-      
+
       if (reloadCategories) {
-        _categories..clear()..addAll(newCategories);
+        _categories
+          ..clear()
+          ..addAll(newCategories);
       }
 
       _currentSource = source;
-      _currentTypeId = selectedTypeId;
+      _currentTypeId = effectiveTypeId;
       _currentPage = page;
       _hasMore = videos.length >= _repository.pageSize;
-
       _errorMessage = null;
-      _setLoading(false);
-      notifyListeners();
     } catch (e, st) {
       if (_isStale(token)) return;
+
       AppLogger.instance.logError(e, st, 'VIDEO_CONTROLLER');
       _errorMessage = '加载失败：$e';
+    } finally {
+      if (_isStale(token)) return;
+
       _setLoading(false);
       notifyListeners();
     }
+  }
+
+  /// 先按分类加载；如果第一页按分类没数据，自动回退到“全部”
+  Future<List<VodItem>> _loadVideosWithFallback({
+    required VideoSource source,
+    required int? typeId,
+    required int page,
+  }) async {
+    final videos = await _repository.loadVideos(
+      source,
+      typeId: typeId,
+      page: page,
+    );
+
+    // 只有第一页才允许回退到“全部”，避免 loadMore 混入别的分类
+    if (videos.isNotEmpty || typeId == null || page != 1) {
+      return videos;
+    }
+
+    return await _repository.loadVideos(
+      source,
+      typeId: null,
+      page: page,
+    );
+  }
+
+  Future<String?> _loadLastSourceKey() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_prefLastSourceKey);
+  }
+
+  Future<void> _saveLastSourceKey(String key) async {
+    if (_disposed) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefLastSourceKey, key);
+  }
+
+  VideoSource? _findDefaultSource(List<VideoSource> sources) {
+    for (final keyword in _preferredDefaultSourceKeywords) {
+      for (final source in sources) {
+        if (source.name.contains(keyword)) {
+          return source;
+        }
+      }
+    }
+    return null;
+  }
+
+  VideoSource? _findSourceByKey(List<VideoSource> sources, String key) {
+    for (final source in sources) {
+      if (_sourceKey(source) == key) {
+        return source;
+      }
+    }
+    return null;
   }
 
   int? _normalizeTypeId(int? typeId, List<VideoCategory> categories) {

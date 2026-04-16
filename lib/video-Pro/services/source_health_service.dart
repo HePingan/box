@@ -1,9 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
-
-import 'video_category.dart';
-import 'video_source.dart';
-import 'vod_item.dart';
+import '../models/video_category.dart';
+import '../models/video_source.dart';
+import '../models/vod_item.dart';
 import '../services/video_api_service.dart';
 import '../../utils/app_logger.dart';
 

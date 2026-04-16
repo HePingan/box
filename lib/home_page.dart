@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 
 import 'daily_news_page.dart';
 import 'globals.dart';
-import 'novel_module.dart';
+import 'novel/pages/novel_list_page.dart';
+
 import 'plugin_manager.dart';
 import 'video_module.dart';
 
@@ -318,7 +319,7 @@ class _HomePageState extends State<HomePage>
         onTap: () {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => NovelListPage()),
+            MaterialPageRoute(builder: (_) => NovelListPageWithProvider()),
           );
         },
       ),

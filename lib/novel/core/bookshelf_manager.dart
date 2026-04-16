@@ -28,6 +28,15 @@ class BookshelfManager {
     }
   }
 
+  static Future<List<NovelDetail>> getBookshelfBooks() async {
+    final books = await getBookshelf();
+    final details = <NovelDetail>[];
+    for (final book in books) {
+      details.add(NovelDetail(book: book, chapters: []));
+    }
+    return details;
+  }
+
   static Future<bool> isInBookshelf(String bookId) async {
     final books = await getBookshelf();
     return books.any((b) => b.id == bookId || b.detailUrl == bookId);
@@ -48,11 +57,52 @@ class BookshelfManager {
     final books = await getBookshelf();
     books.removeWhere((b) => b.id == bookId || b.detailUrl == bookId);
     await _save(books);
+    await _removeReadingProgress(bookId);
   }
 
   static Future<void> clearBookshelf() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_key);
+  }
+
+  // 阅读进度相关
+  static String _progressKey(String bookId) {
+    return '${NovelCacheKeys.readingProgress}_$bookId';
+  }
+
+  static Future<ReadingProgress?> getReadingProgress(String bookId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final str = prefs.getString(_progressKey(bookId));
+    if (str == null || str.isEmpty) return null;
+    try {
+      final json = jsonDecode(str) as Map<String, dynamic>;
+      return ReadingProgress.fromJson(json);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> saveReadingProgress(ReadingProgress progress) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _progressKey(progress.bookId),
+      jsonEncode(progress.toJson()),
+    );
+  }
+
+  static Future<void> _removeReadingProgress(String bookId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_progressKey(bookId));
+  }
+
+  static Future<void> clearAllReadingProgress() async {
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs.getKeys();
+    for (final key in keys) {
+      if (key.startsWith('${NovelCacheKeys.readingProgress}_')) {
+        await prefs.remove(key);
+      }
+    }
   }
 
   static String _bookKey(NovelBook book) {

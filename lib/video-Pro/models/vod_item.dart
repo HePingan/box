@@ -19,10 +19,10 @@ class VodItem {
   final String? vodPlayFrom;
   final String? vodPlayUrl;
 
-  // 🏆 优化：添加解析缓存，使得复杂字符串操作一个视频生命周期内最多只执行一次！
+  // 播放解析缓存
   List<PlaySourceGroup>? _cachedPlayUrls;
 
-  VodItem({ // 移除 const
+  VodItem({
     required this.vodId,
     this.typeId = 0,
     required this.vodName,
@@ -40,7 +40,7 @@ class VodItem {
     this.vodPlayUrl,
   });
 
-  /// 解析播放列表（使用懒加载缓存）
+  /// 解析播放列表（懒加载缓存）
   List<PlaySourceGroup> get parsePlayUrls {
     _cachedPlayUrls ??= VodItemPlayParser.parse(
       vodPlayFrom: vodPlayFrom,
@@ -51,34 +51,31 @@ class VodItem {
 
   bool get hasPlayUrls => parsePlayUrls.isNotEmpty;
 
-  // ... 下方的 fromJson 和 toJson、_readString 等提取方法保持你原来的代码完全不变即可 ...
-  // (为节约字数我不重复贴 fromJson 等固定模板代码，你直接保留原样)
-
   factory VodItem.fromJson(Map<String, dynamic> json) {
     return VodItem(
       vodId: _readInt(json, const ['vod_id', 'vodId', 'id']),
       typeId: _readInt(json, const ['type_id', 'typeId']),
-      vodName: _readString(json, const ['vod_name', 'vodName', 'name']),
-      vodPic: _readString(json, const ['vod_pic', 'vodPic', 'pic']),
+      vodName: _readString(json, const ['vod_name', 'vodName', 'name', 'title']),
+      vodPic: _readString(json, const ['vod_pic', 'vodPic', 'pic', 'poster', 'cover']),
       vodRemarks: _readString(
         json,
         const ['vod_remarks', 'vodRemarks', 'remarks', 'remark'],
       ),
-      vodTime: _readString(json, const ['vod_time', 'vodTime']),
-      vodYear: _readString(json, const ['vod_year', 'vodYear']),
-      vodArea: _readString(json, const ['vod_area', 'vodArea']),
-      vodLang: _readString(json, const ['vod_lang', 'vodLang']),
-      vodDirector: _readString(json, const ['vod_director', 'vodDirector']),
-      vodActor: _readString(json, const ['vod_actor', 'vodActor']),
-      vodContent: _readString(json, const ['vod_content', 'vodContent']),
+      vodTime: _readString(json, const ['vod_time', 'vodTime', 'time']),
+      vodYear: _readString(json, const ['vod_year', 'vodYear', 'year']),
+      vodArea: _readString(json, const ['vod_area', 'vodArea', 'area']),
+      vodLang: _readString(json, const ['vod_lang', 'vodLang', 'lang']),
+      vodDirector: _readString(json, const ['vod_director', 'vodDirector', 'director']),
+      vodActor: _readString(json, const ['vod_actor', 'vodActor', 'actor']),
+      vodContent: _readString(json, const ['vod_content', 'vodContent', 'content']),
       typeName: _readString(json, const ['type_name', 'typeName']),
       vodPlayFrom: _readString(
         json,
-        const ['vod_play_from', 'vodPlayFrom', 'playFrom'],
+        const ['vod_play_from', 'vodPlayFrom', 'playFrom', 'play_from'],
       ),
       vodPlayUrl: _readString(
         json,
-        const ['vod_play_url', 'vodPlayUrl', 'playUrl'],
+        const ['vod_play_url', 'vodPlayUrl', 'playUrl', 'play_url'],
       ),
     );
   }
@@ -169,6 +166,7 @@ class VodItem {
       if (value == null) continue;
 
       if (value is int) return value;
+      if (value is double) return value.toInt();
 
       final text = value.toString().trim();
       if (text.isEmpty || text.toLowerCase() == 'null') continue;

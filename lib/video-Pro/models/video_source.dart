@@ -9,9 +9,9 @@ class VideoSource {
   final bool isHidden;
 
   /// 隐藏原因：
-  /// - ''      ：未隐藏
-  /// - 'manual'：手动隐藏
-  /// - 'auto'  ：自动隐藏
+  /// - ''       ：未隐藏
+  /// - 'manual' ：手动隐藏
+  /// - 'auto'   ：自动隐藏
   final String hiddenReason;
 
   /// 连续失败次数
@@ -74,10 +74,11 @@ class VideoSource {
     }
 
     bool asBool(dynamic value, [bool fallback = true]) {
+      if (value == null) return fallback;
       if (value is bool) return value;
 
-      final text = value?.toString().trim().toLowerCase();
-      if (text == null || text.isEmpty) return fallback;
+      final text = value.toString().trim().toLowerCase();
+      if (text.isEmpty || text == 'null') return fallback;
 
       if (['1', 'true', 'yes', 'y', 'on'].contains(text)) return true;
       if (['0', 'false', 'no', 'n', 'off'].contains(text)) return false;
@@ -88,6 +89,7 @@ class VideoSource {
     int asInt(dynamic value, [int fallback = 0]) {
       if (value == null) return fallback;
       if (value is int) return value;
+      if (value is double) return value.toInt();
       return int.tryParse(value.toString().trim()) ?? fallback;
     }
 
@@ -116,18 +118,21 @@ class VideoSource {
       }
     }
 
+    // 关键：优先把源集合里的 api 映射到 url
     final url = asString(
       json['url'] ??
+          json['api'] ??
           json['listUrl'] ??
           json['list_url'] ??
           json['apiUrl'] ??
           json['api_url'],
     );
 
+    // 关键：detail 一般是详情页/站点页，作为备用
     final detailUrl = asString(
       json['detailUrl'] ??
-          json['detail_url'] ??
           json['detail'] ??
+          json['detail_url'] ??
           json['apiDetail'] ??
           json['api_detail'] ??
           url,
@@ -135,7 +140,10 @@ class VideoSource {
     );
 
     return VideoSource(
-      id: asString(json['id'] ?? json['sourceId'] ?? json['sid'] ?? url),
+      id: asString(
+        json['id'] ?? json['sourceId'] ?? json['sid'] ?? json['key'] ?? url,
+        url,
+      ),
       name: asString(
         json['name'] ?? json['sourceName'] ?? json['title'],
         '未知源',
@@ -162,17 +170,22 @@ class VideoSource {
     Map<String, dynamic> state,
   ) {
     bool asBool(dynamic value, [bool fallback = false]) {
+      if (value == null) return fallback;
       if (value is bool) return value;
-      final text = value?.toString().trim().toLowerCase();
-      if (text == null || text.isEmpty) return fallback;
+
+      final text = value.toString().trim().toLowerCase();
+      if (text.isEmpty || text == 'null') return fallback;
+
       if (['1', 'true', 'yes', 'y', 'on'].contains(text)) return true;
       if (['0', 'false', 'no', 'n', 'off'].contains(text)) return false;
+
       return fallback;
     }
 
     int asInt(dynamic value, [int fallback = 0]) {
       if (value == null) return fallback;
       if (value is int) return value;
+      if (value is double) return value.toInt();
       return int.tryParse(value.toString().trim()) ?? fallback;
     }
 
@@ -200,11 +213,19 @@ class VideoSource {
       }
     }
 
+    String asString(dynamic value, [String fallback = '']) {
+      if (value == null) return fallback;
+      final text = value.toString().trim();
+      if (text.isEmpty || text.toLowerCase() == 'null') return fallback;
+      return text;
+    }
+
     return base.copyWith(
       isHidden: asBool(state['isHidden'] ?? state['hidden'], base.isHidden),
-      hiddenReason: state['hiddenReason']?.toString() ??
-          state['hideReason']?.toString() ??
-          base.hiddenReason,
+      hiddenReason: asString(
+        state['hiddenReason'] ?? state['hideReason'],
+        base.hiddenReason,
+      ),
       failCount: asInt(state['failCount'] ?? state['fails'], base.failCount),
       lastFailAt: asDateTime(state['lastFailAt'] ?? state['last_fail_at']) ??
           base.lastFailAt,
@@ -221,7 +242,9 @@ class VideoSource {
         'id': id,
         'name': name,
         'url': url,
+        'api': url,
         'detailUrl': detailUrl,
+        'detail': detailUrl,
         'isEnabled': isEnabled,
         'isHidden': isHidden,
         'hiddenReason': hiddenReason,
@@ -239,4 +262,18 @@ class VideoSource {
         'hiddenAt': hiddenAt?.millisecondsSinceEpoch,
         'isEnabled': isEnabled,
       };
+
+  @override
+  String toString() {
+    return 'VideoSource(id: $id, name: $name, url: $url, detailUrl: $detailUrl, isEnabled: $isEnabled, isHidden: $isHidden)';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is VideoSource && other.id == id;
+  }
+
+  @override
+  int get hashCode => id.hashCode;
 }

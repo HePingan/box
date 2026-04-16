@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 
 import 'daily_news_page.dart';
 import 'novel/core/cache_store.dart';
-import 'novel_module.dart';
+
+import 'novel/pages/novel_list_page.dart';
 import 'video_module.dart';
 
 String _asString(dynamic value, [String fallback = '']) {
@@ -665,7 +666,7 @@ class HomePluginHost {
           case HomePluginActionType.openNovelList:
             await Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => NovelListPage()),
+              MaterialPageRoute(builder: (_) => NovelListPageWithProvider()),
             );
             return;
           case HomePluginActionType.openVideoList:
@@ -767,7 +768,7 @@ class HomePluginHost {
         onTap: (context) async {
           await Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => NovelListPage()),
+            MaterialPageRoute(builder: (_) => NovelListPageWithProvider()),
           );
         },
       ),

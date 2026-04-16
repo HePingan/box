@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/video_category.dart';
@@ -6,11 +7,9 @@ import '../models/vod_item.dart';
 
 /// 异步数据解析器（运行在独立的后台线程 Isolate 中）
 class IsolateParser {
-  
   /// 开启后台线程，解析视频列表数据
   static Future<List<VodItem>> parseVodList(String jsonString) async {
     if (jsonString.trim().isEmpty) return <VodItem>[];
-    // compute 会开辟一个新的 Isolate 并在后台执行 _parseVodListTask
     return compute(_parseVodListTask, jsonString);
   }
 
@@ -26,12 +25,15 @@ class IsolateParser {
 
   static List<VodItem> _parseVodListTask(String jsonString) {
     try {
-      final decoded = jsonDecode(jsonString); // 耗时的 JSON 转换放到后台
-      final list = extractList(decoded);     // 抓取数组
+      final decoded = jsonDecode(jsonString);
+      final list = extractList(decoded);
+
       return list
           .map(asMap)
           .whereType<Map<String, dynamic>>()
-          .map((e) => VodItem.fromJson(e))    // 耗时的对象映射放到后台
+          .map(_normalizeVodItem)
+          .map((e) => VodItem.fromJson(e))
+          .where((item) => item.vodName.trim().isNotEmpty)
           .toList(growable: false);
     } catch (e) {
       debugPrint('Isolate 视频解析失败: $e');
@@ -43,24 +45,13 @@ class IsolateParser {
     try {
       final decoded = jsonDecode(jsonString);
 
-      // 兼容某些影视源特殊的分类结构
-      if (decoded is Map) {
-        final map = Map<String, dynamic>.from(decoded);
-        final classList = map['class'];
-        if (classList is List) {
-          return classList
-              .map(asMap)
-              .whereType<Map<String, dynamic>>()
-              .map((e) => VideoCategory.fromJson(e))
-              .toList(growable: false);
-        }
-      }
-
       final list = extractList(decoded);
       return list
           .map(asMap)
           .whereType<Map<String, dynamic>>()
+          .map(_normalizeCategoryItem)
           .map((e) => VideoCategory.fromJson(e))
+          .where((item) => item.typeName.trim().isNotEmpty)
           .toList(growable: false);
     } catch (e) {
       debugPrint('Isolate 分类解析失败: $e');
@@ -81,17 +72,35 @@ class IsolateParser {
 
     if (decoded is Map) {
       final map = Map<String, dynamic>.from(decoded);
-      // 兼容所有常见影视 CMS 的数组键名
-      const keys = ['list', 'data', 'results', 'sources', 'items', 'rows', 'class'];
-      
+
+      // 常见影视 CMS 的数组键名
+      const keys = [
+        'list',
+        'data',
+        'results',
+        'result',
+        'sources',
+        'items',
+        'rows',
+        'class',
+      ];
+
       for (final key in keys) {
         final value = map[key];
+
         if (value is List) return value;
 
         if (value is Map) {
           final nested = asMap(value);
           if (nested != null) {
-            for (final nestedKey in const ['list', 'data', 'items', 'rows']) {
+            for (final nestedKey in const [
+              'list',
+              'data',
+              'results',
+              'items',
+              'rows',
+              'class',
+            ]) {
               final nestedValue = nested[nestedKey];
               if (nestedValue is List) return nestedValue;
             }
@@ -99,6 +108,92 @@ class IsolateParser {
         }
       }
     }
+
     return const [];
+  }
+
+  // ===========================================================================
+  // 归一化处理
+  // ===========================================================================
+
+  static String _asString(dynamic value, [String fallback = '']) {
+    if (value == null) return fallback;
+    final s = value.toString().trim();
+    if (s.isEmpty || s.toLowerCase() == 'null') return fallback;
+    return s;
+  }
+
+  static int _asInt(dynamic value, [int fallback = 0]) {
+    if (value == null) return fallback;
+    if (value is int) return value;
+    if (value is double) return value.toInt();
+    return int.tryParse(value.toString().trim()) ?? fallback;
+  }
+
+  static bool _asBool(dynamic value, [bool fallback = true]) {
+    if (value == null) return fallback;
+    if (value is bool) return value;
+    final s = value.toString().trim().toLowerCase();
+    if (s.isEmpty) return fallback;
+    return s == '1' || s == 'true' || s == 'yes' || s == 'on';
+  }
+
+  static Map<String, dynamic> _normalizeVodItem(Map<String, dynamic> raw) {
+    final vodId = _asInt(raw['vod_id'] ?? raw['vodId'] ?? raw['id']);
+    final vodName = _asString(raw['vod_name'] ?? raw['vodName'] ?? raw['name']);
+    final typeId = _asInt(raw['type_id'] ?? raw['typeId']);
+    final typeName = _asString(raw['type_name'] ?? raw['typeName']);
+    final vodPic = _asString(
+      raw['vod_pic'] ?? raw['vodPic'] ?? raw['pic'] ?? raw['poster'] ?? raw['cover'],
+    );
+    final vodRemarks = _asString(
+      raw['vod_remarks'] ?? raw['vodRemarks'] ?? raw['remarks'] ?? raw['remark'],
+    );
+    final vodPlayFrom = _asString(
+      raw['vod_play_from'] ?? raw['vodPlayFrom'] ?? raw['play_from'],
+    );
+    final vodPlayUrl = _asString(
+      raw['vod_play_url'] ?? raw['vodPlayUrl'] ?? raw['play_url'],
+    );
+    final vodTime = _asString(raw['vod_time'] ?? raw['vodTime']);
+    final vodContent = _asString(raw['vod_content'] ?? raw['vodContent']);
+
+    // 同时保留驼峰和下划线，兼容不同的 model 实现
+    return <String, dynamic>{
+      ...raw,
+      'vod_id': vodId,
+      'vodId': vodId,
+      'vod_name': vodName,
+      'vodName': vodName,
+      'type_id': typeId,
+      'typeId': typeId,
+      'type_name': typeName,
+      'typeName': typeName,
+      'vod_pic': vodPic,
+      'vodPic': vodPic,
+      'vod_remarks': vodRemarks,
+      'vodRemarks': vodRemarks,
+      'vod_play_from': vodPlayFrom,
+      'vodPlayFrom': vodPlayFrom,
+      'vod_play_url': vodPlayUrl,
+      'vodPlayUrl': vodPlayUrl,
+      'vod_time': vodTime,
+      'vodTime': vodTime,
+      'vod_content': vodContent,
+      'vodContent': vodContent,
+    };
+  }
+
+  static Map<String, dynamic> _normalizeCategoryItem(Map<String, dynamic> raw) {
+    final typeId = _asInt(raw['type_id'] ?? raw['typeId'] ?? raw['id']);
+    final typeName = _asString(raw['type_name'] ?? raw['typeName'] ?? raw['name']);
+
+    return <String, dynamic>{
+      ...raw,
+      'type_id': typeId,
+      'typeId': typeId,
+      'type_name': typeName,
+      'typeName': typeName,
+    };
   }
 }

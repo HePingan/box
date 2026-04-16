@@ -1,15 +1,24 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:cached_network_image/cached_network_image.dart'; // 🚀 引入高性能图片缓存
 
 import '../controller/history_controller.dart';
 import '../controller/video_controller.dart';
 import '../models/history_item.dart';
 import '../models/video_source.dart';
 import '../pages/video_detail_page.dart';
-import '../../utils/proxy_utils.dart'; // 具体路径根据你放哪而定
+
 class HistoryQuickView extends StatelessWidget {
-  const HistoryQuickView({super.key});
+  const HistoryQuickView({
+    super.key,
+    this.title = '播放历史',
+    this.subtitle = '最近播放记录',
+    this.emptyText = '暂无播放历史',
+  });
+
+  final String title;
+  final String subtitle;
+  final String emptyText;
 
   @override
   Widget build(BuildContext context) {
@@ -18,58 +27,40 @@ class HistoryQuickView extends StatelessWidget {
         final items = controller.historyList;
 
         return Card(
-          elevation: 0.5,
+          elevation: 0.4,
           color: Colors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Colors.grey.shade200),
           ),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    const Text(
-                      '播放历史',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    if (items.isNotEmpty)
-                      TextButton(
-                        onPressed: () => _confirmClear(context, controller),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          minimumSize: const Size(0, 30),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        child: Text(
-                          '清空',
-                          style: TextStyle(
-                            color: Colors.grey.shade500,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ),
-                  ],
+                _buildHeader(context, controller, items.length),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: Colors.grey.shade500,
+                  ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 10),
                 if (items.isEmpty)
                   Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
                     child: Center(
                       child: Text(
-                        '暂无播放历史',
+                        emptyText,
                         style: TextStyle(color: Colors.grey.shade500),
                       ),
                     ),
                   )
                 else
                   SizedBox(
-                    height: 200,
+                    height: 188,
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
                       physics: const BouncingScrollPhysics(),
@@ -79,48 +70,9 @@ class HistoryQuickView extends StatelessWidget {
                         final item = items[index];
                         return _HistoryCard(
                           item: item,
-                          onTap: () async {
-                            final videoController = context.read<VideoController>();
-                            VideoSource? targetSource;
-
-                            try {
-                              targetSource = videoController.sources.firstWhere(
-                                (s) => s.id == item.sourceId,
-                              );
-                            } catch (_) {}
-
-                            if (targetSource == null) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('该视频的片源已失效或被移除'),
-                                ),
-                              );
-                              return;
-                            }
-
-                            final vodId = int.tryParse(item.vodId) ?? 0;
-                            if (vodId <= 0) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('历史记录中的视频ID无效'),
-                                ),
-                              );
-                              return;
-                            }
-
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => VideoDetailPage(
-                                  source: targetSource!,
-                                  vodId: vodId,
-                                  initialEpisodeUrl: item.episodeUrl,
-                                  initialPosition: item.position,
-                                ),
-                              ),
-                            );
-                          },
-                          onLongPress: () => _confirmDelete(context, controller, item),
+                          onTap: () => _openHistoryItem(context, item),
+                          onLongPress: () =>
+                              _confirmDelete(context, controller, item),
                         );
                       },
                     ),
@@ -130,6 +82,83 @@ class HistoryQuickView extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildHeader(
+    BuildContext context,
+    HistoryController controller,
+    int itemCount,
+  ) {
+    return Row(
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        const Spacer(),
+        if (itemCount > 0)
+          TextButton(
+            onPressed: () => _confirmClear(context, controller),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 30),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(
+              '清空',
+              style: TextStyle(
+                color: Colors.grey.shade500,
+                fontSize: 13,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _openHistoryItem(BuildContext context, HistoryItem item) {
+    final videoController = context.read<VideoController>();
+    final targetSource = _findSourceById(videoController.sources, item.sourceId);
+
+    if (targetSource == null) {
+      _showSnackBar(context, '该视频的片源已失效或被移除');
+      return;
+    }
+
+    final vodId = int.tryParse(item.vodId) ?? 0;
+    if (vodId <= 0) {
+      _showSnackBar(context, '历史记录中的视频ID无效');
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VideoDetailPage(
+          source: targetSource,
+          vodId: vodId,
+          initialEpisodeUrl: item.episodeUrl,
+          initialPosition: item.position,
+        ),
+      ),
+    );
+  }
+
+  VideoSource? _findSourceById(List<VideoSource> sources, String sourceId) {
+    for (final source in sources) {
+      if (source.id == sourceId) return source;
+    }
+    return null;
+  }
+
+  void _showSnackBar(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
 
@@ -146,14 +175,20 @@ class HistoryQuickView extends StatelessWidget {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('取消', style: TextStyle(color: Colors.grey)),
+              child: const Text(
+                '取消',
+                style: TextStyle(color: Colors.grey),
+              ),
             ),
             TextButton(
               onPressed: () async {
                 Navigator.pop(dialogContext);
                 await controller.clearHistory();
               },
-              child: const Text('确定', style: TextStyle(color: Colors.redAccent)),
+              child: const Text(
+                '确定',
+                style: TextStyle(color: Colors.redAccent),
+              ),
             ),
           ],
         );
@@ -178,14 +213,20 @@ class HistoryQuickView extends StatelessWidget {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('取消', style: TextStyle(color: Colors.grey)),
+              child: const Text(
+                '取消',
+                style: TextStyle(color: Colors.grey),
+              ),
             ),
             TextButton(
               onPressed: () async {
                 Navigator.pop(dialogContext);
                 await controller.deleteHistory(item);
               },
-              child: const Text('删除', style: TextStyle(color: Colors.redAccent)),
+              child: const Text(
+                '删除',
+                style: TextStyle(color: Colors.redAccent),
+              ),
             ),
           ],
         );
@@ -195,61 +236,49 @@ class HistoryQuickView extends StatelessWidget {
 }
 
 class _HistoryCard extends StatelessWidget {
-  final HistoryItem item;
-  final VoidCallback onTap;
-  final VoidCallback onLongPress;
-
   const _HistoryCard({
     required this.item,
     required this.onTap,
     required this.onLongPress,
   });
 
+  final HistoryItem item;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
   @override
   Widget build(BuildContext context) {
     final progress = (item.progressPercentage * 100).clamp(0, 100).toInt();
+    final imageUrl = (item.vodPic ?? '').trim();
 
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
       child: SizedBox(
-        width: 110,
+        width: 108,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(10),
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    // 🏆 优化的图片加载器，完美应对横向滑动的内存回收与缓存
-                    CachedNetworkImage(
-                      imageUrl: wrapWithProxy(item.vodPic),
-                      fit: BoxFit.cover,
-                      httpHeaders: const {
-                        'User-Agent':
-                            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                      },
-                      placeholder: (context, url) => Container(
-                        color: Colors.grey.shade100,
-                        alignment: Alignment.center,
-                        child: const SizedBox(
-                          width: 20, height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
+                    if (imageUrl.isEmpty)
+                      _buildImagePlaceholder()
+                    else
+                      CachedNetworkImage(
+                        imageUrl: imageUrl,
+                        fit: BoxFit.cover,
+                        httpHeaders: const {
+                          'User-Agent':
+                              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                        },
+                        placeholder: (context, url) => _buildLoadingPlaceholder(),
+                        errorWidget: (context, url, error) =>
+                            _buildImagePlaceholder(),
                       ),
-                      errorWidget: (context, url, error) => Container(
-                        color: Colors.grey.shade100,
-                        child: const Center(
-                          child: Icon(
-                            Icons.movie_outlined,
-                            size: 32,
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ),
-                    ),
                     Positioned(
                       left: 0,
                       right: 0,
@@ -344,6 +373,31 @@ class _HistoryCard extends StatelessWidget {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingPlaceholder() {
+    return Container(
+      color: Colors.grey.shade100,
+      alignment: Alignment.center,
+      child: const SizedBox(
+        width: 20,
+        height: 20,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
+    );
+  }
+
+  Widget _buildImagePlaceholder() {
+    return Container(
+      color: Colors.grey.shade100,
+      child: const Center(
+        child: Icon(
+          Icons.movie_outlined,
+          size: 32,
+          color: Colors.grey,
         ),
       ),
     );

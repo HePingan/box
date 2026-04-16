@@ -1,11 +1,9 @@
 import 'core/cache_store.dart';
-import 'core/html_novel_source.dart';
 import 'core/models.dart';
 import 'core/novel_repository.dart';
 import 'core/novel_source.dart';
-import 'core/qm_novel_source.dart';
-import 'core/source_rules.dart';
-
+import 'core/rule_novel_source.dart';
+import 'core/novel_source_factory.dart';
 class NovelModule {
   static NovelRepository? _repository;
 
@@ -20,43 +18,14 @@ class NovelModule {
     return _repository!;
   }
 
-  static void configure({
-    required NovelSource source,
+  /// 仅保留：规则书源 JSON 配置
+  static void configureRuleSource({
+    required Map<String, dynamic> bookSourceJson,
     CacheStore? cache,
   }) {
     _repository = NovelRepository(
-      source: source,
+      source: NovelSourceFactory.fromBookSourceJson(bookSourceJson),
       cache: cache ?? CacheStore(namespace: 'novel_module'),
-    );
-  }
-
-  static void configureQimao({
-    required String baseUrl,
-    Map<String, String>? headers,
-    CacheStore? cache,
-  }) {
-    configure(
-      source: QmNovelSource(
-        baseUrl: baseUrl,
-        headers: headers,
-      ),
-      cache: cache,
-    );
-  }
-
-  static void configureHtml({
-    required String baseUrl,
-    required SourceRules rules,
-    Map<String, String>? headers,
-    CacheStore? cache,
-  }) {
-    configure(
-      source: HtmlNovelSource(
-        baseUrl: baseUrl,
-        rules: rules,
-        headers: headers,
-      ),
-      cache: cache,
     );
   }
 
@@ -70,19 +39,29 @@ class _UnconfiguredSource implements NovelSource {
 
   Never _error() {
     throw StateError(
-      'NovelModule 未配置，请先调用 NovelModule.configure...',
+      'NovelModule 未配置，请先调用 NovelModule.configureRuleSource(...)',
     );
   }
 
   @override
-  Future<List<NovelBook>> searchBooks(String keyword, {int page = 1}) => Future.error(_error());
+  Future<List<NovelBook>> searchBooks(String keyword, {int page = 1}) =>
+      Future.error(_error());
 
   @override
-  Future<List<NovelBook>> fetchByPath(String path) => Future.error(_error());
+  Future<List<NovelBook>> fetchByPath(String path) =>
+      Future.error(_error());
 
   @override
-  Future<NovelDetail> fetchDetail({required String bookId, String? detailUrl}) => Future.error(_error());
+  Future<NovelDetail> fetchDetail({
+    required String bookId,
+    String? detailUrl,
+  }) =>
+      Future.error(_error());
 
   @override
-  Future<ChapterContent> fetchChapter({required NovelDetail detail, required int chapterIndex}) => Future.error(_error());
+  Future<ChapterContent> fetchChapter({
+    required NovelDetail detail,
+    required int chapterIndex,
+  }) =>
+      Future.error(_error());
 }

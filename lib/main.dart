@@ -6,11 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_drawer.dart';
 import 'globals.dart';
 import 'home_page.dart';
-import 'novel/novel_module.dart';
 import 'plugin_tab.dart';
 import 'tool_page.dart';
 import 'update/update_bootstrap_page.dart';
@@ -20,6 +20,11 @@ import 'warehouse_tab.dart';
 import 'pages/debug_log_page.dart';
 import 'utils/app_logger.dart';
 import 'utils/http_overrides.dart';
+
+// 小说模块相关
+import 'novel/pages/source_manager/book_source_bootstrap.dart';
+import 'novel/pages/source_manager/book_source_manager.dart';
+import 'novel/pages/source_manager/book_source_manager_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -63,28 +68,20 @@ Future<void> main() async {
     systemNavigationBarIconBrightness: Brightness.dark,
   ));
 
-  // 小说模块配置
-  NovelModule.configureQimao(
-    baseUrl: 'http://api.lemiyigou.com',
-    headers: const {
-      'User-Agent': 'okhttp/4.9.2',
-      'client-device': '2d37f6b5b6b2605373092c3dc65a3b39',
-      'client-brand': 'Redmi',
-      'client-version': '2.3.0',
-      'client-name': 'app.maoyankanshu.novel',
-      'client-source': 'android',
-      'Authorization':
-          'bearereyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwOlwvXC9hcGkuanhndHp4Yy5jb20cL2F1dGhcL3RoaXJkIiwiaWF0IjoxNjgzODkxNjUyLCJleHAiOjE3NzcyMDM2NTIsIm5ibfI6MTY4Mzg5MTY1MiwianRpIjoiR2JxWmI4bGZkbTVLYzBIViIsInN1YiI6Njg3ODYyLCJwcnYiOiJhMWNiMDM3MTgwMjk2YzZhMTkzOGVmMzBiNDM3OTQ2NzJkZDAxNmM1In0.mMxaC2SVyZKyjC6rdUqFVv5d9w_X36o0AdKD7szvE_Q',
-    },
-  );
+  // =========================
+  // 小说模块：启动自动加载规则书源
+  // =========================
+  final prefs = await SharedPreferences.getInstance();
+  final novelBootstrap = await BookSourceBootstrap.loadAndConfigure(prefs);
 
-  // 视频源配置
+  // =========================
+  // 视频源配置（保留你原来的逻辑）
+  // =========================
   VideoModule.configureLicensedCatalogSource(
     catalogName: 'OuonnkiTV',
     catalogUrls: const [
-      'https://gh-proxy.org/https://raw.githubusercontent.com/ZhuBaiwan-oOZZXX/OuonnkiTV-Source/main/tv_source/OuonnkiTV/full-noadult.json',
-      'https://ghfast.top/https://raw.githubusercontent.com/ZhuBaiwan-oOZZXX/OuonnkiTV-Source/main/tv_source/OuonnkiTV/full-noadult.json',
-      'https://raw.githubusercontent.com/ZhuBaiwan-oOZZXX/OuonnkiTV-Source/main/tv_source/OuonnkiTV/full-noadult.json',
+      'https://proxy.shuabu.eu.org?format=0&source=jin18',
+      'https://proxy.shuabu.eu.org?format=1&source=jin18',
     ],
   );
 
@@ -93,6 +90,12 @@ Future<void> main() async {
       runApp(
         MultiProvider(
           providers: [
+            // 小说书源管理器
+            ChangeNotifierProvider<BookSourceManager>(
+              create: (_) => BookSourceManager(prefs)..load(),
+            ),
+
+            // 视频相关
             ChangeNotifierProvider<VideoController>(
               create: (_) => VideoController(),
             ),
@@ -103,9 +106,10 @@ Future<void> main() async {
                 return controller;
               },
             ),
-            // ✅ 这里已经移除了已被我们淘汰的 AggregateSearchController 注入！
           ],
-          child: const MyApp(),
+          child: MyApp(
+            novelBootstrap: novelBootstrap,
+          ),
         ),
       );
     },
@@ -116,7 +120,12 @@ Future<void> main() async {
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  const MyApp({
+    super.key,
+    required this.novelBootstrap,
+  });
+
+  final BookSourceBootstrapResult novelBootstrap;
 
   @override
   Widget build(BuildContext context) {
@@ -126,6 +135,11 @@ class MyApp extends StatelessWidget {
       navigatorObservers: [appRouteObserver],
       routes: {
         '/debug-log': (_) => const DebugLogPage(),
+        '/book-source-manager': (_) => BookSourceManagerPage(
+              startupMessage: novelBootstrap.configured
+                  ? ''
+                  : novelBootstrap.message,
+            ),
       },
       theme: ThemeData(
         useMaterial3: true,
@@ -143,7 +157,9 @@ class MyApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFFF8F9FA),
       ),
       home: UpdateBootstrapPage(
-        nextPage: const MainAppShell(),
+        nextPage: MainAppShell(
+          novelBootstrap: novelBootstrap,
+        ),
         appId: 'box',
         checkUrl: 'https://box.hpa888.top/api/v1/app-updates/check',
         platform: 'android',
@@ -155,7 +171,12 @@ class MyApp extends StatelessWidget {
 }
 
 class MainAppShell extends StatefulWidget {
-  const MainAppShell({super.key});
+  const MainAppShell({
+    super.key,
+    required this.novelBootstrap,
+  });
+
+  final BookSourceBootstrapResult novelBootstrap;
 
   @override
   State<MainAppShell> createState() => _MainAppShellState();
@@ -164,8 +185,9 @@ class MainAppShell extends StatefulWidget {
 class _MainAppShellState extends State<MainAppShell> {
   int _currentIndex = 0;
   late final PageController _pageController;
+  bool _novelBootstrapPromptShown = false;
 
-  final List<Map<String, dynamic>> _tabs = [
+  late final List<Map<String, dynamic>> _tabs = [
     {
       'title': '首页',
       'icon': Icons.home_rounded,
@@ -197,6 +219,10 @@ class _MainAppShellState extends State<MainAppShell> {
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _currentIndex);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybePromptNovelSourceConfig();
+    });
   }
 
   @override
@@ -212,6 +238,49 @@ class _MainAppShellState extends State<MainAppShell> {
       index,
       duration: const Duration(milliseconds: 350),
       curve: Curves.decelerate,
+    );
+  }
+
+  Future<void> _maybePromptNovelSourceConfig() async {
+    if (_novelBootstrapPromptShown) return;
+    _novelBootstrapPromptShown = true;
+
+    if (widget.novelBootstrap.configured) return;
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('小说书源未配置'),
+          content: Text(
+            widget.novelBootstrap.message.isNotEmpty
+                ? widget.novelBootstrap.message
+                : '当前还没有可用的规则书源，部分小说功能将不可用，请先导入并启用一个书源。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('稍后再说'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                if (!mounted) return;
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => BookSourceManagerPage(
+                      startupMessage: widget.novelBootstrap.message,
+                    ),
+                  ),
+                );
+              },
+              child: const Text('去配置'),
+            ),
+          ],
+        );
+      },
     );
   }
 
