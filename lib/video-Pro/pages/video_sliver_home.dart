@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../pages/debug_log_page.dart';
 import '../controller/history_controller.dart';
 import '../controller/video_controller.dart';
 import '../models/video_source.dart';
@@ -181,6 +182,16 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
     );
   }
 
+  void _openDebugLog() {
+    if (!mounted) return;
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const DebugLogPage(),
+      ),
+    );
+  }
+
   String _currentCategoryLabel(VideoController controller) {
     final typeId = controller.currentTypeId;
     if (typeId == null) return '全部';
@@ -279,6 +290,11 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
             tooltip: '当前源搜索',
             onPressed: source == null ? null : _openCurrentSourceSearch,
             icon: const Icon(Icons.search_rounded),
+          ),
+          IconButton(
+            tooltip: '日志',
+            onPressed: _openDebugLog,
+            icon: const Icon(Icons.receipt_long_rounded),
           ),
           IconButton(
             tooltip: '聚合搜索',

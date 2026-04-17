@@ -8,9 +8,19 @@ import '../models/vod_item.dart';
 /// 异步数据解析器（运行在独立的后台线程 Isolate 中）
 class IsolateParser {
   /// 开启后台线程，解析视频列表数据
-  static Future<List<VodItem>> parseVodList(String jsonString) async {
+  static Future<List<VodItem>> parseVodList(
+    String jsonString, {
+    String? baseUrl,
+  }) async {
     if (jsonString.trim().isEmpty) return <VodItem>[];
-    return compute(_parseVodListTask, jsonString);
+
+    return compute(
+      _parseVodListTask,
+      <String, String?>{
+        'jsonString': jsonString,
+        'baseUrl': baseUrl,
+      },
+    );
   }
 
   /// 开启后台线程，解析分类列表数据
@@ -23,16 +33,19 @@ class IsolateParser {
   // 下方是纯净的后台线程任务方法（不能调用跨线程对象）
   // ===========================================================================
 
-  static List<VodItem> _parseVodListTask(String jsonString) {
+  static List<VodItem> _parseVodListTask(Map<String, String?> payload) {
     try {
+      final jsonString = payload['jsonString'] ?? '';
+      final baseUrl = payload['baseUrl'];
+
       final decoded = jsonDecode(jsonString);
       final list = extractList(decoded);
 
       return list
           .map(asMap)
           .whereType<Map<String, dynamic>>()
-          .map(_normalizeVodItem)
-          .map((e) => VodItem.fromJson(e))
+          .map((e) => _normalizeVodItem(e, baseUrl: baseUrl))
+          .map((e) => VodItem.fromJson(e, baseUrl: baseUrl))
           .where((item) => item.vodName.trim().isNotEmpty)
           .toList(growable: false);
     } catch (e) {
@@ -59,7 +72,9 @@ class IsolateParser {
     }
   }
 
-  // --- 公共健壮性提取方法 ---
+  // ===========================================================================
+  // 公共健壮性提取方法
+  // ===========================================================================
 
   static Map<String, dynamic>? asMap(dynamic value) {
     if (value is Map<String, dynamic>) return value;
@@ -138,14 +153,33 @@ class IsolateParser {
     return s == '1' || s == 'true' || s == 'yes' || s == 'on';
   }
 
-  static Map<String, dynamic> _normalizeVodItem(Map<String, dynamic> raw) {
+  static Map<String, dynamic> _normalizeVodItem(
+    Map<String, dynamic> raw, {
+    String? baseUrl,
+  }) {
     final vodId = _asInt(raw['vod_id'] ?? raw['vodId'] ?? raw['id']);
-    final vodName = _asString(raw['vod_name'] ?? raw['vodName'] ?? raw['name']);
+    final vodName = _asString(
+      raw['vod_name'] ?? raw['vodName'] ?? raw['name'] ?? raw['title'],
+    );
     final typeId = _asInt(raw['type_id'] ?? raw['typeId']);
     final typeName = _asString(raw['type_name'] ?? raw['typeName']);
-    final vodPic = _asString(
-      raw['vod_pic'] ?? raw['vodPic'] ?? raw['pic'] ?? raw['poster'] ?? raw['cover'],
+
+    final vodPicRaw = _asString(
+      raw['vod_pic'] ??
+          raw['vodPic'] ??
+          raw['pic'] ??
+          raw['poster'] ??
+          raw['cover'] ??
+          raw['image'] ??
+          raw['img'] ??
+          raw['thumb'] ??
+          raw['posterUrl'] ??
+          raw['coverUrl'] ??
+          raw['imageUrl'],
     );
+
+    final vodPic = _resolveMediaUrl(vodPicRaw, baseUrl);
+
     final vodRemarks = _asString(
       raw['vod_remarks'] ?? raw['vodRemarks'] ?? raw['remarks'] ?? raw['remark'],
     );
@@ -163,14 +197,26 @@ class IsolateParser {
       ...raw,
       'vod_id': vodId,
       'vodId': vodId,
+      'id': vodId,
       'vod_name': vodName,
       'vodName': vodName,
+      'name': vodName,
+      'title': vodName,
       'type_id': typeId,
       'typeId': typeId,
       'type_name': typeName,
       'typeName': typeName,
       'vod_pic': vodPic,
       'vodPic': vodPic,
+      'pic': vodPic,
+      'poster': vodPic,
+      'cover': vodPic,
+      'image': vodPic,
+      'img': vodPic,
+      'thumb': vodPic,
+      'posterUrl': vodPic,
+      'coverUrl': vodPic,
+      'imageUrl': vodPic,
       'vod_remarks': vodRemarks,
       'vodRemarks': vodRemarks,
       'vod_play_from': vodPlayFrom,
@@ -195,5 +241,38 @@ class IsolateParser {
       'type_name': typeName,
       'typeName': typeName,
     };
+  }
+
+  static String? _resolveMediaUrl(String? rawUrl, String? baseUrl) {
+    final value = rawUrl?.trim() ?? '';
+    if (value.isEmpty || value.toLowerCase() == 'null') return null;
+
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return value;
+    }
+
+    if (value.startsWith('//')) {
+      return 'https:$value';
+    }
+
+    final origin = _originBase(baseUrl);
+    if (origin == null) return value;
+
+    final path = value.startsWith('/') ? value.substring(1) : value;
+    return origin.resolve(path).toString();
+  }
+
+  static Uri? _originBase(String? baseUrl) {
+    final text = baseUrl?.trim() ?? '';
+    if (text.isEmpty) return null;
+
+    final uri = Uri.tryParse(text);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) return null;
+
+    final origin = uri.hasPort
+        ? '${uri.scheme}://${uri.host}:${uri.port}/'
+        : '${uri.scheme}://${uri.host}/';
+
+    return Uri.tryParse(origin);
   }
 }

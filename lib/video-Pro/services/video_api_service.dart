@@ -19,10 +19,46 @@ class VideoApiService {
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
   };
 
+  /// 是否强制把 VOD 源走代理
+  /// 你现在这个场景建议保持 true
+  static bool enableVodProxy = true;
+
+  /// 是否把封面也通过代理加载
+  /// 如果你只是拿数据，可以先 false
+  static bool enableVodMediaProxy = false;
+
+  /// 你的可访问代理前缀
+  static const String _vodProxyPrefix =
+      'https://proxy.shuabu.eu.org/?url=';
+
   static void _log(String message) {
     AppLogger.instance.log(message, tag: 'HTTP');
   }
 
+  static bool _isProxyUrl(String url) {
+    final uri = Uri.tryParse(url.trim());
+    return uri != null && uri.host == 'proxy.shuabu.eu.org';
+  }
+
+  static String _wrapWithProxy(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return trimmed;
+    if (trimmed.startsWith(_vodProxyPrefix)) return trimmed;
+    if (_isProxyUrl(trimmed)) return trimmed;
+    return '$_vodProxyPrefix${Uri.encodeComponent(trimmed)}';
+  }
+
+  /// 先补成标准 VOD 接口，再按需包代理
+  static String _buildVodBaseUrl(String baseUrl) {
+    final normalized = _normalizeProvideVodEndpoint(baseUrl.trim());
+    if (normalized.isEmpty) return normalized;
+    if (!enableVodProxy) return normalized;
+    return _wrapWithProxy(normalized);
+  }
+
+  /// 智能拼接 query：
+  /// - 普通 URL：直接追加参数
+  /// - 带 ?url=xxx 的嵌套代理/转发 URL：把参数追加到真正的内层目标地址
   static String _withQuery(String baseUrl, Map<String, String> params) {
     final trimmed = baseUrl.trim();
     if (trimmed.isEmpty || params.isEmpty) return trimmed;
@@ -33,8 +69,77 @@ class VideoApiService {
       return '$trimmed$separator${params.entries.map((e) => '${e.key}=${Uri.encodeQueryComponent(e.value)}').join('&')}';
     }
 
-    final merged = Map<String, String>.from(uri.queryParameters)..addAll(params);
-    return uri.replace(queryParameters: merged).toString();
+    final query = Map<String, String>.from(uri.queryParameters);
+    final nestedTarget = query['url'];
+
+    if (nestedTarget != null && nestedTarget.trim().isNotEmpty) {
+      query['url'] = _withQuery(nestedTarget, params);
+      return uri.replace(queryParameters: query).toString();
+    }
+
+    query.addAll(params);
+    return uri.replace(queryParameters: query).toString();
+  }
+
+  /// 递归展开嵌套 url，用于推断真实目标站点
+  static String _unwrapTargetUrl(String url, {int maxDepth = 3}) {
+    var current = url.trim();
+    if (current.isEmpty) return current;
+
+    for (var i = 0; i < maxDepth; i++) {
+      final uri = Uri.tryParse(current);
+      if (uri == null || !uri.hasScheme) break;
+
+      final nested = uri.queryParameters['url'];
+      if (nested == null || nested.trim().isEmpty) break;
+
+      current = nested.trim();
+    }
+
+    return current;
+  }
+
+  static Map<String, String> _headersForUrl(String url) {
+    final headers = <String, String>{..._defaultHeaders};
+
+    // 走代理时，不要强行带原站 Origin / Referer
+    if (_isProxyUrl(url)) {
+      return headers;
+    }
+
+    final target = _unwrapTargetUrl(url);
+    final uri = Uri.tryParse(target);
+    if (uri != null && uri.hasScheme && uri.host.isNotEmpty) {
+      final origin = uri.hasPort
+          ? '${uri.scheme}://${uri.host}:${uri.port}'
+          : '${uri.scheme}://${uri.host}';
+      headers['Origin'] = origin;
+      headers['Referer'] = '$origin/';
+    }
+
+    return headers;
+  }
+
+  /// 把裸域名自动补成标准 VOD 接口：
+  /// https://example.com  -> https://example.com/api.php/provide/vod
+  static String _normalizeProvideVodEndpoint(String baseUrl) {
+    final trimmed = baseUrl.trim();
+    if (trimmed.isEmpty) return trimmed;
+
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || !uri.hasScheme) return trimmed;
+
+    // 已经是标准接口就不动
+    if (uri.path.contains('/api.php/provide/vod')) {
+      return trimmed;
+    }
+
+    // 只对“纯根域名”自动补接口，避免破坏代理类 URL
+    if ((uri.path.isEmpty || uri.path == '/') && uri.queryParameters.isEmpty) {
+      return uri.replace(path: '/api.php/provide/vod').toString();
+    }
+
+    return trimmed;
   }
 
   static Future<String> _getRawString(
@@ -42,8 +147,10 @@ class VideoApiService {
     Duration timeout = _defaultTimeout,
     Map<String, String>? headers,
   }) async {
-    final mergedHeaders = <String, String>{..._defaultHeaders};
-    if (headers != null) mergedHeaders.addAll(headers);
+    final mergedHeaders = <String, String>{
+      ..._headersForUrl(url),
+      if (headers != null) ...headers,
+    };
 
     _log('GET $url');
 
@@ -72,7 +179,7 @@ class VideoApiService {
     try {
       return jsonDecode(cleaned);
     } catch (_) {
-      // 有些接口可能在 JSON 前后带少量文本，尝试截取
+      // 有些接口前后可能带少量文本，继续尝试截取 JSON 片段
     }
 
     final objStart = cleaned.indexOf('{');
@@ -139,14 +246,25 @@ class VideoApiService {
     return const <Map<String, dynamic>>[];
   }
 
-  /// 兼容多种 JSON 结构：
-  /// 1. 直接是数组
-  /// 2. { sources: [...] }
-  /// 3. { list: [...] }
-  /// 4. { data: [...] }
-  /// 5. { items: [...] }
-  /// 6. { rows: [...] }
-  /// 7. 你现在这种 { api_site: { xxx: {...}, ... } }
+  static bool _looksLikeVodItems(List<Map<String, dynamic>> items) {
+    if (items.isEmpty) return false;
+
+    for (final item in items.take(3)) {
+      if (item.containsKey('vod_id') ||
+          item.containsKey('vodId') ||
+          item.containsKey('vod_name') ||
+          item.containsKey('vodName') ||
+          item.containsKey('vod_play_from') ||
+          item.containsKey('vodPlayFrom') ||
+          item.containsKey('vod_play_url') ||
+          item.containsKey('vodPlayUrl')) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   static List<Map<String, dynamic>> _extractSourceItems(dynamic decoded) {
     if (decoded is List) {
       return decoded
@@ -190,7 +308,6 @@ class VideoApiService {
             item['name'] ?? item['title'] ?? entry.key,
             entry.key.toString(),
           ),
-          // 图一里的 api 对应真正接口
           'url': _asString(
             item['url'] ??
                 item['api'] ??
@@ -198,7 +315,6 @@ class VideoApiService {
                 item['api_url'] ??
                 '',
           ),
-          // detail 作为备用地址
           'detailUrl': _asString(
             item['detailUrl'] ??
                 item['detail'] ??
@@ -250,12 +366,189 @@ class VideoApiService {
     };
   }
 
+  /// 分类优先只取 class / classes / categories / type 系列，
+  /// 避免把“视频列表”误解析成“分类列表”
+  static List<Map<String, dynamic>> _extractCategoryItemsStrict(
+    dynamic decoded,
+  ) {
+    if (decoded is List) {
+      return decoded
+          .map(IsolateParser.asMap)
+          .whereType<Map<String, dynamic>>()
+          .toList(growable: false);
+    }
+
+    if (decoded is! Map) {
+      return const <Map<String, dynamic>>[];
+    }
+
+    final map = Map<String, dynamic>.from(decoded);
+
+    for (final key in const [
+      'class',
+      'classes',
+      'categories',
+      'category',
+      'types',
+    ]) {
+      final value = map[key];
+      final list = _toMapList(value);
+      if (list.isNotEmpty) return list;
+    }
+
+    final data = map['data'];
+    if (data is Map) {
+      final nested = Map<String, dynamic>.from(data);
+      for (final key in const [
+        'class',
+        'classes',
+        'categories',
+        'category',
+        'types',
+      ]) {
+        final value = nested[key];
+        final list = _toMapList(value);
+        if (list.isNotEmpty) return list;
+      }
+    }
+
+    return const <Map<String, dynamic>>[];
+  }
+
+  /// 更宽松的分类提取：在“明确非视频列表”的情况下，允许 list / items / rows 兜底
+  static List<Map<String, dynamic>> _extractCategoryItemsBroad(
+    dynamic decoded,
+  ) {
+    final strict = _extractCategoryItemsStrict(decoded);
+    if (strict.isNotEmpty) return strict;
+
+    if (decoded is! Map) return const <Map<String, dynamic>>[];
+
+    final map = Map<String, dynamic>.from(decoded);
+
+    for (final key in const [
+      'list',
+      'data',
+      'items',
+      'rows',
+      'result',
+      'sources',
+    ]) {
+      final value = map[key];
+      final list = _toMapList(value);
+      if (list.isNotEmpty) return list;
+
+      if (value is Map) {
+        final nested = Map<String, dynamic>.from(value);
+        for (final nestedKey in const [
+          'list',
+          'data',
+          'items',
+          'rows',
+          'result',
+          'class',
+          'classes',
+          'categories',
+          'category',
+          'types',
+        ]) {
+          final nestedValue = nested[nestedKey];
+          final nestedList = _toMapList(nestedValue);
+          if (nestedList.isNotEmpty) return nestedList;
+        }
+      }
+    }
+
+    return const <Map<String, dynamic>>[];
+  }
+
+  static Map<String, dynamic> _normalizeCategoryItem(Map<String, dynamic> raw) {
+    final typeId = int.tryParse(
+          _asString(raw['type_id'] ?? raw['typeId'] ?? raw['id']),
+        ) ??
+        0;
+    final typeName = _asString(
+      raw['type_name'] ?? raw['typeName'] ?? raw['name'] ?? raw['title'],
+    );
+
+    return <String, dynamic>{
+      ...raw,
+      'type_id': typeId,
+      'typeId': typeId,
+      'type_name': typeName,
+      'typeName': typeName,
+      'id': typeId == 0 ? _asString(raw['id'] ?? raw['type'] ?? '') : typeId,
+      'name': typeName,
+      'title': typeName,
+    };
+  }
+
+  /// 取“原站”的 origin，而不是代理域名
+  static Uri? _originBase(String? baseUrl) {
+    final text = baseUrl?.trim() ?? '';
+    if (text.isEmpty) return null;
+
+    final uri = Uri.tryParse(text);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) return null;
+
+    final origin = uri.hasPort
+        ? '${uri.scheme}://${uri.host}:${uri.port}/'
+        : '${uri.scheme}://${uri.host}/';
+
+    return Uri.tryParse(origin);
+  }
+
+  /// 用于封面 / 海报 / 图片
+  /// 说明：
+  /// - 代理请求时，图片相对路径仍然应当按原站补全
+  /// - 如果 enableVodMediaProxy = true，可再把图片包一层代理
+  static String? _resolveMediaUrl(String? rawUrl, String? baseUrl) {
+    final value = rawUrl?.trim() ?? '';
+    if (value.isEmpty || value.toLowerCase() == 'null') return null;
+
+    // 已经是绝对地址
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return enableVodMediaProxy ? _wrapWithProxy(value) : value;
+    }
+
+    // 协议相对地址
+    if (value.startsWith('//')) {
+      final absolute = 'https:$value';
+      return enableVodMediaProxy ? _wrapWithProxy(absolute) : absolute;
+    }
+
+    final origin = _originBase(_unwrapTargetUrl(baseUrl ?? ''));
+    if (origin == null) return value;
+
+    final path = value.startsWith('/') ? value.substring(1) : value;
+    final resolved = origin.resolve(path).toString();
+
+    if (!enableVodMediaProxy) return resolved;
+    return _wrapWithProxy(resolved);
+  }
+
+  static VodItem _patchVodItemMedia(VodItem item, String? baseUrl) {
+    final resolved = _resolveMediaUrl(item.vodPic, baseUrl);
+    if (resolved == null || resolved == item.vodPic) return item;
+    return item.copyWith(vodPic: resolved);
+  }
+
+  static List<VodItem> _patchVodItemsMedia(
+    List<VodItem> items,
+    String? baseUrl,
+  ) {
+    if (items.isEmpty) return items;
+    return items.map((e) => _patchVodItemMedia(e, baseUrl)).toList(growable: false);
+  }
+
   static Future<List<VodItem>> _fetchVodListByParams(
     String baseUrl,
     Map<String, String> params,
   ) async {
-    final rawBody = await _getRawString(_withQuery(baseUrl, params));
-    return await IsolateParser.parseVodList(rawBody);
+    final apiBase = _buildVodBaseUrl(baseUrl);
+    final rawBody = await _getRawString(_withQuery(apiBase, params));
+    final items = await IsolateParser.parseVodList(rawBody);
+    return _patchVodItemsMedia(items, apiBase);
   }
 
   static Future<List<VodItem>> _fetchVodListByCandidates(
@@ -272,6 +565,93 @@ class VideoApiService {
       }
     }
     return [];
+  }
+
+  // ======================
+  // XML 兜底解析
+  // ======================
+
+  static String _unescapeXml(String input) {
+    return input
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&apos;', "'")
+        .trim();
+  }
+
+  static String? _extractXmlTagValue(String body, String tag) {
+    final match = RegExp(
+      '<$tag\\b[^>]*>([\\s\\S]*?)</$tag>',
+      caseSensitive: false,
+    ).firstMatch(body);
+
+    if (match == null) return null;
+
+    var value = match.group(1) ?? '';
+    value = value.trim();
+
+    if (value.startsWith('<![CDATA[') && value.endsWith(']]>')) {
+      value = value.substring(9, value.length - 3);
+    }
+
+    return _unescapeXml(value);
+  }
+
+  static Map<String, dynamic>? _parseVodXmlDetail(String body) {
+    final text = body.replaceFirst(RegExp(r'^\uFEFF'), '').trim();
+    if (text.isEmpty || !text.startsWith('<')) return null;
+
+    final candidates = <String>[];
+
+    final videoMatch = RegExp(
+      r'<video[^>]*>([\s\S]*?)</video>',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (videoMatch != null) candidates.add(videoMatch.group(1) ?? '');
+
+    final itemMatch = RegExp(
+      r'<item[^>]*>([\s\S]*?)</item>',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (itemMatch != null) candidates.add(itemMatch.group(1) ?? '');
+
+    candidates.add(text);
+
+    const fields = [
+      'vod_id',
+      'type_id',
+      'type_name',
+      'vod_name',
+      'vod_pic',
+      'vod_remarks',
+      'vod_year',
+      'vod_content',
+      'vod_actor',
+      'vod_director',
+      'vod_play_from',
+      'vod_play_url',
+      'vod_lang',
+      'vod_area',
+      'vod_time',
+      'vod_score',
+    ];
+
+    for (final candidate in candidates) {
+      final map = <String, dynamic>{};
+
+      for (final field in fields) {
+        final value = _extractXmlTagValue(candidate, field);
+        if (value != null && value.isNotEmpty) {
+          map[field] = value;
+        }
+      }
+
+      if (map.isNotEmpty) return map;
+    }
+
+    return null;
   }
 
   // ======================
@@ -300,21 +680,57 @@ class VideoApiService {
     }
   }
 
-  /// 分类：优先 ac=class，部分源可能不返回分类，返回空数组属正常
+  /// 分类：
+  /// 1. 优先尝试根接口
+  /// 2. 再尝试 ac=class
+  /// 3. 再尝试 ac=list
+  ///
+  /// 注意：根接口只接受“明确是分类”的结构，避免把视频列表误判成分类
   static Future<List<VideoCategory>> fetchCategories(String baseUrl) async {
-    final url = baseUrl.trim();
+    final url = _buildVodBaseUrl(baseUrl);
     if (url.isEmpty) return [];
 
     try {
       final candidates = <Map<String, String>>[
+        const <String, String>{}, // 先试根接口
         {'ac': 'class'},
         {'ac': 'list'},
       ];
 
       for (final params in candidates) {
         try {
-          final rawBody = await _getRawString(_withQuery(url, params));
-          final items = await IsolateParser.parseCategoryList(rawBody);
+          final requestUrl = params.isEmpty ? url : _withQuery(url, params);
+          final rawBody = await _getRawString(requestUrl);
+
+          dynamic decoded;
+          try {
+            decoded = _decodeJsonSafely(rawBody);
+          } catch (_) {
+            decoded = null;
+          }
+
+          final rawItems = decoded == null
+              ? const <Map<String, dynamic>>[]
+              : (params.isEmpty
+                  ? _extractCategoryItemsStrict(decoded)
+                  : _extractCategoryItemsBroad(decoded));
+
+          if (rawItems.isEmpty) {
+            final fallback = await IsolateParser.parseCategoryList(rawBody);
+            if (fallback.isNotEmpty) return fallback;
+            continue;
+          }
+
+          if (_looksLikeVodItems(rawItems)) {
+            continue;
+          }
+
+          final items = rawItems
+              .map(_normalizeCategoryItem)
+              .map(VideoCategory.fromJson)
+              .where((item) => item.typeName.trim().isNotEmpty)
+              .toList(growable: false);
+
           if (items.isNotEmpty) return items;
         } catch (e, st) {
           _log('fetchCategories candidate failed: $e');
@@ -337,22 +753,30 @@ class VideoApiService {
     int? typeId,
     int page,
   ) async {
-    final url = baseUrl.trim();
+    final url = _buildVodBaseUrl(baseUrl);
     if (url.isEmpty) return [];
 
     final candidates = <Map<String, String>>[];
+
+    // 只有“全部 + 第 1 页”时，先试根接口
+    if (typeId == null && page == 1) {
+      candidates.add(const <String, String>{});
+    }
 
     if (typeId != null && typeId > 0) {
       candidates.addAll([
         {'ac': 'list', 't': '$typeId', 'pg': '$page'},
         {'ac': 'videolist', 't': '$typeId', 'pg': '$page'},
-        {'ac': 'list', 'pg': '$page'},
-        {'ac': 'videolist', 'pg': '$page'},
+        {'t': '$typeId', 'pg': '$page'},
+        {'ac': 'list', 't': '$typeId', 'page': '$page'},
+        {'t': '$typeId', 'page': '$page'},
       ]);
     } else {
       candidates.addAll([
         {'ac': 'list', 'pg': '$page'},
         {'ac': 'videolist', 'pg': '$page'},
+        {'pg': '$page'},
+        {'page': '$page'},
       ]);
     }
 
@@ -379,7 +803,7 @@ class VideoApiService {
     String baseUrl,
     String keyword,
   ) async {
-    final url = baseUrl.trim();
+    final url = _buildVodBaseUrl(baseUrl);
     final query = keyword.trim();
     if (url.isEmpty || query.isEmpty) return [];
 
@@ -394,7 +818,7 @@ class VideoApiService {
       try {
         final rawBody = await _getRawString(_withQuery(url, params));
         final items = await IsolateParser.parseVodList(rawBody);
-        if (items.isNotEmpty) return items;
+        if (items.isNotEmpty) return _patchVodItemsMedia(items, url);
       } catch (_) {
         continue;
       }
@@ -403,31 +827,54 @@ class VideoApiService {
     return [];
   }
 
+  /// 获取详情
   static Future<VodItem?> fetchDetail(String baseUrl, int vodId) async {
-    final url = baseUrl.trim();
+    final url = _buildVodBaseUrl(baseUrl);
     if (url.isEmpty || vodId <= 0) return null;
 
     final candidates = <Map<String, String>>[
       {'ac': 'detail', 'ids': '$vodId'},
       {'ac': 'detail', 'id': '$vodId'},
       {'ids': '$vodId'},
+      {'id': '$vodId'},
     ];
 
     for (final params in candidates) {
       try {
-        final decoded = await _getJson(_withQuery(url, params));
+        final requestUrl = _withQuery(url, params);
+        final rawBody = await _getRawString(requestUrl);
 
-        final list = _toMapList(decoded);
-        if (list.isNotEmpty) {
-          return VodItem.fromJson(list.first);
-        }
+        // 1) 先尝试按列表解析（很多源的 detail 实际也是一段 list）
+        try {
+          final items = await IsolateParser.parseVodList(rawBody);
+          if (items.isNotEmpty) {
+            return _patchVodItemMedia(items.first, url);
+          }
+        } catch (_) {}
 
-        final map = IsolateParser.asMap(decoded);
-        if (map != null &&
-            (map.containsKey('vod_id') ||
-                map.containsKey('vodId') ||
-                map.containsKey('vod_name'))) {
-          return VodItem.fromJson(map);
+        // 2) 再尝试 JSON
+        try {
+          final decoded = _decodeJsonSafely(rawBody);
+
+          final list = _toMapList(decoded);
+          if (list.isNotEmpty) {
+            return _patchVodItemMedia(VodItem.fromJson(list.first), url);
+          }
+
+          final map = IsolateParser.asMap(decoded);
+          if (map != null &&
+              (map.containsKey('vod_id') ||
+                  map.containsKey('vodId') ||
+                  map.containsKey('vod_name') ||
+                  map.containsKey('vodName'))) {
+            return _patchVodItemMedia(VodItem.fromJson(map), url);
+          }
+        } catch (_) {}
+
+        // 3) 最后尝试 XML
+        final xmlMap = _parseVodXmlDetail(rawBody);
+        if (xmlMap != null) {
+          return _patchVodItemMedia(VodItem.fromJson(xmlMap), url);
         }
       } catch (e, st) {
         _log('fetchDetail candidate failed: $e');
