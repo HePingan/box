@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 
 import '../../controller/video_controller.dart';
@@ -111,26 +113,37 @@ class HomeQuickAccessGrid extends StatelessWidget {
                 ? constraints.maxWidth
                 : screenWidth;
 
-        final isMobile = availableWidth < 600;
+        final horizontalPadding = availableWidth < 600 ? 12.0 : 16.0;
+        final spacing = 10.0;
+        final columns = availableWidth >= 960
+            ? 6
+            : availableWidth >= 720
+                ? 4
+                : availableWidth >= 420
+                    ? 3
+                    : 2;
 
-        final horizontalPadding = isMobile ? 12.0 : 16.0;
+        final itemWidth = max(
+          96.0,
+          (availableWidth - horizontalPadding * 2 - spacing * (columns - 1)) /
+              columns,
+        );
 
-        if (isMobile) {
-          final itemWidth =
-              (availableWidth - horizontalPadding * 2 - 10) / 2;
+        final compact = availableWidth < 600;
 
-          return Padding(
-            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+        return Padding(
+          padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+          child: RepaintBoundary(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    const Text(
+                    Text(
                       '快捷入口',
                       style: TextStyle(
-                        fontSize: 15.5,
+                        fontSize: compact ? 15.5 : 16,
                         fontWeight: FontWeight.bold,
                         color: Colors.black87,
                       ),
@@ -145,10 +158,10 @@ class HomeQuickAccessGrid extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
                 Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
+                  spacing: spacing,
+                  runSpacing: spacing,
                   children: [
                     for (final item in items)
                       SizedBox(
@@ -157,76 +170,13 @@ class HomeQuickAccessGrid extends StatelessWidget {
                           context: context,
                           controller: controller,
                           item: item,
-                          compact: true,
+                          compact: compact,
                         ),
                       ),
                   ],
                 ),
               ],
             ),
-          );
-        }
-
-        int crossAxisCount;
-        double aspectRatio;
-
-        if (availableWidth > 1000) {
-          crossAxisCount = 6;
-          aspectRatio = 2.5;
-        } else {
-          crossAxisCount = 3;
-          aspectRatio = 2.8;
-        }
-
-        return Padding(
-          padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  const Text(
-                    '快捷入口',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '系统猜测的常用大类',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey.shade500,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              GridView.builder(
-                padding: EdgeInsets.zero,
-                physics: const NeverScrollableScrollPhysics(),
-                shrinkWrap: true,
-                itemCount: items.length,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: crossAxisCount,
-                  childAspectRatio: aspectRatio,
-                  crossAxisSpacing: 10,
-                  mainAxisSpacing: 10,
-                ),
-                itemBuilder: (context, index) {
-                  final item = items[index];
-                  return _buildQuickAccessCard(
-                    context: context,
-                    controller: controller,
-                    item: item,
-                    compact: false,
-                  );
-                },
-              ),
-            ],
           ),
         );
       },
@@ -244,7 +194,7 @@ class HomeQuickAccessGrid extends StatelessWidget {
         : controller.currentTypeId == item.typeId && item.typeId != null;
 
     final radius = compact ? 22.0 : 12.0;
-    final height = compact ? 56.0 : null;
+    final height = compact ? 58.0 : 64.0;
     final iconSize = compact ? 18.0 : 20.0;
     final iconBoxSize = compact ? 30.0 : 34.0;
     final fontSize = compact ? 14.5 : 15.0;
@@ -262,63 +212,62 @@ class HomeQuickAccessGrid extends StatelessWidget {
 
         controller.setCategory(item.typeId);
       },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-        height: height,
-        padding: EdgeInsets.symmetric(
-          horizontal: compact ? 12 : 16,
-          vertical: compact ? 0 : 0,
-        ),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(radius),
-          gradient: LinearGradient(
-            colors: item.colors,
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+      child: RepaintBoundary(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          height: height,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(radius),
+            gradient: LinearGradient(
+              colors: item.colors,
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            border: isSelected
+                ? Border.all(color: Colors.black87, width: 2)
+                : Border.all(color: Colors.transparent, width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: item.colors.last.withOpacity(isSelected ? 0.28 : 0.16),
+                blurRadius: isSelected ? 12 : 8,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
-          border: isSelected
-              ? Border.all(color: Colors.black87, width: 2)
-              : Border.all(color: Colors.transparent, width: 1.5),
-          boxShadow: [
-            BoxShadow(
-              color: item.colors.last.withOpacity(isSelected ? 0.28 : 0.16),
-              blurRadius: isSelected ? 12 : 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: iconBoxSize,
-              height: iconBoxSize,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.18),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                item.icon,
-                color: Colors.white,
-                size: iconSize,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                item.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: iconBoxSize,
+                height: iconBoxSize,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.18),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  item.icon,
                   color: Colors.white,
-                  fontSize: fontSize,
-                  fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
-                  letterSpacing: 0,
+                  size: iconSize,
                 ),
               ),
-            ),
-          ],
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  item.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: fontSize,
+                    fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -334,7 +283,7 @@ class _QuickAccessItem {
   const _QuickAccessItem({
     required this.title,
     required this.icon,
-    required this.typeId, 
+    required this.typeId,
     required this.colors,
   });
 }

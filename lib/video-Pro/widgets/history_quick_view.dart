@@ -26,58 +26,63 @@ class HistoryQuickView extends StatelessWidget {
       builder: (context, controller, _) {
         final items = controller.historyList;
 
-        return Card(
-          elevation: 0.4,
-          color: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: Colors.grey.shade200),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildHeader(context, controller, items.length),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: Colors.grey.shade500,
+        return RepaintBoundary(
+          child: Card(
+            elevation: 0.4,
+            color: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: Colors.grey.shade200),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildHeader(context, controller, items.length),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: Colors.grey.shade500,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 10),
-                if (items.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    child: Center(
-                      child: Text(
-                        emptyText,
-                        style: TextStyle(color: Colors.grey.shade500),
+                  const SizedBox(height: 10),
+                  if (items.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      child: Center(
+                        child: Text(
+                          emptyText,
+                          style: TextStyle(color: Colors.grey.shade500),
+                        ),
+                      ),
+                    )
+                  else
+                    SizedBox(
+                      height: 188,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        physics: const ClampingScrollPhysics(),
+                        cacheExtent: 360,
+                        itemCount: items.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 12),
+                        itemBuilder: (context, index) {
+                          final item = items[index];
+                          return RepaintBoundary(
+                            child: _HistoryCard(
+                              item: item,
+                              onTap: () => _openHistoryItem(context, item),
+                              onLongPress: () =>
+                                  _confirmDelete(context, controller, item),
+                            ),
+                          );
+                        },
                       ),
                     ),
-                  )
-                else
-                  SizedBox(
-                    height: 188,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      physics: const BouncingScrollPhysics(),
-                      itemCount: items.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 12),
-                      itemBuilder: (context, index) {
-                        final item = items[index];
-                        return _HistoryCard(
-                          item: item,
-                          onTap: () => _openHistoryItem(context, item),
-                          onLongPress: () =>
-                              _confirmDelete(context, controller, item),
-                        );
-                      },
-                    ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -249,7 +254,10 @@ class _HistoryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final progress = (item.progressPercentage * 100).clamp(0, 100).toInt();
-    final imageUrl = (item.vodPic ?? '').trim();
+    final imageUrl = item.vodPic.trim();
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cacheWidth = (108 * dpr).round();
+    final cacheHeight = (150 * dpr).round();
 
     return GestureDetector(
       onTap: onTap,
@@ -266,18 +274,24 @@ class _HistoryCard extends StatelessWidget {
                   fit: StackFit.expand,
                   children: [
                     if (imageUrl.isEmpty)
-                      _buildImagePlaceholder()
+                      const _HistoryImagePlaceholder()
                     else
                       CachedNetworkImage(
                         imageUrl: imageUrl,
                         fit: BoxFit.cover,
+                        memCacheWidth: cacheWidth,
+                        memCacheHeight: cacheHeight,
+                        useOldImageOnUrlChange: true,
+                        fadeInDuration: Duration.zero,
+                        fadeOutDuration: Duration.zero,
                         httpHeaders: const {
                           'User-Agent':
                               'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                         },
-                        placeholder: (context, url) => _buildLoadingPlaceholder(),
+                        placeholder: (context, url) =>
+                            const _HistoryLoadingPlaceholder(),
                         errorWidget: (context, url, error) =>
-                            _buildImagePlaceholder(),
+                            const _HistoryImagePlaceholder(),
                       ),
                     Positioned(
                       left: 0,
@@ -377,8 +391,13 @@ class _HistoryCard extends StatelessWidget {
       ),
     );
   }
+}
 
-  Widget _buildLoadingPlaceholder() {
+class _HistoryLoadingPlaceholder extends StatelessWidget {
+  const _HistoryLoadingPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       color: Colors.grey.shade100,
       alignment: Alignment.center,
@@ -389,16 +408,20 @@ class _HistoryCard extends StatelessWidget {
       ),
     );
   }
+}
 
-  Widget _buildImagePlaceholder() {
+class _HistoryImagePlaceholder extends StatelessWidget {
+  const _HistoryImagePlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       color: Colors.grey.shade100,
-      child: const Center(
-        child: Icon(
-          Icons.movie_outlined,
-          size: 32,
-          color: Colors.grey,
-        ),
+      alignment: Alignment.center,
+      child: Icon(
+        Icons.movie_outlined,
+        size: 32,
+        color: Colors.grey.shade400,
       ),
     );
   }

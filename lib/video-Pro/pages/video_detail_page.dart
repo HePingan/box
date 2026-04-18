@@ -176,44 +176,47 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Container(
+                      SizedBox(
                         width: double.infinity,
-                        color: Colors.black,
-                        child: AspectRatio(
-                          aspectRatio: 16 / 9,
-                          child: controller.currentEpisodeUrl != null
-                              ? VideoPlayContainer(
-                                  key: ValueKey<String>(
-                                    '${controller.currentEpisodeUrl!}_${controller.selectedLineIndex}_${controller.selectedEpisodeIndex}',
-                                  ),
-                                  url: controller.currentEpisodeUrl!,
-                                  title: detail.vodName ?? controller.source.name,
-                                  vodId: controller.vodId.toString(),
-                                  vodPic: detail.vodPic ?? '',
-                                  sourceId: controller.source.id,
-                                  sourceName: controller.source.name,
-                                  episodeName:
-                                      controller.currentEpisodeName ?? '正片',
-                                  initialPosition:
-                                      controller.getEffectiveInitialPosition(),
-                                  referer: controller.source.detailUrl.isNotEmpty
-                                      ? controller.source.detailUrl
-                                      : controller.source.url,
-                                  showDebugInfo: false,
-                                  onPreviousEpisode: controller.canPlayPrevious()
-                                      ? controller.playPrevious
-                                      : null,
-                                  onNextEpisode: controller.canPlayNext()
-                                      ? controller.playNext
-                                      : null,
-                                )
-                              : const Center(
-                                  child: Text(
-                                    '无可播放资源',
-                                    style: TextStyle(color: Colors.white),
+                        child: controller.currentEpisodeUrl != null
+                            ? VideoPlayContainer(
+                                key: ValueKey<String>(
+                                  '${controller.currentEpisodeUrl!}_${controller.selectedLineIndex}_${controller.selectedEpisodeIndex}',
+                                ),
+                                url: controller.currentEpisodeUrl!,
+                                title: detail.vodName ?? controller.source.name,
+                                vodId: controller.vodId.toString(),
+                                vodPic: detail.vodPic ?? '',
+                                sourceId: controller.source.id,
+                                sourceName: controller.source.name,
+                                episodeName:
+                                    controller.currentEpisodeName ?? '正片',
+                                initialPosition:
+                                    controller.getEffectiveInitialPosition(),
+                                referer: controller.source.detailUrl.isNotEmpty
+                                    ? controller.source.detailUrl
+                                    : controller.source.url,
+                                showDebugInfo: false,
+                                onPreviousEpisode:
+                                    controller.canPlayPrevious()
+                                        ? controller.playPrevious
+                                        : null,
+                                onNextEpisode: controller.canPlayNext()
+                                    ? controller.playNext
+                                    : null,
+                              )
+                            : const AspectRatio(
+                                aspectRatio: 16 / 9,
+                                child: ColoredBox(
+                                  color: Colors.black,
+                                  child: Center(
+                                    child: Text(
+                                      '无可播放资源',
+                                      style: TextStyle(color: Colors.white),
+                                    ),
                                   ),
                                 ),
-                        ),
+                              ),
                       ),
                       const SizedBox(height: 12),
                       Padding(

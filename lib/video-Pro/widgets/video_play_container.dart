@@ -56,10 +56,7 @@ class VideoPlayContainer extends StatefulWidget {
 
 class _VideoPlayContainerState extends State<VideoPlayContainer>
     with WidgetsBindingObserver {
-  /// 解析阶段超时，给得稍微宽一点，避免一些慢站点误判
   static const Duration _resolveTimeout = Duration(seconds: 8);
-
-  /// 播放器初始化超时
   static const Duration _initTimeout = Duration(seconds: 12);
 
   final PlayerStreamResolver _streamResolver = const PlayerStreamResolver();
@@ -78,6 +75,12 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
   int _initToken = 0;
   Uri? _resolvedUri;
 
+  bool _isFullScreen = false;
+
+  /// 全屏切换期间，临时屏蔽生命周期误判
+  bool _suspendLifecyclePause = false;
+  int _fullscreenToggleToken = 0;
+
   VideoPlayArgs get _playArgs => VideoPlayArgs(
         url: widget.url,
         title: widget.title,
@@ -95,10 +98,15 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         showDebugInfo: widget.showDebugInfo,
       );
 
-  double get _aspectRatio =>
-      (_videoPlayerController?.value.aspectRatio ?? 0) > 0
-          ? _videoPlayerController!.value.aspectRatio
-          : 16 / 9;
+  double _layoutAspectRatio(BuildContext context) {
+    if (_isFullScreen) {
+      final size = MediaQuery.sizeOf(context);
+      if (size.height > 0) {
+        return size.width / size.height;
+      }
+    }
+    return 16 / 9;
+  }
 
   @override
   void initState() {
@@ -123,14 +131,19 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     final controller = _videoPlayerController;
     if (controller == null) return;
 
-    if (state == AppLifecycleState.paused) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      /// 关键：全屏切换期间不要误暂停
+      if (_suspendLifecyclePause) {
+        return;
+      }
+
       _wasPlayingBeforePause = controller.value.isPlaying;
-      unawaited(_historyTracker?.saveNow(force: true));
       if (controller.value.isPlaying) {
         controller.pause();
       }
     } else if (state == AppLifecycleState.resumed) {
-      if (_wasPlayingBeforePause) {
+      if (_wasPlayingBeforePause && !_suspendLifecyclePause) {
         controller.play();
       }
       _wasPlayingBeforePause = false;
@@ -163,6 +176,37 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     }
   }
 
+  void _onChewieStateChanged() {
+    final chewie = _chewieController;
+    if (chewie == null) return;
+
+    final now = chewie.isFullScreen;
+    if (now == _isFullScreen) return;
+
+    _isFullScreen = now;
+
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  Future<void> _toggleFullScreenSafely() async {
+    final chewie = _chewieController;
+    if (chewie == null) return;
+
+    final token = ++_fullscreenToggleToken;
+    _suspendLifecyclePause = true;
+
+    try {
+      chewie.toggleFullScreen();
+    } finally {
+      Future.delayed(const Duration(milliseconds: 1000), () {
+        if (!mounted) return;
+        if (token != _fullscreenToggleToken) return;
+        _suspendLifecyclePause = false;
+      });
+    }
+  }
+
   Future<void> _initPlayer() async {
     final int token = ++_initToken;
 
@@ -174,6 +218,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
       _isBuffering = true;
       _errorMessage = null;
       _playbackFailed = false;
+      _isFullScreen = false;
     });
 
     final rawUrl = normalizePlayableUrl(widget.url);
@@ -195,7 +240,6 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         extraHeaders: widget.httpHeaders,
       );
 
-      // 解析直接可播放地址（例如 share 页 -> m3u8）
       final playableUri = await _streamResolver
           .resolveDirectM3u8(uri, headers: headers)
           .timeout(_resolveTimeout);
@@ -203,7 +247,6 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
       if (!mounted || token != _initToken) return;
       _resolvedUri = playableUri;
 
-      // HLS 可用性探测
       if (!kIsWeb && playableUri.path.toLowerCase().contains('.m3u8')) {
         final probeOk = await _streamResolver
             .probeHls(playableUri, headers: headers)
@@ -231,7 +274,6 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
       _videoPlayerController = controller;
       controller.addListener(_onPlayerStateChanged);
 
-      // 底层播放器初始化
       await controller.initialize().timeout(_initTimeout);
 
       if (!mounted || token != _initToken) {
@@ -239,7 +281,6 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         return;
       }
 
-      // 起始播放位置
       if (widget.initialPosition > 0 &&
           controller.value.duration > Duration.zero) {
         final initial = Duration(milliseconds: widget.initialPosition);
@@ -256,15 +297,18 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         allowMuting: true,
         allowFullScreen: true,
         showControlsOnInitialize: false,
-        aspectRatio:
-            controller.value.aspectRatio > 0 ? controller.value.aspectRatio : 16 / 9,
+        aspectRatio: 16 / 9,
         customControls: CustomVideoControls(
           title: widget.title,
           episodeName: widget.episodeName,
           onPrevious: widget.onPreviousEpisode,
           onNext: widget.onNextEpisode,
+          onToggleFullScreen: _toggleFullScreenSafely,
         ),
       );
+
+      _chewieController!.addListener(_onChewieStateChanged);
+      _isFullScreen = _chewieController!.isFullScreen;
 
       _historyTracker = PlayerHistoryTracker(
         historyController: context.read<HistoryController>(),
@@ -336,6 +380,9 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     _videoPlayerController?.removeListener(_onPlayerStateChanged);
 
     final chewie = _chewieController;
+    if (chewie != null) {
+      chewie.removeListener(_onChewieStateChanged);
+    }
     _chewieController = null;
     chewie?.dispose();
 
@@ -366,14 +413,18 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
 
   @override
   Widget build(BuildContext context) {
+    final aspectRatio = _layoutAspectRatio(context);
+
     if (_errorMessage != null) {
       return AspectRatio(
-        aspectRatio: _aspectRatio,
-        child: Container(
-          color: Colors.black,
-          child: PlayerErrorOverlay(
-            errorMessage: _errorMessage!,
-            onRetry: _retry,
+        aspectRatio: aspectRatio,
+        child: ClipRect(
+          child: ColoredBox(
+            color: Colors.black,
+            child: PlayerErrorOverlay(
+              errorMessage: _errorMessage!,
+              onRetry: _retry,
+            ),
           ),
         ),
       );
@@ -383,10 +434,12 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         _chewieController == null ||
         !_videoPlayerController!.value.isInitialized) {
       return AspectRatio(
-        aspectRatio: 16 / 9,
-        child: Container(
-          color: Colors.black,
-          child: const PlayerBufferingOverlay(),
+        aspectRatio: aspectRatio,
+        child: ClipRect(
+          child: ColoredBox(
+            color: Colors.black,
+            child: const PlayerBufferingOverlay(),
+          ),
         ),
       );
     }
@@ -398,17 +451,21 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         }
       },
       child: AspectRatio(
-        aspectRatio: _aspectRatio,
-        child: Container(
-          color: Colors.black,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Chewie(controller: _chewieController!),
-              if (_isBuffering) const PlayerBufferingOverlay(),
-              if (widget.showDebugInfo)
-                PlayerDebugOverlay(info: _buildDebugInfo()),
-            ],
+        aspectRatio: aspectRatio,
+        child: ClipRect(
+          child: ColoredBox(
+            color: Colors.black,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Positioned.fill(
+                  child: Chewie(controller: _chewieController!),
+                ),
+                if (_isBuffering) const PlayerBufferingOverlay(),
+                if (widget.showDebugInfo)
+                  PlayerDebugOverlay(info: _buildDebugInfo()),
+              ],
+            ),
           ),
         ),
       ),

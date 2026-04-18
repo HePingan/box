@@ -10,12 +10,16 @@ class CustomVideoControls extends StatefulWidget {
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
 
+  /// 由父组件接管全屏切换，避免切全屏时触发误暂停
+  final VoidCallback? onToggleFullScreen;
+
   const CustomVideoControls({
     super.key,
     required this.title,
     required this.episodeName,
     this.onPrevious,
     this.onNext,
+    this.onToggleFullScreen,
   });
 
   @override
@@ -28,22 +32,18 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
 
   bool _bound = false;
 
-  /// 普通控制层是否显示
   bool _showControls = true;
-
-  /// 是否已锁定
   bool _isLocked = false;
-
-  /// 锁定时，锁图标是否显示
   bool _showLockOnly = false;
 
   bool _isScrubbing = false;
   bool _wasPlayingBeforeScrub = false;
+
   bool _wasPlayingLastTick = false;
+  bool _wasBufferingLastTick = false;
 
   Timer? _hideTimer;
 
-  /// 长按倍速播放
   bool _isLongPressSpeeding = false;
   bool _wasPlayingBeforeLongPress = false;
   double _speedBeforeLongPress = 1.0;
@@ -71,8 +71,14 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
 
     _videoController!.addListener(_onVideoTick);
 
-    if (_videoController!.value.isPlaying) {
+    final value = _videoController!.value;
+    _wasPlayingLastTick = value.isPlaying;
+    _wasBufferingLastTick = value.isBuffering;
+
+    if (value.isPlaying) {
       _startHideTimer();
+    } else {
+      _showControls = true;
     }
   }
 
@@ -89,22 +95,33 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     final controller = _videoController;
     if (controller == null) return;
 
-    final isPlaying = controller.value.isPlaying;
-    if (isPlaying == _wasPlayingLastTick) return;
+    final value = controller.value;
+    final isPlaying = value.isPlaying;
+    final isBuffering = value.isBuffering;
+
+    if (isPlaying == _wasPlayingLastTick &&
+        isBuffering == _wasBufferingLastTick) {
+      return;
+    }
 
     _wasPlayingLastTick = isPlaying;
+    _wasBufferingLastTick = isBuffering;
 
     if (!mounted) return;
 
     setState(() {
       if (isPlaying) {
-        if (!_isLocked &&
-            !_isScrubbing &&
-            !_isLongPressSpeeding) {
-          _startHideTimer();
+        if (isBuffering) {
+          if (!_isLocked) {
+            _showControls = true;
+          }
+          _hideTimer?.cancel();
+        } else {
+          if (!_isLocked && !_isScrubbing && !_isLongPressSpeeding) {
+            _startHideTimer();
+          }
         }
       } else {
-        // 暂停时，确保普通控制层显示
         if (!_isLocked) {
           _showControls = true;
         }
@@ -132,6 +149,7 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     });
   }
 
+  /// 双击：播放 / 暂停
   void _togglePlayPause() {
     final controller = _videoController;
     if (controller == null || _isLocked) return;
@@ -151,19 +169,18 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     }
   }
 
+  /// 单击：只显示/隐藏控制层，不做播放暂停
   void _toggleControls() {
     final controller = _videoController;
     if (controller == null) return;
 
     if (_isLocked) {
-      // 锁定时：单击屏幕只负责切换锁显示/隐藏
       setState(() {
         _showLockOnly = !_showLockOnly;
       });
       return;
     }
 
-    // 暂停时，不允许隐藏控制层，否则用户找不到播放按钮
     if (!controller.value.isPlaying) {
       setState(() {
         _showControls = true;
@@ -185,7 +202,6 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
   void _toggleLock() {
     setState(() {
       if (_isLocked) {
-        // 解锁
         _isLocked = false;
         _showLockOnly = false;
         _showControls = true;
@@ -196,7 +212,6 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
           _startHideTimer();
         }
       } else {
-        // 锁定
         _isLocked = true;
         _showLockOnly = true;
         _showControls = false;
@@ -205,6 +220,18 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
         _hideTimer?.cancel();
       }
     });
+  }
+
+  void _handleBack() {
+    final chewie = _chewieController;
+    if (chewie != null && chewie.isFullScreen) {
+      chewie.exitFullScreen();
+      return;
+    }
+
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).maybePop();
+    }
   }
 
   String _formatDuration(Duration duration) {
@@ -252,7 +279,6 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     final screenWidth = MediaQuery.of(context).size.width;
     if (screenWidth <= 0) return;
 
-    // 横向拖动一整屏，约等于 300 秒
     final dragRatio = details.delta.dx / screenWidth;
     final dragSeconds = (dragRatio * 300).toInt();
 
@@ -310,7 +336,6 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     _speedBeforeLongPress = _playbackSpeed;
     _wasPlayingBeforeLongPress = controller.value.isPlaying;
 
-    // 长按时临时播放
     if (!controller.value.isPlaying) {
       controller.play();
     }
@@ -328,10 +353,8 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
   void _endLongPressSpeed() {
     final controller = _videoController;
     if (controller != null) {
-      // 恢复原来的速度
       controller.setPlaybackSpeed(_speedBeforeLongPress);
 
-      // 如果长按前是暂停，松开后恢复暂停
       if (!_wasPlayingBeforeLongPress) {
         controller.pause();
       }
@@ -431,14 +454,14 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     return '$state · $buffering · ${_formatSpeed(_playbackSpeed)}x';
   }
 
-  Widget _buildLockButton() {
+  Widget _buildLockOnlyButton() {
     return Positioned(
-      left: 8,
+      left: 0,
       top: 0,
-      bottom: 0,
       child: SafeArea(
-        child: Align(
-          alignment: Alignment.centerLeft,
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.only(left: 4, top: 4),
           child: Material(
             color: Colors.black.withOpacity(0.55),
             shape: const CircleBorder(),
@@ -467,34 +490,65 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
         duration: const Duration(milliseconds: 180),
         child: IgnorePointer(
           ignoring: !controlsVisible,
-          child: Container(
-            height: 84,
-            padding: const EdgeInsets.only(top: 10, left: 52, right: 10),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.black.withOpacity(0.80),
-                  Colors.transparent,
-                ],
+          child: SafeArea(
+            bottom: false,
+            child: Container(
+              height: 56,
+              padding: const EdgeInsets.only(left: 2, right: 8),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.80),
+                    Colors.transparent,
+                  ],
+                ),
               ),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '${widget.title} - ${widget.episodeName}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+              child: Row(
+                children: [
+                  IconButton(
+                    tooltip: _isLocked ? '解锁' : '锁定',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 40,
+                      height: 40,
+                    ),
+                    icon: Icon(
+                      _isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
                       color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
+                      size: 22,
+                    ),
+                    onPressed: _toggleLock,
+                  ),
+                  IconButton(
+                    tooltip: '返回',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 40,
+                      height: 40,
+                    ),
+                    icon: const Icon(
+                      Icons.arrow_back_rounded,
+                      color: Colors.white,
+                    ),
+                    onPressed: _handleBack,
+                  ),
+                  const SizedBox(width: 2),
+                  Expanded(
+                    child: Text(
+                      '${widget.title} - ${widget.episodeName}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -507,7 +561,6 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     if (controller == null) return const SizedBox.shrink();
     if (_isLocked) return const SizedBox.shrink();
 
-    // 播放中不显示中央大按钮
     if (controller.value.isPlaying && !_isScrubbing) {
       return const SizedBox.shrink();
     }
@@ -517,23 +570,21 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
         opacity: controlsVisible ? 1.0 : 0.0,
         duration: const Duration(milliseconds: 180),
         child: IgnorePointer(
-          ignoring: !controlsVisible,
-          child: GestureDetector(
-            onTap: _togglePlayPause,
-            child: Container(
-              width: 76,
-              height: 76,
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.35),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                controller.value.isPlaying
-                    ? Icons.pause_rounded
-                    : Icons.play_arrow_rounded,
-                color: Colors.white,
-                size: 44,
-              ),
+          /// 关键：中间按钮不再接收点击，避免误触播放/暂停
+          ignoring: true,
+          child: Container(
+            width: 76,
+            height: 76,
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.35),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              controller.value.isPlaying
+                  ? Icons.pause_rounded
+                  : Icons.play_arrow_rounded,
+              color: Colors.white,
+              size: 44,
             ),
           ),
         ),
@@ -557,104 +608,107 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
         duration: const Duration(milliseconds: 180),
         child: IgnorePointer(
           ignoring: !controlsVisible,
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.bottomCenter,
-                end: Alignment.topCenter,
-                colors: [
-                  Colors.black.withOpacity(0.92),
-                  Colors.transparent,
-                ],
-              ),
-            ),
-            padding: const EdgeInsets.only(
-              bottom: 20,
-              top: 40,
-              left: 12,
-              right: 12,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    if (widget.onPrevious != null)
-                      IconButton(
-                        tooltip: '上一集',
-                        icon: const Icon(
-                          Icons.skip_previous_rounded,
-                          color: Colors.white,
-                        ),
-                        onPressed: widget.onPrevious,
-                      ),
-                    if (widget.onNext != null)
-                      IconButton(
-                        tooltip: '下一集',
-                        icon: const Icon(
-                          Icons.skip_next_rounded,
-                          color: Colors.white,
-                        ),
-                        onPressed: widget.onNext,
-                      ),
-                    const SizedBox(width: 8),
-                    ValueListenableBuilder<VideoPlayerValue>(
-                      valueListenable: controller,
-                      builder: (context, value, child) {
-                        return Text(
-                          '${_formatDuration(value.position)} / ${_formatDuration(value.duration)}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                          ),
-                        );
-                      },
-                    ),
-                    const Spacer(),
-                    TextButton(
-                      onPressed: _showSpeedSheet,
-                      child: Text(
-                        '${_formatSpeed(_playbackSpeed)}x',
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: chewieController.isFullScreen
-                          ? '退出全屏'
-                          : '全屏',
-                      icon: Icon(
-                        chewieController.isFullScreen
-                            ? Icons.fullscreen_exit_rounded
-                            : Icons.fullscreen_rounded,
-                        color: Colors.white,
-                        size: 28,
-                      ),
-                      onPressed: () => chewieController.toggleFullScreen(),
-                    ),
+          child: SafeArea(
+            top: false,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.92),
+                    Colors.transparent,
                   ],
                 ),
-                SizedBox(
-                  height: 20,
-                  child: VideoProgressIndicator(
-                    controller,
-                    allowScrubbing: true,
-                    colors: const VideoProgressColors(
-                      playedColor: Colors.blueAccent,
-                      bufferedColor: Colors.white38,
-                      backgroundColor: Colors.white24,
+              ),
+              padding: const EdgeInsets.only(
+                bottom: 20,
+                top: 40,
+                left: 12,
+                right: 12,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      if (widget.onPrevious != null)
+                        IconButton(
+                          tooltip: '上一集',
+                          icon: const Icon(
+                            Icons.skip_previous_rounded,
+                            color: Colors.white,
+                          ),
+                          onPressed: widget.onPrevious,
+                        ),
+                      if (widget.onNext != null)
+                        IconButton(
+                          tooltip: '下一集',
+                          icon: const Icon(
+                            Icons.skip_next_rounded,
+                            color: Colors.white,
+                          ),
+                          onPressed: widget.onNext,
+                        ),
+                      const SizedBox(width: 8),
+                      ValueListenableBuilder<VideoPlayerValue>(
+                        valueListenable: controller,
+                        builder: (context, value, child) {
+                          return Text(
+                            '${_formatDuration(value.position)} / ${_formatDuration(value.duration)}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                            ),
+                          );
+                        },
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: _showSpeedSheet,
+                        child: Text(
+                          '${_formatSpeed(_playbackSpeed)}x',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip:
+                            chewieController.isFullScreen ? '退出全屏' : '全屏',
+                        icon: Icon(
+                          chewieController.isFullScreen
+                              ? Icons.fullscreen_exit_rounded
+                              : Icons.fullscreen_rounded,
+                          color: Colors.white,
+                          size: 28,
+                        ),
+                        onPressed: widget.onToggleFullScreen ??
+                            () => chewieController.toggleFullScreen(),
+                      ),
+                    ],
+                  ),
+                  SizedBox(
+                    height: 20,
+                    child: VideoProgressIndicator(
+                      controller,
+                      allowScrubbing: true,
+                      colors: const VideoProgressColors(
+                        playedColor: Colors.blueAccent,
+                        bufferedColor: Colors.white38,
+                        backgroundColor: Colors.white24,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _bottomStateText(),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 11,
+                  const SizedBox(height: 4),
+                  Text(
+                    _bottomStateText(),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -742,18 +796,15 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
       return const SizedBox.shrink();
     }
 
-    /// 未锁定：播放中可自动隐藏，暂停时必须显示
     final showNormalControls =
         !_isLocked && (_showControls || !controller.value.isPlaying || _isScrubbing);
 
-    /// 锁定时：只显示锁按钮
     final showLockOnly = _isLocked && _showLockOnly;
 
     return SizedBox.expand(
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // 背景手势层
           Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
@@ -771,19 +822,15 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
             ),
           ),
 
-          // 未锁定时：普通控制层里的锁按钮 + 其他控件
           if (showNormalControls) ...[
-            _buildLockButton(),
             _buildTopBar(showNormalControls),
             _buildCenterPlayButton(showNormalControls),
             _buildBottomBar(showNormalControls),
             if (_isScrubbing) _buildScrubOverlay(),
           ],
 
-          // 锁定时：只保留锁按钮
-          if (showLockOnly) _buildLockButton(),
+          if (showLockOnly) _buildLockOnlyButton(),
 
-          // 长按倍速提示
           _buildLongPressSpeedHint(),
         ],
       ),

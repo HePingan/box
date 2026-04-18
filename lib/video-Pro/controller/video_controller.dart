@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -26,9 +27,18 @@ class VideoController extends ChangeNotifier {
     '量子',
   ];
 
+  static Future<SharedPreferences>? _prefsFuture;
+
   final List<VideoSource> _sources = <VideoSource>[];
   final List<VideoCategory> _categories = <VideoCategory>[];
   final List<VodItem> _videoList = <VodItem>[];
+
+  late final UnmodifiableListView<VideoSource> _sourcesView =
+      UnmodifiableListView<VideoSource>(_sources);
+  late final UnmodifiableListView<VideoCategory> _categoriesView =
+      UnmodifiableListView<VideoCategory>(_categories);
+  late final UnmodifiableListView<VodItem> _videoListView =
+      UnmodifiableListView<VodItem>(_videoList);
 
   VideoSource? _currentSource;
   int? _currentTypeId;
@@ -45,49 +55,12 @@ class VideoController extends ChangeNotifier {
   bool _coverPrefetchQueued = false;
 
   // =========================
-  // 日志辅助
-  // =========================
-
-  void _log(String message) {
-    if (kDebugMode) {
-      AppLogger.instance.log(message, tag: 'VIDEO_CONTROLLER');
-    }
-  }
-
-  String _briefSource(VideoSource? source) {
-    if (source == null) return 'null';
-    return 'name=${source.name}, id=${source.id}, url=${source.url}, detail=${source.detailUrl}';
-  }
-
-  String _briefCategories(List<VideoCategory> categories, {int limit = 8}) {
-    if (categories.isEmpty) return '[]';
-    return categories
-        .take(limit)
-        .map((e) => '${e.typeId}:${e.typeName}')
-        .join(' | ');
-  }
-
-  String _briefVideos(List<VodItem> videos, {int limit = 3}) {
-    if (videos.isEmpty) return '[]';
-    return videos
-        .take(limit)
-        .map((e) => '${e.vodId}:${e.vodName}:pic=${e.vodPic ?? "null"}')
-        .join(' | ');
-  }
-
-  bool _hasText(String? value) {
-    if (value == null) return false;
-    final text = value.trim();
-    return text.isNotEmpty && text.toLowerCase() != 'null';
-  }
-
-  // =========================
   // 对外 getters
   // =========================
 
-  List<VideoSource> get sources => List.unmodifiable(_sources);
-  List<VideoCategory> get categories => List.unmodifiable(_categories);
-  List<VodItem> get videoList => List.unmodifiable(_videoList);
+  List<VideoSource> get sources => _sourcesView;
+  List<VideoCategory> get categories => _categoriesView;
+  List<VodItem> get videoList => _videoListView;
 
   VideoSource? get currentSource => _currentSource;
   int? get currentTypeId => _currentTypeId;
@@ -106,8 +79,8 @@ class VideoController extends ChangeNotifier {
         'currentSource=${_currentSource?.name ?? '-'}, '
         'currentTypeId=${_currentTypeId?.toString() ?? 'all'}, '
         'page=$_currentPage, '
-        'hasMore=$hasMore, '
-        'isLoading=$isLoading, '
+        'hasMore=$_hasMore, '
+        'isLoading=$_isLoading, '
         'error=${_errorMessage ?? '-'}';
   }
 
@@ -127,31 +100,30 @@ class VideoController extends ChangeNotifier {
 
     final token = _beginRequest();
 
-    _log('[initSources] start catalogUrl=$catalogUrl');
-    _setLoading(true);
+    _isLoading = true;
     _errorMessage = null;
-    notifyListeners();
+    _notify();
 
     try {
-      final sources = await _repository.loadSources(catalogUrl);
-      if (_isStale(token)) {
-        _log('[initSources] stale after loadSources token=$token');
+      final url = catalogUrl.trim();
+      if (url.isEmpty) {
+        _sources.clear();
+        _categories.clear();
+        _videoList.clear();
+        _currentSource = null;
+        _currentTypeId = null;
+        _currentPage = 1;
+        _hasMore = false;
+        _errorMessage = '目录地址为空';
         return;
       }
 
-      _log(
-        '[initSources] loadSources result count=${sources.length} '
-        'sample=${sources.take(3).map((e) => e.name).join(" | ")}',
-      );
+      final sources = await _repository.loadSources(url);
+      if (_isStale(token)) return;
 
       _sources
         ..clear()
         ..addAll(_dedupeSources(sources));
-
-      _log(
-        '[initSources] deduped sources=${_sources.length} '
-        'sample=${_sources.take(5).map((e) => e.name).join(" | ")}',
-      );
 
       if (_sources.isEmpty) {
         _currentSource = null;
@@ -161,42 +133,21 @@ class VideoController extends ChangeNotifier {
         _currentPage = 1;
         _hasMore = false;
         _errorMessage = '暂无可用视频源';
-        _setLoading(false);
-        _log('[initSources] no sources available');
-        notifyListeners();
         return;
       }
 
-      // 1) 先尝试恢复上次选择的源
       final savedSourceKey = await _loadLastSourceKey();
-      if (_isStale(token)) {
-        _log('[initSources] stale after _loadLastSourceKey token=$token');
-        return;
-      }
-
-      _log('[initSources] savedSourceKey=${savedSourceKey ?? "null"}');
+      if (_isStale(token)) return;
 
       VideoSource? selectedSource;
+
       if (savedSourceKey != null && savedSourceKey.isNotEmpty) {
         selectedSource = _findSourceByKey(_sources, savedSourceKey);
-        _log('[initSources] selected by saved key => ${_briefSource(selectedSource)}');
       }
 
-      // 2) 再尝试默认源
       selectedSource ??= _findDefaultSource(_sources);
-      if (selectedSource != null) {
-        _log('[initSources] selected default source => ${_briefSource(selectedSource)}');
-      }
-
-      // 3) 再尝试匹配当前源
       selectedSource ??= _findMatchingSource(_sources, _currentSource);
-      if (selectedSource != null) {
-        _log('[initSources] selected matched current source => ${_briefSource(selectedSource)}');
-      }
-
-      // 4) 最后兜底第一个
       selectedSource ??= _sources.first;
-      _log('[initSources] final selected source => ${_briefSource(selectedSource)}');
 
       await _loadSourceData(
         source: selectedSource,
@@ -207,47 +158,41 @@ class VideoController extends ChangeNotifier {
         page: 1,
       );
 
-      if (_isStale(token)) {
-        _log('[initSources] stale after _loadSourceData token=$token');
-        return;
-      }
+      if (_isStale(token)) return;
 
-      // 只有成功加载后再保存，避免把坏源写进缓存
       if (_errorMessage == null && selectedSource != null) {
         await _saveLastSourceKey(_sourceKey(selectedSource));
-        _log('[initSources] saved last source key=${_sourceKey(selectedSource)}');
       }
-
-      _log('[initSources] done => $debugSummary');
     } catch (e, st) {
       if (_isStale(token)) return;
 
       AppLogger.instance.logError(e, st, 'VIDEO_CONTROLLER');
       _errorMessage = '初始化片源失败：$e';
-      _setLoading(false);
-      notifyListeners();
+    } finally {
+      if (_isStale(token)) return;
+      _isLoading = false;
+      _notify();
     }
   }
 
   /// 切换当前片源
   Future<void> setCurrentSource(VideoSource source) async {
     if (_disposed) return;
+
     if (_currentSource != null && _sameSource(_currentSource!, source)) {
-      _log('[setCurrentSource] same source ignored => ${_briefSource(source)}');
       return;
     }
 
     final token = _beginRequest();
 
-    _log('[setCurrentSource] source=${_briefSource(source)}');
     _currentSource = source;
     _currentTypeId = null;
     _videoList.clear();
     _currentPage = 1;
     _hasMore = false;
     _errorMessage = null;
-    _setLoading(true);
-    notifyListeners();
+    _isLoading = true;
+    _notify();
 
     await _loadSourceData(
       source: source,
@@ -258,39 +203,27 @@ class VideoController extends ChangeNotifier {
       page: 1,
     );
 
-    if (_isStale(token)) {
-      _log('[setCurrentSource] stale after load token=$token');
-      return;
-    }
+    if (_isStale(token)) return;
 
     if (_errorMessage == null) {
       await _saveLastSourceKey(_sourceKey(source));
-      _log('[setCurrentSource] saved last source key=${_sourceKey(source)}');
     }
-
-    _log('[setCurrentSource] done => $debugSummary');
   }
 
   /// 刷新当前片源
-  ///
-  /// 不会强制切换分类，默认保留当前分类。
   Future<void> refreshCurrentSource() async {
     if (_disposed) return;
+
     final source = _currentSource;
     if (source == null) {
-      _log('[refreshCurrentSource] skipped, currentSource is null');
       return;
     }
 
     final token = _beginRequest();
 
-    _log(
-      '[refreshCurrentSource] source=${_briefSource(source)} '
-      'currentTypeId=${_currentTypeId?.toString() ?? "all"}',
-    );
     _errorMessage = null;
-    _setLoading(true);
-    notifyListeners();
+    _isLoading = true;
+    _notify();
 
     await _loadSourceData(
       source: source,
@@ -300,8 +233,6 @@ class VideoController extends ChangeNotifier {
       append: false,
       page: 1,
     );
-
-    _log('[refreshCurrentSource] done => $debugSummary');
   }
 
   /// 切换分类
@@ -312,23 +243,18 @@ class VideoController extends ChangeNotifier {
 
     final source = _currentSource;
     if (source == null) {
-      _log(
-        '[setCategory] skipped, currentSource is null, '
-        'typeId=${typeId?.toString() ?? "all"}',
-      );
       return;
     }
 
     final token = _beginRequest();
 
-    _log('[setCategory] source=${_briefSource(source)} typeId=${typeId?.toString() ?? "all"}');
     _currentTypeId = typeId;
     _videoList.clear();
     _currentPage = 1;
     _hasMore = false;
     _errorMessage = null;
-    _setLoading(true);
-    notifyListeners();
+    _isLoading = true;
+    _notify();
 
     await _loadSourceData(
       source: source,
@@ -338,8 +264,6 @@ class VideoController extends ChangeNotifier {
       append: false,
       page: 1,
     );
-
-    _log('[setCategory] done => $debugSummary');
   }
 
   /// 加载更多
@@ -347,29 +271,20 @@ class VideoController extends ChangeNotifier {
     if (_disposed) return;
 
     if (_isLoading || !_hasMore) {
-      _log(
-        '[loadMore] skipped isLoading=$_isLoading hasMore=$_hasMore '
-        'page=$_currentPage source=${_briefSource(_currentSource)}',
-      );
       return;
     }
 
     final source = _currentSource;
     if (source == null) {
-      _log('[loadMore] skipped, currentSource is null');
       return;
     }
 
     final nextPage = _currentPage + 1;
     final token = _beginRequest();
 
-    _log(
-      '[loadMore] start source=${_briefSource(source)} '
-      'nextPage=$nextPage typeId=${_currentTypeId?.toString() ?? "all"}',
-    );
-    _setLoading(true);
+    _isLoading = true;
     _errorMessage = null;
-    notifyListeners();
+    _notify();
 
     await _loadSourceData(
       source: source,
@@ -379,30 +294,30 @@ class VideoController extends ChangeNotifier {
       append: true,
       page: nextPage,
     );
-
-    _log('[loadMore] done => $debugSummary');
   }
 
   /// 清掉错误状态
   void clearError() {
+    if (_errorMessage == null) return;
     _errorMessage = null;
-    _log('[clearError] cleared');
-    notifyListeners();
+    _notify();
   }
 
   /// 替换当前列表中的某一条视频
   ///
-  /// 注意：这里只更新当前列表，不会改变片源。
+  /// 只更新当前列表，不会改片源
   void replaceVideoItem(VodItem updated) {
     final changed = _replaceVideoItemByVodId(updated);
     if (!changed) return;
-    notifyListeners();
+    _notify();
   }
 
   @override
   void dispose() {
     _disposed = true;
-    _log('[dispose] controller disposed');
+    _requestToken++;
+    _coverPrefetchRunning = false;
+    _coverPrefetchQueued = false;
     super.dispose();
   }
 
@@ -419,68 +334,30 @@ class VideoController extends ChangeNotifier {
     required int page,
   }) async {
     try {
-      _log(
-        '[loadSourceData] start '
-        'source=${_briefSource(source)} '
-        'reloadCategories=$reloadCategories '
-        'resetCategory=$resetCategory '
-        'append=$append '
-        'page=$page '
-        'currentTypeId=${_currentTypeId?.toString() ?? "all"}',
-      );
-
       List<VideoCategory> newCategories = _categories;
 
-      // 1) 先加载分类（如果需要）
       if (reloadCategories) {
         try {
           newCategories = await _repository.loadCategories(source);
-          if (_isStale(token)) {
-            _log('[loadSourceData] stale after loadCategories token=$token');
-            return;
-          }
-
-          _log(
-            '[loadSourceData] categories loaded count=${newCategories.length} '
-            'sample=${_briefCategories(newCategories)}',
-          );
+          if (_isStale(token)) return;
         } catch (e, st) {
           // 分类失败不应该阻断视频加载
           AppLogger.instance.logError(e, st, 'VIDEO_CONTROLLER');
           newCategories = <VideoCategory>[];
-          _log('[loadSourceData] categories load failed, fallback to empty list');
         }
       }
 
-      // 2) 决定最终使用的分类 ID
-      int? effectiveTypeId;
-      if (resetCategory) {
-        effectiveTypeId = null;
-      } else {
-        effectiveTypeId = _normalizeTypeId(_currentTypeId, newCategories);
-      }
+      final effectiveTypeId = resetCategory
+          ? null
+          : _normalizeTypeId(_currentTypeId, newCategories);
 
-      _log(
-        '[loadSourceData] effectiveTypeId=${effectiveTypeId?.toString() ?? "all"} '
-        'newCategories=${newCategories.length}',
-      );
-
-      // 3) 拉视频
       final videos = await _loadVideosWithFallback(
         source: source,
         typeId: effectiveTypeId,
         page: page,
       );
 
-      if (_isStale(token)) {
-        _log('[loadSourceData] stale after loadVideos token=$token');
-        return;
-      }
-
-      _log(
-        '[loadSourceData] videos fetched count=${videos.length} '
-        'sample=${_briefVideos(videos)}',
-      );
+      if (_isStale(token)) return;
 
       if (append) {
         _videoList.addAll(videos);
@@ -502,20 +379,9 @@ class VideoController extends ChangeNotifier {
       _hasMore = videos.length >= _repository.pageSize;
       _errorMessage = null;
 
-      _log(
-        '[loadSourceData] applied '
-        'source=${source.name} '
-        'categories=${_categories.length} '
-        'videos=${_videoList.length} '
-        'currentTypeId=${_currentTypeId?.toString() ?? "all"} '
-        'page=$_currentPage '
-        'hasMore=$_hasMore',
-      );
-
-      // 列表数据成功后，异步补齐当前批次缺封面的视频
-      // 首屏优先补 20 条，后续分页优先补 10 条
       _scheduleCoverPrefetch(
         source,
+        token: token,
         items: videos,
         limit: page == 1 ? 20 : 10,
       );
@@ -524,59 +390,29 @@ class VideoController extends ChangeNotifier {
 
       AppLogger.instance.logError(e, st, 'VIDEO_CONTROLLER');
       _errorMessage = '加载失败：$e';
-      _log('[loadSourceData] error=$e');
     } finally {
-      if (_isStale(token)) {
-        _log('[loadSourceData] stale in finally token=$token');
-        return;
-      }
+      if (_isStale(token)) return;
 
-      _setLoading(false);
-      notifyListeners();
-
-      _log('[loadSourceData] finished => $debugSummary');
+      _isLoading = false;
+      _notify();
     }
   }
 
-  /// 先按分类加载；如果第一页按分类没数据，自动回退到“全部”
+  /// 先按分类加载；如果第一页分类没数据，自动回退到“全部”
   Future<List<VodItem>> _loadVideosWithFallback({
     required VideoSource source,
     required int? typeId,
     required int page,
   }) async {
-    _log(
-      '[loadVideos] request '
-      'source=${_briefSource(source)} '
-      'typeId=${typeId?.toString() ?? "all"} '
-      'page=$page',
-    );
-
     final videos = await _repository.loadVideos(
       source,
       typeId: typeId,
       page: page,
     );
 
-    _log(
-      '[loadVideos] result '
-      'source=${source.name} '
-      'typeId=${typeId?.toString() ?? "all"} '
-      'page=$page '
-      'count=${videos.length} '
-      'sample=${_briefVideos(videos)}',
-    );
-
-    // 只有第一页才允许回退到“全部”，避免 loadMore 混入别的分类
     if (videos.isNotEmpty || typeId == null || page != 1) {
       return videos;
     }
-
-    _log(
-      '[loadVideos] fallback to all category '
-      'source=${source.name} '
-      'page=$page '
-      'because category load returned empty',
-    );
 
     final fallbackVideos = await _repository.loadVideos(
       source,
@@ -584,20 +420,12 @@ class VideoController extends ChangeNotifier {
       page: page,
     );
 
-    _log(
-      '[loadVideos] fallback result '
-      'source=${source.name} '
-      'typeId=all '
-      'page=$page '
-      'count=${fallbackVideos.length} '
-      'sample=${_briefVideos(fallbackVideos)}',
-    );
-
     return fallbackVideos;
   }
 
   void _scheduleCoverPrefetch(
     VideoSource source, {
+    required int token,
     List<VodItem>? items,
     int limit = 20,
   }) {
@@ -611,18 +439,25 @@ class VideoController extends ChangeNotifier {
     unawaited(
       _prefetchMissingCovers(
         source: source,
+        token: token,
         items: items,
         limit: limit,
       ),
     );
   }
 
+  /// 异步补齐封面
+  ///
+  /// 注意：
+  /// - 使用 token 防止切源 / 切分类后旧任务继续改当前列表
+  /// - 只在全部处理完成后统一 notify，减少 UI 抖动
   Future<void> _prefetchMissingCovers({
     required VideoSource source,
+    required int token,
     List<VodItem>? items,
     int limit = 20,
   }) async {
-    if (_disposed) return;
+    if (_disposed || _isStale(token)) return;
 
     if (_coverPrefetchRunning) {
       _coverPrefetchQueued = true;
@@ -635,87 +470,83 @@ class VideoController extends ChangeNotifier {
     try {
       final activeSource = _currentSource;
       if (activeSource == null || !_sameSource(activeSource, source)) {
-        _log('[prefetchMissingCovers] skipped because source changed');
         return;
       }
 
-      final targetItems = (items ?? _videoList)
+      final snapshot = List<VodItem>.from(items ?? _videoList);
+      final targetItems = snapshot
           .where((v) => !_hasText(v.vodPic))
           .take(limit)
           .toList(growable: false);
 
       if (targetItems.isEmpty) {
-        _log('[prefetchMissingCovers] no missing cover targets');
         return;
       }
 
-      _log(
-        '[prefetchMissingCovers] start '
-        'source=${source.name} '
-        'limit=$limit '
-        'targets=${targetItems.length}',
-      );
+      final indexByVodId = <int, int>{};
+      for (int i = 0; i < _videoList.length; i++) {
+        indexByVodId[_videoList[i].vodId] = i;
+      }
 
       const int batchSize = 4;
 
       for (int i = 0; i < targetItems.length; i += batchSize) {
-        if (_disposed) break;
+        if (_disposed || _isStale(token)) break;
 
         final batch = targetItems.skip(i).take(batchSize).toList(growable: false);
-        bool batchChanged = false;
 
         final results = await Future.wait<VodItem?>(
-          batch.map((item) async {
-            if (_disposed) return null;
-
-            final currentSource = _currentSource;
-            if (currentSource == null || !_sameSource(currentSource, source)) {
-              return null;
-            }
-
-            return VodDetailFillService.instance.fill(
+          batch.map(
+            (item) => VodDetailFillService.instance.fill(
               source: source,
               vodId: item.vodId,
               baseItem: item,
-            );
-          }),
+            ),
+          ),
         );
 
-        for (final filled in results) {
-          if (_disposed || filled == null) continue;
+        if (_disposed || _isStale(token)) break;
 
-          if (_hasText(filled.vodPic)) {
-            final updated = _replaceVideoItemByVodId(filled);
-            if (updated) {
-              batchChanged = true;
-              anyChanged = true;
-              _log(
-                '[prefetchMissingCovers] cover filled '
-                'vodId=${filled.vodId} '
-                'vodName=${filled.vodName} '
-                'vodPic=${filled.vodPic}',
-              );
-            }
-          }
+        final currentSource = _currentSource;
+        if (currentSource == null || !_sameSource(currentSource, source)) {
+          break;
         }
 
-        if (batchChanged && !_disposed) {
-          notifyListeners();
+        for (final filled in results) {
+          if (_disposed || _isStale(token) || filled == null) {
+            continue;
+          }
+
+          if (!_hasText(filled.vodPic)) {
+            continue;
+          }
+
+          final index = indexByVodId[filled.vodId];
+          if (index == null || index < 0 || index >= _videoList.length) {
+            continue;
+          }
+
+          if (_videoList[index].vodId != filled.vodId) {
+            continue;
+          }
+
+          _videoList[index] = filled;
+          anyChanged = true;
         }
       }
     } catch (e, st) {
       AppLogger.instance.logError(e, st, 'VIDEO_CONTROLLER');
-      _log('[prefetchMissingCovers] error=$e');
     } finally {
       _coverPrefetchRunning = false;
 
-      if (_coverPrefetchQueued && !_disposed) {
+      if (_coverPrefetchQueued && !_disposed && !_isStale(token)) {
         _coverPrefetchQueued = false;
         final currentSource = _currentSource;
         if (currentSource != null) {
           unawaited(
             _prefetchMissingCovers(
               source: currentSource,
+              token: _requestToken,
               items: List<VodItem>.from(_videoList),
               limit: limit,
             ),
@@ -725,7 +556,9 @@ class VideoController extends ChangeNotifier {
         _coverPrefetchQueued = false;
       }
 
-      _log('[prefetchMissingCovers] done changed=$anyChanged');
+      if (anyChanged && !_disposed && !_isStale(token)) {
+        _notify();
+      }
     }
   }
 
@@ -738,14 +571,19 @@ class VideoController extends ChangeNotifier {
   }
 
   Future<String?> _loadLastSourceKey() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPrefs();
     return prefs.getString(_prefLastSourceKey);
   }
 
   Future<void> _saveLastSourceKey(String key) async {
     if (_disposed) return;
-    final prefs = await SharedPreferences.getInstance();
+
+    final prefs = await _sharedPrefs();
     await prefs.setString(_prefLastSourceKey, key);
+  }
+
+  static Future<SharedPreferences> _sharedPrefs() {
+    return _prefsFuture ??= SharedPreferences.getInstance();
   }
 
   VideoSource? _findDefaultSource(List<VideoSource> sources) {
@@ -768,24 +606,23 @@ class VideoController extends ChangeNotifier {
     return null;
   }
 
+  VideoSource? _findMatchingSource(
+    List<VideoSource> sources,
+    VideoSource? target,
+  ) {
+    if (target == null) return null;
+
+    for (final source in sources) {
+      if (_sameSource(source, target)) return source;
+    }
+    return null;
+  }
+
   int? _normalizeTypeId(int? typeId, List<VideoCategory> categories) {
     if (typeId == null) return null;
 
     final exists = categories.any((e) => e.typeId == typeId);
     return exists ? typeId : null;
-  }
-
-  int _beginRequest() {
-    _requestToken += 1;
-    return _requestToken;
-  }
-
-  bool _isStale(int token) {
-    return _disposed || token != _requestToken;
-  }
-
-  void _setLoading(bool value) {
-    _isLoading = value;
   }
 
   List<VideoSource> _dedupeSources(List<VideoSource> sources) {
@@ -800,18 +637,6 @@ class VideoController extends ChangeNotifier {
     }
 
     return result;
-  }
-
-  VideoSource? _findMatchingSource(
-    List<VideoSource> sources,
-    VideoSource? target,
-  ) {
-    if (target == null) return null;
-
-    for (final source in sources) {
-      if (_sameSource(source, target)) return source;
-    }
-    return null;
   }
 
   bool _sameSource(VideoSource a, VideoSource b) {
@@ -835,5 +660,25 @@ class VideoController extends ChangeNotifier {
     }
 
     return 'name:${source.name.trim()}';
+  }
+
+  int _beginRequest() {
+    _requestToken += 1;
+    return _requestToken;
+  }
+
+  bool _isStale(int token) {
+    return _disposed || token != _requestToken;
+  }
+
+  bool _hasText(String? value) {
+    if (value == null) return false;
+    final text = value.trim();
+    return text.isNotEmpty && text.toLowerCase() != 'null';
+  }
+
+  void _notify() {
+    if (_disposed) return;
+    notifyListeners();
   }
 }
