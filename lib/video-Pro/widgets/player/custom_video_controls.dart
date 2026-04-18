@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:chewie/chewie.dart';
 import 'package:flutter/material.dart';
@@ -9,8 +10,6 @@ class CustomVideoControls extends StatefulWidget {
   final String episodeName;
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
-
-  /// 由父组件接管全屏切换，避免切全屏时触发误暂停
   final VoidCallback? onToggleFullScreen;
 
   const CustomVideoControls({
@@ -31,35 +30,33 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
   VideoPlayerController? _videoController;
 
   bool _bound = false;
-
   bool _showControls = true;
   bool _isLocked = false;
-  bool _showLockOnly = false;
 
+  // 手势与防抖
+  bool _isReallyScrubbing = false;
   bool _isScrubbing = false;
   bool _wasPlayingBeforeScrub = false;
 
-  bool _wasPlayingLastTick = false;
-  bool _wasBufferingLastTick = false;
+  int _lastTapTime = 0;
+  Timer? _singleTapTimer;
+
+  // 记录上一次播放状态，防止自动触发导致的 UI 闪烁
+  bool? _lastKnownPlayingState;
 
   Timer? _hideTimer;
 
   bool _isLongPressSpeeding = false;
-  bool _wasPlayingBeforeLongPress = false;
   double _speedBeforeLongPress = 1.0;
   final double _longPressSpeed = 2.0;
 
   Duration _scrubBasePosition = Duration.zero;
   Duration _scrubCurrentPosition = Duration.zero;
-
   double _playbackSpeed = 1.0;
-
-  bool get _isPlaying => _videoController?.value.isPlaying == true;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-
     if (_bound) return;
 
     final chewie = ChewieController.of(context);
@@ -70,646 +67,295 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     _bound = true;
 
     _videoController!.addListener(_onVideoTick);
+    _lastKnownPlayingState = _videoController!.value.isPlaying;
 
-    final value = _videoController!.value;
-    _wasPlayingLastTick = value.isPlaying;
-    _wasBufferingLastTick = value.isBuffering;
-
-    if (value.isPlaying) {
+    if (_videoController!.value.isPlaying) {
       _startHideTimer();
     } else {
-      _showControls = true;
+      _showControls = true; // 初始暂停时显示
     }
   }
 
   @override
   void dispose() {
-    if (_bound && _videoController != null) {
-      _videoController!.removeListener(_onVideoTick);
-    }
+    _videoController?.removeListener(_onVideoTick);
     _hideTimer?.cancel();
+    _singleTapTimer?.cancel();
     super.dispose();
   }
 
+  // 🚀 核心优化：监控播放器状态变化
   void _onVideoTick() {
-    final controller = _videoController;
-    if (controller == null) return;
+    if (!mounted || _videoController == null) return;
 
-    final value = controller.value;
-    final isPlaying = value.isPlaying;
-    final isBuffering = value.isBuffering;
-
-    if (isPlaying == _wasPlayingLastTick &&
-        isBuffering == _wasBufferingLastTick) {
-      return;
-    }
-
-    _wasPlayingLastTick = isPlaying;
-    _wasBufferingLastTick = isBuffering;
-
-    if (!mounted) return;
-
-    setState(() {
-      if (isPlaying) {
-        if (isBuffering) {
-          if (!_isLocked) {
-            _showControls = true;
-          }
+    final isPlaying = _videoController!.value.isPlaying;
+    
+    // 只有状态从【播放->暂停】或【暂停->播放】发生真实切换时才触发
+    if (isPlaying != _lastKnownPlayingState) {
+      _lastKnownPlayingState = isPlaying;
+      
+      setState(() {
+        if (!isPlaying) {
+          // 视频暂停了：立刻显示控制栏，并取消自动隐藏计时器
+          _showControls = true;
           _hideTimer?.cancel();
         } else {
-          if (!_isLocked && !_isScrubbing && !_isLongPressSpeeding) {
+          // 视频开始播放了：如果当前控制栏开着，开启自动隐藏倒计时
+          if (_showControls && !_isLocked) {
             _startHideTimer();
           }
         }
-      } else {
-        if (!_isLocked) {
-          _showControls = true;
-        }
-        _hideTimer?.cancel();
-      }
-    });
+      });
+    }
   }
 
   void _startHideTimer() {
     _hideTimer?.cancel();
-    _hideTimer = Timer(const Duration(seconds: 2), () {
-      if (!mounted) return;
-
-      final controller = _videoController;
-      if (controller == null) return;
-
-      if (controller.value.isPlaying &&
-          !_isLocked &&
-          !_isScrubbing &&
-          !_isLongPressSpeeding) {
-        setState(() {
-          _showControls = false;
-        });
+    _hideTimer = Timer(const Duration(milliseconds: 3000), () {
+      // 只有在视频正在播放且没锁定时，才隐去控制栏
+      if (mounted && _videoController?.value.isPlaying == true && !_isLocked && !_isScrubbing) {
+        setState(() => _showControls = false);
       }
     });
   }
 
-  /// 双击：播放 / 暂停
-  void _togglePlayPause() {
-    final controller = _videoController;
-    if (controller == null || _isLocked) return;
+  // 🚀 核心优化：手动由于单双击，彻底拦截任何点击穿透
+  void _handleTap() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final delta = now - _lastTapTime;
+    _lastTapTime = now;
 
-    if (controller.value.isPlaying) {
-      controller.pause();
-      setState(() {
-        _showControls = true;
-      });
-      _hideTimer?.cancel();
+    if (delta < 300) {
+      // 【双击动作】判定发生
+      _singleTapTimer?.cancel();
+      if (!_isLocked) {
+        _togglePlayPause(); // 仅在这里执行视频的暂停/播放
+      }
     } else {
-      controller.play();
-      setState(() {
-        _showControls = true;
+      // 【单击动作】候选
+      _singleTapTimer?.cancel();
+      _singleTapTimer = Timer(const Duration(milliseconds: 300), () {
+        if (!mounted) return;
+        
+        // 🚨 核心改动：单击只准由控制 UI，绝对不去碰视频的 play() 或 pause()
+        setState(() {
+          _showControls = !_showControls;
+          if (_showControls) {
+            // 如果点亮了控制面板
+            if (_videoController?.value.isPlaying == true) {
+              _startHideTimer(); // 播放中则开启倒计时隐藏
+            } else {
+              _hideTimer?.cancel(); // 暂停中则永久显示
+            }
+          } else {
+            _hideTimer?.cancel();
+          }
+        });
       });
-      _startHideTimer();
     }
   }
 
-  /// 单击：只显示/隐藏控制层，不做播放暂停
-  void _toggleControls() {
-    final controller = _videoController;
-    if (controller == null) return;
-
-    if (_isLocked) {
-      setState(() {
-        _showLockOnly = !_showLockOnly;
-      });
-      return;
-    }
-
-    if (!controller.value.isPlaying) {
-      setState(() {
-        _showControls = true;
-      });
-      return;
-    }
-
-    setState(() {
-      _showControls = !_showControls;
-    });
-
-    if (_showControls) {
-      _startHideTimer();
+  void _togglePlayPause() {
+    if (_videoController == null || _isLocked) return;
+    if (_videoController!.value.isPlaying) {
+      _videoController!.pause();
     } else {
-      _hideTimer?.cancel();
+      _videoController!.play();
     }
   }
 
   void _toggleLock() {
     setState(() {
-      if (_isLocked) {
-        _isLocked = false;
-        _showLockOnly = false;
-        _showControls = true;
-        _isScrubbing = false;
-        _isLongPressSpeeding = false;
-
-        if (_isPlaying) {
-          _startHideTimer();
-        }
+      _isLocked = !_isLocked;
+      _showControls = true;
+      if (!_isLocked && _videoController?.value.isPlaying == true) {
+        _startHideTimer();
       } else {
-        _isLocked = true;
-        _showLockOnly = true;
-        _showControls = false;
-        _isScrubbing = false;
-        _isLongPressSpeeding = false;
         _hideTimer?.cancel();
       }
     });
   }
 
-  void _handleBack() {
-    final chewie = _chewieController;
-    if (chewie != null && chewie.isFullScreen) {
-      chewie.exitFullScreen();
-      return;
-    }
-
-    if (Navigator.of(context).canPop()) {
-      Navigator.of(context).maybePop();
-    }
+  String _formatDuration(Duration d) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return d.inHours > 0 
+        ? '${two(d.inHours)}:${two(d.inMinutes.remainder(60))}:${two(d.inSeconds.remainder(60))}'
+        : '${two(d.inMinutes.remainder(60))}:${two(d.inSeconds.remainder(60))}';
   }
 
-  String _formatDuration(Duration duration) {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-
-    final hours = duration.inHours;
-    final minutes = duration.inMinutes.remainder(60);
-    final seconds = duration.inSeconds.remainder(60);
-
-    if (hours > 0) {
-      return '${twoDigits(hours)}:${twoDigits(minutes)}:${twoDigits(seconds)}';
-    }
-    return '${twoDigits(minutes)}:${twoDigits(seconds)}';
-  }
-
-  String _formatSpeed(double speed) {
-    final isInteger = speed.truncateToDouble() == speed;
-    return isInteger ? speed.toStringAsFixed(0) : speed.toStringAsFixed(2);
-  }
-
-  void _onHorizontalDragStart(DragStartDetails details) {
-    final controller = _videoController;
-    if (controller == null || _isLocked) return;
-
-    _scrubBasePosition = controller.value.position;
-    _scrubCurrentPosition = _scrubBasePosition;
-    _wasPlayingBeforeScrub = controller.value.isPlaying;
-
-    if (controller.value.isPlaying) {
-      controller.pause();
-    }
-
-    setState(() {
-      _isScrubbing = true;
-      _showControls = true;
-    });
-
-    _hideTimer?.cancel();
-  }
+  // ============== 手势逻辑（修正 clamp 报错） ==============
 
   void _onHorizontalDragUpdate(DragUpdateDetails details) {
-    final controller = _videoController;
-    if (controller == null || _isLocked || !_isScrubbing) return;
+    if (_videoController == null || _isLocked) return;
 
-    final screenWidth = MediaQuery.of(context).size.width;
-    if (screenWidth <= 0) return;
-
-    final dragRatio = details.delta.dx / screenWidth;
-    final dragSeconds = (dragRatio * 300).toInt();
-
-    var newPosition = _scrubCurrentPosition + Duration(seconds: dragSeconds);
-    final duration = controller.value.duration;
-
-    if (newPosition < Duration.zero) {
-      newPosition = Duration.zero;
-    }
-    if (newPosition > duration) {
-      newPosition = duration;
+    if (!_isReallyScrubbing) {
+      _isReallyScrubbing = true;
+      _wasPlayingBeforeScrub = _videoController!.value.isPlaying;
+      if (_wasPlayingBeforeScrub) _videoController!.pause();
+      setState(() {
+        _isScrubbing = true;
+        _showControls = true;
+      });
+      _hideTimer?.cancel();
     }
 
-    setState(() {
-      _scrubCurrentPosition = newPosition;
-    });
-  }
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final dragSeconds = (details.delta.dx / screenWidth * 180).toInt();
+    
+    var newPos = _scrubCurrentPosition + Duration(seconds: dragSeconds);
+    
+    // 🚀 修复编译错误：手动替换 clamp 逻辑
+    final totalDuration = _videoController!.value.duration;
+    if (newPos < Duration.zero) {
+      newPos = Duration.zero;
+    } else if (newPos > totalDuration) {
+      newPos = totalDuration;
+    }
 
-  void _onHorizontalDragEnd(DragEndDetails details) {
-    final controller = _videoController;
-    if (controller == null || _isLocked || !_isScrubbing) return;
-
-    controller.seekTo(_scrubCurrentPosition);
-
-    setState(() {
-      _isScrubbing = false;
-      _showControls = true;
-    });
-
-    if (_wasPlayingBeforeScrub) {
-      controller.play();
-      _startHideTimer();
+    if (newPos != _scrubCurrentPosition) {
+      setState(() => _scrubCurrentPosition = newPos);
     }
   }
 
-  void _onHorizontalDragCancel() {
-    final controller = _videoController;
-    if (controller == null || _isLocked || !_isScrubbing) return;
-
+  void _onHorizontalDragEnd(DragEndDetails? details) {
+    if (_isReallyScrubbing && _videoController != null) {
+      _videoController!.seekTo(_scrubCurrentPosition);
+      if (_wasPlayingBeforeScrub) _videoController!.play();
+    }
     setState(() {
       _isScrubbing = false;
-      _showControls = true;
+      _isReallyScrubbing = false;
     });
-
-    if (_wasPlayingBeforeScrub) {
-      controller.play();
+    if (_videoController?.value.isPlaying == true) {
       _startHideTimer();
     }
   }
 
-  void _startLongPressSpeed(LongPressStartDetails details) {
-    final controller = _videoController;
-    if (controller == null || _isLocked || _isScrubbing) return;
+  // ============== UI 构建 ==============
 
-    _speedBeforeLongPress = _playbackSpeed;
-    _wasPlayingBeforeLongPress = controller.value.isPlaying;
+  @override
+  Widget build(BuildContext context) {
+    if (_videoController == null) return const SizedBox.shrink();
 
-    if (!controller.value.isPlaying) {
-      controller.play();
-    }
-
-    controller.setPlaybackSpeed(_longPressSpeed);
-
-    setState(() {
-      _isLongPressSpeeding = true;
-      _showControls = false;
-    });
-
-    _hideTimer?.cancel();
-  }
-
-  void _endLongPressSpeed() {
-    final controller = _videoController;
-    if (controller != null) {
-      controller.setPlaybackSpeed(_speedBeforeLongPress);
-
-      if (!_wasPlayingBeforeLongPress) {
-        controller.pause();
-      }
-    }
-
-    if (!mounted) return;
-
-    setState(() {
-      _isLongPressSpeeding = false;
-    });
-
-    if (_isPlaying && !_isLocked && !_isScrubbing) {
-      _startHideTimer();
-    }
-  }
-
-  void _onLongPressEnd(LongPressEndDetails details) {
-    _endLongPressSpeed();
-  }
-
-  void _onLongPressCancel() {
-    _endLongPressSpeed();
-  }
-
-  Future<void> _setSpeed(double speed) async {
-    final controller = _videoController;
-    if (controller == null) return;
-
-    await controller.setPlaybackSpeed(speed);
-
-    setState(() {
-      _playbackSpeed = speed;
-    });
-
-    if (_isPlaying &&
-        !_isLocked &&
-        !_isScrubbing &&
-        !_isLongPressSpeeding) {
-      _startHideTimer();
-    }
-  }
-
-  Future<void> _showSpeedSheet() async {
-    final speeds = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-
-    if (!mounted) return;
-
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    '播放速度',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final speed in speeds)
-                      ChoiceChip(
-                        label: Text('${_formatSpeed(speed)}x'),
-                        selected: _playbackSpeed == speed,
-                        onSelected: (_) async {
-                          Navigator.pop(sheetContext);
-                          await _setSpeed(speed);
-                        },
-                      ),
-                  ],
-                ),
-              ],
+    return SizedBox.expand(
+      child: Stack(
+        children: [
+          // 🚀 核心透明拦截层：强制使用 HitTestBehavior.opaque 拦截所有底层穿透
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _handleTap,
+              onLongPressStart: _isLocked ? null : (d) {
+                _wasPlayingBeforeScrub = _videoController!.value.isPlaying;
+                _videoController!.setPlaybackSpeed(_longPressSpeed);
+                setState(() => _isLongPressSpeeding = true);
+              },
+              onLongPressEnd: _isLocked ? null : (d) {
+                _videoController!.setPlaybackSpeed(_playbackSpeed);
+                if (!_wasPlayingBeforeScrub) _videoController!.pause();
+                setState(() => _isLongPressSpeeding = false);
+              },
+              onHorizontalDragStart: _isLocked ? null : (d) {
+                _scrubCurrentPosition = _videoController!.value.position;
+                _isReallyScrubbing = false;
+              },
+              onHorizontalDragUpdate: _isLocked ? null : _onHorizontalDragUpdate,
+              onHorizontalDragEnd: _isLocked ? null : _onHorizontalDragEnd,
             ),
           ),
-        );
-      },
+
+          // 顶部
+          _buildAnimatedBar(
+            alignment: Alignment.topCenter,
+            visible: _showControls && !_isLocked,
+            child: _buildTopBar(),
+          ),
+
+          // 底部
+          _buildAnimatedBar(
+            alignment: Alignment.bottomCenter,
+            visible: _showControls && !_isLocked,
+            child: _buildBottomBar(),
+          ),
+
+          // 锁按钮
+          _buildAnimatedLock(),
+
+          // 中心播放按钮：仅在暂停时或面板开启时显示
+          if (!_isLocked && (_showControls || !_videoController!.value.isPlaying))
+            Center(child: _buildLargePlayButton()),
+
+          // Overlay 提示层
+          if (_isScrubbing) _buildScrubOverlay(),
+          if (_isLongPressSpeeding) _buildSpeedHint(),
+        ],
+      ),
     );
   }
 
-  String _bottomStateText() {
-    final controller = _videoController;
-    if (controller == null) return '';
-
-    final state = controller.value.isPlaying ? '播放中' : '已暂停';
-    final buffering = controller.value.isBuffering ? '缓冲中' : '正常';
-    return '$state · $buffering · ${_formatSpeed(_playbackSpeed)}x';
-  }
-
-  Widget _buildLockOnlyButton() {
+  Widget _buildAnimatedBar({required Alignment alignment, required bool visible, required Widget child}) {
     return Positioned(
-      left: 0,
-      top: 0,
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.only(left: 4, top: 4),
-          child: Material(
-            color: Colors.black.withOpacity(0.55),
-            shape: const CircleBorder(),
-            child: IconButton(
-              tooltip: _isLocked ? '解锁' : '锁定',
-              icon: Icon(
-                _isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
-                color: Colors.white,
-                size: 22,
-              ),
-              onPressed: _toggleLock,
-            ),
-          ),
-        ),
+      left: 0, right: 0,
+      top: alignment == Alignment.topCenter ? 0 : null,
+      bottom: alignment == Alignment.bottomCenter ? 0 : null,
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 250),
+        transitionBuilder: (c, a) => FadeTransition(opacity: a, child: c),
+        child: visible ? child : const SizedBox.shrink(),
       ),
     );
   }
 
-  Widget _buildTopBar(bool controlsVisible) {
+  Widget _buildTopBar() {
+    return Container(
+      height: 70, padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: const BoxDecoration(gradient: LinearGradient(colors: [Colors.black87, Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+      child: SafeArea(child: Row(children: [
+        IconButton(icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white), onPressed: () => Navigator.maybePop(context)),
+        Expanded(child: Text('${widget.title} - ${widget.episodeName}', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
+      ])),
+    );
+  }
+
+  Widget _buildBottomBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: const BoxDecoration(gradient: LinearGradient(colors: [Colors.transparent, Colors.black87], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+      child: SafeArea(top: false, child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Row(children: [
+          Text('${_formatDuration(_videoController!.value.position)} / ${_formatDuration(_videoController!.value.duration)}', style: const TextStyle(color: Colors.white, fontSize: 12)),
+          const Spacer(),
+          IconButton(
+            icon: Icon(_chewieController!.isFullScreen ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded, color: Colors.white),
+            onPressed: widget.onToggleFullScreen ?? () => _chewieController!.toggleFullScreen(),
+          ),
+        ]),
+        VideoProgressIndicator(_videoController!, allowScrubbing: true, colors: const VideoProgressColors(playedColor: Colors.blueAccent)),
+      ])),
+    );
+  }
+
+  Widget _buildLargePlayButton() {
+    final playing = _videoController!.value.isPlaying;
+    return GestureDetector(
+      onTap: _togglePlayPause,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: const BoxDecoration(color: Colors.black26, shape: BoxShape.circle),
+        child: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 48),
+      ),
+    );
+  }
+
+  Widget _buildAnimatedLock() {
     return Positioned(
-      left: 0,
-      right: 0,
-      top: 0,
-      child: AnimatedOpacity(
-        opacity: controlsVisible ? 1.0 : 0.0,
-        duration: const Duration(milliseconds: 180),
-        child: IgnorePointer(
-          ignoring: !controlsVisible,
-          child: SafeArea(
-            bottom: false,
-            child: Container(
-              height: 56,
-              padding: const EdgeInsets.only(left: 2, right: 8),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withOpacity(0.80),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    tooltip: _isLocked ? '解锁' : '锁定',
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 40,
-                      height: 40,
-                    ),
-                    icon: Icon(
-                      _isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
-                      color: Colors.white,
-                      size: 22,
-                    ),
-                    onPressed: _toggleLock,
-                  ),
-                  IconButton(
-                    tooltip: '返回',
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 40,
-                      height: 40,
-                    ),
-                    icon: const Icon(
-                      Icons.arrow_back_rounded,
-                      color: Colors.white,
-                    ),
-                    onPressed: _handleBack,
-                  ),
-                  const SizedBox(width: 2),
-                  Expanded(
-                    child: Text(
-                      '${widget.title} - ${widget.episodeName}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCenterPlayButton(bool controlsVisible) {
-    final controller = _videoController;
-    if (controller == null) return const SizedBox.shrink();
-    if (_isLocked) return const SizedBox.shrink();
-
-    if (controller.value.isPlaying && !_isScrubbing) {
-      return const SizedBox.shrink();
-    }
-
-    return Center(
-      child: AnimatedOpacity(
-        opacity: controlsVisible ? 1.0 : 0.0,
-        duration: const Duration(milliseconds: 180),
-        child: IgnorePointer(
-          /// 关键：中间按钮不再接收点击，避免误触播放/暂停
-          ignoring: true,
-          child: Container(
-            width: 76,
-            height: 76,
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.35),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              controller.value.isPlaying
-                  ? Icons.pause_rounded
-                  : Icons.play_arrow_rounded,
-              color: Colors.white,
-              size: 44,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBottomBar(bool controlsVisible) {
-    final controller = _videoController;
-    final chewieController = _chewieController;
-    if (controller == null || chewieController == null) {
-      return const SizedBox.shrink();
-    }
-
-    return Positioned(
-      left: 0,
-      right: 0,
-      bottom: 0,
-      child: AnimatedOpacity(
-        opacity: controlsVisible ? 1.0 : 0.0,
-        duration: const Duration(milliseconds: 180),
-        child: IgnorePointer(
-          ignoring: !controlsVisible,
-          child: SafeArea(
-            top: false,
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomCenter,
-                  end: Alignment.topCenter,
-                  colors: [
-                    Colors.black.withOpacity(0.92),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-              padding: const EdgeInsets.only(
-                bottom: 20,
-                top: 40,
-                left: 12,
-                right: 12,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      if (widget.onPrevious != null)
-                        IconButton(
-                          tooltip: '上一集',
-                          icon: const Icon(
-                            Icons.skip_previous_rounded,
-                            color: Colors.white,
-                          ),
-                          onPressed: widget.onPrevious,
-                        ),
-                      if (widget.onNext != null)
-                        IconButton(
-                          tooltip: '下一集',
-                          icon: const Icon(
-                            Icons.skip_next_rounded,
-                            color: Colors.white,
-                          ),
-                          onPressed: widget.onNext,
-                        ),
-                      const SizedBox(width: 8),
-                      ValueListenableBuilder<VideoPlayerValue>(
-                        valueListenable: controller,
-                        builder: (context, value, child) {
-                          return Text(
-                            '${_formatDuration(value.position)} / ${_formatDuration(value.duration)}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13,
-                            ),
-                          );
-                        },
-                      ),
-                      const Spacer(),
-                      TextButton(
-                        onPressed: _showSpeedSheet,
-                        child: Text(
-                          '${_formatSpeed(_playbackSpeed)}x',
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      ),
-                      IconButton(
-                        tooltip:
-                            chewieController.isFullScreen ? '退出全屏' : '全屏',
-                        icon: Icon(
-                          chewieController.isFullScreen
-                              ? Icons.fullscreen_exit_rounded
-                              : Icons.fullscreen_rounded,
-                          color: Colors.white,
-                          size: 28,
-                        ),
-                        onPressed: widget.onToggleFullScreen ??
-                            () => chewieController.toggleFullScreen(),
-                      ),
-                    ],
-                  ),
-                  SizedBox(
-                    height: 20,
-                    child: VideoProgressIndicator(
-                      controller,
-                      allowScrubbing: true,
-                      colors: const VideoProgressColors(
-                        playedColor: Colors.blueAccent,
-                        bufferedColor: Colors.white38,
-                        backgroundColor: Colors.white24,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _bottomStateText(),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+      left: 20, top: 0, bottom: 0,
+      child: Center(
+        child: AnimatedOpacity(
+          opacity: _showControls || _isLocked ? 1 : 0, duration: const Duration(milliseconds: 200),
+          child: IconButton(
+            icon: Icon(_isLocked ? Icons.lock_rounded : Icons.lock_open_rounded, color: Colors.white, size: 28),
+            onPressed: _toggleLock,
           ),
         ),
       ),
@@ -717,123 +363,18 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
   }
 
   Widget _buildScrubOverlay() {
-    final controller = _videoController;
-    if (controller == null || !_isScrubbing || _isLocked) {
-      return const SizedBox.shrink();
-    }
-
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.75),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              _scrubCurrentPosition > _scrubBasePosition
-                  ? Icons.fast_forward_rounded
-                  : Icons.fast_rewind_rounded,
-              color: Colors.blueAccent,
-              size: 32,
-            ),
-            const SizedBox(width: 12),
-            Text(
-              '${_formatDuration(_scrubCurrentPosition)} / ${_formatDuration(controller.value.duration)}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    return Center(child: Container(
+      padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
+      child: Text('${_formatDuration(_scrubCurrentPosition)} / ${_formatDuration(_videoController!.value.duration)}', 
+        style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold, fontFeatures: [FontFeature.tabularFigures()])),
+    ));
   }
 
-  Widget _buildLongPressSpeedHint() {
-    if (!_isLongPressSpeeding) return const SizedBox.shrink();
-
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.75),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.speed_rounded,
-              color: Colors.blueAccent,
-              size: 30,
-            ),
-            const SizedBox(width: 12),
-            Text(
-              '${_formatSpeed(_longPressSpeed)}x',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = _videoController;
-    final chewieController = _chewieController;
-
-    if (controller == null || chewieController == null) {
-      return const SizedBox.shrink();
-    }
-
-    final showNormalControls =
-        !_isLocked && (_showControls || !controller.value.isPlaying || _isScrubbing);
-
-    final showLockOnly = _isLocked && _showLockOnly;
-
-    return SizedBox.expand(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _toggleControls,
-              onDoubleTap: _isLocked ? null : _togglePlayPause,
-              onLongPressStart: _isLocked ? null : _startLongPressSpeed,
-              onLongPressEnd: _isLocked ? null : _onLongPressEnd,
-              onLongPressCancel: _isLocked ? null : _onLongPressCancel,
-              onHorizontalDragStart: _isLocked ? null : _onHorizontalDragStart,
-              onHorizontalDragUpdate:
-                  _isLocked ? null : _onHorizontalDragUpdate,
-              onHorizontalDragEnd: _isLocked ? null : _onHorizontalDragEnd,
-              onHorizontalDragCancel:
-                  _isLocked ? null : _onHorizontalDragCancel,
-            ),
-          ),
-
-          if (showNormalControls) ...[
-            _buildTopBar(showNormalControls),
-            _buildCenterPlayButton(showNormalControls),
-            _buildBottomBar(showNormalControls),
-            if (_isScrubbing) _buildScrubOverlay(),
-          ],
-
-          if (showLockOnly) _buildLockOnlyButton(),
-
-          _buildLongPressSpeedHint(),
-        ],
-      ),
-    );
+  Widget _buildSpeedHint() {
+    return Align(alignment: Alignment.topCenter, child: SafeArea(child: Container(
+      margin: const EdgeInsets.only(top: 10), padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(color: Colors.blueAccent.withOpacity(0.8), borderRadius: BorderRadius.circular(20)),
+      child: const Text('2.0x 倍速播放中', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+    )));
   }
 }

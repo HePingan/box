@@ -65,19 +65,15 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
   ChewieController? _chewieController;
   PlayerHistoryTracker? _historyTracker;
 
-  Timer? _attemptTimer;
-
   bool _isBuffering = true;
-  bool _wasPlayingBeforePause = false;
   bool _playbackFailed = false;
+  bool _isFullScreen = false;
 
   String? _errorMessage;
   int _initToken = 0;
   Uri? _resolvedUri;
 
-  bool _isFullScreen = false;
-
-  /// 全屏切换期间，临时屏蔽生命周期误判
+  /// 全屏切换遮罩
   bool _suspendLifecyclePause = false;
   int _fullscreenToggleToken = 0;
 
@@ -98,15 +94,8 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         showDebugInfo: widget.showDebugInfo,
       );
 
-  double _layoutAspectRatio(BuildContext context) {
-    if (_isFullScreen) {
-      final size = MediaQuery.sizeOf(context);
-      if (size.height > 0) {
-        return size.width / size.height;
-      }
-    }
-    return 16 / 9;
-  }
+  // 🏆 优化：移除 MediaQuery 依赖。非全屏下固定 16/9，全屏下由系统 Route 撑满。
+  double get _layoutAspectRatio => 16 / 9;
 
   @override
   void initState() {
@@ -118,9 +107,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
   @override
   void didUpdateWidget(covariant VideoPlayContainer oldWidget) {
     super.didUpdateWidget(oldWidget);
-
-    if (oldWidget.url != widget.url ||
-        oldWidget.initialPosition != widget.initialPosition) {
+    if (oldWidget.url != widget.url || oldWidget.initialPosition != widget.initialPosition) {
       unawaited(_historyTracker?.saveNow(force: true));
       _initPlayer();
     }
@@ -128,44 +115,20 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final controller = _videoPlayerController;
-    if (controller == null) return;
-
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
-      /// 关键：全屏切换期间不要误暂停
-      if (_suspendLifecyclePause) {
-        return;
-      }
-
-      _wasPlayingBeforePause = controller.value.isPlaying;
-      if (controller.value.isPlaying) {
-        controller.pause();
-      }
-    } else if (state == AppLifecycleState.resumed) {
-      if (_wasPlayingBeforePause && !_suspendLifecyclePause) {
-        controller.play();
-      }
-      _wasPlayingBeforePause = false;
-    }
+    // 🚀 终极修复：彻底不响应 AppLifecycleState！
+    // 理由：Android 全屏下点击屏幕弹出虚拟导航栏会错误触发 AppLifecycleState.inactive。
+    // 为了极致的稳定点播体验，移除这里的 pause 逻辑。
+    return;
   }
 
   void _onPlayerStateChanged() {
     if (!mounted) return;
-
     final controller = _videoPlayerController;
     if (controller == null) return;
 
     final value = controller.value;
-
     if (value.hasError) {
-      final msg = value.errorDescription ?? '视频流已断开或无效';
-      AppLogger.instance.log(
-        '视频播放器底层抛出异常: $msg | url=${widget.url}',
-        tag: 'PLAYER_ERROR',
-      );
-
-      _failFast(msg);
+      _failFast(value.errorDescription ?? '视频流已断开或无效');
       return;
     }
 
@@ -178,15 +141,12 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
 
   void _onChewieStateChanged() {
     final chewie = _chewieController;
-    if (chewie == null) return;
+    if (chewie == null || !mounted) return;
 
     final now = chewie.isFullScreen;
-    if (now == _isFullScreen) return;
-
-    _isFullScreen = now;
-
-    if (!mounted) return;
-    setState(() {});
+    if (now != _isFullScreen) {
+      setState(() => _isFullScreen = now);
+    }
   }
 
   Future<void> _toggleFullScreenSafely() async {
@@ -200,8 +160,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
       chewie.toggleFullScreen();
     } finally {
       Future.delayed(const Duration(milliseconds: 1000), () {
-        if (!mounted) return;
-        if (token != _fullscreenToggleToken) return;
+        if (!mounted || token != _fullscreenToggleToken) return;
         _suspendLifecyclePause = false;
       });
     }
@@ -209,7 +168,6 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
 
   Future<void> _initPlayer() async {
     final int token = ++_initToken;
-
     _disposePlayer();
 
     if (!mounted) return;
@@ -229,7 +187,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
 
     final uri = Uri.tryParse(rawUrl);
     if (uri == null || !uri.hasScheme || isInvalidWebPageUrl(uri)) {
-      _failFast('无效的播放地址，请尝试切换线路');
+      _failFast('无效的播放地址');
       return;
     }
 
@@ -251,11 +209,9 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         final probeOk = await _streamResolver
             .probeHls(playableUri, headers: headers)
             .timeout(const Duration(seconds: 6));
-
         if (!mounted || token != _initToken) return;
-
         if (!probeOk) {
-          _failFast('该线路服务器拒绝连接或分片已失效');
+          _failFast('该线路服务器拒绝连接');
           return;
         }
       }
@@ -273,7 +229,6 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
 
       _videoPlayerController = controller;
       controller.addListener(_onPlayerStateChanged);
-
       await controller.initialize().timeout(_initTimeout);
 
       if (!mounted || token != _initToken) {
@@ -281,13 +236,10 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         return;
       }
 
-      if (widget.initialPosition > 0 &&
-          controller.value.duration > Duration.zero) {
+      // Seek to history position
+      if (widget.initialPosition > 0 && controller.value.duration > Duration.zero) {
         final initial = Duration(milliseconds: widget.initialPosition);
-        final safeInitial = controller.value.duration > initial
-            ? initial
-            : controller.value.duration;
-        await controller.seekTo(safeInitial);
+        await controller.seekTo(controller.value.duration > initial ? initial : controller.value.duration);
       }
 
       _chewieController = ChewieController(
@@ -297,7 +249,9 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         allowMuting: true,
         allowFullScreen: true,
         showControlsOnInitialize: false,
-        aspectRatio: 16 / 9,
+        // 🚀 核心修复：在此设为 null。
+        // 这样在全屏模式下，视频会自动填充可用空间而不会被比例锁死导致左右黑边过大或画面塌陷。
+        aspectRatio: null, 
         customControls: CustomVideoControls(
           title: widget.title,
           episodeName: widget.episodeName,
@@ -325,81 +279,44 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         _isBuffering = false;
       });
 
-      _attemptTimer?.cancel();
-      _attemptTimer = null;
-
       _historyTracker?.setPlaying(controller.value.isPlaying);
-    } on TimeoutException catch (e, st) {
-      AppLogger.instance.logError(e, st, 'PLAYER');
-
-      if (!mounted || token != _initToken) {
-        _disposePlayer();
-        return;
-      }
-
-      _disposePlayer();
-      _failFast('视频连接超时，请稍后重试', e);
+      
     } catch (e, st) {
+      if (token != _initToken) return;
       AppLogger.instance.logError(e, st, 'PLAYER');
-
-      if (!mounted || token != _initToken) {
-        _disposePlayer();
-        return;
-      }
-
-      _disposePlayer();
-      _failFast('视频连接失败，请稍后重试', e);
+      _failFast(e is TimeoutException ? '连接超时' : '播放失败');
     }
   }
 
   void _failFast(String msg, [Object? debugObject]) {
     if (_playbackFailed) return;
     _playbackFailed = true;
-
+    _disposePlayer();
     if (!mounted) return;
-
     setState(() {
       _errorMessage = msg;
       _isBuffering = false;
     });
-
-    _disposePlayer();
   }
 
-  Future<void> _retry() async {
-    _initPlayer();
-  }
+  Future<void> _retry() async => _initPlayer();
 
   void _disposePlayer() {
-    _attemptTimer?.cancel();
-    _attemptTimer = null;
-
     _historyTracker?.stop();
     _historyTracker = null;
-
     _videoPlayerController?.removeListener(_onPlayerStateChanged);
-
-    final chewie = _chewieController;
-    if (chewie != null) {
-      chewie.removeListener(_onChewieStateChanged);
-    }
+    _chewieController?.removeListener(_onChewieStateChanged);
+    _chewieController?.dispose();
     _chewieController = null;
-    chewie?.dispose();
-
-    final video = _videoPlayerController;
+    _videoPlayerController?.dispose();
     _videoPlayerController = null;
-    video?.dispose();
   }
 
   String _buildDebugInfo() {
     final controller = _videoPlayerController;
-    if (controller == null) return 'no controller';
-
+    if (controller == null) return 'no data';
     final value = controller.value;
-    return 'pos=${value.position.inSeconds}s | '
-        'dur=${value.duration.inSeconds}s | '
-        'buf=${value.isBuffering} | '
-        'host=${_resolvedUri?.host ?? "-"}';
+    return 'pos=${value.position.inSeconds}s | dur=${value.duration.inSeconds}s | buf=${value.isBuffering}';
   }
 
   @override
@@ -413,60 +330,29 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
 
   @override
   Widget build(BuildContext context) {
-    final aspectRatio = _layoutAspectRatio(context);
-
+    // 渲染比例容器
+    Widget content;
     if (_errorMessage != null) {
-      return AspectRatio(
-        aspectRatio: aspectRatio,
-        child: ClipRect(
-          child: ColoredBox(
-            color: Colors.black,
-            child: PlayerErrorOverlay(
-              errorMessage: _errorMessage!,
-              onRetry: _retry,
-            ),
-          ),
-        ),
+      content = PlayerErrorOverlay(errorMessage: _errorMessage!, onRetry: _retry);
+    } else if (_videoPlayerController == null || _chewieController == null || !_videoPlayerController!.value.isInitialized) {
+      content = const PlayerBufferingOverlay();
+    } else {
+      content = Stack(
+        fit: StackFit.expand,
+        children: [
+          Positioned.fill(child: Chewie(controller: _chewieController!)),
+          if (_isBuffering) const PlayerBufferingOverlay(),
+          if (widget.showDebugInfo) PlayerDebugOverlay(info: _buildDebugInfo()),
+        ],
       );
     }
 
-    if (_videoPlayerController == null ||
-        _chewieController == null ||
-        !_videoPlayerController!.value.isInitialized) {
-      return AspectRatio(
-        aspectRatio: aspectRatio,
-        child: ClipRect(
-          child: ColoredBox(
-            color: Colors.black,
-            child: const PlayerBufferingOverlay(),
-          ),
-        ),
-      );
-    }
-
-    return PopScope(
-      onPopInvoked: (didPop) {
-        if (didPop) {
-          _disposePlayer();
-        }
-      },
-      child: AspectRatio(
-        aspectRatio: aspectRatio,
-        child: ClipRect(
-          child: ColoredBox(
-            color: Colors.black,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Positioned.fill(
-                  child: Chewie(controller: _chewieController!),
-                ),
-                if (_isBuffering) const PlayerBufferingOverlay(),
-                if (widget.showDebugInfo)
-                  PlayerDebugOverlay(info: _buildDebugInfo()),
-              ],
-            ),
-          ),
+    return AspectRatio(
+      aspectRatio: _layoutAspectRatio,
+      child: ClipRect(
+        child: ColoredBox(
+          color: Colors.black,
+          child: content,
         ),
       ),
     );
