@@ -1,11 +1,18 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../models/vod_item.dart';
+import 'package:box/utils/app_logger.dart';
 import 'home_empty_state.dart';
 
-// 🏆 优化：签名从 Future<String?> 变为极速同步的 String?
+// 极速同步封面地址加载
 typedef HomeVideoCoverLoader = String? Function(VodItem video);
+
+void _logGrid(String message) {
+  if (kDebugMode) {
+    AppLogger.instance.log(message, tag: 'HOME_GRID');
+  }
+}
 
 class HomeVideoSliverGrid extends StatelessWidget {
   const HomeVideoSliverGrid({
@@ -28,6 +35,14 @@ class HomeVideoSliverGrid extends StatelessWidget {
   final String emptyMessage;
   final String? emptyActionLabel;
   final VoidCallback? onEmptyAction;
+
+  String _safeText(String? value, {String fallback = ''}) {
+    final text = value?.trim();
+    if (text == null || text.isEmpty || text.toLowerCase() == 'null') {
+      return fallback;
+    }
+    return text;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -59,7 +74,19 @@ class HomeVideoSliverGrid extends StatelessWidget {
       );
     }
 
-    final crossAxisCount = screenWidth > 800 ? 6 : (screenWidth > 500 ? 4 : 3);
+    final effectiveWidth = screenWidth >= 560 ? 560.0 : screenWidth;
+
+    final crossAxisCount = effectiveWidth >= 520
+        ? 4
+        : effectiveWidth >= 360
+            ? 3
+            : 2;
+
+    final childAspectRatio = effectiveWidth >= 520
+        ? 0.62
+        : effectiveWidth >= 360
+            ? 0.58
+            : 0.52;
 
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -67,10 +94,18 @@ class HomeVideoSliverGrid extends StatelessWidget {
         delegate: SliverChildBuilderDelegate(
           (context, index) {
             final video = videos[index];
+            final coverUrl = coverUrlFor(video);
+
+            _logGrid(
+              '[CARD] vodId=${video.vodId} '
+              'vodName=${_safeText(video.vodName, fallback: "未命名")} '
+              'vodPic=${video.vodPic ?? "null"} '
+              'coverUrl=${coverUrl ?? "null"}',
+            );
+
             return HomeVideoCard(
               video: video,
-              // 🚀 极速传递 URL 字符串，彻底消灭渲染延迟闪烁
-              coverUrl: coverUrlFor(video), 
+              coverUrl: coverUrl,
               onTap: () => onTapVideo(video),
             );
           },
@@ -80,7 +115,7 @@ class HomeVideoSliverGrid extends StatelessWidget {
           crossAxisCount: crossAxisCount,
           mainAxisSpacing: 12,
           crossAxisSpacing: 10,
-          childAspectRatio: 0.55,
+          childAspectRatio: childAspectRatio,
         ),
       ),
     );
@@ -99,12 +134,21 @@ class HomeVideoCard extends StatelessWidget {
   final String? coverUrl;
   final VoidCallback? onTap;
 
+  String _safeText(String? value, {String fallback = ''}) {
+    final text = value?.trim();
+    if (text == null || text.isEmpty || text.toLowerCase() == 'null') {
+      return fallback;
+    }
+    return text;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final title = video.vodName.trim().isNotEmpty ? video.vodName : '未命名';
-    final subtitle = (video.vodRemarks?.trim().isNotEmpty == true)
-        ? video.vodRemarks
-        : video.typeName;
+    final title = _safeText(video.vodName, fallback: '未命名');
+
+    final remarks = _safeText(video.vodRemarks);
+    final typeName = _safeText(video.typeName);
+    final subtitle = remarks.isNotEmpty ? remarks : typeName;
 
     return InkWell(
       borderRadius: BorderRadius.circular(12),
@@ -116,8 +160,8 @@ class HomeVideoCard extends StatelessWidget {
             child: SizedBox(
               width: double.infinity,
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: _buildImage(),
+                borderRadius: BorderRadius.circular(8),
+                child: _buildImage(title),
               ),
             ),
           ),
@@ -126,39 +170,68 @@ class HomeVideoCard extends StatelessWidget {
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87),
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+              color: Colors.black87,
+            ),
           ),
-          Text(
-            subtitle ?? '',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-          ),
+          if (subtitle.isNotEmpty)
+            Text(
+              subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.grey.shade500,
+              ),
+            )
+          else
+            const SizedBox(height: 14),
         ],
       ),
     );
   }
 
-  Widget _buildImage() {
+  Widget _buildImage(String title) {
     final imageUrl = coverUrl?.trim();
+
     if (imageUrl == null || imageUrl.isEmpty) {
+      _logGrid(
+        '[IMG_EMPTY] vodId=${video.vodId} title=$title '
+        'vodPic=${video.vodPic ?? "null"}',
+      );
       return _buildPlaceholder();
     }
 
-    // 🏆 终极方案：使用 CachedNetworkImage。不仅彻底接管本地缓存，而且滑卡直接飞起
-    return CachedNetworkImage(
-      imageUrl: imageUrl,
+    _logGrid(
+      '[IMG_LOAD] vodId=${video.vodId} title=$title url=$imageUrl',
+    );
+
+    // 临时 debug 版：用 Image.network 更容易看到 Web/CORS/404 的错误
+    return Image.network(
+      imageUrl,
       fit: BoxFit.cover,
       alignment: Alignment.center,
-      placeholder: (context, url) => Container(
-        color: Colors.grey.shade200,
-        alignment: Alignment.center,
-        child: const SizedBox(
-           width: 20, height: 20,
-           child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      ),
-      errorWidget: (context, url, error) => _buildPlaceholder(),
+      loadingBuilder: (context, child, loadingProgress) {
+        if (loadingProgress == null) return child;
+        return Container(
+          color: Colors.grey.shade200,
+          alignment: Alignment.center,
+          child: const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        );
+      },
+      errorBuilder: (context, error, stackTrace) {
+        _logGrid(
+          '[IMG_ERROR] vodId=${video.vodId} title=$title '
+          'url=$imageUrl error=$error',
+        );
+        return _buildPlaceholder();
+      },
     );
   }
 
@@ -166,7 +239,11 @@ class HomeVideoCard extends StatelessWidget {
     return Container(
       color: Colors.grey.shade200,
       alignment: Alignment.center,
-      child: Icon(Icons.movie_outlined, size: 28, color: Colors.grey.shade400),
+      child: Icon(
+        Icons.movie_outlined,
+        size: 28,
+        color: Colors.grey.shade400,
+      ),
     );
   }
 }

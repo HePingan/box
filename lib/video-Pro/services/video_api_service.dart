@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../../utils/app_logger.dart';
@@ -32,7 +33,42 @@ class VideoApiService {
       'https://proxy.shuabu.eu.org/?url=';
 
   static void _log(String message) {
-    AppLogger.instance.log(message, tag: 'HTTP');
+    if (kDebugMode) {
+      AppLogger.instance.log(message, tag: 'VIDEO_API');
+    }
+  }
+
+  static String _preview(String text, {int max = 1000}) {
+    final value = text.trim();
+    if (value.length <= max) return value;
+    return '${value.substring(0, max)}...<truncated>';
+  }
+
+  static String _paramsText(Map<String, String> params) {
+    if (params.isEmpty) return '{}';
+    return params.entries.map((e) => '${e.key}=${e.value}').join('&');
+  }
+
+  static String _sampleVodItems(List<VodItem> items, {int limit = 3}) {
+    if (items.isEmpty) return '[]';
+    return items.take(limit).map((e) {
+      return jsonEncode({
+        'vod_id': e.vodId,
+        'vod_name': e.vodName,
+        'vod_pic': e.vodPic,
+        'type_id': e.typeId,
+        'type_name': e.typeName,
+      });
+    }).join(' | ');
+  }
+
+  static String _sampleMapItems(List<Map<String, dynamic>> items,
+      {int limit = 2}) {
+    if (items.isEmpty) return '[]';
+    return items
+        .take(limit)
+        .map((e) => _preview(jsonEncode(e), max: 500))
+        .join(' | ');
   }
 
   static bool _isProxyUrl(String url) {
@@ -152,7 +188,7 @@ class VideoApiService {
       if (headers != null) ...headers,
     };
 
-    _log('GET $url');
+    _log('[GET] url=$url');
 
     try {
       final response = await http
@@ -161,6 +197,17 @@ class VideoApiService {
 
       final body = utf8.decode(response.bodyBytes, allowMalformed: true).trim();
 
+      _log(
+        '[GET] status=${response.statusCode} '
+        'contentType=${response.headers['content-type'] ?? '-'} '
+        'bytes=${response.bodyBytes.length} '
+        'bodyLen=${body.length}',
+      );
+
+      if (body.isNotEmpty) {
+        _log('[GET] preview=${_preview(body)}');
+      }
+
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception('HTTP ${response.statusCode}');
       }
@@ -168,7 +215,7 @@ class VideoApiService {
 
       return body;
     } catch (e) {
-      _log('GET failed url=$url error=$e');
+      _log('[GET] failed url=$url error=$e');
       rethrow;
     }
   }
@@ -546,9 +593,38 @@ class VideoApiService {
     Map<String, String> params,
   ) async {
     final apiBase = _buildVodBaseUrl(baseUrl);
-    final rawBody = await _getRawString(_withQuery(apiBase, params));
+    final requestUrl = _withQuery(apiBase, params);
+
+    _log(
+      '[fetchVodList] request apiBase=$apiBase '
+      'requestUrl=$requestUrl '
+      'params=${_paramsText(params)}',
+    );
+
+    final rawBody = await _getRawString(requestUrl);
+    _log('[fetchVodList] raw preview=${_preview(rawBody)}');
+
     final items = await IsolateParser.parseVodList(rawBody);
-    return _patchVodItemsMedia(items, apiBase);
+
+    _log(
+      '[fetchVodList] parsed count=${items.length} '
+      'sample=${_sampleVodItems(items)}',
+    );
+
+    if (items.isNotEmpty) {
+      _log(
+        '[fetchVodList] firstRawVod=${_preview(jsonEncode(items.first.toJson()), max: 900)}',
+      );
+    }
+
+    final patched = _patchVodItemsMedia(items, apiBase);
+
+    _log(
+      '[fetchVodList] patched count=${patched.length} '
+      'sample=${_sampleVodItems(patched)}',
+    );
+
+    return patched;
   }
 
   static Future<List<VodItem>> _fetchVodListByCandidates(
@@ -558,12 +634,29 @@ class VideoApiService {
     for (final params in candidates) {
       try {
         final items = await _fetchVodListByParams(baseUrl, params);
-        if (items.isNotEmpty) return items;
+        if (items.isNotEmpty) {
+          _log(
+            '[fetchVodListByCandidates] success '
+            'params=${_paramsText(params)} '
+            'count=${items.length}',
+          );
+          return items;
+        }
+
+        _log(
+          '[fetchVodListByCandidates] empty '
+          'params=${_paramsText(params)}',
+        );
       } catch (e, st) {
-        _log('vod list candidate failed: $e');
+        _log(
+          '[fetchVodListByCandidates] failed '
+          'params=${_paramsText(params)} error=$e',
+        );
         _log(st.toString());
       }
     }
+
+    _log('[fetchVodListByCandidates] all empty');
     return [];
   }
 
@@ -662,19 +755,40 @@ class VideoApiService {
   /// 兼容你现在的 api_site 结构，也兼容老的数组结构
   static Future<List<VideoSource>> fetchSources(String configUrl) async {
     final url = configUrl.trim();
-    if (url.isEmpty) return [];
+    if (url.isEmpty) {
+      _log('[fetchSources] skip empty configUrl');
+      return [];
+    }
+
+    _log('[fetchSources] start configUrl=$url');
 
     try {
       final decoded = await _getJson(url);
-      final rawItems = _extractSourceItems(decoded);
+      _log('[fetchSources] decodedType=${decoded.runtimeType}');
 
-      return rawItems
+      final rawItems = _extractSourceItems(decoded);
+      _log(
+        '[fetchSources] rawItems=${rawItems.length} '
+        'sampleKeys=${rawItems.isNotEmpty ? rawItems.first.keys.take(12).join(" | ") : "-"}',
+      );
+      if (rawItems.isNotEmpty) {
+        _log('[fetchSources] firstRaw=${_preview(jsonEncode(rawItems.first), max: 800)}');
+      }
+
+      final sources = rawItems
           .map(_normalizeSourceItem)
           .whereType<Map<String, dynamic>>()
           .map(VideoSource.fromJson)
           .toList(growable: false);
+
+      _log(
+        '[fetchSources] parsedSources=${sources.length} '
+        'sample=${sources.take(5).map((e) => e.name).join(" | ")}',
+      );
+
+      return sources;
     } catch (e, st) {
-      _log('fetchSources failed: $e');
+      _log('[fetchSources] failed: $e');
       _log(st.toString());
       return [];
     }
@@ -688,7 +802,16 @@ class VideoApiService {
   /// 注意：根接口只接受“明确是分类”的结构，避免把视频列表误判成分类
   static Future<List<VideoCategory>> fetchCategories(String baseUrl) async {
     final url = _buildVodBaseUrl(baseUrl);
-    if (url.isEmpty) return [];
+    if (url.isEmpty) {
+      _log('[fetchCategories] skip empty baseUrl');
+      return [];
+    }
+
+    _log(
+      '[fetchCategories] start baseUrl=$baseUrl '
+      'builtUrl=$url '
+      'enableVodProxy=$enableVodProxy',
+    );
 
     try {
       final candidates = <Map<String, String>>[
@@ -700,13 +823,20 @@ class VideoApiService {
       for (final params in candidates) {
         try {
           final requestUrl = params.isEmpty ? url : _withQuery(url, params);
+          _log(
+            '[fetchCategories] try requestUrl=$requestUrl '
+            'params=${_paramsText(params)}',
+          );
+
           final rawBody = await _getRawString(requestUrl);
 
           dynamic decoded;
           try {
             decoded = _decodeJsonSafely(rawBody);
+            _log('[fetchCategories] decodedType=${decoded.runtimeType}');
           } catch (_) {
             decoded = null;
+            _log('[fetchCategories] decode json failed, will try fallback parser');
           }
 
           final rawItems = decoded == null
@@ -715,13 +845,23 @@ class VideoApiService {
                   ? _extractCategoryItemsStrict(decoded)
                   : _extractCategoryItemsBroad(decoded));
 
+          _log(
+            '[fetchCategories] rawItems=${rawItems.length} '
+            'sample=${_sampleMapItems(rawItems)}',
+          );
+
           if (rawItems.isEmpty) {
             final fallback = await IsolateParser.parseCategoryList(rawBody);
+            _log(
+              '[fetchCategories] isolateFallback count=${fallback.length} '
+              'sample=${fallback.take(5).map((e) => "${e.typeId}:${e.typeName}").join(" | ")}',
+            );
             if (fallback.isNotEmpty) return fallback;
             continue;
           }
 
           if (_looksLikeVodItems(rawItems)) {
+            _log('[fetchCategories] skip because looks like vod items');
             continue;
           }
 
@@ -731,16 +871,22 @@ class VideoApiService {
               .where((item) => item.typeName.trim().isNotEmpty)
               .toList(growable: false);
 
+          _log(
+            '[fetchCategories] parsed count=${items.length} '
+            'sample=${items.take(5).map((e) => "${e.typeId}:${e.typeName}").join(" | ")}',
+          );
+
           if (items.isNotEmpty) return items;
         } catch (e, st) {
-          _log('fetchCategories candidate failed: $e');
+          _log('[fetchCategories] candidate failed params=${_paramsText(params)} error=$e');
           _log(st.toString());
         }
       }
 
+      _log('[fetchCategories] fallback empty');
       return [];
     } catch (e, st) {
-      _log('fetchCategories failed: $e');
+      _log('[fetchCategories] failed: $e');
       _log(st.toString());
       return [];
     }
@@ -754,7 +900,19 @@ class VideoApiService {
     int page,
   ) async {
     final url = _buildVodBaseUrl(baseUrl);
-    if (url.isEmpty) return [];
+    if (url.isEmpty) {
+      _log('[fetchVideos] skip empty baseUrl');
+      return [];
+    }
+
+    _log(
+      '[fetchVideos] start baseUrl=$baseUrl '
+      'builtUrl=$url '
+      'typeId=${typeId?.toString() ?? "all"} '
+      'page=$page '
+      'enableVodProxy=$enableVodProxy '
+      'enableVodMediaProxy=$enableVodMediaProxy',
+    );
 
     final candidates = <Map<String, String>>[];
 
@@ -780,10 +938,14 @@ class VideoApiService {
       ]);
     }
 
+    _log(
+      '[fetchVideos] candidates=${candidates.map(_paramsText).join(" || ")}',
+    );
+
     try {
       return await _fetchVodListByCandidates(url, candidates);
     } catch (e, st) {
-      _log('fetchVideos failed: $e');
+      _log('[fetchVideos] failed: $e');
       _log(st.toString());
       return [];
     }
@@ -805,7 +967,12 @@ class VideoApiService {
   ) async {
     final url = _buildVodBaseUrl(baseUrl);
     final query = keyword.trim();
-    if (url.isEmpty || query.isEmpty) return [];
+    if (url.isEmpty || query.isEmpty) {
+      _log('[searchVideo] skip empty url or keyword');
+      return [];
+    }
+
+    _log('[searchVideo] start baseUrl=$baseUrl builtUrl=$url keyword=$query');
 
     final candidates = <Map<String, String>>[
       {'ac': 'list', 'wd': query},
@@ -816,21 +983,40 @@ class VideoApiService {
 
     for (final params in candidates) {
       try {
-        final rawBody = await _getRawString(_withQuery(url, params));
+        final requestUrl = _withQuery(url, params);
+        _log(
+          '[searchVideo] try requestUrl=$requestUrl '
+          'params=${_paramsText(params)}',
+        );
+
+        final rawBody = await _getRawString(requestUrl);
         final items = await IsolateParser.parseVodList(rawBody);
+
+        _log(
+          '[searchVideo] parsed count=${items.length} '
+          'sample=${_sampleVodItems(items)}',
+        );
+
         if (items.isNotEmpty) return _patchVodItemsMedia(items, url);
-      } catch (_) {
-        continue;
+      } catch (e, st) {
+        _log('[searchVideo] candidate failed params=${_paramsText(params)} error=$e');
+        _log(st.toString());
       }
     }
 
+    _log('[searchVideo] fallback empty');
     return [];
   }
 
   /// 获取详情
   static Future<VodItem?> fetchDetail(String baseUrl, int vodId) async {
     final url = _buildVodBaseUrl(baseUrl);
-    if (url.isEmpty || vodId <= 0) return null;
+    if (url.isEmpty || vodId <= 0) {
+      _log('[fetchDetail] skip empty url or invalid vodId=$vodId');
+      return null;
+    }
+
+    _log('[fetchDetail] start baseUrl=$baseUrl builtUrl=$url vodId=$vodId');
 
     final candidates = <Map<String, String>>[
       {'ac': 'detail', 'ids': '$vodId'},
@@ -842,46 +1028,74 @@ class VideoApiService {
     for (final params in candidates) {
       try {
         final requestUrl = _withQuery(url, params);
-        final rawBody = await _getRawString(requestUrl);
+        _log(
+          '[fetchDetail] try requestUrl=$requestUrl '
+          'params=${_paramsText(params)}',
+        );
 
-        // 1) 先尝试按列表解析（很多源的 detail 实际也是一段 list）
+        final rawBody = await _getRawString(requestUrl);
+        _log('[fetchDetail] raw preview=${_preview(rawBody)}');
+
+        // 1) 先尝试按列表解析
         try {
           final items = await IsolateParser.parseVodList(rawBody);
+          _log(
+            '[fetchDetail] parseVodList count=${items.length} '
+            'sample=${_sampleVodItems(items)}',
+          );
           if (items.isNotEmpty) {
             return _patchVodItemMedia(items.first, url);
           }
-        } catch (_) {}
+        } catch (e) {
+          _log('[fetchDetail] parseVodList failed: $e');
+        }
 
         // 2) 再尝试 JSON
         try {
           final decoded = _decodeJsonSafely(rawBody);
+          _log('[fetchDetail] decodedType=${decoded.runtimeType}');
 
           final list = _toMapList(decoded);
           if (list.isNotEmpty) {
+            _log(
+              '[fetchDetail] decoded list count=${list.length} '
+              'sample=${_sampleMapItems(list)}',
+            );
             return _patchVodItemMedia(VodItem.fromJson(list.first), url);
           }
 
           final map = IsolateParser.asMap(decoded);
-          if (map != null &&
-              (map.containsKey('vod_id') ||
-                  map.containsKey('vodId') ||
-                  map.containsKey('vod_name') ||
-                  map.containsKey('vodName'))) {
-            return _patchVodItemMedia(VodItem.fromJson(map), url);
+          if (map != null) {
+            _log(
+              '[fetchDetail] decoded map keys=${map.keys.take(20).join(" | ")}',
+            );
+
+            if (map.containsKey('vod_id') ||
+                map.containsKey('vodId') ||
+                map.containsKey('vod_name') ||
+                map.containsKey('vodName')) {
+              return _patchVodItemMedia(VodItem.fromJson(map), url);
+            }
           }
-        } catch (_) {}
+        } catch (e) {
+          _log('[fetchDetail] json parse failed: $e');
+        }
 
         // 3) 最后尝试 XML
         final xmlMap = _parseVodXmlDetail(rawBody);
         if (xmlMap != null) {
+          _log('[fetchDetail] xmlMap keys=${xmlMap.keys.take(20).join(" | ")}');
           return _patchVodItemMedia(VodItem.fromJson(xmlMap), url);
         }
+
+        _log('[fetchDetail] no detail matched for params=${_paramsText(params)}');
       } catch (e, st) {
-        _log('fetchDetail candidate failed: $e');
+        _log('[fetchDetail] candidate failed params=${_paramsText(params)} error=$e');
         _log(st.toString());
       }
     }
 
+    _log('[fetchDetail] fallback null');
     return null;
   }
 }

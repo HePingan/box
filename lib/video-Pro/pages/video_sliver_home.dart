@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -5,6 +7,7 @@ import '../../pages/debug_log_page.dart';
 import '../controller/history_controller.dart';
 import '../controller/video_controller.dart';
 import '../models/video_source.dart';
+import '../models/vod_item.dart';
 import '../video_module.dart';
 import '../widgets/history_quick_view.dart';
 import 'aggregate_search_page.dart';
@@ -217,6 +220,25 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
     );
   }
 
+  /// 给视频封面一个更稳的兜底：
+  /// 1. 先用 resolveVideoCoverSync
+  /// 2. 失败后回退到 raw vodPic
+  /// 3. 再交给 HomeVideoSliverGrid 去渲染
+  String? _resolveCoverUrl(VodItem video, VideoSource? source) {
+  final resolved = source == null
+      ? null
+      : resolveVideoCoverSync(video, source)?.trim();
+
+  if (resolved != null && resolved.isNotEmpty) {
+    return resolved;
+  }
+
+  final fallback = (video.vodPic ?? '').trim();
+  if (fallback.isEmpty) return null;
+
+  return fallback;
+}
+
   Widget _buildBottomLoader(VideoController controller) {
     if (controller.videoList.isEmpty) return const SizedBox.shrink();
 
@@ -256,7 +278,12 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
     final controller = context.watch<VideoController>();
     final source = controller.currentSource;
     final screenWidth = MediaQuery.of(context).size.width;
-    final layoutWidth = screenWidth >= 700 ? 560.0 : screenWidth;
+    final layoutWidth = min(screenWidth, 560.0);
+
+    final hasHistory = widget.showHistory &&
+        context.select<HistoryController, bool>(
+          (history) => history.historyList.isNotEmpty,
+        );
 
     final safeVideoList = controller.videoList.where((video) {
       return isSafeContent(video.typeName) && isSafeContent(video.vodName);
@@ -339,10 +366,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
                     ),
                   ),
                 ),
-                if (widget.showHistory &&
-                    context.select<HistoryController, bool>(
-                      (history) => history.historyList.isNotEmpty,
-                    ))
+                if (hasHistory)
                   const SliverToBoxAdapter(
                     child: Padding(
                       padding: EdgeInsets.fromLTRB(12, 12, 12, 0),
@@ -405,8 +429,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
                   videos: safeVideoList,
                   screenWidth: screenWidth,
                   isLoading: controller.isLoading,
-                  coverUrlFor: (video) =>
-                      source == null ? null : resolveVideoCoverSync(video, source),
+                  coverUrlFor: (video) => _resolveCoverUrl(video, source),
                   onTapVideo: (video) {
                     if (source == null) {
                       _showSnackBar('暂无可用片源');
@@ -531,7 +554,8 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
             TextButton.icon(
               onPressed: () => showHomeSourcePickerSheet(context, controller),
               style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 minimumSize: const Size(0, 38),
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
