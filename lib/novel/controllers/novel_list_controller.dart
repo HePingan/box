@@ -6,14 +6,12 @@ import '../core/models.dart';
 import '../core/rule_novel_source.dart';
 import '../novel_module.dart';
 import '../core/wtzw_novel_source.dart';
+
 class _ExploreEntry {
   final String title;
   final String url;
 
-  const _ExploreEntry({
-    required this.title,
-    required this.url,
-  });
+  const _ExploreEntry({required this.title, required this.url});
 }
 
 class NovelListController extends ChangeNotifier {
@@ -39,22 +37,16 @@ class NovelListController extends ChangeNotifier {
   String get error => _error;
 
   bool get isConfigured => NovelModule.isConfigured;
-Object? get _activeSource {
-  if (!NovelModule.isConfigured) return null;
-  return NovelModule.repository.source;
-}
+  Object? get _activeSource {
+    if (!NovelModule.isConfigured) return null;
+    return NovelModule.repository.source;
+  }
 
-String _sourceNameOf(Object? source) {
-  if (source is RuleNovelSource) return source.name;
-  if (source is WtzwNovelSource) return source.name;
-  return '';
-}
-
-String _exploreUrlOf(Object? source) {
-  if (source is RuleNovelSource) return source.exploreUrl;
-  if (source is WtzwNovelSource) return source.exploreUrl;
-  return '';
-}
+  String _exploreUrlOf(Object? source) {
+    if (source is RuleNovelSource) return source.exploreUrl;
+    if (source is WtzwNovelSource) return source.exploreUrl;
+    return '';
+  }
 
   bool get supportsExplore => _resolvePrimaryExploreEntry(page: 1) != null;
 
@@ -115,10 +107,7 @@ String _exploreUrlOf(Object? source) {
     await _loadExplorePage(_page + 1, reset: false);
   }
 
-  Future<void> _loadSearchPage(
-    int page, {
-    required bool reset,
-  }) async {
+  Future<void> _loadSearchPage(int page, {required bool reset}) async {
     if (!isConfigured) return;
 
     if (reset) {
@@ -161,10 +150,7 @@ String _exploreUrlOf(Object? source) {
     }
   }
 
-  Future<void> _loadExplorePage(
-    int page, {
-    required bool reset,
-  }) async {
+  Future<void> _loadExplorePage(int page, {required bool reset}) async {
     if (!isConfigured) return;
 
     final entry = _resolvePrimaryExploreEntry(page: page);
@@ -215,13 +201,11 @@ String _exploreUrlOf(Object? source) {
     }
   }
 
-  _ExploreEntry? _resolvePrimaryExploreEntry({
-    required int page,
-  }) {
-    final source = _ruleSource;
+  _ExploreEntry? _resolvePrimaryExploreEntry({required int page}) {
+    final source = _activeSource;
     if (source == null) return null;
 
-    final raw = source.exploreUrl.trim();
+    final raw = _exploreUrlOf(source).trim();
     if (raw.isEmpty) return null;
 
     // 情况 1：普通字符串 URL

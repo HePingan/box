@@ -14,17 +14,16 @@ class IsolateParser {
   }) async {
     if (jsonString.trim().isEmpty) return <VodItem>[];
 
-    return compute(
-      _parseVodListTask,
-      <String, String?>{
-        'jsonString': jsonString,
-        'baseUrl': baseUrl,
-      },
-    );
+    return compute(_parseVodListTask, <String, String?>{
+      'jsonString': jsonString,
+      'baseUrl': baseUrl,
+    });
   }
 
   /// 开启后台线程，解析分类列表数据
-  static Future<List<VideoCategory>> parseCategoryList(String jsonString) async {
+  static Future<List<VideoCategory>> parseCategoryList(
+    String jsonString,
+  ) async {
     if (jsonString.trim().isEmpty) return <VideoCategory>[];
     return compute(_parseCategoryListTask, jsonString);
   }
@@ -145,14 +144,6 @@ class IsolateParser {
     return int.tryParse(value.toString().trim()) ?? fallback;
   }
 
-  static bool _asBool(dynamic value, [bool fallback = true]) {
-    if (value == null) return fallback;
-    if (value is bool) return value;
-    final s = value.toString().trim().toLowerCase();
-    if (s.isEmpty) return fallback;
-    return s == '1' || s == 'true' || s == 'yes' || s == 'on';
-  }
-
   static Map<String, dynamic> _normalizeVodItem(
     Map<String, dynamic> raw, {
     String? baseUrl,
@@ -181,7 +172,10 @@ class IsolateParser {
     final vodPic = _resolveMediaUrl(vodPicRaw, baseUrl);
 
     final vodRemarks = _asString(
-      raw['vod_remarks'] ?? raw['vodRemarks'] ?? raw['remarks'] ?? raw['remark'],
+      raw['vod_remarks'] ??
+          raw['vodRemarks'] ??
+          raw['remarks'] ??
+          raw['remark'],
     );
     final vodPlayFrom = _asString(
       raw['vod_play_from'] ?? raw['vodPlayFrom'] ?? raw['play_from'],
@@ -232,7 +226,9 @@ class IsolateParser {
 
   static Map<String, dynamic> _normalizeCategoryItem(Map<String, dynamic> raw) {
     final typeId = _asInt(raw['type_id'] ?? raw['typeId'] ?? raw['id']);
-    final typeName = _asString(raw['type_name'] ?? raw['typeName'] ?? raw['name']);
+    final typeName = _asString(
+      raw['type_name'] ?? raw['typeName'] ?? raw['name'],
+    );
 
     return <String, dynamic>{
       ...raw,

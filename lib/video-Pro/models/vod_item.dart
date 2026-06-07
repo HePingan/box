@@ -57,62 +57,67 @@ class VodItem {
 
   bool get hasPlayUrls => parsePlayUrls.isNotEmpty;
 
-  factory VodItem.fromJson(
-    Map<String, dynamic> json, {
-    String? baseUrl,
-  }) {
+  factory VodItem.fromJson(Map<String, dynamic> json, {String? baseUrl}) {
     return VodItem(
       vodId: _readInt(json, const ['vod_id', 'vodId', 'id']),
       typeId: _readInt(json, const ['type_id', 'typeId']),
-      vodName: _readString(
-        json,
-        const ['vod_name', 'vodName', 'name', 'title', 'vodTitle'],
-      ),
+      vodName: _readString(json, const [
+        'vod_name',
+        'vodName',
+        'name',
+        'title',
+        'vodTitle',
+      ]),
       vodPic: _resolveMediaUrl(
-        _readString(
-          json,
-          const [
-            'vod_pic',
-            'vodPic',
-            'pic',
-            'poster',
-            'cover',
-            'image',
-            'img',
-            'thumb',
-            'posterUrl',
-            'coverUrl',
-            'imageUrl',
-          ],
-        ),
+        _readString(json, const [
+          'vod_pic',
+          'vodPic',
+          'pic',
+          'poster',
+          'cover',
+          'image',
+          'img',
+          'thumb',
+          'posterUrl',
+          'coverUrl',
+          'imageUrl',
+        ]),
         baseUrl,
       ),
-      vodRemarks: _readString(
-        json,
-        const ['vod_remarks', 'vodRemarks', 'remarks', 'remark'],
-      ),
+      vodRemarks: _readString(json, const [
+        'vod_remarks',
+        'vodRemarks',
+        'remarks',
+        'remark',
+      ]),
       vodTime: _readString(json, const ['vod_time', 'vodTime', 'time']),
       vodYear: _readString(json, const ['vod_year', 'vodYear', 'year']),
       vodArea: _readString(json, const ['vod_area', 'vodArea', 'area']),
       vodLang: _readString(json, const ['vod_lang', 'vodLang', 'lang']),
-      vodDirector: _readString(
-        json,
-        const ['vod_director', 'vodDirector', 'director'],
-      ),
+      vodDirector: _readString(json, const [
+        'vod_director',
+        'vodDirector',
+        'director',
+      ]),
       vodActor: _readString(json, const ['vod_actor', 'vodActor', 'actor']),
-      vodContent: _readString(
-        json,
-        const ['vod_content', 'vodContent', 'content'],
-      ),
+      vodContent: _readString(json, const [
+        'vod_content',
+        'vodContent',
+        'content',
+      ]),
       typeName: _readString(json, const ['type_name', 'typeName']),
-      vodPlayFrom: _readString(
-        json,
-        const ['vod_play_from', 'vodPlayFrom', 'playFrom', 'play_from'],
-      ),
-      vodPlayUrl: _readString(
-        json,
-        const ['vod_play_url', 'vodPlayUrl', 'playUrl', 'play_url'],
-      ),
+      vodPlayFrom: _readString(json, const [
+        'vod_play_from',
+        'vodPlayFrom',
+        'playFrom',
+        'play_from',
+      ]),
+      vodPlayUrl: _readString(json, const [
+        'vod_play_url',
+        'vodPlayUrl',
+        'playUrl',
+        'play_url',
+      ]),
     );
   }
 
@@ -177,10 +182,7 @@ class VodItem {
     return 'VodItem(vodId: $vodId, typeId: $typeId, vodName: $vodName)';
   }
 
-  static String _readString(
-    Map<String, dynamic> json,
-    List<String> keys,
-  ) {
+  static String _readString(Map<String, dynamic> json, List<String> keys) {
     for (final key in keys) {
       final value = json[key];
       if (value == null) continue;
@@ -193,10 +195,7 @@ class VodItem {
     return '';
   }
 
-  static int _readInt(
-    Map<String, dynamic> json,
-    List<String> keys,
-  ) {
+  static int _readInt(Map<String, dynamic> json, List<String> keys) {
     for (final key in keys) {
       final value = json[key];
       if (value == null) continue;

@@ -48,8 +48,9 @@ class VideoDetailController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final detailUrl =
-          source.detailUrl.trim().isNotEmpty ? source.detailUrl : source.url;
+      final detailUrl = source.detailUrl.trim().isNotEmpty
+          ? source.detailUrl
+          : source.url;
       _log('开始加载详情，vodId=$vodId, detailUrl=$detailUrl');
 
       // 获取详情数据
@@ -187,7 +188,9 @@ class VideoDetailController extends ChangeNotifier {
     }
 
     // 再兜底：第一条可播放线路
-    final firstPlayableIndex = lines.indexWhere((line) => line.episodes.isNotEmpty);
+    final firstPlayableIndex = lines.indexWhere(
+      (line) => line.episodes.isNotEmpty,
+    );
     if (firstPlayableIndex >= 0) {
       final line = lines[firstPlayableIndex];
       final ep = line.episodes.first;
@@ -215,7 +218,9 @@ class VideoDetailController extends ChangeNotifier {
       }
     }
 
-    final firstPlayableIndex = lines.indexWhere((line) => line.episodes.isNotEmpty);
+    final firstPlayableIndex = lines.indexWhere(
+      (line) => line.episodes.isNotEmpty,
+    );
     return firstPlayableIndex >= 0 ? firstPlayableIndex : 0;
   }
 
@@ -251,7 +256,9 @@ class VideoDetailController extends ChangeNotifier {
 
   void selectEpisode(int index) {
     if (playLines.isEmpty) return;
-    final safeLineIndex = selectedLineIndex.clamp(0, playLines.length - 1).toInt();
+    final safeLineIndex = selectedLineIndex
+        .clamp(0, playLines.length - 1)
+        .toInt();
     final line = playLines[safeLineIndex];
 
     if (index < 0 || index >= line.episodes.length) return;
@@ -278,7 +285,9 @@ class VideoDetailController extends ChangeNotifier {
 
   bool canPlayNext() {
     if (playLines.isEmpty) return false;
-    final safeLineIndex = selectedLineIndex.clamp(0, playLines.length - 1).toInt();
+    final safeLineIndex = selectedLineIndex
+        .clamp(0, playLines.length - 1)
+        .toInt();
     return selectedEpisodeIndex < playLines[safeLineIndex].episodes.length - 1;
   }
 

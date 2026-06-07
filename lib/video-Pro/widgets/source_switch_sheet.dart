@@ -111,7 +111,7 @@ class _SourceSwitchSheetState extends State<SourceSwitchSheet> {
             Expanded(
               child: ListView.separated(
                 itemCount: list.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
+                separatorBuilder: (_, _) => const Divider(height: 1),
                 itemBuilder: (context, index) {
                   final source = list[index];
                   final record = widget.visibilityRepo.getRecord(source);
@@ -119,7 +119,9 @@ class _SourceSwitchSheetState extends State<SourceSwitchSheet> {
 
                   return ListTile(
                     leading: Icon(
-                      selected ? Icons.check_circle : Icons.radio_button_unchecked,
+                      selected
+                          ? Icons.check_circle
+                          : Icons.radio_button_unchecked,
                       color: selected ? Colors.blue : Colors.grey,
                     ),
                     title: Text(
@@ -141,12 +143,15 @@ class _SourceSwitchSheetState extends State<SourceSwitchSheet> {
                       onSelected: (value) async {
                         if (value == 'select') {
                           await widget.onSelectSource(source);
-                          if (mounted) Navigator.pop(context);
+                          if (!context.mounted) return;
+                          Navigator.pop(context);
                         } else if (value == 'hide') {
                           await widget.onToggleHidden(source, true);
+                          if (!mounted) return;
                           setState(() {});
                         } else if (value == 'show') {
                           await widget.onToggleHidden(source, false);
+                          if (!mounted) return;
                           setState(() {});
                         }
                       },
@@ -163,10 +168,12 @@ class _SourceSwitchSheetState extends State<SourceSwitchSheet> {
                     ),
                     onTap: () async {
                       await widget.onSelectSource(source);
-                      if (mounted) Navigator.pop(context);
+                      if (!context.mounted) return;
+                      Navigator.pop(context);
                     },
                     onLongPress: () async {
                       await widget.onToggleHidden(source, !record.manualHidden);
+                      if (!mounted) return;
                       setState(() {});
                     },
                   );

@@ -28,14 +28,14 @@ class HistoryQuickView extends StatelessWidget {
 
         return RepaintBoundary(
           child: Card(
-            elevation: 0.4,
-            color: Colors.white,
+            elevation: 0,
+            color: const Color(0xFF111827),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: BorderSide(color: Colors.grey.shade200),
+              borderRadius: BorderRadius.circular(26),
+              side: const BorderSide(color: Color(0xFF273449)),
             ),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -45,29 +45,31 @@ class HistoryQuickView extends StatelessWidget {
                     subtitle,
                     style: TextStyle(
                       fontSize: 11.5,
-                      color: Colors.grey.shade500,
+                      color: Colors.white.withValues(alpha: 0.60),
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                   if (items.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       child: Center(
                         child: Text(
                           emptyText,
-                          style: TextStyle(color: Colors.grey.shade500),
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.60),
+                          ),
                         ),
                       ),
                     )
                   else
                     SizedBox(
-                      height: 188,
+                      height: 172,
                       child: ListView.separated(
                         scrollDirection: Axis.horizontal,
                         physics: const ClampingScrollPhysics(),
-                        cacheExtent: 360,
                         itemCount: items.length,
-                        separatorBuilder: (_, __) => const SizedBox(width: 12),
+                        separatorBuilder: (_, _) => const SizedBox(width: 12),
                         itemBuilder: (context, index) {
                           final item = items[index];
                           return RepaintBoundary(
@@ -100,9 +102,9 @@ class HistoryQuickView extends StatelessWidget {
         Text(
           title,
           style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.black87,
+            fontSize: 17,
+            fontWeight: FontWeight.w900,
+            color: Colors.white,
           ),
         ),
         const Spacer(),
@@ -116,9 +118,10 @@ class HistoryQuickView extends StatelessWidget {
             ),
             child: Text(
               '清空',
-              style: TextStyle(
-                color: Colors.grey.shade500,
-                fontSize: 13,
+              style: const TextStyle(
+                color: Color(0xFFFFE08A),
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ),
@@ -128,7 +131,10 @@ class HistoryQuickView extends StatelessWidget {
 
   void _openHistoryItem(BuildContext context, HistoryItem item) {
     final videoController = context.read<VideoController>();
-    final targetSource = _findSourceById(videoController.sources, item.sourceId);
+    final targetSource = _findSourceById(
+      videoController.sources,
+      item.sourceId,
+    );
 
     if (targetSource == null) {
       _showSnackBar(context, '该视频的片源已失效或被移除');
@@ -162,9 +168,9 @@ class HistoryQuickView extends StatelessWidget {
   }
 
   void _showSnackBar(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _confirmClear(BuildContext context, HistoryController controller) {
@@ -180,10 +186,7 @@ class HistoryQuickView extends StatelessWidget {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text(
-                '取消',
-                style: TextStyle(color: Colors.grey),
-              ),
+              child: const Text('取消', style: TextStyle(color: Colors.grey)),
             ),
             TextButton(
               onPressed: () async {
@@ -218,10 +221,7 @@ class HistoryQuickView extends StatelessWidget {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text(
-                '取消',
-                style: TextStyle(color: Colors.grey),
-              ),
+              child: const Text('取消', style: TextStyle(color: Colors.grey)),
             ),
             TextButton(
               onPressed: () async {
@@ -256,20 +256,20 @@ class _HistoryCard extends StatelessWidget {
     final progress = (item.progressPercentage * 100).clamp(0, 100).toInt();
     final imageUrl = item.vodPic.trim();
     final dpr = MediaQuery.of(context).devicePixelRatio;
-    final cacheWidth = (108 * dpr).round();
-    final cacheHeight = (150 * dpr).round();
+    final cacheWidth = (96 * dpr).round();
+    final cacheHeight = (134 * dpr).round();
 
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
       child: SizedBox(
-        width: 108,
+        width: 96,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(18),
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -308,7 +308,7 @@ class _HistoryCard extends StatelessWidget {
                             end: Alignment.bottomCenter,
                             colors: [
                               Colors.transparent,
-                              Colors.black.withOpacity(0.85),
+                              Colors.black.withValues(alpha: 0.85),
                             ],
                           ),
                         ),
@@ -327,9 +327,11 @@ class _HistoryCard extends StatelessWidget {
                             LinearProgressIndicator(
                               value: item.progressPercentage,
                               minHeight: 2.5,
-                              backgroundColor: Colors.white.withOpacity(0.15),
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Theme.of(context).colorScheme.primary,
+                              backgroundColor: Colors.white.withValues(
+                                alpha: 0.15,
+                              ),
+                              valueColor: const AlwaysStoppedAnimation<Color>(
+                                Color(0xFFFFE08A),
                               ),
                             ),
                           ],
@@ -340,7 +342,7 @@ class _HistoryCard extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 5),
             Text(
               item.vodName,
               maxLines: 1,
@@ -348,7 +350,7 @@ class _HistoryCard extends StatelessWidget {
               style: const TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: 13,
-                color: Colors.black87,
+                color: Colors.white,
                 height: 1.2,
               ),
             ),
@@ -359,7 +361,7 @@ class _HistoryCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 11,
-                color: Colors.grey.shade600,
+                color: Colors.white.withValues(alpha: 0.70),
                 height: 1.2,
               ),
             ),
@@ -369,7 +371,7 @@ class _HistoryCard extends StatelessWidget {
                 Icon(
                   Icons.video_library_rounded,
                   size: 10,
-                  color: Colors.grey.shade400,
+                  color: const Color(0xFFFFE08A),
                 ),
                 const SizedBox(width: 4),
                 Expanded(
@@ -379,7 +381,7 @@ class _HistoryCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 11,
-                      color: Colors.grey.shade500,
+                      color: Colors.white.withValues(alpha: 0.54),
                       height: 1.2,
                     ),
                   ),
@@ -421,7 +423,7 @@ class _HistoryImagePlaceholder extends StatelessWidget {
       child: Icon(
         Icons.movie_outlined,
         size: 32,
-        color: Colors.grey.shade400,
+        color: Colors.white.withValues(alpha: 0.72),
       ),
     );
   }

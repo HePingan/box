@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import '../core/models.dart';
@@ -92,11 +91,11 @@ class _ReaderPageState extends State<ReaderPage> {
   Color get _bgColor {
     switch (_controller.settings.themeMode) {
       case ReaderThemeMode.warm:
-        return const Color(0xFFCBE5D2);
+        return const Color(0xFFDDEBD2);
       case ReaderThemeMode.paper:
-        return const Color(0xFFF1E9CE);
+        return const Color(0xFFF6EFD8);
       case ReaderThemeMode.dark:
-        return const Color(0xFF141414);
+        return const Color(0xFF10131A);
     }
   }
 
@@ -264,9 +263,7 @@ class _ReaderPageState extends State<ReaderPage> {
       _controller.chapterIndex,
     );
 
-    _scrollController.jumpTo(
-      saved == null ? 0.0 : _decodeScrollOffset(saved),
-    );
+    _scrollController.jumpTo(saved == null ? 0.0 : _decodeScrollOffset(saved));
   }
 
   void _onPageChanged(int viewIndex) {
@@ -343,15 +340,15 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
-  Future<void> _switchAdjacentChapter(int offset, ReaderJumpTarget target) async {
+  Future<void> _switchAdjacentChapter(
+    int offset,
+    ReaderJumpTarget target,
+  ) async {
     final nextIndex = _controller.chapterIndex + offset;
     if (nextIndex < 0 || nextIndex >= _controller.totalChapters) return;
 
     _controller.setMenuVisible(false);
-    await _navigationController.switchChapter(
-      nextIndex,
-      target: target,
-    );
+    await _navigationController.switchChapter(nextIndex, target: target);
   }
 
   void _calculatePages(
@@ -442,7 +439,10 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
-  Widget _buildPagedReaderView(BuildContext context, BoxConstraints constraints) {
+  Widget _buildPagedReaderView(
+    BuildContext context,
+    BoxConstraints constraints,
+  ) {
     final topPad = MediaQuery.of(context).padding.top;
     final fitWidth = constraints.maxWidth - 40.0;
     final paddingTotal = topPad + 8.0 + 8.0;
@@ -456,7 +456,7 @@ class _ReaderPageState extends State<ReaderPage> {
       return Center(
         child: CircularProgressIndicator(
           strokeWidth: 2,
-          color: _textColor.withOpacity(0.4),
+          color: _textColor.withValues(alpha: 0.4),
         ),
       );
     }
@@ -473,7 +473,7 @@ class _ReaderPageState extends State<ReaderPage> {
       return Center(
         child: CircularProgressIndicator(
           strokeWidth: 2,
-          color: _textColor.withOpacity(0.4),
+          color: _textColor.withValues(alpha: 0.4),
         ),
       );
     }
@@ -520,52 +520,44 @@ class _ReaderPageState extends State<ReaderPage> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               CircularProgressIndicator(
-                                color: _textColor.withOpacity(0.5),
+                                color: _textColor.withValues(alpha: 0.5),
                               ),
                               const SizedBox(height: 14),
                               Text(
                                 '正在铺排...',
                                 style: TextStyle(
-                                  color: _textColor.withOpacity(0.5),
+                                  color: _textColor.withValues(alpha: 0.5),
                                 ),
                               ),
                             ],
                           ),
                         )
                       : _controller.isError
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(20),
-                                child: Text(
-                                  _controller.errorText,
-                                  style: const TextStyle(
-                                    color: Colors.redAccent,
-                                    fontSize: 16,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Text(
+                              _controller.errorText,
+                              style: const TextStyle(
+                                color: Colors.redAccent,
+                                fontSize: 16,
                               ),
-                            )
-                          : _controller.isScrollMode
-                              ? _buildContinuousReaderView(
-                                  MediaQuery.of(context).padding.top,
-                                )
-                              : LayoutBuilder(
-                                  builder: (context, constraints) {
-                                    return _buildPagedReaderView(
-                                      context,
-                                      constraints,
-                                    );
-                                  },
-                                ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        )
+                      : _controller.isScrollMode
+                      ? _buildContinuousReaderView(
+                          MediaQuery.of(context).padding.top,
+                        )
+                      : LayoutBuilder(
+                          builder: (context, constraints) {
+                            return _buildPagedReaderView(context, constraints);
+                          },
+                        ),
                 ),
                 if (_controller.showMenu)
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: _buildTopBar(),
-                  ),
+                  Positioned(top: 0, left: 0, right: 0, child: _buildTopBar()),
                 if (_controller.showMenu)
                   Positioned(
                     left: 0,

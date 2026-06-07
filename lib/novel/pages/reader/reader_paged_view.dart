@@ -23,9 +23,7 @@ class ReaderPagedView extends StatelessWidget {
   final double topPadding;
   final ValueChanged<int> onPageChanged;
 
-  Widget _buildBoundaryPage({
-    required bool isNext,
-  }) {
+  Widget _buildBoundaryPage({required bool isNext}) {
     final canMove = isNext ? controller.canGoNext : controller.canGoPrev;
 
     final tip = !canMove
@@ -49,14 +47,14 @@ class ReaderPagedView extends StatelessWidget {
           Icon(
             isNext ? Icons.swipe_left_rounded : Icons.swipe_right_rounded,
             size: 34,
-            color: textColor.withOpacity(0.45),
+            color: textColor.withValues(alpha: 0.45),
           ),
           const SizedBox(height: 10),
           Text(
             tip,
             style: TextStyle(
               fontSize: 14,
-              color: textColor.withOpacity(0.72),
+              color: textColor.withValues(alpha: 0.72),
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -69,7 +67,7 @@ class ReaderPagedView extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 12,
-                  color: textColor.withOpacity(0.52),
+                  color: textColor.withValues(alpha: 0.52),
                 ),
               ),
             ),
@@ -86,7 +84,7 @@ class ReaderPagedView extends StatelessWidget {
       return Center(
         child: CircularProgressIndicator(
           strokeWidth: 2,
-          color: textColor.withOpacity(0.4),
+          color: textColor.withValues(alpha: 0.4),
         ),
       );
     }
@@ -140,7 +138,7 @@ class ReaderPagedView extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 10,
-                        color: textColor.withOpacity(0.5),
+                        color: textColor.withValues(alpha: 0.5),
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -170,7 +168,7 @@ class ReaderPagedView extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 11,
-                          color: textColor.withOpacity(0.5),
+                          color: textColor.withValues(alpha: 0.5),
                         ),
                       ),
                     ),
@@ -178,7 +176,7 @@ class ReaderPagedView extends StatelessWidget {
                       '${index + 1}/$totalPages   ${((index + 1) / totalPages * 100).toStringAsFixed(1)}%',
                       style: TextStyle(
                         fontSize: 11,
-                        color: textColor.withOpacity(0.5),
+                        color: textColor.withValues(alpha: 0.5),
                       ),
                     ),
                   ],

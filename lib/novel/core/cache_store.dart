@@ -25,7 +25,9 @@ class CacheStore {
   }
 
   Future<void> write(String key, dynamic data, {Duration? ttl}) async {
-    final expiresAt = ttl == null ? null : DateTime.now().add(ttl).millisecondsSinceEpoch;
+    final expiresAt = ttl == null
+        ? null
+        : DateTime.now().add(ttl).millisecondsSinceEpoch;
     final payload = <String, dynamic>{
       'savedAt': DateTime.now().millisecondsSinceEpoch,
       'expiresAt': expiresAt,

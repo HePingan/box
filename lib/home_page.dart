@@ -3,14 +3,16 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import 'daily_news_page.dart';
+import 'design_system/app_tokens.dart';
 import 'globals.dart';
 import 'novel/pages/novel_list_page.dart';
-
 import 'plugin_manager.dart';
 import 'video_module.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  const HomePage({super.key, this.onSwitchTab});
+
+  final ValueChanged<int>? onSwitchTab;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -25,7 +27,15 @@ class _HomePageState extends State<HomePage>
 
   String _todayDateStr = '';
   bool _isLoadingNews = true;
+  int _selectedCategory = 0;
   List<String> _newsList = [];
+
+  static const List<_CategoryTab> _categories = [
+    _CategoryTab('推荐', Icons.auto_awesome_rounded, HomePluginArea.recommend),
+    _CategoryTab('音乐', Icons.graphic_eq_rounded, HomePluginArea.music),
+    _CategoryTab('影视', Icons.movie_filter_rounded, HomePluginArea.video),
+    _CategoryTab('漫画', Icons.palette_rounded, HomePluginArea.comic),
+  ];
 
   @override
   void initState() {
@@ -46,7 +56,7 @@ class _HomePageState extends State<HomePage>
     setState(() => _isLoadingNews = true);
 
     try {
-      await Future.delayed(const Duration(milliseconds: 1200));
+      await Future.delayed(const Duration(milliseconds: 700));
       final random = Random().nextInt(100);
       _newsList = [
         '漂白鸡爪掀行业震荡 多品牌回应',
@@ -68,254 +78,245 @@ class _HomePageState extends State<HomePage>
     super.build(context);
 
     return Scaffold(
-      body: DefaultTabController(
-        length: 4,
-        child: SafeArea(
-          child: NestedScrollView(
-            headerSliverBuilder: (context, innerBoxIsScrolled) {
-              return <Widget>[
-                SliverToBoxAdapter(child: _buildTopHeader()),
-                SliverToBoxAdapter(child: _buildDailyNewsCard()),
-                SliverToBoxAdapter(child: _buildQuickActions()),
-                SliverPersistentHeader(
-                  pinned: true,
-                  delegate: _SliverAppBarDelegate(_buildTabBar()),
-                ),
-              ];
-            },
-            body: TabBarView(
-              children: [
-                _buildRecommendGrid(),
-                _buildMusicGrid(),
-                _buildVideoTab(),
-                _buildComicGrid(),
-              ],
+      backgroundColor: const Color(0xFFF4F7FB),
+      body: SafeArea(
+        child: CustomScrollView(
+          physics: const BouncingScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(child: _buildHeroHeader()),
+            SliverToBoxAdapter(child: _buildQuickDock()),
+            SliverToBoxAdapter(child: _buildDailyNewsCard()),
+            SliverToBoxAdapter(child: _buildCategorySwitcher()),
+            ValueListenableBuilder<List<HomePlugin>>(
+              valueListenable: _pluginHost.listenable,
+              builder: (context, _, _) => _buildFeatureSliver(),
             ),
-          ),
+            const SliverToBoxAdapter(
+              child: SizedBox(height: AppTokens.pageBottomPadding),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  TabBar _buildTabBar() {
-    return TabBar(
-      isScrollable: true,
-      tabAlignment: TabAlignment.start,
-      indicatorColor: Colors.blue[700],
-      indicatorSize: TabBarIndicatorSize.label,
-      indicatorWeight: 3.0,
-      labelColor: Colors.blue[700],
-      unselectedLabelColor: Colors.black54,
-      dividerColor: Colors.grey[300],
-      tabs: const [
-        Tab(
-          child: Row(
+  Widget _buildHeroHeader() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0F172A), Color(0xFF1455D9), Color(0xFF36C2FF)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(26),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF1455D9).withValues(alpha: 0.28),
+            blurRadius: 26,
+            offset: const Offset(0, 14),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Icon(Icons.local_fire_department_outlined, size: 20),
-              SizedBox(width: 4),
-              Text(
-                '推荐',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              _GlassIconButton(
+                icon: Icons.menu_rounded,
+                onTap: () => appScaffoldKey.currentState?.openDrawer(),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.22),
+                  ),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.bolt_rounded,
+                      size: 15,
+                      color: Color(0xFFFFE08A),
+                    ),
+                    SizedBox(width: 4),
+                    Text(
+                      '今日工作台',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              _GlassIconButton(
+                icon: Icons.refresh_rounded,
+                onTap: _fetchDailyNews,
               ),
             ],
           ),
-        ),
-        Tab(
-          child: Row(
-            children: [
-              Icon(Icons.music_note_outlined, size: 20),
-              SizedBox(width: 4),
-              Text('音乐', style: TextStyle(fontSize: 16)),
-            ],
-          ),
-        ),
-        Tab(
-          child: Row(
-            children: [
-              Icon(Icons.play_circle_outline, size: 20),
-              SizedBox(width: 4),
-              Text('影视', style: TextStyle(fontSize: 16)),
-            ],
-          ),
-        ),
-        Tab(
-          child: Row(
-            children: [
-              Icon(Icons.image_outlined, size: 20),
-              SizedBox(width: 4),
-              Text('漫画', style: TextStyle(fontSize: 16)),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTopHeader() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-      child: Row(
-        children: [
-          GestureDetector(
-            onTap: () => appScaffoldKey.currentState?.openDrawer(),
-            child: const Icon(Icons.menu, size: 28),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Geek工具箱',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                Text(
-                  '计划赶不上变化😭',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+          const SizedBox(height: 18),
+          const Text(
+            '欢迎回来',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 29,
+              height: 1.05,
+              fontWeight: FontWeight.w900,
+              letterSpacing: -0.5,
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.refresh, size: 24),
-            onPressed: _fetchDailyNews,
-            tooltip: '刷新日报',
+          const SizedBox(height: 8),
+          Text(
+            '今天想做点什么？从工具、影视、小说或插件开始。',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.84),
+              fontSize: 13,
+              height: 1.35,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),
     );
+  }
+
+  void _switchToTab(int index, String label) {
+    if (widget.onSwitchTab != null) {
+      widget.onSwitchTab!(index);
+      return;
+    }
+    _showSnack(context, '请在底部进入「$label」');
   }
 
   Widget _buildDailyNewsCard() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-      padding: const EdgeInsets.all(16.0),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: const Color(0xFF2C3228),
-        borderRadius: BorderRadius.circular(20),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: const Color(0xFFE7ECF5)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.055),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
       ),
-      child: Stack(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 120),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '视界日报',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2,
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFFF7A45), Color(0xFFFFC53D)],
                   ),
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Daily News - $_todayDateStr',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                if (_isLoadingNews)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 20.0),
-                    child: Center(
-                      child: SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          color: Colors.white70,
-                          strokeWidth: 2,
-                        ),
+                child: const Icon(Icons.newspaper_rounded, color: Colors.white),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '视界日报',
+                      style: TextStyle(
+                        color: AppTokens.textPrimary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
                       ),
                     ),
-                  )
-                else
-                  ..._newsList.take(3).map(
-                        (newsText) => Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.radio_button_checked,
-                                color: Colors.white70,
-                                size: 14,
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Tooltip(
-                                  message: newsText,
-                                  child: Text(
-                                    newsText,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 14,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                    Text(
+                      'Daily News · $_todayDateStr',
+                      style: const TextStyle(
+                        color: AppTokens.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
                       ),
-              ],
-            ),
-          ),
-          Positioned(
-            top: -8,
-            right: -8,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  tooltip: '刷新',
-                  icon: const Icon(
-                    Icons.refresh,
-                    color: Colors.white70,
-                    size: 20,
-                  ),
-                  onPressed: _fetchDailyNews,
+                    ),
+                  ],
                 ),
-                IconButton(
-                  tooltip: '查看详情',
-                  icon: const Icon(
-                    Icons.remove_red_eye_outlined,
-                    color: Colors.white70,
-                    size: 20,
-                  ),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => DailyNewsPage()),
-                    );
-                  },
-                ),
-              ],
-            ),
+              ),
+              IconButton.filledTonal(
+                tooltip: '刷新',
+                onPressed: _fetchDailyNews,
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+              IconButton.filledTonal(
+                tooltip: '查看详情',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => DailyNewsPage()),
+                  );
+                },
+                icon: const Icon(Icons.visibility_rounded),
+              ),
+            ],
           ),
+          const SizedBox(height: 16),
+          if (_isLoadingNews)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 18),
+                child: CircularProgressIndicator(strokeWidth: 2.4),
+              ),
+            )
+          else
+            ..._newsList.take(2).map((newsText) => _NewsLine(text: newsText)),
         ],
       ),
     );
   }
 
-  Widget _buildQuickActions() {
+  Widget _buildQuickDock() {
     final actions = <_HomeQuickAction>[
       _HomeQuickAction(
-        title: '小说',
-        icon: Icons.menu_book_outlined,
+        title: '工具搜索',
+        subtitle: '进入工具库',
+        icon: Icons.manage_search_rounded,
+        color: const Color(0xFF2563EB),
+        onTap: () => _switchToTab(1, '工具'),
+      ),
+      _HomeQuickAction(
+        title: '影视搜索',
+        subtitle: '聚合片源',
+        icon: Icons.smart_display_rounded,
+        color: const Color(0xFF10B981),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => VideoListPage()),
+          );
+        },
+      ),
+      _HomeQuickAction(
+        title: '小说书架',
+        subtitle: '阅读收藏',
+        icon: Icons.menu_book_rounded,
+        color: const Color(0xFFF59E0B),
         onTap: () {
           Navigator.push(
             context,
@@ -324,443 +325,566 @@ class _HomePageState extends State<HomePage>
         },
       ),
       _HomeQuickAction(
-        title: '仓库',
-        icon: Icons.inventory_2_outlined,
-        onTap: () => _showSnack(context, '请在底部进入仓库查看收藏'),
-      ),
-      _HomeQuickAction(
-        title: '插件',
-        icon: Icons.extension_outlined,
-        onTap: () => _showSnack(context, '请在底部进入插件中心'),
-      ),
-      _HomeQuickAction(
-        title: '影视搜索',
-        icon: Icons.video_collection_outlined,
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => VideoListPage()),
-          );
-        },
+        title: '插件市场',
+        subtitle: '扩展能力',
+        icon: Icons.extension_rounded,
+        color: const Color(0xFF8B5CF6),
+        onTap: () => _switchToTab(3, '扩展'),
       ),
     ];
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 2, 16, 12),
-      child: Row(
-        children: actions.map((action) {
-          return Expanded(
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: action.onTap,
-              child: Container(
-                height: 68,
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.grey.shade200),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(action.icon, size: 20, color: Colors.blueGrey),
-                    const SizedBox(height: 6),
-                    Text(
-                      action.title,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  Widget _buildRecommendGrid() {
-    final items = <_GridCardItem>[
-      _GridCardItem(
-        id: 'recommend_sniff',
-        title: '资源嗅探',
-        sub: '嗅探网页中的\n音视图片等资源',
-        icon: Icons.travel_explore_outlined,
-        color: Colors.amber,
-        onTap: (ctx) => _showSnack(ctx, '资源嗅探开发中...'),
-      ),
-      _GridCardItem(
-        id: 'recommend_apps',
-        title: '应用中心',
-        sub: '海量实用软件\n游戏下载工具集',
-        icon: Icons.apps_outlined,
-        color: Colors.blue,
-        onTap: (ctx) => _showSnack(ctx, '应用中心开发中...'),
-      ),
-      _GridCardItem(
-        id: 'recommend_game',
-        title: '怀旧游戏',
-        sub: '街机、FC等\n童年怀旧游戏',
-        icon: Icons.sports_esports_outlined,
-        color: Colors.blue.shade700,
-        onTap: (ctx) => _showSnack(ctx, '怀旧游戏开发中...'),
-      ),
-      _GridCardItem(
-        id: 'recommend_video_parse',
-        title: '短视频解析',
-        sub: '短视频工具\n（需合法使用）',
-        icon: Icons.downloading_outlined,
-        color: Colors.lightGreen,
-        onTap: (ctx) => _showSnack(ctx, '短视频解析开发中...'),
-      ),
-    ];
-
-    return _buildTabGridWithPlugins(
-      area: HomePluginArea.recommend,
-      baseItems: items,
-      emptyTip: '推荐功能开发中...',
-    );
-  }
-
-  Widget _buildMusicGrid() {
-    final items = <_GridCardItem>[
-      _GridCardItem(
-        id: 'music_search',
-        title: '音乐搜索',
-        sub: '搜索公开音乐资源',
-        icon: Icons.search,
-        color: Colors.purple,
-        onTap: (ctx) => _showSnack(ctx, '音乐搜索开发中...'),
-      ),
-      _GridCardItem(
-        id: 'music_playlist',
-        title: '歌单管理',
-        sub: '收藏、创建、导入歌单',
-        icon: Icons.playlist_play,
-        color: Colors.pink,
-        onTap: (ctx) => _showSnack(ctx, '歌单管理开发中...'),
-      ),
-    ];
-
-    return _buildTabGridWithPlugins(
-      area: HomePluginArea.music,
-      baseItems: items,
-      emptyTip: '音乐功能区开发中...',
-    );
-  }
-
-  Widget _buildComicGrid() {
-    final items = <_GridCardItem>[
-      _GridCardItem(
-        id: 'comic_rank',
-        title: '漫画排行',
-        sub: '热门漫画榜单',
-        icon: Icons.emoji_emotions_outlined,
-        color: Colors.teal,
-        onTap: (ctx) => _showSnack(ctx, '漫画排行开发中...'),
-      ),
-      _GridCardItem(
-        id: 'comic_search',
-        title: '漫画搜索',
-        sub: '按关键词检索漫画',
-        icon: Icons.manage_search_outlined,
-        color: Colors.green,
-        onTap: (ctx) => _showSnack(ctx, '漫画搜索开发中...'),
-      ),
-    ];
-
-    return _buildTabGridWithPlugins(
-      area: HomePluginArea.comic,
-      baseItems: items,
-      emptyTip: '漫画功能区开发中...',
-    );
-  }
-
-  Widget _buildVideoTab() {
-    return ValueListenableBuilder<List<HomePlugin>>(
-      valueListenable: _pluginHost.listenable,
-      builder: (context, _, __) {
-        final videoPlugins = _pluginHost.pluginsOf(HomePluginArea.video);
-
-        if (videoPlugins.isEmpty) {
-          return VideoHomePage();
-        }
-
-        return Column(
-          children: [
-            SizedBox(
-              height: 96,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
-                itemCount: videoPlugins.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
-                itemBuilder: (context, index) {
-                  final plugin = videoPlugins[index];
-                  return InkWell(
-                    borderRadius: BorderRadius.circular(14),
-                    onTap: () async {
-                      try {
-                        await plugin.onTap(context);
-                      } catch (e) {
-                        await _showSnack(context, '插件执行失败: $e');
-                      }
-                    },
-                    child: Container(
-                      width: 170,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: Colors.grey.shade200),
-                      ),
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            backgroundColor: plugin.color.withOpacity(0.15),
-                            child: Icon(plugin.icon, color: plugin.color),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  plugin.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  plugin.subtitle,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey[600],
-                                    height: 1.2,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-            const Divider(height: 1),
-            Expanded(child: VideoHomePage()),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildTabGridWithPlugins({
-    required HomePluginArea area,
-    required List<_GridCardItem> baseItems,
-    required String emptyTip,
-  }) {
-    return ValueListenableBuilder<List<HomePlugin>>(
-      valueListenable: _pluginHost.listenable,
-      builder: (context, _, __) {
-        final pluginItems = _pluginHost
-            .pluginsOf(area)
-            .map(_GridCardItem.fromPlugin)
-            .toList();
-
-        final merged = <String, _GridCardItem>{};
-        for (final item in baseItems) {
-          merged[item.id] = item;
-        }
-        for (final item in pluginItems) {
-          merged[item.id] = item;
-        }
-
-        final all = merged.values.toList();
-
-        if (all.isEmpty) {
-          return Center(
-            child: Text(
-              emptyTip,
-              style: TextStyle(color: Colors.grey[600]),
-            ),
-          );
-        }
-
-        return _buildGridView(all);
-      },
-    );
-  }
-
-  Widget _buildGridView(List<_GridCardItem> items) {
-    return GridView.builder(
-      padding: const EdgeInsets.all(16.0),
-      physics: const BouncingScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 12.0,
-        mainAxisSpacing: 12.0,
-        childAspectRatio: 2.1,
-      ),
-      itemCount: items.length,
-      itemBuilder: (context, index) {
-        final item = items[index];
-        return InkWell(
-          borderRadius: BorderRadius.circular(16.0),
-          onTap: () async {
-            if (item.onTap != null) {
-              await item.onTap!(context);
-            }
-          },
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFFEDEEF0),
-              borderRadius: BorderRadius.circular(16.0),
-            ),
-            child: Stack(
-              children: [
-                Positioned(
-                  left: 12,
-                  top: 12,
-                  right: 52,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        item.title,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        item.sub,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey[600],
-                          height: 1.2,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-                Positioned(
-                  right: 8,
-                  bottom: 8,
-                  child: Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: item.color,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Center(
-                      child: Icon(
-                        item.icon,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '快速开始',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+              color: AppTokens.textPrimary,
             ),
           ),
-        );
-      },
+          const SizedBox(height: 12),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: actions.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 1.48,
+            ),
+            itemBuilder: (context, index) =>
+                _QuickDockCard(action: actions[index]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategorySwitcher() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Text(
+                '探索更多',
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  color: AppTokens.textPrimary,
+                ),
+              ),
+              Spacer(),
+              Text(
+                '第二屏功能区',
+                style: TextStyle(
+                  color: AppTokens.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 44,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _categories.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final tab = _categories[index];
+                final selected = index == _selectedCategory;
+                return ChoiceChip(
+                  selected: selected,
+                  showCheckmark: false,
+                  avatar: Icon(
+                    tab.icon,
+                    size: 18,
+                    color: selected ? Colors.white : AppTokens.textSecondary,
+                  ),
+                  label: Text(tab.label),
+                  labelStyle: TextStyle(
+                    color: selected ? Colors.white : AppTokens.textPrimary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                  selectedColor: AppTokens.seed,
+                  backgroundColor: Colors.white,
+                  side: BorderSide(
+                    color: selected ? AppTokens.seed : const Color(0xFFE3E8F2),
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  onSelected: (_) => setState(() => _selectedCategory = index),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFeatureSliver() {
+    final tab = _categories[_selectedCategory];
+    final items = _featureItemsFor(tab.area);
+    final pluginItems = _pluginHost
+        .pluginsOf(tab.area)
+        .map(_FeatureCardItem.fromPlugin)
+        .toList();
+    final merged = <String, _FeatureCardItem>{};
+    for (final item in items) {
+      merged[item.id] = item;
+    }
+    for (final item in pluginItems) {
+      merged[item.id] = item;
+    }
+    final all = merged.values.toList();
+
+    if (tab.area == HomePluginArea.video && pluginItems.isEmpty) {
+      return SliverToBoxAdapter(
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          height: 420,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: const Color(0xFFE7ECF5)),
+          ),
+          child: VideoHomePage(),
+        ),
+      );
+    }
+
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverGrid.builder(
+        itemCount: all.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          childAspectRatio: 1.08,
+        ),
+        itemBuilder: (context, index) => _FeatureCard(item: all[index]),
+      ),
+    );
+  }
+
+  List<_FeatureCardItem> _featureItemsFor(HomePluginArea area) {
+    switch (area) {
+      case HomePluginArea.recommend:
+        return [
+          _FeatureCardItem(
+            id: 'recommend_sniff',
+            title: '资源嗅探',
+            subtitle: '自动识别网页里的音视频与图片资源',
+            icon: Icons.travel_explore_rounded,
+            gradient: const [Color(0xFF2563EB), Color(0xFF38BDF8)],
+            status: '开发中',
+            onTap: (ctx) => _showSnack(ctx, '资源嗅探开发中...'),
+          ),
+          _FeatureCardItem(
+            id: 'recommend_apps',
+            title: '应用中心',
+            subtitle: '实用软件、游戏工具与常用下载合集',
+            icon: Icons.apps_rounded,
+            gradient: const [Color(0xFF7C3AED), Color(0xFFC084FC)],
+            status: '开发中',
+            onTap: (ctx) => _showSnack(ctx, '应用中心开发中...'),
+          ),
+          _FeatureCardItem(
+            id: 'recommend_game',
+            title: '怀旧游戏',
+            subtitle: '街机、FC 与童年经典入口',
+            icon: Icons.sports_esports_rounded,
+            gradient: const [Color(0xFFF97316), Color(0xFFFACC15)],
+            status: '开发中',
+            onTap: (ctx) => _showSnack(ctx, '怀旧游戏开发中...'),
+          ),
+          _FeatureCardItem(
+            id: 'recommend_video_parse',
+            title: '短视频解析',
+            subtitle: '短视频工具箱，需合法合规使用',
+            icon: Icons.downloading_rounded,
+            gradient: const [Color(0xFF059669), Color(0xFF34D399)],
+            status: '开发中',
+            onTap: (ctx) => _showSnack(ctx, '短视频解析开发中...'),
+          ),
+        ];
+      case HomePluginArea.music:
+        return [
+          _FeatureCardItem(
+            id: 'music_search',
+            title: '音乐搜索',
+            subtitle: '搜索公开音乐资源与灵感歌单',
+            icon: Icons.search_rounded,
+            gradient: const [Color(0xFFDB2777), Color(0xFFF9A8D4)],
+            status: '开发中',
+            onTap: (ctx) => _showSnack(ctx, '音乐搜索开发中...'),
+          ),
+          _FeatureCardItem(
+            id: 'music_playlist',
+            title: '歌单管理',
+            subtitle: '收藏、创建、导入歌单',
+            icon: Icons.playlist_play_rounded,
+            gradient: const [Color(0xFF9333EA), Color(0xFFA5B4FC)],
+            status: '开发中',
+            onTap: (ctx) => _showSnack(ctx, '歌单管理开发中...'),
+          ),
+        ];
+      case HomePluginArea.video:
+        return [
+          _FeatureCardItem(
+            id: 'video_search',
+            title: '影视搜索',
+            subtitle: '聚合搜索影片、剧集与播放源',
+            icon: Icons.movie_filter_rounded,
+            gradient: const [Color(0xFF0F766E), Color(0xFF22D3EE)],
+            status: '可用',
+            onTap: (ctx) async {
+              Navigator.push(
+                ctx,
+                MaterialPageRoute(builder: (_) => VideoListPage()),
+              );
+            },
+          ),
+        ];
+      case HomePluginArea.comic:
+        return [
+          _FeatureCardItem(
+            id: 'comic_rank',
+            title: '漫画排行',
+            subtitle: '热门漫画榜单与推荐',
+            icon: Icons.emoji_emotions_rounded,
+            gradient: const [Color(0xFFEA580C), Color(0xFFFDBA74)],
+            status: '开发中',
+            onTap: (ctx) => _showSnack(ctx, '漫画排行开发中...'),
+          ),
+          _FeatureCardItem(
+            id: 'comic_search',
+            title: '漫画搜索',
+            subtitle: '按关键词检索漫画内容',
+            icon: Icons.manage_search_rounded,
+            gradient: const [Color(0xFF16A34A), Color(0xFF86EFAC)],
+            status: '开发中',
+            onTap: (ctx) => _showSnack(ctx, '漫画搜索开发中...'),
+          ),
+        ];
+      case HomePluginArea.novel:
+      case HomePluginArea.center:
+        return const [];
+    }
+  }
+}
+
+class _GlassIconButton extends StatelessWidget {
+  const _GlassIconButton({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: onTap,
+      child: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
+        ),
+        child: Icon(icon, color: Colors.white, size: 24),
+      ),
     );
   }
 }
 
-class _GridCardItem {
-  final String id;
-  final String title;
-  final String sub;
-  final IconData icon;
-  final Color color;
-  final HomePluginTap? onTap;
+class _NewsLine extends StatelessWidget {
+  const _NewsLine({required this.text});
 
-  const _GridCardItem({
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F9FD),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.fiber_manual_record_rounded,
+            color: Color(0xFF3D7CFF),
+            size: 10,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickDockCard extends StatelessWidget {
+  const _QuickDockCard({required this.action});
+
+  final _HomeQuickAction action;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(24),
+      onTap: action.onTap,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: const Color(0xFFE7ECF5)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.045),
+              blurRadius: 18,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: action.color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Icon(action.icon, color: action.color, size: 22),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              action.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTokens.textPrimary,
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              action.subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTokens.textSecondary,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FeatureCard extends StatelessWidget {
+  const _FeatureCard({required this.item});
+
+  final _FeatureCardItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(28),
+      onTap: () async {
+        if (item.onTap != null) {
+          await item.onTap!(context);
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: item.gradient,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(28),
+          boxShadow: [
+            BoxShadow(
+              color: item.gradient.first.withValues(alpha: 0.18),
+              blurRadius: 20,
+              offset: const Offset(0, 12),
+            ),
+          ],
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              right: -16,
+              bottom: -18,
+              child: Icon(
+                item.icon,
+                color: Colors.white.withValues(alpha: 0.18),
+                size: 92,
+              ),
+            ),
+            if (item.status != null)
+              Positioned(
+                top: 0,
+                right: 0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.20),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.24),
+                    ),
+                  ),
+                  child: Text(
+                    item.status!,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.20),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.22),
+                    ),
+                  ),
+                  child: Icon(item.icon, color: Colors.white),
+                ),
+                const Spacer(),
+                Text(
+                  item.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  item.subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.82),
+                    fontSize: 12,
+                    height: 1.25,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FeatureCardItem {
+  const _FeatureCardItem({
     required this.id,
     required this.title,
-    required this.sub,
+    required this.subtitle,
     required this.icon,
-    required this.color,
+    required this.gradient,
+    this.status,
     this.onTap,
   });
 
-  factory _GridCardItem.fromPlugin(HomePlugin plugin) {
-    return _GridCardItem(
+  final String id;
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final List<Color> gradient;
+  final String? status;
+  final HomePluginTap? onTap;
+
+  factory _FeatureCardItem.fromPlugin(HomePlugin plugin) {
+    return _FeatureCardItem(
       id: plugin.id,
       title: plugin.title,
-      sub: plugin.subtitle,
+      subtitle: plugin.subtitle,
       icon: plugin.icon,
-      color: plugin.color,
+      gradient: [plugin.color, plugin.color.withValues(alpha: 0.68)],
+      status: '插件',
       onTap: plugin.onTap,
     );
   }
 }
 
 class _HomeQuickAction {
-  final String title;
-  final IconData icon;
-  final VoidCallback onTap;
-
   const _HomeQuickAction({
     required this.title,
+    required this.subtitle,
     required this.icon,
+    required this.color,
     required this.onTap,
   });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
 }
 
-class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
-  _SliverAppBarDelegate(this._tabBar);
+class _CategoryTab {
+  const _CategoryTab(this.label, this.icon, this.area);
 
-  final TabBar _tabBar;
-
-  @override
-  double get minExtent => _tabBar.preferredSize.height;
-
-  @override
-  double get maxExtent => _tabBar.preferredSize.height;
-
-  @override
-  Widget build(
-    BuildContext context,
-    double shrinkOffset,
-    bool overlapsContent,
-  ) {
-    return Container(
-      color: const Color(0xFFF7F8FA),
-      child: _tabBar,
-    );
-  }
-
-  @override
-  bool shouldRebuild(_SliverAppBarDelegate oldDelegate) => false;
+  final String label;
+  final IconData icon;
+  final HomePluginArea area;
 }
 
 Future<void> _showSnack(BuildContext context, String text) async {
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text(text)),
-  );
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 }

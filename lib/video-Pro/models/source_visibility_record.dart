@@ -40,14 +40,14 @@ class SourceVisibilityRecord {
   }
 
   Map<String, dynamic> toJson() => {
-        'key': key,
-        'manualHidden': manualHidden,
-        'autoHidden': autoHidden,
-        'failCount': failCount,
-        'lastCheckedAt': lastCheckedAt?.toIso8601String(),
-        'lastReason': lastReason,
-        'lastPlayable': lastPlayable,
-      };
+    'key': key,
+    'manualHidden': manualHidden,
+    'autoHidden': autoHidden,
+    'failCount': failCount,
+    'lastCheckedAt': lastCheckedAt?.toIso8601String(),
+    'lastReason': lastReason,
+    'lastPlayable': lastPlayable,
+  };
 
   factory SourceVisibilityRecord.fromJson(Map<String, dynamic> json) {
     return SourceVisibilityRecord(

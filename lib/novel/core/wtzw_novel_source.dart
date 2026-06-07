@@ -28,7 +28,9 @@ class WtzwNovelSource implements NovelSource {
     final baseUrl = '${json['bookSourceUrl'] ?? ''}'.toLowerCase();
     final searchUrl = '${json['searchUrl'] ?? ''}';
     final ruleContent = json['ruleContent'];
-    final contentRule = ruleContent is Map ? '${ruleContent['content'] ?? ''}' : '';
+    final contentRule = ruleContent is Map
+        ? '${ruleContent['content'] ?? ''}'
+        : '';
 
     return baseUrl.contains('wtzw.com') ||
         searchUrl.contains('/api/v5/search/words') ||
@@ -151,10 +153,7 @@ class WtzwNovelSource implements NovelSource {
         .join('&');
   }
 
-  Uri _buildUri(
-    String url, {
-    Map<String, String>? queryParameters,
-  }) {
+  Uri _buildUri(String url, {Map<String, String>? queryParameters}) {
     final raw = url.trim();
     final full = raw.startsWith('http://') || raw.startsWith('https://')
         ? raw
@@ -173,8 +172,9 @@ class WtzwNovelSource implements NovelSource {
     Map<String, String>? headers,
   }) async {
     final uri = _buildUri(url, queryParameters: queryParameters);
-    final response =
-        await http.get(uri, headers: headers ?? _signedHeaders()).timeout(_timeout);
+    final response = await http
+        .get(uri, headers: headers ?? _signedHeaders())
+        .timeout(_timeout);
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('HTTP ${response.statusCode} for $uri');
@@ -244,10 +244,7 @@ class WtzwNovelSource implements NovelSource {
           RegExp(r'<script[\s\S]*?</script>', caseSensitive: false),
           '',
         )
-        .replaceAll(
-          RegExp(r'<style[\s\S]*?</style>', caseSensitive: false),
-          '',
-        )
+        .replaceAll(RegExp(r'<style[\s\S]*?</style>', caseSensitive: false), '')
         .replaceAll(_htmlTag, '');
 
     text = text.replaceAll(RegExp(r'\r\n?'), '\n');
@@ -255,10 +252,7 @@ class WtzwNovelSource implements NovelSource {
     return text.trim();
   }
 
-  String _buildIntro({
-    required String intro,
-    String tags = '',
-  }) {
+  String _buildIntro({required String intro, String tags = ''}) {
     final cleanIntro = _cleanText(intro);
     final cleanTags = tags.trim();
 
@@ -278,17 +272,11 @@ class WtzwNovelSource implements NovelSource {
   }
 
   String _chapterContentUrl(String bookId, String chapterId) {
-    final params = _withParamSign({
-      'id': bookId,
-      'chapterId': chapterId,
-    });
+    final params = _withParamSign({'id': bookId, 'chapterId': chapterId});
     return '$_apiKsBase/api/v1/chapter/content?${_encodeQuery(params)}';
   }
 
-  String _extractBookId({
-    required String bookId,
-    String? detailUrl,
-  }) {
+  String _extractBookId({required String bookId, String? detailUrl}) {
     final rawBookId = bookId.trim();
     if (rawBookId.isNotEmpty) return rawBookId;
 
@@ -355,10 +343,7 @@ class WtzwNovelSource implements NovelSource {
         : _str(item['author']);
     final coverUrl = _str(item['image_link']);
     final tags = _extractTags(item['ptags']);
-    final intro = _buildIntro(
-      intro: _str(item['intro']),
-      tags: tags,
-    );
+    final intro = _buildIntro(intro: _str(item['intro']), tags: tags);
 
     return NovelBook(
       id: id,
@@ -385,10 +370,7 @@ class WtzwNovelSource implements NovelSource {
         : _str(item['original_author']);
     final coverUrl = _str(item['image_link']);
     final tags = _extractTags(item['ptags']);
-    final intro = _buildIntro(
-      intro: _str(item['intro']),
-      tags: tags,
-    );
+    final intro = _buildIntro(intro: _str(item['intro']), tags: tags);
 
     return NovelBook(
       id: id,
@@ -409,10 +391,7 @@ class WtzwNovelSource implements NovelSource {
     final author = _str(book['author']);
     final coverUrl = _str(book['image_link']);
     final tags = _extractTags(book['book_tag_list']);
-    final intro = _buildIntro(
-      intro: _str(book['intro']),
-      tags: tags,
-    );
+    final intro = _buildIntro(intro: _str(book['intro']), tags: tags);
 
     return NovelBook(
       id: id,
@@ -432,7 +411,9 @@ class WtzwNovelSource implements NovelSource {
     final seen = <String>{};
 
     for (final book in books) {
-      final key = book.id.isNotEmpty ? 'id:${book.id}' : 'url:${book.detailUrl}';
+      final key = book.id.isNotEmpty
+          ? 'id:${book.id}'
+          : 'url:${book.detailUrl}';
       if (seen.add(key)) {
         out.add(book);
       }
@@ -460,10 +441,7 @@ class WtzwNovelSource implements NovelSource {
         ),
       );
 
-      return encrypter.decrypt(
-        enc.Encrypted(cipherBytes),
-        iv: enc.IV(ivBytes),
-      );
+      return encrypter.decrypt(enc.Encrypted(cipherBytes), iv: enc.IV(ivBytes));
     } catch (_) {
       return encodedContent;
     }
@@ -510,7 +488,8 @@ class WtzwNovelSource implements NovelSource {
     final headers = _signedHeaders();
     final looseParams = _extractLooseParams(raw);
 
-    final isCategory = raw.contains('/category') || looseParams.containsKey('category_id');
+    final isCategory =
+        raw.contains('/category') || looseParams.containsKey('category_id');
     final isTag = raw.contains('/tag') || looseParams.containsKey('tag_id');
 
     if (!isCategory && !isTag) {
@@ -564,10 +543,7 @@ class WtzwNovelSource implements NovelSource {
     required String bookId,
     String? detailUrl,
   }) async {
-    final id = _extractBookId(
-      bookId: bookId,
-      detailUrl: detailUrl,
-    );
+    final id = _extractBookId(bookId: bookId, detailUrl: detailUrl);
 
     if (id.isEmpty) {
       throw Exception('书籍 ID 为空，无法获取详情');
@@ -594,9 +570,7 @@ class WtzwNovelSource implements NovelSource {
 
     final book = _bookFromDetail(bookMap);
 
-    final tocParams = _withParamSign({
-      'id': id,
-    });
+    final tocParams = _withParamSign({'id': id});
 
     final tocJson = await _getJsonMap(
       '$_apiKsBase/api/v1/chapter/chapter-list',
@@ -615,17 +589,11 @@ class WtzwNovelSource implements NovelSource {
       if (chapterId.isEmpty || title.isEmpty) continue;
 
       chapters.add(
-        NovelChapter(
-          title: title,
-          url: _chapterContentUrl(id, chapterId),
-        ),
+        NovelChapter(title: title, url: _chapterContentUrl(id, chapterId)),
       );
     }
 
-    return NovelDetail(
-      book: book,
-      chapters: chapters,
-    );
+    return NovelDetail(book: book, chapters: chapters);
   }
 
   @override
@@ -660,13 +628,9 @@ class WtzwNovelSource implements NovelSource {
       requestUrl = _chapterContentUrl(bookId, chapterId);
     }
 
-    final json = await _getJsonMap(
-      requestUrl,
-      headers: headers,
-    );
+    final json = await _getJsonMap(requestUrl, headers: headers);
 
-    final encryptedContent =
-        _str(_readPath(json, ['data', 'content']));
+    final encryptedContent = _str(_readPath(json, ['data', 'content']));
     final plainText = _decryptChapterContent(encryptedContent);
     final content = _cleanText(plainText);
 

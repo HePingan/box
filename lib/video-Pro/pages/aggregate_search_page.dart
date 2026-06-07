@@ -54,10 +54,14 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
         return;
       }
 
-      final futures = sources.map<Future<List<AggregateResult>>>((source) async {
+      final futures = sources.map<Future<List<AggregateResult>>>((
+        source,
+      ) async {
         try {
           final items = await VideoApiService.searchVideo(source.url, keyword);
-          return items.map((video) => AggregateResult(source: source, video: video)).toList(growable: false);
+          return items
+              .map((video) => AggregateResult(source: source, video: video))
+              .toList(growable: false);
         } catch (e) {
           return const <AggregateResult>[];
         }
@@ -92,7 +96,8 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => VideoDetailPage(source: result.source, vodId: result.video.vodId),
+        builder: (_) =>
+            VideoDetailPage(source: result.source, vodId: result.video.vodId),
       ),
     );
   }
@@ -103,14 +108,15 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
       padding: const EdgeInsets.only(top: 6, bottom: 18),
       physics: const AlwaysScrollableScrollPhysics(),
       itemCount: sections.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
         final entry = sections[index];
         return AggregateSearchSourceSection(
           source: entry.key,
           results: entry.value,
           // 🏆 优化：移除外层无用缓存池，直接实时计算返回
-          coverUrlFor: (result) => loadSearchVideoCover(result.video, result.source),
+          coverUrlFor: (result) =>
+              loadSearchVideoCover(result.video, result.source),
           onTapVideo: _openDetail,
         );
       },
@@ -124,12 +130,19 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
         title: TextField(
           controller: _searchController,
           autofocus: true,
-          decoration: const InputDecoration(hintText: '全网多源聚合搜索...', border: InputBorder.none),
+          decoration: const InputDecoration(
+            hintText: '全网多源聚合搜索...',
+            border: InputBorder.none,
+          ),
           textInputAction: TextInputAction.search,
           onSubmitted: (_) => _performAggregateSearch(),
         ),
         actions: [
-          IconButton(tooltip: '搜索', icon: const Icon(Icons.search), onPressed: _performAggregateSearch),
+          IconButton(
+            tooltip: '搜索',
+            icon: const Icon(Icons.search),
+            onPressed: _performAggregateSearch,
+          ),
           IconButton(
             tooltip: '清空',
             icon: const Icon(Icons.clear_rounded),
@@ -145,14 +158,30 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
         ],
       ),
       body: _isLoading
-          ? const Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [CircularProgressIndicator(), SizedBox(height: 16), Text('正在全网搜寻，请稍候...')]))
+          ? const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('正在全网搜寻，请稍候...'),
+                ],
+              ),
+            )
           : !_hasSearched
-              ? SearchEmptyState(message: '输入影片名称，回车全网搜索', icon: Icons.travel_explore_rounded)
-              : _errorMessage != null
-                  ? _buildErrorView()
-                  : _results.isEmpty
-                      ? SearchEmptyState(message: '全网未找到相关资源', actionLabel: '重新搜索', onAction: _performAggregateSearch)
-                      : _buildResultList(),
+          ? SearchEmptyState(
+              message: '输入影片名称，回车全网搜索',
+              icon: Icons.travel_explore_rounded,
+            )
+          : _errorMessage != null
+          ? _buildErrorView()
+          : _results.isEmpty
+          ? SearchEmptyState(
+              message: '全网未找到相关资源',
+              actionLabel: '重新搜索',
+              onAction: _performAggregateSearch,
+            )
+          : _buildResultList(),
     );
   }
 
@@ -161,11 +190,27 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
         const SizedBox(height: 120),
-        Icon(Icons.error_outline_rounded, size: 72, color: Colors.grey.shade400),
+        Icon(
+          Icons.error_outline_rounded,
+          size: 72,
+          color: Colors.grey.shade400,
+        ),
         const SizedBox(height: 12),
-        Center(child: Text(_errorMessage ?? '搜索失败', style: TextStyle(color: Colors.grey.shade700, fontSize: 15), textAlign: TextAlign.center)),
+        Center(
+          child: Text(
+            _errorMessage ?? '搜索失败',
+            style: TextStyle(color: Colors.grey.shade700, fontSize: 15),
+            textAlign: TextAlign.center,
+          ),
+        ),
         const SizedBox(height: 16),
-        Center(child: ElevatedButton.icon(onPressed: _performAggregateSearch, icon: const Icon(Icons.refresh_rounded), label: const Text('重试'))),
+        Center(
+          child: ElevatedButton.icon(
+            onPressed: _performAggregateSearch,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('重试'),
+          ),
+        ),
       ],
     );
   }

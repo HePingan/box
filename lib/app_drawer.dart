@@ -87,8 +87,7 @@ class AppDrawer extends StatelessWidget {
                         _buildInfoItem(
                           icon: Icons.copyright_outlined,
                           title: '侵权和违规内容处理',
-                          subtitle:
-                              'Geek工具箱基于网络公开资源及用户投稿接口开发，如侵犯您的权益请点击处理。',
+                          subtitle: 'Geek工具箱基于网络公开资源及用户投稿接口开发，如侵犯您的权益请点击处理。',
                         ),
                         _buildInfoItem(
                           icon: Icons.privacy_tip_outlined,
@@ -165,7 +164,7 @@ class AppDrawer extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 12,
             offset: const Offset(0, 5),
           ),
@@ -243,7 +242,9 @@ class AppDrawer extends StatelessWidget {
             size: 20,
             color: Color(0xFFB2BDC8),
           ),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
           onTap: () {},
         ),
       ),
@@ -299,7 +300,7 @@ class AppDrawer extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 14,
             offset: const Offset(0, 6),
           ),
@@ -336,10 +337,7 @@ class AppDrawer extends StatelessWidget {
                 SizedBox(height: 3),
                 Text(
                   '登录后可同步收藏与配置',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF75808C),
-                  ),
+                  style: TextStyle(fontSize: 12, color: Color(0xFF75808C)),
                 ),
               ],
             ),

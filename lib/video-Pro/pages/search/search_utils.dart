@@ -4,10 +4,7 @@ import '../../models/vod_item.dart';
 // ✅ 彻底干掉 video_api_service 的引入，斩断网络并发风暴的根源！
 
 /// 搜索页封面解析：仅处理本地字符串
-String? resolveSearchImageUrl(
-  String? rawUrl, {
-  required VideoSource source,
-}) {
+String? resolveSearchImageUrl(String? rawUrl, {required VideoSource source}) {
   if (rawUrl == null) return null;
 
   var url = rawUrl.trim().replaceAll('\\', '');
@@ -22,10 +19,7 @@ String? resolveSearchImageUrl(
     return url;
   }
 
-  final baseUrls = <String>[
-    source.detailUrl.trim(),
-    source.url.trim(),
-  ];
+  final baseUrls = <String>[source.detailUrl.trim(), source.url.trim()];
 
   for (final base in baseUrls) {
     if (base.isEmpty) continue;
@@ -47,7 +41,7 @@ String? loadSearchVideoCover(VodItem video, VideoSource source) {
   if (direct != null && direct.isNotEmpty) {
     return direct;
   }
-  
+
   // ⛔️ 列表无图就显示占位图，绝不能在滑动时发起网络请求！
   return null;
 }

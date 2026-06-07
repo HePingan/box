@@ -24,7 +24,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
   static const double _indicatorHeight = 46.0;
 
   final ScrollController _scrollController = ScrollController();
-  
+
   // 👉 性能优化绝招：使用极轻量的 Notifier 单独控制滚动条位置，彻底脱离复杂的组件树重绘
   final ValueNotifier<double> _scrollRatioNotifier = ValueNotifier(0.0);
 
@@ -48,7 +48,8 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
       if (!_isDragging && _scrollController.hasClients) {
         final maxExt = _scrollController.position.maxScrollExtent;
         if (maxExt > 0) {
-          _scrollRatioNotifier.value = (_scrollController.offset / maxExt).clamp(0.0, 1.0);
+          _scrollRatioNotifier.value = (_scrollController.offset / maxExt)
+              .clamp(0.0, 1.0);
         }
       }
     });
@@ -106,10 +107,8 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
 
     final targetOffset = ((visualIndex - 4).clamp(0, total - 1)) * _itemHeight;
     final maxExtent = _scrollController.position.maxScrollExtent;
-    
-    _scrollController.jumpTo(
-      targetOffset.toDouble().clamp(0.0, maxExtent),
-    );
+
+    _scrollController.jumpTo(targetOffset.toDouble().clamp(0.0, maxExtent));
   }
 
   // 👉 全新设计：极致丝滑的拖拽滑块
@@ -120,19 +119,21 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
     return LayoutBuilder(
       builder: (context, constraints) {
         // 防止初次渲染还未拿到高度时的除零错误
-        final areaHeight = constraints.maxHeight <= 0 ? 100.0 : constraints.maxHeight;
+        final areaHeight = constraints.maxHeight <= 0
+            ? 100.0
+            : constraints.maxHeight;
         final availableTravel = areaHeight - _indicatorHeight;
 
         void handleDrag(double localDy) {
           if (!_scrollController.hasClients || availableTravel <= 0) return;
           _showIndicator();
-          
+
           final dy = localDy - (_indicatorHeight / 2);
           final ratio = (dy / availableTravel).clamp(0.0, 1.0);
-          
+
           // 1. 让小滑块瞬间跟手（不经过事件循环队列排队等待）
           _scrollRatioNotifier.value = ratio;
-          
+
           // 2. 指挥庞大的列表去跳跃
           _scrollController.jumpTo(
             _scrollController.position.maxScrollExtent * ratio,
@@ -178,14 +179,22 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
                   width: 24,
                   height: _indicatorHeight,
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.18),
+                    color: Colors.black.withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.arrow_drop_up_rounded, size: 20, color: Colors.white),
-                      Icon(Icons.arrow_drop_down_rounded, size: 20, color: Colors.white),
+                      Icon(
+                        Icons.arrow_drop_up_rounded,
+                        size: 20,
+                        color: Colors.white,
+                      ),
+                      Icon(
+                        Icons.arrow_drop_down_rounded,
+                        size: 20,
+                        color: Colors.white,
+                      ),
                     ],
                   ),
                 ),
@@ -232,12 +241,12 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
                       Text(
                         '${controller.chapterIndex + 1}/$total',
                         style: TextStyle(
-                          color: widget.textColor.withOpacity(0.55),
+                          color: widget.textColor.withValues(alpha: 0.55),
                           fontSize: 12,
                         ),
                       ),
                       const Spacer(),
-                      
+
                       GestureDetector(
                         onTap: total <= 0
                             ? null
@@ -262,14 +271,17 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
                     ],
                   ),
                 ),
-                Divider(height: 1, color: widget.textColor.withOpacity(0.08)),
+                Divider(
+                  height: 1,
+                  color: widget.textColor.withValues(alpha: 0.08),
+                ),
                 Expanded(
                   child: total <= 0
                       ? Center(
                           child: Text(
                             '暂无章节',
                             style: TextStyle(
-                              color: widget.textColor.withOpacity(0.55),
+                              color: widget.textColor.withValues(alpha: 0.55),
                             ),
                           ),
                         )
@@ -280,28 +292,35 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
                                 if (notification is ScrollStartNotification ||
                                     notification is ScrollUpdateNotification) {
                                   _showIndicator();
-                                } else if (notification is ScrollEndNotification) {
+                                } else if (notification
+                                    is ScrollEndNotification) {
                                   if (!_isDragging) _hideIndicatorWithDelay();
                                 }
-                                return false; 
+                                return false;
                               },
                               child: ListView.builder(
                                 controller: _scrollController,
                                 itemCount: total,
                                 itemExtent: _itemHeight,
                                 // 👉 只使用很弱的弹簧效果，防止与拖拽打架造成闪烁
-                                physics: const ClampingScrollPhysics(), 
+                                physics: const ClampingScrollPhysics(),
                                 itemBuilder: (_, i) {
-                                  final visualIndex = _reversed ? total - 1 - i : i;
-                                  final chapter = controller.detail.chapters[visualIndex];
-                                  final current = visualIndex == controller.chapterIndex;
+                                  final visualIndex = _reversed
+                                      ? total - 1 - i
+                                      : i;
+                                  final chapter =
+                                      controller.detail.chapters[visualIndex];
+                                  final current =
+                                      visualIndex == controller.chapterIndex;
 
                                   return Container(
                                     height: _itemHeight,
                                     decoration: BoxDecoration(
                                       border: Border(
                                         bottom: BorderSide(
-                                          color: widget.textColor.withOpacity(0.04),
+                                          color: widget.textColor.withValues(
+                                            alpha: 0.04,
+                                          ),
                                           width: 1,
                                         ),
                                       ),
@@ -314,8 +333,12 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: TextStyle(
-                                          color: current ? Colors.orange : widget.textColor,
-                                          fontWeight: current ? FontWeight.bold : FontWeight.normal,
+                                          color: current
+                                              ? Colors.orange
+                                              : widget.textColor,
+                                          fontWeight: current
+                                              ? FontWeight.bold
+                                              : FontWeight.normal,
                                         ),
                                       ),
                                       trailing: current
@@ -333,7 +356,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
                                 },
                               ),
                             ),
-                            
+
                             // 高性能物理渲染悬浮滚动条
                             Positioned(
                               top: 0,

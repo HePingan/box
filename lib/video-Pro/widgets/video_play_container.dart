@@ -71,28 +71,24 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
 
   String? _errorMessage;
   int _initToken = 0;
-  Uri? _resolvedUri;
-
-  /// 全屏切换遮罩
-  bool _suspendLifecyclePause = false;
   int _fullscreenToggleToken = 0;
 
   VideoPlayArgs get _playArgs => VideoPlayArgs(
-        url: widget.url,
-        title: widget.title,
-        vodId: widget.vodId,
-        vodPic: widget.vodPic,
-        sourceId: widget.sourceId,
-        sourceName: widget.sourceName,
-        episodeName: widget.episodeName,
-        initialPosition: widget.initialPosition,
-        onPreviousEpisode: widget.onPreviousEpisode,
-        onNextEpisode: widget.onNextEpisode,
-        referer: widget.referer,
-        httpHeaders: widget.httpHeaders,
-        userAgent: widget.userAgent,
-        showDebugInfo: widget.showDebugInfo,
-      );
+    url: widget.url,
+    title: widget.title,
+    vodId: widget.vodId,
+    vodPic: widget.vodPic,
+    sourceId: widget.sourceId,
+    sourceName: widget.sourceName,
+    episodeName: widget.episodeName,
+    initialPosition: widget.initialPosition,
+    onPreviousEpisode: widget.onPreviousEpisode,
+    onNextEpisode: widget.onNextEpisode,
+    referer: widget.referer,
+    httpHeaders: widget.httpHeaders,
+    userAgent: widget.userAgent,
+    showDebugInfo: widget.showDebugInfo,
+  );
 
   // 🏆 优化：移除 MediaQuery 依赖。非全屏下固定 16/9，全屏下由系统 Route 撑满。
   double get _layoutAspectRatio => 16 / 9;
@@ -107,7 +103,8 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
   @override
   void didUpdateWidget(covariant VideoPlayContainer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.url != widget.url || oldWidget.initialPosition != widget.initialPosition) {
+    if (oldWidget.url != widget.url ||
+        oldWidget.initialPosition != widget.initialPosition) {
       unawaited(_historyTracker?.saveNow(force: true));
       _initPlayer();
     }
@@ -154,14 +151,12 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     if (chewie == null) return;
 
     final token = ++_fullscreenToggleToken;
-    _suspendLifecyclePause = true;
 
     try {
       chewie.toggleFullScreen();
     } finally {
       Future.delayed(const Duration(milliseconds: 1000), () {
         if (!mounted || token != _fullscreenToggleToken) return;
-        _suspendLifecyclePause = false;
       });
     }
   }
@@ -191,6 +186,8 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
       return;
     }
 
+    final historyController = context.read<HistoryController>();
+
     try {
       final headers = buildPlayerHeaders(
         userAgent: widget.userAgent,
@@ -203,7 +200,6 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
           .timeout(_resolveTimeout);
 
       if (!mounted || token != _initToken) return;
-      _resolvedUri = playableUri;
 
       if (!kIsWeb && playableUri.path.toLowerCase().contains('.m3u8')) {
         final probeOk = await _streamResolver
@@ -237,9 +233,14 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
       }
 
       // Seek to history position
-      if (widget.initialPosition > 0 && controller.value.duration > Duration.zero) {
+      if (widget.initialPosition > 0 &&
+          controller.value.duration > Duration.zero) {
         final initial = Duration(milliseconds: widget.initialPosition);
-        await controller.seekTo(controller.value.duration > initial ? initial : controller.value.duration);
+        await controller.seekTo(
+          controller.value.duration > initial
+              ? initial
+              : controller.value.duration,
+        );
       }
 
       _chewieController = ChewieController(
@@ -251,7 +252,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         showControlsOnInitialize: false,
         // 🚀 核心修复：在此设为 null。
         // 这样在全屏模式下，视频会自动填充可用空间而不会被比例锁死导致左右黑边过大或画面塌陷。
-        aspectRatio: null, 
+        aspectRatio: null,
         customControls: CustomVideoControls(
           title: widget.title,
           episodeName: widget.episodeName,
@@ -265,7 +266,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
       _isFullScreen = _chewieController!.isFullScreen;
 
       _historyTracker = PlayerHistoryTracker(
-        historyController: context.read<HistoryController>(),
+        historyController: historyController,
         args: _playArgs,
       )..attach(controller);
 
@@ -280,7 +281,6 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
       });
 
       _historyTracker?.setPlaying(controller.value.isPlaying);
-      
     } catch (e, st) {
       if (token != _initToken) return;
       AppLogger.instance.logError(e, st, 'PLAYER');
@@ -288,7 +288,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     }
   }
 
-  void _failFast(String msg, [Object? debugObject]) {
+  void _failFast(String msg) {
     if (_playbackFailed) return;
     _playbackFailed = true;
     _disposePlayer();
@@ -333,8 +333,13 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     // 渲染比例容器
     Widget content;
     if (_errorMessage != null) {
-      content = PlayerErrorOverlay(errorMessage: _errorMessage!, onRetry: _retry);
-    } else if (_videoPlayerController == null || _chewieController == null || !_videoPlayerController!.value.isInitialized) {
+      content = PlayerErrorOverlay(
+        errorMessage: _errorMessage!,
+        onRetry: _retry,
+      );
+    } else if (_videoPlayerController == null ||
+        _chewieController == null ||
+        !_videoPlayerController!.value.isInitialized) {
       content = const PlayerBufferingOverlay();
     } else {
       content = Stack(
@@ -350,10 +355,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     return AspectRatio(
       aspectRatio: _layoutAspectRatio,
       child: ClipRect(
-        child: ColoredBox(
-          color: Colors.black,
-          child: content,
-        ),
+        child: ColoredBox(color: Colors.black, child: content),
       ),
     );
   }

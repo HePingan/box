@@ -3,10 +3,7 @@ class VideoCategory {
   final int typeId;
   final String typeName;
 
-  const VideoCategory({
-    required this.typeId,
-    required this.typeName,
-  });
+  const VideoCategory({required this.typeId, required this.typeName});
 
   factory VideoCategory.fromJson(Map<String, dynamic> json) {
     int parseInt(dynamic value) {
@@ -38,8 +35,5 @@ class VideoCategory {
     );
   }
 
-  Map<String, dynamic> toJson() => {
-        'type_id': typeId,
-        'type_name': typeName,
-      };
+  Map<String, dynamic> toJson() => {'type_id': typeId, 'type_name': typeName};
 }

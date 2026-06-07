@@ -6,11 +6,7 @@ import '../../core/models.dart';
 import '../../novel_module.dart';
 import 'reader_progress_service.dart';
 
-enum ReaderJumpTarget {
-  start,
-  end,
-  restoreDb,
-}
+enum ReaderJumpTarget { start, end, restoreDb }
 
 class ReaderScrollChapterItem {
   final int index;
@@ -31,11 +27,11 @@ class ReaderController extends ChangeNotifier {
     required this.detail,
     required int initialChapterIndex,
     ReaderProgressService? progressService,
-  })  : progressService = progressService ?? const ReaderProgressService(),
-        chapterIndex = initialChapterIndex.clamp(
-          0,
-          detail.chapters.isEmpty ? 0 : detail.chapters.length - 1,
-        );
+  }) : progressService = progressService ?? const ReaderProgressService(),
+       chapterIndex = initialChapterIndex.clamp(
+         0,
+         detail.chapters.isEmpty ? 0 : detail.chapters.length - 1,
+       );
 
   final NovelDetail detail;
   final ReaderProgressService progressService;
@@ -169,10 +165,7 @@ class ReaderController extends ChangeNotifier {
       if (nextIndex < detail.chapters.length) {
         unawaited(
           NovelModule.repository
-              .prefetchChapter(
-                detail: detail,
-                chapterIndex: nextIndex,
-              )
+              .prefetchChapter(detail: detail, chapterIndex: nextIndex)
               .catchError((_) {}),
         );
       }
@@ -197,10 +190,7 @@ class ReaderController extends ChangeNotifier {
     scrollItems.clear();
     notifyListeners();
 
-    await loadCurrentChapter(
-      forceRefresh: false,
-      target: target,
-    );
+    await loadCurrentChapter(forceRefresh: false, target: target);
   }
 
   void setMenuVisible(bool value) {
@@ -273,14 +263,11 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
 
     _settingsSaveDebounce?.cancel();
-    _settingsSaveDebounce = Timer(
-      const Duration(milliseconds: 220),
-      () {
-        unawaited(
-          NovelModule.repository.saveReaderSettings(next).catchError((_) {}),
-        );
-      },
-    );
+    _settingsSaveDebounce = Timer(const Duration(milliseconds: 220), () {
+      unawaited(
+        NovelModule.repository.saveReaderSettings(next).catchError((_) {}),
+      );
+    });
   }
 
   String _cleanText(String raw) {
@@ -306,7 +293,9 @@ class ReaderController extends ChangeNotifier {
   @override
   void dispose() {
     _settingsSaveDebounce?.cancel();
-    unawaited(NovelModule.repository.saveReaderSettings(settings).catchError((_) {}));
+    unawaited(
+      NovelModule.repository.saveReaderSettings(settings).catchError((_) {}),
+    );
     super.dispose();
   }
 }

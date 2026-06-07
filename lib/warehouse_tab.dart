@@ -1,11 +1,13 @@
-import 'dart:collection';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'design_system/app_tokens.dart';
+import 'design_system/widgets/app_cards.dart';
 import 'novel/core/bookshelf_manager.dart';
 import 'novel/core/cache_store.dart';
 import 'novel/pages/novel_detail_page.dart';
+import 'novel/pages/novel_list_page.dart';
+import 'video_module.dart';
 
 class WarehouseTab extends StatefulWidget {
   const WarehouseTab({super.key});
@@ -78,7 +80,7 @@ class _WarehouseTabState extends State<WarehouseTab>
     List<WarehouseItem> liveItems,
     List<WarehouseItem> storedItems,
   ) {
-    final map = LinkedHashMap<String, WarehouseItem>();
+    final map = <String, WarehouseItem>{};
     for (final item in [...liveItems, ...storedItems]) {
       map.putIfAbsent(item.uniqueKey, () => item);
     }
@@ -98,11 +100,7 @@ class _WarehouseTabState extends State<WarehouseTab>
     return parts.join(' · ');
   }
 
-  String _readString(
-    dynamic target,
-    String field, {
-    String fallback = '',
-  }) {
+  String _readString(dynamic target, String field, {String fallback = ''}) {
     try {
       final dynamic value = (target as dynamic)
           .toJson()
@@ -150,7 +148,19 @@ class _WarehouseTabState extends State<WarehouseTab>
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: Text('新增${category.label}'),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          title: Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: category.color.withValues(alpha: 0.12),
+                child: Icon(category.icon, color: category.color),
+              ),
+              const SizedBox(width: 10),
+              Text('新增${category.hubLabel}'),
+            ],
+          ),
           content: SizedBox(
             width: 420,
             child: Form(
@@ -215,7 +225,8 @@ class _WarehouseTabState extends State<WarehouseTab>
               onPressed: () => Navigator.pop(dialogContext),
               child: const Text('取消'),
             ),
-            FilledButton(
+            FilledButton.icon(
+              icon: const Icon(Icons.save_rounded),
               onPressed: () async {
                 if (!(formKey.currentState?.validate() ?? false)) return;
 
@@ -233,12 +244,12 @@ class _WarehouseTabState extends State<WarehouseTab>
 
                 await _store.add(item);
 
-                if (!mounted) return;
+                if (!mounted || !dialogContext.mounted) return;
                 Navigator.pop(dialogContext);
                 setState(_reload);
                 _showSnack('已添加到${category.label}');
               },
-              child: const Text('保存'),
+              label: const Text('保存收藏'),
             ),
           ],
         );
@@ -256,9 +267,7 @@ class _WarehouseTabState extends State<WarehouseTab>
     if (item.category == WarehouseCategory.books && item.raw != null) {
       await Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (_) => NovelDetailPage(entryBook: item.raw),
-        ),
+        MaterialPageRoute(builder: (_) => NovelDetailPage(entryBook: item.raw)),
       );
       return;
     }
@@ -277,8 +286,13 @@ class _WarehouseTabState extends State<WarehouseTab>
                 Row(
                   children: [
                     CircleAvatar(
-                      backgroundColor: item.category.color.withOpacity(0.12),
-                      child: Icon(item.category.icon, color: item.category.color),
+                      backgroundColor: item.category.color.withValues(
+                        alpha: 0.12,
+                      ),
+                      child: Icon(
+                        item.category.icon,
+                        color: item.category.color,
+                      ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -293,7 +307,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                   ],
                 ),
                 if (item.subtitle.trim().isNotEmpty) ...[
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
                   Text(
                     item.subtitle,
                     style: TextStyle(color: Colors.grey.shade700),
@@ -303,10 +317,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                   const SizedBox(height: 10),
                   Text(
                     item.meta,
-                    style: TextStyle(
-                      color: Colors.grey.shade800,
-                      height: 1.45,
-                    ),
+                    style: TextStyle(color: Colors.grey.shade800, height: 1.45),
                   ),
                 ],
                 const SizedBox(height: 14),
@@ -320,7 +331,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                           await Clipboard.setData(
                             ClipboardData(text: item.detailUrl),
                           );
-                          if (!mounted) return;
+                          if (!mounted || !sheetContext.mounted) return;
                           Navigator.pop(sheetContext);
                           _showSnack('链接已复制');
                         },
@@ -331,7 +342,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                       OutlinedButton.icon(
                         onPressed: () async {
                           await _store.remove(item.category, item.uniqueKey);
-                          if (!mounted) return;
+                          if (!mounted || !sheetContext.mounted) return;
                           Navigator.pop(sheetContext);
                           setState(_reload);
                           _showSnack('已移出${item.category.label}');
@@ -350,56 +361,368 @@ class _WarehouseTabState extends State<WarehouseTab>
   }
 
   void _showSnack(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text)),
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  void _openVideoCenter() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const VideoListPage()),
     );
   }
 
+  void _openNovelLibrary() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
+    );
+  }
+
+  void _showHubComingSoon(String title) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$title 会在下方分区持续收纳')));
+  }
+
   Widget _buildTopCard() {
-    return Card(
-      elevation: 0,
-      color: const Color(0xFFF1F6FF),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '资源仓库',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(32),
+        border: Border.all(color: const Color(0xFFE4EAF3)),
+        boxShadow: AppTokens.shadowMd(color: AppTokens.primaryBlue),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  gradient: AppTokens.emeraldGradient,
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTokens.emerald.withValues(alpha: 0.22),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.collections_bookmark_rounded,
+                  color: Colors.white,
+                  size: 28,
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '这里可以统一收纳书籍、漫画、影视、音乐。当前书籍自动读取书架，其它分类支持本地收藏。',
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.grey.shade700,
-                height: 1.45,
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '内容中心',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: AppTokens.textPrimary,
+                        fontSize: 30,
+                        height: 1.05,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.6,
+                      ),
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      '入口优先 · 收藏聚合',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: AppTokens.textSecondary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                OutlinedButton.icon(
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 50,
+                height: 50,
+                child: IconButton.filledTonal(
+                  tooltip: '刷新',
                   onPressed: _refresh,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('刷新'),
+                  icon: const Icon(Icons.refresh_rounded, size: 24),
+                  style: IconButton.styleFrom(
+                    backgroundColor: const Color(0xFFEDEBFF),
+                    foregroundColor: AppTokens.textPrimary,
+                    shape: const CircleBorder(),
+                    padding: EdgeInsets.zero,
+                  ),
                 ),
-                FilledButton.icon(
-                  onPressed: () => _showCategoryPicker(),
-                  icon: const Icon(Icons.add),
-                  label: const Text('新增收藏'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: _buildHeaderMetricPill(
+                  value: '4',
+                  label: '内容入口',
+                  icon: Icons.apps_rounded,
+                  color: AppTokens.emerald,
                 ),
-              ],
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildHeaderMetricPill(
+                  value: '4',
+                  label: '收藏库',
+                  icon: Icons.folder_special_rounded,
+                  color: AppTokens.primaryBlue,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildHeaderMetricPill(
+                  value: '书架',
+                  label: '自动同步',
+                  icon: Icons.sync_rounded,
+                  color: AppTokens.orange,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeaderMetricPill({
+    required String value,
+    required String label,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      height: 78,
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.14)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Icon(icon, color: color, size: 17),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppTokens.textPrimary,
+                  fontSize: 18,
+                  height: 1,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.2,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppTokens.textSecondary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContentMatrix() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '内容入口',
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 9),
+        Row(
+          children: [
+            Expanded(
+              child: AppGradientActionCard(
+                title: '影视搜索',
+                subtitle: '聚合片源 · 播放历史',
+                icon: Icons.smart_display_rounded,
+                gradient: AppTokens.darkOceanGradient,
+                onTap: _openVideoCenter,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: AppGradientActionCard(
+                title: '小说书架',
+                subtitle: '书源阅读 · 书架收藏',
+                icon: Icons.auto_stories_rounded,
+                gradient: AppTokens.sunsetGradient,
+                onTap: _openNovelLibrary,
+              ),
             ),
           ],
         ),
-      ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: AppGradientActionCard(
+                title: '漫画收藏',
+                subtitle: '收藏夹 · 手动导入',
+                icon: Icons.collections_bookmark_rounded,
+                gradient: AppTokens.violetGradient,
+                onTap: () => _showHubComingSoon('漫画收藏'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: AppGradientActionCard(
+                title: '音乐收藏',
+                subtitle: '歌单 · 历史 · 链接',
+                icon: Icons.library_music_rounded,
+                gradient: AppTokens.emeraldGradient,
+                onTap: () => _showHubComingSoon('音乐收藏'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOverviewRow() {
+    return FutureBuilder<List<List<WarehouseItem>>>(
+      future: Future.wait([
+        _bookFuture.catchError((_) => <WarehouseItem>[]),
+        _comicFuture.catchError((_) => <WarehouseItem>[]),
+        _videoFuture.catchError((_) => <WarehouseItem>[]),
+        _musicFuture.catchError((_) => <WarehouseItem>[]),
+      ]),
+      builder: (context, snapshot) {
+        final groups = snapshot.data ?? const <List<WarehouseItem>>[];
+        final total = groups.fold<int>(0, (sum, items) => sum + items.length);
+        final recent = groups.expand((items) => items).toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        final recentTitle = recent.isEmpty
+            ? '暂无收藏，先导入一个资源'
+            : recent.first.title;
+
+        return Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0xFFE7ECF5)),
+            boxShadow: AppTokens.shadowSm(color: AppTokens.primaryBlue),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '收藏操作区',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            color: AppTokens.textPrimary,
+                          ),
+                        ),
+                        SizedBox(height: 3),
+                        Text(
+                          '最近收藏 / 快速导入 / 分类管理',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppTokens.textSecondary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppTokens.emerald.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      snapshot.connectionState == ConnectionState.done
+                          ? '$total 项'
+                          : '加载中',
+                      style: const TextStyle(
+                        color: AppTokens.emerald,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: AppGradientActionCard(
+                      title: '最近收藏',
+                      subtitle: recentTitle,
+                      icon: Icons.history_rounded,
+                      gradient: AppTokens.violetGradient,
+                      onTap: recent.isEmpty
+                          ? null
+                          : () => _openItem(recent.first),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: AppGradientActionCard(
+                      title: '快速导入',
+                      subtitle: '选择分类添加资源',
+                      icon: Icons.add_link_rounded,
+                      gradient: AppTokens.sunsetGradient,
+                      onTap: _showCategoryPicker,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -451,7 +774,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                     Icon(category.icon, size: 18, color: category.color),
                     const SizedBox(width: 8),
                     Text(
-                      category.label,
+                      category.hubLabel,
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
@@ -483,10 +806,20 @@ class _WarehouseTabState extends State<WarehouseTab>
                 else if (snapshot.hasError)
                   _buildErrorBox()
                 else if (items.isEmpty)
-                  _buildEmptyBox(
-                    emptyText: emptyText,
+                  AppEmptyState(
+                    title: '还没有${category.hubLabel}',
+                    message: emptyText,
                     icon: category.icon,
-                    onAdd: () => _showAddDialog(category),
+                    actionLabel: category == WarehouseCategory.videos
+                        ? '打开影视搜索'
+                        : category == WarehouseCategory.books
+                        ? '打开小说书架'
+                        : '添加一个',
+                    onAction: category == WarehouseCategory.videos
+                        ? _openVideoCenter
+                        : category == WarehouseCategory.books
+                        ? _openNovelLibrary
+                        : () => _showAddDialog(category),
                   )
                 else
                   SizedBox(
@@ -495,7 +828,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                       scrollDirection: Axis.horizontal,
                       physics: const BouncingScrollPhysics(),
                       itemCount: items.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 10),
+                      separatorBuilder: (_, _) => const SizedBox(width: 10),
                       itemBuilder: (context, index) {
                         final item = items[index];
                         return _WarehouseCard(
@@ -510,45 +843,6 @@ class _WarehouseTabState extends State<WarehouseTab>
           ),
         );
       },
-    );
-  }
-
-  Widget _buildEmptyBox({
-    required String emptyText,
-    required IconData icon,
-    required VoidCallback onAdd,
-  }) {
-    return Container(
-      height: 160,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8F9FA),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 34, color: Colors.grey.shade400),
-            const SizedBox(height: 8),
-            Text(
-              emptyText,
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.grey.shade600,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 10),
-            TextButton.icon(
-              onPressed: onAdd,
-              icon: const Icon(Icons.add),
-              label: const Text('添加一个'),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -584,61 +878,74 @@ class _WarehouseTabState extends State<WarehouseTab>
   Widget build(BuildContext context) {
     super.build(context);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('仓库'),
-        actions: [
-          IconButton(
-            tooltip: '刷新',
-            onPressed: _refresh,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
       ),
-      body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-          children: [
-            _buildTopCard(),
-            const SizedBox(height: 12),
-            _buildSection(
-              category: WarehouseCategory.books,
-              future: _bookFuture,
-              emptyText: '这里会展示你的书架和手动收藏的书籍',
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF4F7FB),
+        body: SafeArea(
+          top: true,
+          bottom: false,
+          child: RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(
+                parent: BouncingScrollPhysics(),
+              ),
+              padding: const EdgeInsets.fromLTRB(
+                16,
+                14,
+                16,
+                AppTokens.pageBottomPadding + 32,
+              ),
+              children: [
+                _buildTopCard(),
+                const SizedBox(height: 16),
+                _buildContentMatrix(),
+                const SizedBox(height: 18),
+                _buildOverviewRow(),
+                const SizedBox(height: 18),
+                const _WarehouseSectionHeader(
+                  title: '收藏库',
+                  subtitle: '我的书架 / 影视收藏 / 漫画收藏 / 音乐收藏',
+                ),
+                const SizedBox(height: 10),
+                _buildSection(
+                  category: WarehouseCategory.books,
+                  future: _bookFuture,
+                  emptyText: '从小说书架同步最近阅读，也可以手动收藏书籍链接',
+                ),
+                const SizedBox(height: 12),
+                _buildSection(
+                  category: WarehouseCategory.comics,
+                  future: _comicFuture,
+                  emptyText: '漫画资源会集中放在这里，方便后续扩展漫画入口',
+                ),
+                const SizedBox(height: 12),
+                _buildSection(
+                  category: WarehouseCategory.videos,
+                  future: _videoFuture,
+                  emptyText: '先去影视搜索发现内容，后续播放历史和收藏会聚合到这里',
+                ),
+                const SizedBox(height: 12),
+                _buildSection(
+                  category: WarehouseCategory.music,
+                  future: _musicFuture,
+                  emptyText: '音乐链接、歌单和历史记录会集中收纳到这里',
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            _buildSection(
-              category: WarehouseCategory.comics,
-              future: _comicFuture,
-              emptyText: '这里可以收纳漫画收藏',
-            ),
-            const SizedBox(height: 12),
-            _buildSection(
-              category: WarehouseCategory.videos,
-              future: _videoFuture,
-              emptyText: '这里可以收纳影视收藏',
-            ),
-            const SizedBox(height: 12),
-            _buildSection(
-              category: WarehouseCategory.music,
-              future: _musicFuture,
-              emptyText: '这里可以收纳音乐收藏',
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 }
 
-enum WarehouseCategory {
-  books,
-  comics,
-  videos,
-  music,
-}
+enum WarehouseCategory { books, comics, videos, music }
 
 extension WarehouseCategoryX on WarehouseCategory {
   String get label {
@@ -651,6 +958,19 @@ extension WarehouseCategoryX on WarehouseCategory {
         return '影视';
       case WarehouseCategory.music:
         return '音乐';
+    }
+  }
+
+  String get hubLabel {
+    switch (this) {
+      case WarehouseCategory.books:
+        return '我的书架';
+      case WarehouseCategory.comics:
+        return '漫画收藏';
+      case WarehouseCategory.videos:
+        return '影视收藏';
+      case WarehouseCategory.music:
+        return '音乐收藏';
     }
   }
 
@@ -742,14 +1062,17 @@ class WarehouseItem {
       meta: json['meta']?.toString() ?? '',
       category: category,
       sourceLabel: json['sourceLabel']?.toString() ?? '手动收藏',
-      createdAt: _asInt(json['createdAt'], DateTime.now().millisecondsSinceEpoch),
+      createdAt: _asInt(
+        json['createdAt'],
+        DateTime.now().millisecondsSinceEpoch,
+      ),
     );
   }
 }
 
 class WarehouseStore {
   WarehouseStore({CacheStore? cache})
-      : _cache = cache ?? CacheStore(namespace: 'warehouse_center');
+    : _cache = cache ?? CacheStore(namespace: 'warehouse_center');
 
   final CacheStore _cache;
 
@@ -808,11 +1131,47 @@ class WarehouseStore {
   }
 }
 
+class _WarehouseSectionHeader extends StatelessWidget {
+  const _WarehouseSectionHeader({required this.title, required this.subtitle});
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: AppTokens.textPrimary,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                subtitle,
+                style: const TextStyle(
+                  color: AppTokens.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _WarehouseCard extends StatelessWidget {
-  const _WarehouseCard({
-    required this.item,
-    required this.onTap,
-  });
+  const _WarehouseCard({required this.item, required this.onTap});
 
   final WarehouseItem item;
   final VoidCallback onTap;
@@ -835,7 +1194,7 @@ class _WarehouseCard extends StatelessWidget {
                     : Image.network(
                         item.coverUrl,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => _buildFallback(),
+                        errorBuilder: (_, _, _) => _buildFallback(),
                       ),
               ),
             ),
@@ -844,14 +1203,13 @@ class _WarehouseCard extends StatelessWidget {
               item.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 2),
             Text(
-              item.subtitle.trim().isNotEmpty ? item.subtitle : item.sourceLabel,
+              item.subtitle.trim().isNotEmpty
+                  ? item.subtitle
+                  : item.sourceLabel,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -870,11 +1228,7 @@ class _WarehouseCard extends StatelessWidget {
     return Container(
       color: const Color(0xFFE9ECEF),
       child: Center(
-        child: Icon(
-          item.category.icon,
-          size: 32,
-          color: Colors.grey.shade500,
-        ),
+        child: Icon(item.category.icon, size: 32, color: Colors.grey.shade500),
       ),
     );
   }

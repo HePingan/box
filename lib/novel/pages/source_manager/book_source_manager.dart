@@ -55,23 +55,24 @@ class BookSourceManager extends ChangeNotifier {
       return <BookSourceModel>[];
     }
   }
-static int sortComparator(BookSourceModel a, BookSourceModel b) {
-  // 启用的排前面
-  if (a.enabled != b.enabled) {
-    return a.enabled ? -1 : 1;
+
+  static int sortComparator(BookSourceModel a, BookSourceModel b) {
+    // 启用的排前面
+    if (a.enabled != b.enabled) {
+      return a.enabled ? -1 : 1;
+    }
+
+    // customOrder 越大越靠前
+    final r2 = b.customOrder.compareTo(a.customOrder);
+    if (r2 != 0) return r2;
+
+    // weight 越大越靠前
+    final r3 = b.weight.compareTo(a.weight);
+    if (r3 != 0) return r3;
+
+    // 名称升序
+    return a.bookSourceName.compareTo(b.bookSourceName);
   }
-
-  // customOrder 越大越靠前
-  final r2 = b.customOrder.compareTo(a.customOrder);
-  if (r2 != 0) return r2;
-
-  // weight 越大越靠前
-  final r3 = b.weight.compareTo(a.weight);
-  if (r3 != 0) return r3;
-
-  // 名称升序
-  return a.bookSourceName.compareTo(b.bookSourceName);
-}
 
   Future<void> load() async {
     final raw = _prefs.getString(storageKey);
@@ -213,15 +214,15 @@ static int sortComparator(BookSourceModel a, BookSourceModel b) {
         if (decoded is List) {
           return decoded
               .whereType<Map>()
-              .map((e) => BookSourceModel.fromJson(Map<String, dynamic>.from(e)))
+              .map(
+                (e) => BookSourceModel.fromJson(Map<String, dynamic>.from(e)),
+              )
               .toList();
         }
       } else if (t.startsWith('{')) {
         final decoded = jsonDecode(t);
         if (decoded is Map) {
-          return [
-            BookSourceModel.fromJson(Map<String, dynamic>.from(decoded)),
-          ];
+          return [BookSourceModel.fromJson(Map<String, dynamic>.from(decoded))];
         }
       }
     } catch (_) {
@@ -237,7 +238,9 @@ static int sortComparator(BookSourceModel a, BookSourceModel b) {
       try {
         final decoded = jsonDecode(b);
         if (decoded is Map) {
-          result.add(BookSourceModel.fromJson(Map<String, dynamic>.from(decoded)));
+          result.add(
+            BookSourceModel.fromJson(Map<String, dynamic>.from(decoded)),
+          );
         }
       } catch (_) {}
     }

@@ -30,27 +30,16 @@ class DetailPlayParser {
       for (var j = 0; j < group.episodes.length; j++) {
         final ep = group.episodes[j];
 
-        final episodeName =
-            _text(ep.name) ?? _text(ep.title) ?? '第${j + 1}集';
+        final episodeName = _text(ep.name) ?? _text(ep.title) ?? '第${j + 1}集';
         final resolvedUrl = resolvePlayUrl(ep.url, source: source);
 
         if (resolvedUrl.trim().isEmpty) continue;
 
-        episodes.add(
-          DetailPlayEpisode(
-            name: episodeName,
-            url: resolvedUrl,
-          ),
-        );
+        episodes.add(DetailPlayEpisode(name: episodeName, url: resolvedUrl));
       }
 
       if (episodes.isNotEmpty) {
-        result.add(
-          DetailPlayLine(
-            name: groupName,
-            episodes: episodes,
-          ),
-        );
+        result.add(DetailPlayLine(name: groupName, episodes: episodes));
       }
     }
 
@@ -100,10 +89,7 @@ class DetailPlayParser {
     );
   }
 
-  static String resolvePlayUrl(
-    String rawUrl, {
-    required VideoSource source,
-  }) {
+  static String resolvePlayUrl(String rawUrl, {required VideoSource source}) {
     var url = rawUrl.trim().replaceAll('\\', '');
     if (url.isEmpty) return url;
 
@@ -116,10 +102,7 @@ class DetailPlayParser {
       return url;
     }
 
-    for (final base in <String>[
-      source.detailUrl,
-      source.url,
-    ]) {
+    for (final base in <String>[source.detailUrl, source.url]) {
       final baseUri = Uri.tryParse(base.trim());
       if (baseUri == null || !baseUri.hasScheme) continue;
 
@@ -151,10 +134,7 @@ class DetailPlayParser {
       return url;
     }
 
-    for (final base in <String>[
-      source.detailUrl,
-      source.url,
-    ]) {
+    for (final base in <String>[source.detailUrl, source.url]) {
       final baseUri = Uri.tryParse(base.trim());
       if (baseUri == null || !baseUri.hasScheme) continue;
 
@@ -177,9 +157,7 @@ class DetailPlayParser {
     final leftUri = Uri.tryParse(left);
     final rightUri = Uri.tryParse(right);
 
-    if (leftUri != null &&
-        rightUri != null &&
-        leftUri.path == rightUri.path) {
+    if (leftUri != null && rightUri != null && leftUri.path == rightUri.path) {
       return true;
     }
 

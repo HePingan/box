@@ -227,10 +227,11 @@ class VideoSource {
         base.hiddenReason,
       ),
       failCount: asInt(state['failCount'] ?? state['fails'], base.failCount),
-      lastFailAt: asDateTime(state['lastFailAt'] ?? state['last_fail_at']) ??
+      lastFailAt:
+          asDateTime(state['lastFailAt'] ?? state['last_fail_at']) ??
           base.lastFailAt,
-      hiddenAt: asDateTime(state['hiddenAt'] ?? state['hidden_at']) ??
-          base.hiddenAt,
+      hiddenAt:
+          asDateTime(state['hiddenAt'] ?? state['hidden_at']) ?? base.hiddenAt,
       isEnabled: state.containsKey('isEnabled')
           ? asBool(state['isEnabled'], base.isEnabled)
           : base.isEnabled,
@@ -239,29 +240,29 @@ class VideoSource {
 
   /// 完整 JSON：适合网络/配置导入导出
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'url': url,
-        'api': url,
-        'detailUrl': detailUrl,
-        'detail': detailUrl,
-        'isEnabled': isEnabled,
-        'isHidden': isHidden,
-        'hiddenReason': hiddenReason,
-        'failCount': failCount,
-        'lastFailAt': lastFailAt?.millisecondsSinceEpoch,
-        'hiddenAt': hiddenAt?.millisecondsSinceEpoch,
-      };
+    'id': id,
+    'name': name,
+    'url': url,
+    'api': url,
+    'detailUrl': detailUrl,
+    'detail': detailUrl,
+    'isEnabled': isEnabled,
+    'isHidden': isHidden,
+    'hiddenReason': hiddenReason,
+    'failCount': failCount,
+    'lastFailAt': lastFailAt?.millisecondsSinceEpoch,
+    'hiddenAt': hiddenAt?.millisecondsSinceEpoch,
+  };
 
   /// 仅保存“状态”的 JSON：适合本地持久化
   Map<String, dynamic> toStateJson() => {
-        'isHidden': isHidden,
-        'hiddenReason': hiddenReason,
-        'failCount': failCount,
-        'lastFailAt': lastFailAt?.millisecondsSinceEpoch,
-        'hiddenAt': hiddenAt?.millisecondsSinceEpoch,
-        'isEnabled': isEnabled,
-      };
+    'isHidden': isHidden,
+    'hiddenReason': hiddenReason,
+    'failCount': failCount,
+    'lastFailAt': lastFailAt?.millisecondsSinceEpoch,
+    'hiddenAt': hiddenAt?.millisecondsSinceEpoch,
+    'isEnabled': isEnabled,
+  };
 
   @override
   String toString() {

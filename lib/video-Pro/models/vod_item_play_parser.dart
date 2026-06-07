@@ -10,10 +10,7 @@ class PlayEpisode {
   final String name;
   final String url;
 
-  const PlayEpisode({
-    required this.name,
-    required this.url,
-  });
+  const PlayEpisode({required this.name, required this.url});
 
   /// 兼容一些旧代码可能写 title
   String get title => name;
@@ -28,10 +25,7 @@ class PlaySourceGroup {
   final String name;
   final List<PlayEpisode> episodes;
 
-  const PlaySourceGroup({
-    required this.name,
-    required this.episodes,
-  });
+  const PlaySourceGroup({required this.name, required this.episodes});
 
   bool get isEmpty => episodes.isEmpty;
   bool get isNotEmpty => episodes.isNotEmpty;
@@ -73,23 +67,21 @@ class VodItemPlayParser {
       final episodes = _parseEpisodes(rawEpisodeLine);
       if (episodes.isEmpty) continue;
 
-      result.add(
-        PlaySourceGroup(
-          name: groupName,
-          episodes: episodes,
-        ),
-      );
+      result.add(PlaySourceGroup(name: groupName, episodes: episodes));
     }
 
     return result;
   }
 
-// 在 vod_item_play_parser.dart 中替换这两个方法：
-  
+  // 在 vod_item_play_parser.dart 中替换这两个方法：
+
   static List<String> _splitGroups(String? raw) {
-    if (raw == null || raw.trim().isEmpty || raw.toLowerCase() == 'null') return const <String>[];
+    if (raw == null || raw.trim().isEmpty || raw.toLowerCase() == 'null') {
+      return const <String>[];
+    }
     // 🏆 优化：链式流处理，一步到位
-    return raw.split(r'$$$')
+    return raw
+        .split(r'$$$')
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .toList(growable: false);
@@ -117,7 +109,11 @@ class VodItemPlayParser {
         url = item;
       }
 
-      if (url.isNotEmpty) episodes.add(PlayEpisode(name: name.isEmpty ? '第${i + 1}集' : name, url: url));
+      if (url.isNotEmpty) {
+        episodes.add(
+          PlayEpisode(name: name.isEmpty ? '第${i + 1}集' : name, url: url),
+        );
+      }
     }
     return episodes;
   }

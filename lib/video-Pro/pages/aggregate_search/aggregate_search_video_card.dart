@@ -49,20 +49,14 @@ class AggregateSearchVideoCard extends StatelessWidget {
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 2),
             Text(
               subtitle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                color: Colors.grey.shade600,
-              ),
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
             ),
           ],
         ),
@@ -85,8 +79,9 @@ class AggregateSearchVideoCard extends StatelessWidget {
         color: Colors.grey.shade200,
         alignment: Alignment.center,
         child: const SizedBox(
-           width: 18, height: 18,
-           child: CircularProgressIndicator(strokeWidth: 2),
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
         ),
       ),
       errorWidget: (context, url, error) => _buildPlaceholder(),
@@ -97,11 +92,7 @@ class AggregateSearchVideoCard extends StatelessWidget {
     return Container(
       color: Colors.grey.shade200,
       alignment: Alignment.center,
-      child: Icon(
-        Icons.movie_outlined,
-        size: 30,
-        color: Colors.grey.shade600,
-      ),
+      child: Icon(Icons.movie_outlined, size: 30, color: Colors.grey.shade600),
     );
   }
 }

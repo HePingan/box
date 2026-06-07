@@ -4,7 +4,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 class ToolWebPage extends StatefulWidget {
   final String title; // 工具的名字 (比如：在线PS)
-  final String url;   // 工具的网址 (比如：https://www.photopea.com/)
+  final String url; // 工具的网址 (比如：https://www.photopea.com/)
 
   const ToolWebPage({super.key, required this.title, required this.url});
 
@@ -41,7 +41,14 @@ class _ToolWebPageState extends State<ToolWebPage> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: Text(widget.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+        title: Text(
+          widget.title,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
         backgroundColor: Colors.white,
         elevation: 0,
         scrolledUnderElevation: 0,

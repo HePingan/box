@@ -21,16 +21,20 @@ class ReaderTopBar extends StatelessWidget {
     final topInset = MediaQuery.of(context).padding.top;
 
     return Container(
+      margin: const EdgeInsets.fromLTRB(10, 8, 10, 0),
       height: 56 + topInset,
       padding: EdgeInsets.only(top: topInset),
       decoration: BoxDecoration(
-        color: bgColor,
-        border: Border(
-          bottom: BorderSide(
-            color: textColor.withOpacity(0.08),
-            width: 1,
+        color: bgColor.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: textColor.withValues(alpha: 0.08)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.10),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
           ),
-        ),
+        ],
       ),
       child: Row(
         children: [

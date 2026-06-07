@@ -18,8 +18,9 @@ class AppLogger {
   /// 防抖写入时间
   static const Duration _flushDelay = Duration(milliseconds: 250);
 
-  final ValueNotifier<List<String>> lines =
-      ValueNotifier<List<String>>(<String>[]);
+  final ValueNotifier<List<String>> lines = ValueNotifier<List<String>>(
+    <String>[],
+  );
 
   SharedPreferences? _prefs;
   bool _inited = false;
@@ -93,10 +94,7 @@ class AppLogger {
   }
 
   void logBlock(String title, String content, {String tag = 'APP'}) {
-    log(
-      '════════ $title ════════\n$content\n══════════════════════',
-      tag: tag,
-    );
+    log('════════ $title ════════\n$content\n══════════════════════', tag: tag);
   }
 
   void logError(Object error, [StackTrace? stackTrace, String tag = 'ERROR']) {

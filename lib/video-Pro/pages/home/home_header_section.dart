@@ -18,13 +18,13 @@ class HomeHeaderSection extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFFF7F9FF),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.blue.withOpacity(0.1)),
+        border: Border.all(color: Colors.blue.withValues(alpha: 0.1)),
       ),
       child: Row(
         children: [
           Icon(
             Icons.hub_rounded,
-            color: Colors.blueAccent.withOpacity(0.8),
+            color: Colors.blueAccent.withValues(alpha: 0.8),
             size: 24,
           ),
           const SizedBox(width: 10),
@@ -41,10 +41,7 @@ class HomeHeaderSection extends StatelessWidget {
                 ),
                 Text(
                   subtitle,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.grey.shade600,
-                  ),
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                 ),
               ],
             ),

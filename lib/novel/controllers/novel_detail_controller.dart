@@ -5,15 +5,15 @@ import '../core/bookshelf_manager.dart';
 
 class NovelDetailController extends ChangeNotifier {
   final NovelBook entryBook;
-  
+
   bool _loading = true;
   String _error = '';
   bool _reverse = false;
   bool _inBookshelf = false;
-  
+
   NovelDetail? _detail;
   ReadingProgress? _progress;
-  
+
   bool _isCaching = false;
   bool _cancelCache = false;
   int _cacheCurrent = 0;
@@ -116,7 +116,9 @@ class NovelDetailController extends ChangeNotifier {
             intro: exactBook.intro,
             category: exactBook.category.isNotEmpty ? exactBook.category : null,
             status: exactBook.status.isNotEmpty ? exactBook.status : null,
-            wordCount: exactBook.wordCount.isNotEmpty ? exactBook.wordCount : null,
+            wordCount: exactBook.wordCount.isNotEmpty
+                ? exactBook.wordCount
+                : null,
           ),
           chapters: _detail!.chapters,
         );

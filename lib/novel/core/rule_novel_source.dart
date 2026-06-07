@@ -19,19 +19,16 @@ class RuleNovelSource implements NovelSource {
     Map<String, dynamic>? ruleToc,
     Map<String, dynamic>? ruleContent,
     Map<String, String>? headers,
-  })  : name = name.trim(),
-        baseUrl = _normalizeBaseUrlInput(baseUrl),
-        searchUrl = searchUrl.trim(),
-        exploreUrl = exploreUrl.trim(),
-        ruleSearch = ruleSearch ?? const {},
-        ruleExplore = ruleExplore ?? const {},
-        ruleBookInfo = ruleBookInfo ?? const {},
-        ruleToc = ruleToc ?? const {},
-        ruleContent = ruleContent ?? const {},
-        headers = {
-          'User-Agent': 'okhttp/4.9.2',
-          if (headers != null) ...headers,
-        };
+  }) : name = name.trim(),
+       baseUrl = _normalizeBaseUrlInput(baseUrl),
+       searchUrl = searchUrl.trim(),
+       exploreUrl = exploreUrl.trim(),
+       ruleSearch = ruleSearch ?? const {},
+       ruleExplore = ruleExplore ?? const {},
+       ruleBookInfo = ruleBookInfo ?? const {},
+       ruleToc = ruleToc ?? const {},
+       ruleContent = ruleContent ?? const {},
+       headers = {'User-Agent': 'okhttp/4.9.2', ...?headers};
 
   factory RuleNovelSource.fromBookSourceJson(Map<String, dynamic> json) {
     final headerMap = _parseHeader(json['header']);
@@ -115,8 +112,9 @@ class RuleNovelSource implements NovelSource {
       } catch (_) {}
 
       final out = <String, String>{};
-      final matches =
-          RegExp(r'([A-Za-z0-9_\-]+)\s*:\s*([^,\n]+)').allMatches(s);
+      final matches = RegExp(
+        r'([A-Za-z0-9_\-]+)\s*:\s*([^,\n]+)',
+      ).allMatches(s);
       for (final m in matches) {
         final key = m.group(1)?.trim();
         final value = m.group(2)?.trim();
@@ -149,10 +147,7 @@ class RuleNovelSource implements NovelSource {
         t.contains(r'$..');
   }
 
-  String _toAbsoluteUrl(
-    String input, {
-    String? base,
-  }) {
+  String _toAbsoluteUrl(String input, {String? base}) {
     final raw = input.trim();
     if (raw.isEmpty) return raw;
 
@@ -192,10 +187,7 @@ class RuleNovelSource implements NovelSource {
     return baseUri.resolve(raw).toString();
   }
 
-  Uri _resolveUri(
-    String path, {
-    String? base,
-  }) {
+  Uri _resolveUri(String path, {String? base}) {
     final raw = path.trim();
 
     if (raw.isEmpty) {
@@ -208,10 +200,7 @@ class RuleNovelSource implements NovelSource {
     return Uri.parse(_toAbsoluteUrl(raw, base: base));
   }
 
-  String _absUrl(
-    String path, {
-    String? base,
-  }) {
+  String _absUrl(String path, {String? base}) {
     final raw = path.trim();
     if (raw.isEmpty) return '';
 
@@ -222,10 +211,7 @@ class RuleNovelSource implements NovelSource {
     }
   }
 
-  Future<String> _request(
-    String path, {
-    String? base,
-  }) async {
+  Future<String> _request(String path, {String? base}) async {
     final uri = _resolveUri(path, base: base);
 
     final response = await http.get(uri, headers: headers).timeout(_timeout);
@@ -259,12 +245,7 @@ class RuleNovelSource implements NovelSource {
         return vars[expr]!;
       }
 
-      final value = _evalExpr(
-        expr,
-        context: context,
-        root: root,
-        vars: vars,
-      );
+      final value = _evalExpr(expr, context: context, root: root, vars: vars);
 
       return value;
     });
@@ -539,17 +520,10 @@ class RuleNovelSource implements NovelSource {
     try {
       final normalized = _normalizeBase64(input);
       final encrypter = enc.Encrypter(
-        enc.AES(
-          enc.Key.fromUtf8(key),
-          mode: enc.AESMode.cbc,
-          padding: 'PKCS7',
-        ),
+        enc.AES(enc.Key.fromUtf8(key), mode: enc.AESMode.cbc, padding: 'PKCS7'),
       );
 
-      final plain = encrypter.decrypt64(
-        normalized,
-        iv: enc.IV.fromUtf8(iv),
-      );
+      final plain = encrypter.decrypt64(normalized, iv: enc.IV.fromUtf8(iv));
 
       return plain
           .replaceAll(r'\/', '/')
@@ -581,10 +555,7 @@ class RuleNovelSource implements NovelSource {
           RegExp(r'<script[\s\S]*?</script>', caseSensitive: false),
           '',
         )
-        .replaceAll(
-          RegExp(r'<style[\s\S]*?</style>', caseSensitive: false),
-          '',
-        )
+        .replaceAll(RegExp(r'<style[\s\S]*?</style>', caseSensitive: false), '')
         .replaceAll(_htmlTag, '');
 
     text = text.replaceAll(RegExp(r'\r\n?'), '\n');
@@ -599,7 +570,7 @@ class RuleNovelSource implements NovelSource {
   String _cleanContent(String content) {
     var text = content;
 
-    final replaceRegex = '${_toStr(ruleContent['replaceRegex'])}'.trim();
+    final replaceRegex = _toStr(ruleContent['replaceRegex']).trim();
     if (replaceRegex.isNotEmpty) {
       final pattern = replaceRegex.startsWith('##')
           ? replaceRegex.substring(2)
@@ -669,8 +640,9 @@ class RuleNovelSource implements NovelSource {
     String title,
     String fallbackId,
   ) {
-    final map =
-        item is Map ? Map<String, dynamic>.from(item) : <String, dynamic>{};
+    final map = item is Map
+        ? Map<String, dynamic>.from(item)
+        : <String, dynamic>{};
 
     final candidates = [
       _toStr(_mapLookup(map, 'novelId')),
@@ -687,7 +659,8 @@ class RuleNovelSource implements NovelSource {
     if (detailUrl.isNotEmpty) {
       final uri = Uri.tryParse(detailUrl);
       if (uri != null) {
-        final qp = uri.queryParameters['id'] ??
+        final qp =
+            uri.queryParameters['id'] ??
             uri.queryParameters['novelId'] ??
             uri.queryParameters['bookId'];
         if (qp != null && qp.isNotEmpty) return qp;
@@ -734,10 +707,12 @@ class RuleNovelSource implements NovelSource {
     if (item is! Map) return '';
     final map = Map<String, dynamic>.from(item);
 
-    final className =
-        _toStr(_mapLookup(map, 'className') ?? _mapLookup(map, 'classname'));
-    final tagName =
-        _toStr(_mapLookup(map, 'tagName') ?? _mapLookup(map, 'tagname'));
+    final className = _toStr(
+      _mapLookup(map, 'className') ?? _mapLookup(map, 'classname'),
+    );
+    final tagName = _toStr(
+      _mapLookup(map, 'tagName') ?? _mapLookup(map, 'tagname'),
+    );
     final kind = _toStr(_mapLookup(map, 'kind'));
 
     final parts = <String>[
@@ -757,64 +732,49 @@ class RuleNovelSource implements NovelSource {
     String itemBaseUrl = '',
     Map<String, String> vars = const {},
   }) {
-    final title = _pickField(
-      item,
-      item,
-      ruleMaps,
-      ['name', 'title', 'novelName', 'bookName'],
-      vars: vars,
-    );
+    final title = _pickField(item, item, ruleMaps, [
+      'name',
+      'title',
+      'novelName',
+      'bookName',
+    ], vars: vars);
 
-    final author = _pickField(
-      item,
-      item,
-      ruleMaps,
-      ['author', 'authorName'],
-      vars: vars,
-    );
+    final author = _pickField(item, item, ruleMaps, [
+      'author',
+      'authorName',
+    ], vars: vars);
 
-    final intro = _pickField(
-      item,
-      item,
-      ruleMaps,
-      ['intro', 'summary', 'desc'],
-      vars: vars,
-    );
+    final intro = _pickField(item, item, ruleMaps, [
+      'intro',
+      'summary',
+      'desc',
+    ], vars: vars);
 
-    final coverUrl = _pickField(
-      item,
-      item,
-      ruleMaps,
-      ['coverUrl', 'cover', 'img', 'thumb'],
-      vars: vars,
-    );
+    final coverUrl = _pickField(item, item, ruleMaps, [
+      'coverUrl',
+      'cover',
+      'img',
+      'thumb',
+    ], vars: vars);
 
-    final category = _pickField(
-      item,
-      item,
-      ruleMaps,
-      ['category', 'kind', 'className'],
-      vars: vars,
-    );
+    final category = _pickField(item, item, ruleMaps, [
+      'category',
+      'kind',
+      'className',
+    ], vars: vars);
 
-    final wordCount = _pickField(
-      item,
-      item,
-      ruleMaps,
-      ['wordCount', 'wordNum'],
-      vars: vars,
-    );
+    final wordCount = _pickField(item, item, ruleMaps, [
+      'wordCount',
+      'wordNum',
+    ], vars: vars);
 
-    final detailRule = _pickField(
-      item,
-      item,
-      ruleMaps,
-      ['bookUrl', 'detailUrl', 'url'],
-      vars: vars,
-    );
+    final detailRule = _pickField(item, item, ruleMaps, [
+      'bookUrl',
+      'detailUrl',
+      'url',
+    ], vars: vars);
 
-    final detailUrl =
-        detailRule.isNotEmpty ? detailRule : fallbackDetailUrl;
+    final detailUrl = detailRule.isNotEmpty ? detailRule : fallbackDetailUrl;
 
     final finalDetailUrl = _absUrl(
       detailUrl,
@@ -824,13 +784,7 @@ class RuleNovelSource implements NovelSource {
     final finalId = _deriveId(item, finalDetailUrl, title, fallbackId);
     if (finalId.isEmpty && title.isEmpty) return null;
 
-    final status = _pickField(
-      item,
-      item,
-      ruleMaps,
-      ['status'],
-      vars: vars,
-    );
+    final status = _pickField(item, item, ruleMaps, ['status'], vars: vars);
 
     return NovelBook(
       id: finalId,
@@ -891,19 +845,16 @@ class RuleNovelSource implements NovelSource {
     required List<Map<String, dynamic>> ruleMaps,
     String chapterBaseUrl = '',
   }) {
-    final listRule = _pickRuleString(
-      ruleMaps,
-      ['chapterList', 'bookList', 'list'],
-    );
+    final listRule = _pickRuleString(ruleMaps, [
+      'chapterList',
+      'bookList',
+      'list',
+    ]);
 
     List<dynamic> items = const [];
 
     if (listRule.isNotEmpty) {
-      final raw = _resolveDynamicRule(
-        listRule,
-        context: root,
-        root: root,
-      );
+      final raw = _resolveDynamicRule(listRule, context: root, root: root);
 
       if (raw is List) {
         items = raw;
@@ -923,44 +874,39 @@ class RuleNovelSource implements NovelSource {
       items = maps;
     }
 
-    final chapterNameRule = _pickRuleString(
-      ruleMaps,
-      ['chapterName', 'name', 'title'],
-    );
+    final chapterNameRule = _pickRuleString(ruleMaps, [
+      'chapterName',
+      'name',
+      'title',
+    ]);
 
-    final chapterUrlRule = _pickRuleString(
-      ruleMaps,
-      ['chapterUrl', 'url', 'path', 'href'],
-    );
+    final chapterUrlRule = _pickRuleString(ruleMaps, [
+      'chapterUrl',
+      'url',
+      'path',
+      'href',
+    ]);
 
     final chapters = <NovelChapter>[];
 
     for (final item in items) {
       final title = chapterNameRule.isNotEmpty
-          ? _resolveStringRule(
-              chapterNameRule,
-              context: item,
-              root: item,
-            )
-          : _pickField(
-              item,
-              item,
-              const [],
-              ['chapterName', 'chaptername', 'title', 'name'],
-            );
+          ? _resolveStringRule(chapterNameRule, context: item, root: item)
+          : _pickField(item, item, const [], [
+              'chapterName',
+              'chaptername',
+              'title',
+              'name',
+            ]);
 
       var url = chapterUrlRule.isNotEmpty
-          ? _resolveStringRule(
-              chapterUrlRule,
-              context: item,
-              root: item,
-            )
-          : _pickField(
-              item,
-              item,
-              const [],
-              ['chapterUrl', 'url', 'path', 'href'],
-            );
+          ? _resolveStringRule(chapterUrlRule, context: item, root: item)
+          : _pickField(item, item, const [], [
+              'chapterUrl',
+              'url',
+              'path',
+              'href',
+            ]);
 
       final cleanTitle = _cleanChapterTitle(title);
       url = _absUrl(
@@ -970,12 +916,7 @@ class RuleNovelSource implements NovelSource {
 
       if (cleanTitle.isEmpty || url.isEmpty) continue;
 
-      chapters.add(
-        NovelChapter(
-          title: cleanTitle,
-          url: url,
-        ),
-      );
+      chapters.add(NovelChapter(title: cleanTitle, url: url));
     }
 
     final seen = <String>{};
@@ -992,11 +933,7 @@ class RuleNovelSource implements NovelSource {
     final initRule = _toStr(ruleMap['init']);
     if (initRule.isEmpty) return root;
 
-    final extracted = _resolveDynamicRule(
-      initRule,
-      context: root,
-      root: root,
-    );
+    final extracted = _resolveDynamicRule(initRule, context: root, root: root);
 
     return extracted ?? root;
   }
@@ -1024,19 +961,12 @@ class RuleNovelSource implements NovelSource {
 
     final init = _extractInit(decoded, ruleSearch);
 
-    final listRule = _pickRuleString(
-      [ruleSearch],
-      ['bookList', 'list'],
-    );
+    final listRule = _pickRuleString([ruleSearch], ['bookList', 'list']);
 
     List<dynamic> items = const [];
 
     if (listRule.isNotEmpty) {
-      final raw = _resolveDynamicRule(
-        listRule,
-        context: init,
-        root: decoded,
-      );
+      final raw = _resolveDynamicRule(listRule, context: init, root: decoded);
       if (raw is List) {
         items = raw;
       } else if (raw is Map) {
@@ -1089,19 +1019,12 @@ class RuleNovelSource implements NovelSource {
     final activeRule = ruleExplore.isNotEmpty ? ruleExplore : ruleSearch;
     final init = _extractInit(decoded, activeRule);
 
-    final listRule = _pickRuleString(
-      [activeRule],
-      ['bookList', 'list'],
-    );
+    final listRule = _pickRuleString([activeRule], ['bookList', 'list']);
 
     List<dynamic> items = const [];
 
     if (listRule.isNotEmpty) {
-      final raw = _resolveDynamicRule(
-        listRule,
-        context: init,
-        root: decoded,
-      );
+      final raw = _resolveDynamicRule(listRule, context: init, root: decoded);
       if (raw is List) {
         items = raw;
       } else if (raw is Map) {
@@ -1183,11 +1106,7 @@ class RuleNovelSource implements NovelSource {
     String tocPath = '';
 
     if (tocRule.isNotEmpty) {
-      tocPath = _resolveStringRule(
-        tocRule,
-        context: init,
-        root: decoded,
-      );
+      tocPath = _resolveStringRule(tocRule, context: init, root: decoded);
 
       if (tocPath.isNotEmpty) {
         try {
@@ -1217,10 +1136,7 @@ class RuleNovelSource implements NovelSource {
           : (book.detailUrl.isNotEmpty ? book.detailUrl : usedPath),
     );
 
-    return NovelDetail(
-      book: book,
-      chapters: chapters,
-    );
+    return NovelDetail(book: book, chapters: chapters);
   }
 
   @override
@@ -1233,10 +1149,7 @@ class RuleNovelSource implements NovelSource {
     }
 
     final chapter = detail.chapters[chapterIndex];
-    final body = await _request(
-      chapter.url,
-      base: detail.book.detailUrl,
-    );
+    final body = await _request(chapter.url, base: detail.book.detailUrl);
     final decoded = _tryDecodeJson(body);
 
     dynamic contentRoot = decoded ?? body;

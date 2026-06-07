@@ -47,12 +47,10 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
   Timer? _hideTimer;
 
   bool _isLongPressSpeeding = false;
-  double _speedBeforeLongPress = 1.0;
   final double _longPressSpeed = 2.0;
 
-  Duration _scrubBasePosition = Duration.zero;
   Duration _scrubCurrentPosition = Duration.zero;
-  double _playbackSpeed = 1.0;
+  final double _playbackSpeed = 1.0;
 
   @override
   void didChangeDependencies() {
@@ -60,7 +58,6 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     if (_bound) return;
 
     final chewie = ChewieController.of(context);
-    if (chewie == null) return;
 
     _chewieController = chewie;
     _videoController = chewie.videoPlayerController;
@@ -89,11 +86,11 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     if (!mounted || _videoController == null) return;
 
     final isPlaying = _videoController!.value.isPlaying;
-    
+
     // 只有状态从【播放->暂停】或【暂停->播放】发生真实切换时才触发
     if (isPlaying != _lastKnownPlayingState) {
       _lastKnownPlayingState = isPlaying;
-      
+
       setState(() {
         if (!isPlaying) {
           // 视频暂停了：立刻显示控制栏，并取消自动隐藏计时器
@@ -113,7 +110,10 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     _hideTimer?.cancel();
     _hideTimer = Timer(const Duration(milliseconds: 3000), () {
       // 只有在视频正在播放且没锁定时，才隐去控制栏
-      if (mounted && _videoController?.value.isPlaying == true && !_isLocked && !_isScrubbing) {
+      if (mounted &&
+          _videoController?.value.isPlaying == true &&
+          !_isLocked &&
+          !_isScrubbing) {
         setState(() => _showControls = false);
       }
     });
@@ -136,7 +136,7 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
       _singleTapTimer?.cancel();
       _singleTapTimer = Timer(const Duration(milliseconds: 300), () {
         if (!mounted) return;
-        
+
         // 🚨 核心改动：单击只准由控制 UI，绝对不去碰视频的 play() 或 pause()
         setState(() {
           _showControls = !_showControls;
@@ -178,7 +178,7 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
 
   String _formatDuration(Duration d) {
     String two(int n) => n.toString().padLeft(2, '0');
-    return d.inHours > 0 
+    return d.inHours > 0
         ? '${two(d.inHours)}:${two(d.inMinutes.remainder(60))}:${two(d.inSeconds.remainder(60))}'
         : '${two(d.inMinutes.remainder(60))}:${two(d.inSeconds.remainder(60))}';
   }
@@ -201,9 +201,9 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
 
     final screenWidth = MediaQuery.sizeOf(context).width;
     final dragSeconds = (details.delta.dx / screenWidth * 180).toInt();
-    
+
     var newPos = _scrubCurrentPosition + Duration(seconds: dragSeconds);
-    
+
     // 🚀 修复编译错误：手动替换 clamp 逻辑
     final totalDuration = _videoController!.value.duration;
     if (newPos < Duration.zero) {
@@ -245,21 +245,30 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _handleTap,
-              onLongPressStart: _isLocked ? null : (d) {
-                _wasPlayingBeforeScrub = _videoController!.value.isPlaying;
-                _videoController!.setPlaybackSpeed(_longPressSpeed);
-                setState(() => _isLongPressSpeeding = true);
-              },
-              onLongPressEnd: _isLocked ? null : (d) {
-                _videoController!.setPlaybackSpeed(_playbackSpeed);
-                if (!_wasPlayingBeforeScrub) _videoController!.pause();
-                setState(() => _isLongPressSpeeding = false);
-              },
-              onHorizontalDragStart: _isLocked ? null : (d) {
-                _scrubCurrentPosition = _videoController!.value.position;
-                _isReallyScrubbing = false;
-              },
-              onHorizontalDragUpdate: _isLocked ? null : _onHorizontalDragUpdate,
+              onLongPressStart: _isLocked
+                  ? null
+                  : (d) {
+                      _wasPlayingBeforeScrub =
+                          _videoController!.value.isPlaying;
+                      _videoController!.setPlaybackSpeed(_longPressSpeed);
+                      setState(() => _isLongPressSpeeding = true);
+                    },
+              onLongPressEnd: _isLocked
+                  ? null
+                  : (d) {
+                      _videoController!.setPlaybackSpeed(_playbackSpeed);
+                      if (!_wasPlayingBeforeScrub) _videoController!.pause();
+                      setState(() => _isLongPressSpeeding = false);
+                    },
+              onHorizontalDragStart: _isLocked
+                  ? null
+                  : (d) {
+                      _scrubCurrentPosition = _videoController!.value.position;
+                      _isReallyScrubbing = false;
+                    },
+              onHorizontalDragUpdate: _isLocked
+                  ? null
+                  : _onHorizontalDragUpdate,
               onHorizontalDragEnd: _isLocked ? null : _onHorizontalDragEnd,
             ),
           ),
@@ -282,7 +291,8 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
           _buildAnimatedLock(),
 
           // 中心播放按钮：仅在暂停时或面板开启时显示
-          if (!_isLocked && (_showControls || !_videoController!.value.isPlaying))
+          if (!_isLocked &&
+              (_showControls || !_videoController!.value.isPlaying))
             Center(child: _buildLargePlayButton()),
 
           // Overlay 提示层
@@ -293,9 +303,14 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     );
   }
 
-  Widget _buildAnimatedBar({required Alignment alignment, required bool visible, required Widget child}) {
+  Widget _buildAnimatedBar({
+    required Alignment alignment,
+    required bool visible,
+    required Widget child,
+  }) {
     return Positioned(
-      left: 0, right: 0,
+      left: 0,
+      right: 0,
       top: alignment == Alignment.topCenter ? 0 : null,
       bottom: alignment == Alignment.bottomCenter ? 0 : null,
       child: AnimatedSwitcher(
@@ -307,31 +322,161 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
   }
 
   Widget _buildTopBar() {
-    return Container(
-      height: 70, padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: const BoxDecoration(gradient: LinearGradient(colors: [Colors.black87, Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
-      child: SafeArea(child: Row(children: [
-        IconButton(icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white), onPressed: () => Navigator.maybePop(context)),
-        Expanded(child: Text('${widget.title} - ${widget.episodeName}', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
-      ])),
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF080A1F).withValues(alpha: 0.66),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+          ),
+          child: SafeArea(
+            bottom: false,
+            child: Row(
+              children: [
+                _glassButton(
+                  icon: Icons.close_rounded,
+                  onTap: () => setState(() => _showControls = false),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        widget.title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        widget.episodeName,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.68),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFE08A).withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Text(
+                    '手势播放器',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.6,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
   Widget _buildBottomBar() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(gradient: LinearGradient(colors: [Colors.transparent, Colors.black87], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
-      child: SafeArea(top: false, child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Row(children: [
-          Text('${_formatDuration(_videoController!.value.position)} / ${_formatDuration(_videoController!.value.duration)}', style: const TextStyle(color: Colors.white, fontSize: 12)),
-          const Spacer(),
-          IconButton(
-            icon: Icon(_chewieController!.isFullScreen ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded, color: Colors.white),
-            onPressed: widget.onToggleFullScreen ?? () => _chewieController!.toggleFullScreen(),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(26),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFF080A1F).withValues(alpha: 0.72),
+              borderRadius: BorderRadius.circular(26),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+            ),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      _timeChip(
+                        _formatDuration(_videoController!.value.position),
+                      ),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          child: VideoProgressIndicator(
+                            _videoController!,
+                            allowScrubbing: true,
+                            colors: const VideoProgressColors(
+                              playedColor: Color(0xFFFFE08A),
+                              bufferedColor: Color(0x66FFFFFF),
+                              backgroundColor: Color(0x33FFFFFF),
+                            ),
+                          ),
+                        ),
+                      ),
+                      _timeChip(
+                        _formatDuration(_videoController!.value.duration),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _glassButton(
+                        icon: Icons.skip_previous_rounded,
+                        onTap: widget.onPrevious,
+                      ),
+                      _glassButton(
+                        icon: _videoController!.value.isPlaying
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                        onTap: _togglePlayPause,
+                        emphasized: true,
+                      ),
+                      _glassButton(
+                        icon: Icons.skip_next_rounded,
+                        onTap: widget.onNext,
+                      ),
+                      _glassButton(
+                        icon: _chewieController!.isFullScreen
+                            ? Icons.fullscreen_exit_rounded
+                            : Icons.fullscreen_rounded,
+                        onTap:
+                            widget.onToggleFullScreen ??
+                            () => _chewieController!.toggleFullScreen(),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ),
-        ]),
-        VideoProgressIndicator(_videoController!, allowScrubbing: true, colors: const VideoProgressColors(playedColor: Colors.blueAccent)),
-      ])),
+        ),
+      ),
     );
   }
 
@@ -340,21 +485,93 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     return GestureDetector(
       onTap: _togglePlayPause,
       child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: const BoxDecoration(color: Colors.black26, shape: BoxShape.circle),
-        child: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 48),
+        width: 66,
+        height: 66,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.16),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFFFE08A).withValues(alpha: 0.28),
+              blurRadius: 26,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: Icon(
+          playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+          color: Colors.white,
+          size: 40,
+        ),
+      ),
+    );
+  }
+
+  Widget _glassButton({
+    required IconData icon,
+    required VoidCallback? onTap,
+    bool emphasized = false,
+  }) {
+    final enabled = onTap != null;
+    return Opacity(
+      opacity: enabled ? 1 : 0.38,
+      child: Material(
+        color: emphasized
+            ? const Color(0xFFFFE08A)
+            : Colors.white.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: SizedBox(
+            width: emphasized ? 52 : 40,
+            height: emphasized ? 44 : 38,
+            child: Icon(
+              icon,
+              color: emphasized ? const Color(0xFF111827) : Colors.white,
+              size: emphasized ? 30 : 22,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _timeChip(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          fontFeatures: [FontFeature.tabularFigures()],
+        ),
       ),
     );
   }
 
   Widget _buildAnimatedLock() {
     return Positioned(
-      left: 20, top: 0, bottom: 0,
+      left: 20,
+      top: 0,
+      bottom: 0,
       child: Center(
         child: AnimatedOpacity(
-          opacity: _showControls || _isLocked ? 1 : 0, duration: const Duration(milliseconds: 200),
+          opacity: _showControls || _isLocked ? 1 : 0,
+          duration: const Duration(milliseconds: 200),
           child: IconButton(
-            icon: Icon(_isLocked ? Icons.lock_rounded : Icons.lock_open_rounded, color: Colors.white, size: 28),
+            icon: Icon(
+              _isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
+              color: Colors.white,
+              size: 28,
+            ),
             onPressed: _toggleLock,
           ),
         ),
@@ -363,18 +580,43 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
   }
 
   Widget _buildScrubOverlay() {
-    return Center(child: Container(
-      padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
-      child: Text('${_formatDuration(_scrubCurrentPosition)} / ${_formatDuration(_videoController!.value.duration)}', 
-        style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold, fontFeatures: [FontFeature.tabularFigures()])),
-    ));
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          '${_formatDuration(_scrubCurrentPosition)} / ${_formatDuration(_videoController!.value.duration)}',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildSpeedHint() {
-    return Align(alignment: Alignment.topCenter, child: SafeArea(child: Container(
-      margin: const EdgeInsets.only(top: 10), padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(color: Colors.blueAccent.withOpacity(0.8), borderRadius: BorderRadius.circular(20)),
-      child: const Text('2.0x 倍速播放中', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-    )));
+    return Align(
+      alignment: Alignment.topCenter,
+      child: SafeArea(
+        child: Container(
+          margin: const EdgeInsets.only(top: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF6D28D9).withValues(alpha: 0.86),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: const Text(
+            '2.0x 倍速播放中',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -33,8 +33,9 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
   void initState() {
     super.initState();
     _keywordController = TextEditingController(text: widget.initialKeyword);
-    _capabilityReport =
-        NovelSourceCapabilityDetector.detect(widget.source.toJson());
+    _capabilityReport = NovelSourceCapabilityDetector.detect(
+      widget.source.toJson(),
+    );
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _runDiagnostic();
@@ -64,8 +65,9 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
     String nextError = '';
 
     try {
-      final sourceImpl =
-          NovelSourceFactory.fromBookSourceJson(widget.source.toJson());
+      final sourceImpl = NovelSourceFactory.fromBookSourceJson(
+        widget.source.toJson(),
+      );
 
       steps.add(
         _RuntimeDiagnosticStep(
@@ -99,7 +101,8 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
                 title: '搜索测试',
                 state: _RuntimeDiagnosticStepState.warning,
                 summary: '搜索请求成功，但未返回结果',
-                detail: '关键词：$keyword\n'
+                detail:
+                    '关键词：$keyword\n'
                     '说明：接口可访问，但当前关键词下没有搜索结果，或解析规则未取到列表。',
                 durationMs: sw.elapsedMilliseconds,
               ),
@@ -241,7 +244,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
           );
           sw.stop();
 
-          final text = (content.content ?? '').toString().trim();
+          final text = content.content.trim();
 
           if (text.isEmpty) {
             steps.add(
@@ -266,11 +269,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
                 title: '正文测试',
                 state: _RuntimeDiagnosticStepState.success,
                 summary: '正文解析成功，已获取首章内容',
-                detail: [
-                  '章节：${content.title}',
-                  '正文预览：',
-                  preview,
-                ].join('\n\n'),
+                detail: ['章节：${content.title}', '正文预览：', preview].join('\n\n'),
                 durationMs: sw.elapsedMilliseconds,
               ),
             );
@@ -315,8 +314,9 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
       _runtimeResult = nextResult;
       _runtimeError = nextError;
       _running = false;
-      _capabilityReport =
-          NovelSourceCapabilityDetector.detect(widget.source.toJson());
+      _capabilityReport = NovelSourceCapabilityDetector.detect(
+        widget.source.toJson(),
+      );
     });
   }
 
@@ -383,15 +383,13 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
         ..add(_runtimeError.trim());
     }
 
-    await Clipboard.setData(
-      ClipboardData(text: lines.join('\n')),
-    );
+    await Clipboard.setData(ClipboardData(text: lines.join('\n')));
 
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('诊断报告已复制到剪贴板')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('诊断报告已复制到剪贴板')));
   }
 
   List<String> _enabledFeatureLabels(NovelSourceCapabilityReport report) {
@@ -489,10 +487,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
         children: [
           Text(
             source.bookSourceName.isNotEmpty ? source.bookSourceName : '未命名书源',
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-            ),
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
           Text(
@@ -539,10 +534,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
         children: [
           const Text(
             '测试参数',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-            ),
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -577,7 +569,9 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
               ),
               const SizedBox(width: 8),
               OutlinedButton.icon(
-                onPressed: (_runtimeResult == null && _runtimeError.isEmpty) || _running
+                onPressed:
+                    (_runtimeResult == null && _runtimeError.isEmpty) ||
+                        _running
                     ? null
                     : _copyReport,
                 icon: const Icon(Icons.copy_rounded),
@@ -596,10 +590,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
               ),
               child: Text(
                 _runtimeError,
-                style: const TextStyle(
-                  color: Colors.redAccent,
-                  fontSize: 13,
-                ),
+                style: const TextStyle(color: Colors.redAccent, fontSize: 13),
               ),
             ),
           ],
@@ -614,8 +605,8 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
     final overallColor = report.isUsableForRead
         ? Colors.green
         : report.isPartiallySupported
-            ? Colors.orange
-            : Colors.redAccent;
+        ? Colors.orange
+        : Colors.redAccent;
 
     Widget statChip(String text, Color color) {
       return Container(
@@ -663,10 +654,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
           const SizedBox(height: 10),
           Text(
             '状态：${report.statusLabel}\n适配器：${report.adapterLabel}',
-            style: const TextStyle(
-              fontSize: 13.5,
-              height: 1.5,
-            ),
+            style: const TextStyle(fontSize: 13.5, height: 1.5),
           ),
           const SizedBox(height: 12),
           Wrap(
@@ -699,10 +687,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
           if (report.matchedSignals.isNotEmpty) ...[
             const Text(
               '命中特征',
-              style: TextStyle(
-                fontSize: 13.5,
-                fontWeight: FontWeight.w700,
-              ),
+              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
             ...report.matchedSignals.map(
@@ -755,10 +740,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
                   '• $e',
-                  style: const TextStyle(
-                    fontSize: 12.8,
-                    color: Colors.black87,
-                  ),
+                  style: const TextStyle(fontSize: 12.8, color: Colors.black87),
                 ),
               ),
             ),
@@ -772,8 +754,8 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
     final overallColor = report.hasFailure
         ? Colors.redAccent
         : (report.warningCount > 0 || report.skippedCount > 0)
-            ? Colors.orange
-            : Colors.green;
+        ? Colors.orange
+        : Colors.green;
 
     Widget statChip(String text, Color color) {
       return Container(
@@ -821,10 +803,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
           const SizedBox(height: 10),
           Text(
             report.overallSummary,
-            style: const TextStyle(
-              fontSize: 13.5,
-              height: 1.5,
-            ),
+            style: const TextStyle(fontSize: 13.5, height: 1.5),
           ),
           const SizedBox(height: 12),
           Wrap(
@@ -884,27 +863,23 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
           leading: Icon(_stateIcon(step.state), color: color),
           title: Text(
             '${index + 1}. ${step.title}',
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 14.5,
-            ),
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5),
           ),
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(
               step.summary,
-              style: const TextStyle(
-                fontSize: 12.5,
-                color: Colors.black54,
-              ),
+              style: const TextStyle(fontSize: 12.5, color: Colors.black54),
             ),
           ),
           trailing: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
                 decoration: BoxDecoration(
                   color: color.withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(20),
@@ -921,10 +896,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
               const SizedBox(height: 4),
               Text(
                 '${step.durationMs} ms',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Colors.black45,
-                ),
+                style: const TextStyle(fontSize: 11, color: Colors.black45),
               ),
             ],
           ),
@@ -934,10 +906,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
                 alignment: Alignment.centerLeft,
                 child: Text(
                   '暂无更多详情',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.black45,
-                  ),
+                  style: TextStyle(fontSize: 13, color: Colors.black45),
                 ),
               )
             else
@@ -973,10 +942,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 14),
-            Text(
-              '正在诊断书源，请稍候...',
-              style: TextStyle(color: Colors.black54),
-            ),
+            Text('正在诊断书源，请稍候...', style: TextStyle(color: Colors.black54)),
           ],
         ),
       );
@@ -1002,15 +968,12 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
         const SizedBox(height: 12),
         const Text(
           '诊断步骤',
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-          ),
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 10),
         ...runtime.steps.asMap().entries.map(
-              (entry) => _buildStepCard(entry.value, entry.key),
-            ),
+          (entry) => _buildStepCard(entry.value, entry.key),
+        ),
       ],
     );
   }
@@ -1028,10 +991,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
         elevation: 0,
         title: Text(
           sourceName,
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-          ),
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
         ),
         actions: [
           IconButton(
@@ -1041,7 +1001,8 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
           ),
           IconButton(
             tooltip: '复制报告',
-            onPressed: (_runtimeResult == null && _runtimeError.isEmpty) || _running
+            onPressed:
+                (_runtimeResult == null && _runtimeError.isEmpty) || _running
                 ? null
                 : _copyReport,
             icon: const Icon(Icons.copy_rounded),
@@ -1064,12 +1025,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
   }
 }
 
-enum _RuntimeDiagnosticStepState {
-  success,
-  warning,
-  failure,
-  skipped,
-}
+enum _RuntimeDiagnosticStepState { success, warning, failure, skipped }
 
 class _RuntimeDiagnosticStep {
   const _RuntimeDiagnosticStep({
@@ -1122,5 +1078,5 @@ class _RuntimeDiagnosticResult {
       return '本次诊断可以运行，但存在警告或跳过步骤，兼容性可能不完整。';
     }
     return '本次诊断全部关键步骤通过，书源可用性较好。';
-    }
+  }
 }

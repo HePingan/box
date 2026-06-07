@@ -5,11 +5,11 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'design_system/app_tokens.dart';
 import 'novel/core/cache_store.dart';
 
-typedef MarketInstallHandler = Future<void> Function(
-  MarketPluginTemplate template,
-);
+typedef MarketInstallHandler =
+    Future<void> Function(MarketPluginTemplate template);
 
 typedef MarketUninstallHandler = Future<void> Function(String pluginId);
 
@@ -62,10 +62,7 @@ Color _parseColor(dynamic value, [Color fallback = const Color(0xFF4F46E5)]) {
   return Color(parsed);
 }
 
-enum PluginMarketChannel {
-  stable,
-  beta,
-}
+enum PluginMarketChannel { stable, beta }
 
 extension PluginMarketChannelX on PluginMarketChannel {
   String get label {
@@ -86,11 +83,7 @@ PluginMarketChannel _channelFromName(String raw) {
   return PluginMarketChannel.stable;
 }
 
-enum PluginMarketSignMode {
-  none,
-  sha256,
-  hmacSha256,
-}
+enum PluginMarketSignMode { none, sha256, hmacSha256 }
 
 String _signModeWireName(PluginMarketSignMode mode) {
   switch (mode) {
@@ -396,7 +389,7 @@ class MarketPluginTemplate {
       'iconCodePoint': icon.codePoint,
       'iconFontFamily': icon.fontFamily,
       'iconFontPackage': icon.fontPackage,
-      'colorValue': color.value,
+      'colorValue': color.toARGB32(),
       'sort': sort,
     };
   }
@@ -425,15 +418,15 @@ class MarketPluginTemplate {
       final ff = _safeString(json['iconFontFamily'], 'MaterialIcons');
       final fp = _safeString(json['iconFontPackage']);
       icon = IconData(
+        // ignore: non_const_argument_for_const_parameter
         cp,
+        // ignore: non_const_argument_for_const_parameter
         fontFamily: ff,
+        // ignore: non_const_argument_for_const_parameter
         fontPackage: fp.isEmpty ? null : fp,
       );
     } else {
-      final iconName = _safeString(
-        json['iconName'],
-        _safeString(json['icon']),
-      );
+      final iconName = _safeString(json['iconName'], _safeString(json['icon']));
       icon = iconName.isEmpty
           ? _defaultIconForArea(areaCode)
           : _MarketIconRegistry.byName(iconName);
@@ -658,7 +651,9 @@ class PluginMarketManifest {
       templates: _dedupTemplates(templates),
       source: 'cache',
       fetchedAt: fetchedAt,
-      channel: _channelFromName(_safeString(json['channel'], defaultChannel.name)),
+      channel: _channelFromName(
+        _safeString(json['channel'], defaultChannel.name),
+      ),
       signatureVerified: _safeBool(json['signatureVerified'], false),
       signatureMode: _signModeFromWireName(
         _safeString(json['signatureMode'], 'none'),
@@ -673,10 +668,7 @@ class _ResolvedRemotePayload {
   final PluginMarketChannel channel;
   final Map<String, dynamic> node;
 
-  const _ResolvedRemotePayload({
-    required this.channel,
-    required this.node,
-  });
+  const _ResolvedRemotePayload({required this.channel, required this.node});
 }
 
 class PluginMarketRepository {
@@ -705,7 +697,9 @@ class PluginMarketRepository {
       channel: channel,
       signatureVerified: security.mode == PluginMarketSignMode.none,
       signatureMode: security.mode,
-      signatureMessage: security.mode == PluginMarketSignMode.none ? '验签关闭' : '内置清单',
+      signatureMessage: security.mode == PluginMarketSignMode.none
+          ? '验签关闭'
+          : '内置清单',
       signatureValue: '',
     );
 
@@ -744,9 +738,9 @@ class PluginMarketRepository {
   }) async {
     try {
       final uri = Uri.parse(url);
-      final text = await NetworkAssetBundle(uri)
-          .loadString(url)
-          .timeout(const Duration(seconds: 10));
+      final text = await NetworkAssetBundle(
+        uri,
+      ).loadString(url).timeout(const Duration(seconds: 10));
 
       final decoded = jsonDecode(text);
 
@@ -795,12 +789,10 @@ class PluginMarketRepository {
       final actualChannel = resolved.channel;
       final node = resolved.node;
 
-      final version = _safeInt(
-        node['version'],
-        _safeInt(root['version'], 1),
-      );
+      final version = _safeInt(node['version'], _safeInt(root['version'], 1));
 
-      final rawPluginsValue = node['plugins'] ??
+      final rawPluginsValue =
+          node['plugins'] ??
           node['data'] ??
           node['list'] ??
           root['plugins'] ??
@@ -835,7 +827,8 @@ class PluginMarketRepository {
       }
 
       final templates = _parseTemplates(rawPlugins);
-      final fetchedAt = _tryParseDate(node['fetchedAt']) ??
+      final fetchedAt =
+          _tryParseDate(node['fetchedAt']) ??
           _tryParseDate(node['updatedAt']) ??
           _tryParseDate(root['fetchedAt']) ??
           _tryParseDate(root['updatedAt']) ??
@@ -901,10 +894,7 @@ class PluginMarketRepository {
     }
 
     // 旧格式：根节点即清单
-    return _ResolvedRemotePayload(
-      channel: requestedChannel,
-      node: root,
-    );
+    return _ResolvedRemotePayload(channel: requestedChannel, node: root);
   }
 
   List<MarketPluginTemplate> _parseTemplates(dynamic raw) {
@@ -995,6 +985,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
   late Set<String> _installedIds;
 
   final Set<String> _loadingIds = {};
+  late final TextEditingController _searchController;
   bool _bulkRunning = false;
   bool _marketLoading = true;
 
@@ -1015,8 +1006,24 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
   void initState() {
     super.initState();
     _installedIds = {...widget.initialInstalledIds};
+    _searchController = TextEditingController();
     _currentChannel = widget.initialChannel;
     _loadMarket(forceRefresh: false);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _resetFilters() {
+    _searchController.clear();
+    setState(() {
+      _searchController.clear();
+      _keyword = '';
+      _areaFilter = 'all';
+    });
   }
 
   Future<void> _loadMarket({required bool forceRefresh}) async {
@@ -1071,6 +1078,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
 
     setState(() {
       _currentChannel = channel;
+      _searchController.clear();
       _keyword = '';
       _areaFilter = 'all';
     });
@@ -1087,7 +1095,8 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
 
       if (keyword.isEmpty) return true;
 
-      final joined = '${item.title} ${item.subtitle} ${item.payload}'.toLowerCase();
+      final joined = '${item.title} ${item.subtitle} ${item.payload}'
+          .toLowerCase();
       return joined.contains(keyword);
     }).toList();
 
@@ -1199,6 +1208,14 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       return;
     }
 
+    final confirmed = await _confirmBulkAction(
+      title: '安装当前筛选插件',
+      message: '将安装当前筛选结果中的 ${target.length} 个未安装插件，不会删除筛选条件。是否继续？',
+      confirmText: '开始安装',
+      destructive: false,
+    );
+    if (!confirmed || !mounted) return;
+
     setState(() => _bulkRunning = true);
 
     var success = 0;
@@ -1227,6 +1244,14 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       return;
     }
 
+    final confirmed = await _confirmBulkAction(
+      title: '卸载当前筛选插件',
+      message: '将卸载当前筛选结果中的 ${target.length} 个已安装插件，不会删除筛选条件。是否继续？',
+      confirmText: '确认卸载',
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+
     setState(() => _bulkRunning = true);
 
     var success = 0;
@@ -1243,11 +1268,61 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     _showSnack('批量卸载完成：$success / ${target.length}');
   }
 
+  Future<bool> _confirmBulkAction({
+    required String title,
+    required String message,
+    required String confirmText,
+    required bool destructive,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: destructive
+                ? FilledButton.styleFrom(backgroundColor: AppTokens.rose)
+                : null,
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(confirmText),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
   Widget _buildAreaChip(String code, String label) {
-    return ChoiceChip(
-      label: Text(label),
-      selected: _areaFilter == code,
-      onSelected: (_) => setState(() => _areaFilter = code),
+    final selected = _areaFilter == code;
+    return GestureDetector(
+      onTap: () => setState(() => _areaFilter = code),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+        decoration: BoxDecoration(
+          gradient: selected ? AppTokens.violetGradient : null,
+          color: selected ? null : Colors.white,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: selected ? Colors.transparent : AppTokens.divider,
+          ),
+          boxShadow: selected
+              ? AppTokens.shadowSm(color: AppTokens.violet)
+              : null,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.white : AppTokens.textSecondary,
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
     );
   }
 
@@ -1258,15 +1333,15 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
         spacing: 8,
         runSpacing: 8,
         children: [
-          ChoiceChip(
-            label: const Text('Stable'),
+          _MarketPill(
+            label: 'Stable',
             selected: _currentChannel == PluginMarketChannel.stable,
-            onSelected: (_) => _switchChannel(PluginMarketChannel.stable),
+            onTap: () => _switchChannel(PluginMarketChannel.stable),
           ),
-          ChoiceChip(
-            label: const Text('Beta'),
+          _MarketPill(
+            label: 'Beta',
             selected: _currentChannel == PluginMarketChannel.beta,
-            onSelected: (_) => _switchChannel(PluginMarketChannel.beta),
+            onTap: () => _switchChannel(PluginMarketChannel.beta),
           ),
         ],
       ),
@@ -1302,7 +1377,8 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
   }
 
   Widget _buildSignatureWarning() {
-    final shouldWarn = _marketSource == 'remote' &&
+    final shouldWarn =
+        _marketSource == 'remote' &&
         widget.securityConfig.mode != PluginMarketSignMode.none &&
         !_signatureVerified;
 
@@ -1319,7 +1395,11 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.warning_amber_rounded, size: 18, color: Color(0xFFB45309)),
+          const Icon(
+            Icons.warning_amber_rounded,
+            size: 18,
+            color: Color(0xFFB45309),
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -1337,69 +1417,228 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     final installed = _installedIds.contains(item.id);
     final loading = _loadingIds.contains(item.id) || _bulkRunning;
 
-    return Card(
-      elevation: 0,
-      margin: EdgeInsets.zero,
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: installed
+              ? AppTokens.emerald.withValues(alpha: 0.26)
+              : AppTokens.divider,
+        ),
+        boxShadow: AppTokens.shadowSm(color: item.color),
+      ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            CircleAvatar(
-              radius: 22,
-              backgroundColor: item.color.withOpacity(0.15),
-              child: Icon(item.icon, color: item.color),
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: item.color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Icon(item.icon, color: item.color, size: 22),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.title,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w900,
+                            color: AppTokens.textPrimary,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      _StatusBadge(installed: installed),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
                   Text(
-                    item.title,
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                    item.subtitle,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppTokens.textSecondary,
+                      height: 1.3,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    item.subtitle,
-                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 7),
                   Wrap(
                     spacing: 6,
-                    runSpacing: 6,
+                    runSpacing: 4,
                     children: [
                       _TagChip(text: _areaLabel(item.areaCode)),
                       _TagChip(text: _actionLabel(item.actionCode)),
+                      _TagChip(text: _currentChannel.label),
                     ],
                   ),
                 ],
               ),
             ),
-            const SizedBox(width: 8),
-            if (loading)
-              const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else if (installed)
-              OutlinedButton.icon(
-                onPressed: () => _uninstall(item),
-                icon: const Icon(Icons.delete_outline, size: 16),
-                label: const Text('卸载'),
-              )
-            else
-              FilledButton.icon(
-                onPressed: () => _install(item),
-                icon: const Icon(Icons.download_rounded, size: 16),
-                label: const Text('安装'),
-              ),
+            const SizedBox(width: 10),
+            SizedBox(
+              width: 92,
+              child: loading
+                  ? const Center(
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : installed
+                  ? OutlinedButton(
+                      onPressed: () => _uninstall(item),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        foregroundColor: AppTokens.rose,
+                        side: BorderSide(
+                          color: AppTokens.rose.withValues(alpha: 0.38),
+                        ),
+                      ),
+                      child: const Text('卸载'),
+                    )
+                  : FilledButton(
+                      onPressed: () => _install(item),
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                      ),
+                      child: const Text('安装'),
+                    ),
+            ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildMarketHero(int visibleCount) {
+    final installedCount = _installedIds.length;
+    final totalCount = _allTemplates.length;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppTokens.divider),
+        boxShadow: AppTokens.shadowSm(color: AppTokens.primaryBlue),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              IconButton.filledTonal(
+                onPressed: () => Navigator.of(context).maybePop(),
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '插件市场',
+                      style: TextStyle(
+                        color: AppTokens.textPrimary,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '搜索、验签、安装扩展 · 当前 ${_currentChannel.label}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppTokens.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton.filledTonal(
+                tooltip: '刷新远程配置',
+                onPressed: _marketLoading
+                    ? null
+                    : () => _loadMarket(forceRefresh: true),
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _MarketMetric(
+                  value: '$totalCount',
+                  label: '模板',
+                  glass: false,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _MarketMetric(
+                  value: '$visibleCount',
+                  label: '筛选',
+                  glass: false,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _MarketMetric(
+                  value: '$installedCount',
+                  label: '已装',
+                  glass: false,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _bulkRunning ? null : _installVisible,
+                  icon: const Icon(Icons.download_done_rounded, size: 18),
+                  label: const Text('安装当前筛选'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _bulkRunning ? null : _removeVisible,
+                  icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                  label: const Text('卸载当前筛选'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTokens.rose,
+                    side: BorderSide(
+                      color: AppTokens.rose.withValues(alpha: 0.38),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -1413,152 +1652,221 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     final visible = _visibleTemplates;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text('插件市场（${_currentChannel.label}）'),
-        actions: [
-          IconButton(
-            tooltip: '刷新远程配置',
-            onPressed: _marketLoading ? null : () => _loadMarket(forceRefresh: true),
-            icon: const Icon(Icons.refresh),
-          ),
-          PopupMenuButton<String>(
-            tooltip: '更多操作',
-            onSelected: (value) {
-              switch (value) {
-                case 'switch_stable':
-                  _switchChannel(PluginMarketChannel.stable);
-                  break;
-                case 'switch_beta':
-                  _switchChannel(PluginMarketChannel.beta);
-                  break;
-                case 'install_visible':
-                  _installVisible();
-                  break;
-                case 'remove_visible':
-                  _removeVisible();
-                  break;
-                case 'copy_url':
-                  final url = _safeString(widget.remoteConfigUrl);
-                  if (url.isEmpty) {
-                    _showSnack('未配置远程地址');
-                  } else {
-                    Clipboard.setData(ClipboardData(text: url));
-                    _showSnack('远程地址已复制');
-                  }
-                  break;
-                case 'reset_filter':
-                  setState(() {
-                    _keyword = '';
-                    _areaFilter = 'all';
-                  });
-                  break;
-              }
-            },
-            itemBuilder: (_) => [
-              PopupMenuItem(
-                value: 'switch_stable',
-                child: Text(
-                  _currentChannel == PluginMarketChannel.stable
-                      ? '当前频道：Stable'
-                      : '切换到 Stable',
-                ),
-              ),
-              PopupMenuItem(
-                value: 'switch_beta',
-                child: Text(
-                  _currentChannel == PluginMarketChannel.beta
-                      ? '当前频道：Beta'
-                      : '切换到 Beta',
-                ),
-              ),
-              const PopupMenuDivider(),
-              const PopupMenuItem(
-                value: 'install_visible',
-                child: Text('安装当前筛选结果'),
-              ),
-              const PopupMenuItem(
-                value: 'remove_visible',
-                child: Text('卸载当前筛选已安装'),
-              ),
-              const PopupMenuItem(
-                value: 'copy_url',
-                child: Text('复制远程配置地址'),
-              ),
-              const PopupMenuItem(
-                value: 'reset_filter',
-                child: Text('重置筛选'),
-              ),
-            ],
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          if (_marketLoading) const LinearProgressIndicator(minHeight: 2),
-          _buildMetaCard(),
-          _buildSignatureWarning(),
-          _buildChannelSwitch(),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
-            child: TextField(
-              onChanged: (v) => setState(() => _keyword = v),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: '搜索插件名称/描述',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _keyword.trim().isEmpty
-                    ? null
-                    : IconButton(
-                        onPressed: () => setState(() => _keyword = ''),
-                        icon: const Icon(Icons.clear),
-                      ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _buildAreaChip('all', '全部'),
-                _buildAreaChip('recommend', '推荐'),
-                _buildAreaChip('music', '音乐'),
-                _buildAreaChip('video', '影视'),
-                _buildAreaChip('comic', '漫画'),
-                _buildAreaChip('novel', '小说'),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: () => _loadMarket(forceRefresh: true),
-              child: visible.isEmpty
-                  ? ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      children: [
-                        const SizedBox(height: 120),
-                        Center(
-                          child: Text(
-                            _marketLoading ? '正在加载插件市场...' : '没有匹配结果',
-                            style: TextStyle(color: Colors.grey[600]),
+      backgroundColor: const Color(0xFFF4F7FB),
+      body: SafeArea(
+        child: Column(
+          children: [
+            if (_marketLoading) const LinearProgressIndicator(minHeight: 2),
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: () => _loadMarket(forceRefresh: true),
+                child: CustomScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(
+                    parent: BouncingScrollPhysics(),
+                  ),
+                  slivers: [
+                    SliverToBoxAdapter(child: _buildMarketHero(visible.length)),
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+                        child: TextField(
+                          controller: _searchController,
+                          onChanged: (v) => setState(() => _keyword = v),
+                          decoration: InputDecoration(
+                            filled: true,
+                            fillColor: Colors.white,
+                            isDense: true,
+                            hintText: '搜索插件名称/描述',
+                            prefixIcon: const Icon(Icons.search),
+                            suffixIcon: _keyword.trim().isEmpty
+                                ? null
+                                : IconButton(
+                                    onPressed: _resetFilters,
+                                    icon: const Icon(Icons.clear),
+                                  ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(18),
+                              borderSide: const BorderSide(
+                                color: Color(0xFFE7ECF5),
+                              ),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(18),
+                              borderSide: const BorderSide(
+                                color: Color(0xFFE7ECF5),
+                              ),
+                            ),
                           ),
                         ),
-                      ],
-                    )
-                  : ListView.separated(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                      itemCount: visible.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 10),
-                      itemBuilder: (_, index) => _buildCard(visible[index]),
+                      ),
                     ),
+                    SliverToBoxAdapter(child: _buildChannelSwitch()),
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            _buildAreaChip('all', '全部'),
+                            _buildAreaChip('recommend', '推荐'),
+                            _buildAreaChip('music', '音乐'),
+                            _buildAreaChip('video', '影视'),
+                            _buildAreaChip('comic', '漫画'),
+                            _buildAreaChip('novel', '小说'),
+                          ],
+                        ),
+                      ),
+                    ),
+                    SliverToBoxAdapter(child: _buildMetaCard()),
+                    SliverToBoxAdapter(child: _buildSignatureWarning()),
+                    if (visible.isEmpty)
+                      SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(
+                          child: _MarketEmptyState(
+                            loading: _marketLoading,
+                            onReset: _resetFilters,
+                          ),
+                        ),
+                      )
+                    else
+                      SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(16, 2, 16, 104),
+                        sliver: SliverList.separated(
+                          itemCount: visible.length,
+                          separatorBuilder: (_, _) =>
+                              const SizedBox(height: 10),
+                          itemBuilder: (_, index) => _buildCard(visible[index]),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MarketPill extends StatelessWidget {
+  const _MarketPill({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          gradient: selected ? AppTokens.blueGradient : null,
+          color: selected ? null : Colors.white,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: selected ? Colors.transparent : AppTokens.divider,
+          ),
+          boxShadow: selected
+              ? AppTokens.shadowSm(color: AppTokens.primaryBlue)
+              : null,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.white : AppTokens.textSecondary,
+            fontSize: 12,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({required this.installed});
+
+  final bool installed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: installed
+            ? AppTokens.emerald.withValues(alpha: 0.12)
+            : AppTokens.primaryBlue.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        installed ? '已安装' : '可安装',
+        style: TextStyle(
+          color: installed ? AppTokens.emerald : AppTokens.primaryBlue,
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _MarketEmptyState extends StatelessWidget {
+  const _MarketEmptyState({required this.loading, required this.onReset});
+
+  final bool loading;
+  final VoidCallback onReset;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: AppTokens.divider),
+        boxShadow: AppTokens.shadowSm(),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            loading ? Icons.hourglass_empty_rounded : Icons.search_off_rounded,
+            color: AppTokens.primaryBlue,
+            size: 38,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            loading ? '正在加载插件市场...' : '没有匹配插件',
+            style: const TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
+              color: AppTokens.textPrimary,
             ),
           ),
+          const SizedBox(height: 6),
+          const Text(
+            '换个关键词，或重置筛选查看全部模板',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: AppTokens.textSecondary, fontSize: 12),
+          ),
+          if (!loading) ...[
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: onReset,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('重置筛选'),
+            ),
+          ],
         ],
       ),
     );
@@ -1581,6 +1889,62 @@ class _TagChip extends StatelessWidget {
       child: Text(
         text,
         style: TextStyle(fontSize: 10, color: Colors.grey[700]),
+      ),
+    );
+  }
+}
+
+class _MarketMetric extends StatelessWidget {
+  const _MarketMetric({
+    required this.value,
+    required this.label,
+    this.glass = true,
+  });
+
+  final String value;
+  final String label;
+  final bool glass;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: glass
+            ? Colors.white.withValues(alpha: 0.14)
+            : AppTokens.surfaceMuted,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: glass
+              ? Colors.white.withValues(alpha: 0.18)
+              : AppTokens.divider,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: glass ? Colors.white : AppTokens.textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: glass
+                  ? Colors.white.withValues(alpha: 0.76)
+                  : AppTokens.textSecondary,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }

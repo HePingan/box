@@ -21,10 +21,7 @@ class HomeQuickAccessGrid extends StatelessWidget {
         .where((cat) => isSafeContent(cat.typeName))
         .toList(growable: false);
 
-    int? getMappedTypeId(
-      List<String> exactMatch,
-      List<String> fuzzyMatch,
-    ) {
+    int? getMappedTypeId(List<String> exactMatch, List<String> fuzzyMatch) {
       for (final word in exactMatch) {
         for (final cat in safeCategories) {
           if (cat.typeName == word) return cat.typeId;
@@ -45,64 +42,37 @@ class HomeQuickAccessGrid extends StatelessWidget {
         title: '全部影片',
         icon: Icons.auto_awesome,
         typeId: null,
-        colors: const [
-          Color(0xFF90A4AE),
-          Color(0xFF607D8B),
-        ],
+        colors: const [Color(0xFF90A4AE), Color(0xFF607D8B)],
       ),
       _QuickAccessItem(
         title: '电影找片',
         icon: Icons.movie_creation_outlined,
         typeId: getMappedTypeId(['电影'], ['电影', '片']),
-        colors: const [
-          Color(0xFFFFB74D),
-          Color(0xFFFF9800),
-        ],
+        colors: const [Color(0xFFFFB74D), Color(0xFFFF9800)],
       ),
       _QuickAccessItem(
         title: '热播追剧',
         icon: Icons.live_tv_rounded,
-        typeId: getMappedTypeId(
-          ['连续剧', '国产剧', '电视剧'],
-          ['剧', '剧集'],
-        ),
-        colors: const [
-          Color(0xFF64B5F6),
-          Color(0xFF2196F3),
-        ],
+        typeId: getMappedTypeId(['连续剧', '国产剧', '电视剧'], ['剧', '剧集']),
+        colors: const [Color(0xFF64B5F6), Color(0xFF2196F3)],
       ),
       _QuickAccessItem(
         title: '动漫次元',
         icon: Icons.animation_rounded,
-        typeId: getMappedTypeId(
-          ['动漫', '动画片'],
-          ['漫', '动画'],
-        ),
-        colors: const [
-          Color(0xFF81C784),
-          Color(0xFF4CAF50),
-        ],
+        typeId: getMappedTypeId(['动漫', '动画片'], ['漫', '动画']),
+        colors: const [Color(0xFF81C784), Color(0xFF4CAF50)],
       ),
       _QuickAccessItem(
         title: '综艺大观',
         icon: Icons.mic_external_on_rounded,
         typeId: getMappedTypeId(['综艺'], ['综艺']),
-        colors: const [
-          Color(0xFFF06292),
-          Color(0xFFE91E63),
-        ],
+        colors: const [Color(0xFFF06292), Color(0xFFE91E63)],
       ),
       _QuickAccessItem(
         title: '爽文短剧',
         icon: Icons.video_library_rounded,
-        typeId: getMappedTypeId(
-          ['短剧', '微网剧'],
-          ['短剧'],
-        ),
-        colors: const [
-          Color(0xFF7986CB),
-          Color(0xFF3F51B5),
-        ],
+        typeId: getMappedTypeId(['短剧', '微网剧'], ['短剧']),
+        colors: const [Color(0xFF7986CB), Color(0xFF3F51B5)],
       ),
     ];
 
@@ -110,18 +80,18 @@ class HomeQuickAccessGrid extends StatelessWidget {
       builder: (context, constraints) {
         final availableWidth =
             constraints.maxWidth.isFinite && constraints.maxWidth > 0
-                ? constraints.maxWidth
-                : screenWidth;
+            ? constraints.maxWidth
+            : screenWidth;
 
         final horizontalPadding = availableWidth < 600 ? 12.0 : 16.0;
         final spacing = 10.0;
         final columns = availableWidth >= 960
             ? 6
             : availableWidth >= 720
-                ? 4
-                : availableWidth >= 420
-                    ? 3
-                    : 2;
+            ? 4
+            : availableWidth >= 420
+            ? 3
+            : 2;
 
         final itemWidth = max(
           96.0,
@@ -202,11 +172,9 @@ class HomeQuickAccessGrid extends StatelessWidget {
     return GestureDetector(
       onTap: () {
         if (item.title != '全部影片' && item.typeId == null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('当前片源未映射「${item.title}」分类'),
-            ),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('当前片源未映射「${item.title}」分类')));
           return;
         }
 
@@ -230,7 +198,9 @@ class HomeQuickAccessGrid extends StatelessWidget {
                 : Border.all(color: Colors.transparent, width: 1.5),
             boxShadow: [
               BoxShadow(
-                color: item.colors.last.withOpacity(isSelected ? 0.28 : 0.16),
+                color: item.colors.last.withValues(
+                  alpha: isSelected ? 0.28 : 0.16,
+                ),
                 blurRadius: isSelected ? 12 : 8,
                 offset: const Offset(0, 4),
               ),
@@ -243,14 +213,10 @@ class HomeQuickAccessGrid extends StatelessWidget {
                 width: iconBoxSize,
                 height: iconBoxSize,
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.18),
+                  color: Colors.white.withValues(alpha: 0.18),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(
-                  item.icon,
-                  color: Colors.white,
-                  size: iconSize,
-                ),
+                child: Icon(item.icon, color: Colors.white, size: iconSize),
               ),
               const SizedBox(width: 8),
               Flexible(

@@ -16,7 +16,7 @@ class AggregateSearchSourceSection extends StatelessWidget {
   final VideoSource source;
   final List<AggregateResult> results;
   // 🚀 优化：类型从 Future<String?> 变为极速同步的 String?
-  final String? Function(AggregateResult result) coverUrlFor; 
+  final String? Function(AggregateResult result) coverUrlFor;
   final ValueChanged<AggregateResult> onTapVideo;
 
   @override
@@ -60,14 +60,14 @@ class AggregateSearchSourceSection extends StatelessWidget {
               padding: const EdgeInsets.all(12),
               scrollDirection: Axis.horizontal,
               itemCount: results.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
               itemBuilder: (context, index) {
                 final result = results[index];
 
                 return AggregateSearchVideoCard(
                   result: result,
                   // 🚀 优化：直接传入同步字符串，不再触发 Future 构建回调
-                  coverUrl: coverUrlFor(result), 
+                  coverUrl: coverUrlFor(result),
                   onTap: () => onTapVideo(result),
                 );
               },

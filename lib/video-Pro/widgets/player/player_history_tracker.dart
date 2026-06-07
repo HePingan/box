@@ -8,10 +8,7 @@ import '../../controller/history_controller.dart';
 import 'video_play_args.dart';
 
 class PlayerHistoryTracker {
-  PlayerHistoryTracker({
-    required this.historyController,
-    required this.args,
-  });
+  PlayerHistoryTracker({required this.historyController, required this.args});
 
   final HistoryController historyController;
   final VideoPlayArgs args;

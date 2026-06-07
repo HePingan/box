@@ -30,9 +30,10 @@ class NovelSourceCapabilityDetector {
       'hasAtPut': _containsDeep(json, '@put:{'),
       'hasAesDecode':
           _containsDeep(json, 'java.aesBase64DecodeToString(') ||
-              _containsDeep(json, 'AES/CBC/PKCS5Padding'),
+          _containsDeep(json, 'AES/CBC/PKCS5Padding'),
       'hasExploreMenu': _looksLikeExploreMenu(exploreUrl),
-      'hasHeaderAuth': _containsDeep(json, 'Authorization') ||
+      'hasHeaderAuth':
+          _containsDeep(json, 'Authorization') ||
           _containsDeep(json, 'AUTHORIZATION'),
     };
 
@@ -102,11 +103,7 @@ class NovelSourceCapabilityDetector {
 
     // -------- 通用 Rule 检测 --------
 
-    final searchUrlCheck = _checkField(
-      'searchUrl',
-      searchUrl,
-      critical: true,
-    );
+    final searchUrlCheck = _checkField('searchUrl', searchUrl, critical: true);
 
     final searchBookListCheck = _checkField(
       'ruleSearch.bookList',
@@ -198,21 +195,25 @@ class NovelSourceCapabilityDetector {
     final supportsSearch =
         searchUrlCheck.supported && searchBookListCheck.supported;
 
-    final supportsExplore = exploreUrl.trim().isNotEmpty &&
+    final supportsExplore =
+        exploreUrl.trim().isNotEmpty &&
         exploreUrlCheck.supported &&
         exploreBookListCheck.supported;
 
-    final hasAnyBookUrlRule = _toStr(ruleSearch['bookUrl']).isNotEmpty ||
+    final hasAnyBookUrlRule =
+        _toStr(ruleSearch['bookUrl']).isNotEmpty ||
         _toStr(ruleExplore['bookUrl']).isNotEmpty;
 
     final hasBookInfoRule = ruleBookInfo.isNotEmpty;
 
-    final supportsDetail = hasBookInfoRule &&
+    final supportsDetail =
+        hasBookInfoRule &&
         detailInitCheck.supported &&
         searchBookUrlCheck.supported &&
         exploreBookUrlCheck.supported;
 
-    final supportsToc = chapterListCheck.supported &&
+    final supportsToc =
+        chapterListCheck.supported &&
         chapterUrlCheck.supported &&
         tocUrlCheck.supported;
 
@@ -391,11 +392,7 @@ class NovelSourceCapabilityDetector {
       }
     }
 
-    return _checkField(
-      'exploreUrl',
-      text,
-      critical: false,
-    );
+    return _checkField('exploreUrl', text, critical: false);
   }
 
   static _FieldCheckResult _checkField(
@@ -462,9 +459,10 @@ class NovelSourceCapabilityDetector {
 
     final hasAesDecode =
         text.contains('java.aesBase64DecodeToString(') ||
-            text.contains('AES/CBC/PKCS5Padding');
+        text.contains('AES/CBC/PKCS5Padding');
 
-    final hasAdvancedApis = text.contains('java.ajax(') ||
+    final hasAdvancedApis =
+        text.contains('java.ajax(') ||
         text.contains('java.md5Encode(') ||
         text.contains('java.put(') ||
         text.contains('java.get(') ||

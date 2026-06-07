@@ -58,9 +58,7 @@ class BookSourceBootstrap {
 
       source ??= enabledSources.first;
 
-      NovelModule.configureRuleSource(
-        bookSourceJson: source.toJson(),
-      );
+      NovelModule.configureRuleSource(bookSourceJson: source.toJson());
 
       return BookSourceBootstrapResult(
         configured: true,

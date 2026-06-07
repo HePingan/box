@@ -1,8 +1,4 @@
-enum NovelSourceAdapterKind {
-  rule,
-  wtzw,
-  unsupported,
-}
+enum NovelSourceAdapterKind { rule, wtzw, unsupported }
 
 class NovelSourceCapabilityReport {
   const NovelSourceCapabilityReport({
@@ -60,17 +56,17 @@ class NovelSourceCapabilityReport {
 
   String get primaryBlocker => blockers.isNotEmpty ? blockers.first : '';
 
-  List<_CapabilityItem> get capabilityItems => [
-        _CapabilityItem('搜索', supportsSearch),
-        _CapabilityItem('发现', supportsExplore),
-        _CapabilityItem('详情', supportsDetail),
-        _CapabilityItem('目录', supportsToc),
-        _CapabilityItem('正文', supportsContent),
-      ];
+  List<CapabilityItem> get capabilityItems => [
+    CapabilityItem('搜索', supportsSearch),
+    CapabilityItem('发现', supportsExplore),
+    CapabilityItem('详情', supportsDetail),
+    CapabilityItem('目录', supportsToc),
+    CapabilityItem('正文', supportsContent),
+  ];
 }
 
-class _CapabilityItem {
-  const _CapabilityItem(this.label, this.supported);
+class CapabilityItem {
+  const CapabilityItem(this.label, this.supported);
 
   final String label;
   final bool supported;

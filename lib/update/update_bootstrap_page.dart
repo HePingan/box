@@ -80,7 +80,7 @@ class _UpdateBootstrapPageState extends State<UpdateBootstrapPage> {
         }
         return;
       }
-_manifest = manifest;
+      _manifest = manifest;
 
       // ==========================================
       // 🔥 终极铁门：硬性物理拦截！
@@ -145,9 +145,9 @@ _manifest = manifest;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => widget.nextPage),
-      );
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: (_) => widget.nextPage));
     });
   }
 
@@ -168,31 +168,31 @@ _manifest = manifest;
                   ],
                 )
               : _error == null
-                  ? const SizedBox.shrink()
-                  : Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            _error!,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(color: Colors.red),
-                          ),
-                          const SizedBox(height: 16),
-                          FilledButton(
-                            onPressed: () {
-                              setState(() {
-                                _loading = true;
-                                _error = null;
-                              });
-                              _bootstrap();
-                            },
-                            child: const Text('重试'),
-                          ),
-                        ],
+              ? const SizedBox.shrink()
+              : Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _error!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.red),
                       ),
-                    ),
+                      const SizedBox(height: 16),
+                      FilledButton(
+                        onPressed: () {
+                          setState(() {
+                            _loading = true;
+                            _error = null;
+                          });
+                          _bootstrap();
+                        },
+                        child: const Text('重试'),
+                      ),
+                    ],
+                  ),
+                ),
         ),
       ),
     );

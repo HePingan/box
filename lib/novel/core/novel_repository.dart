@@ -4,10 +4,7 @@ import 'novel_cache_keys.dart';
 import 'novel_source.dart';
 
 class NovelRepository {
-  NovelRepository({
-    required this.source,
-    required this.cache,
-  });
+  NovelRepository({required this.source, required this.cache});
 
   final NovelSource source;
   final CacheStore cache;
@@ -111,10 +108,7 @@ class NovelRepository {
     String? detailUrl,
     bool forceRefresh = false,
   }) async {
-    final key = NovelCacheKeys.detail(
-      bookId: bookId,
-      detailUrl: detailUrl,
-    );
+    final key = NovelCacheKeys.detail(bookId: bookId, detailUrl: detailUrl);
 
     if (!forceRefresh) {
       final cached = _decodeDetail(await cache.read(key));
@@ -193,10 +187,7 @@ class NovelRepository {
   }
 
   Future<void> saveReaderSettings(ReaderSettings settings) async {
-    await cache.write(
-      NovelCacheKeys.readerSettings,
-      settings.toJson(),
-    );
+    await cache.write(NovelCacheKeys.readerSettings, settings.toJson());
   }
 
   Future<ReaderSettings> getReaderSettings() async {
