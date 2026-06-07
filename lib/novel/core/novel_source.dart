@@ -5,10 +5,7 @@ abstract class NovelSource {
 
   Future<List<NovelBook>> fetchByPath(String path);
 
-  Future<NovelDetail> fetchDetail({
-    required String bookId,
-    String? detailUrl,
-  });
+  Future<NovelDetail> fetchDetail({required String bookId, String? detailUrl});
 
   Future<ChapterContent> fetchChapter({
     required NovelDetail detail,

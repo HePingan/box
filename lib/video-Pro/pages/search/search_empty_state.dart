@@ -22,11 +22,7 @@ class SearchEmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: 68,
-              color: Colors.grey.shade300,
-            ),
+            Icon(icon, size: 68, color: Colors.grey.shade300),
             const SizedBox(height: 12),
             Text(
               message,

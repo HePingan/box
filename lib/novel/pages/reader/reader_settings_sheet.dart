@@ -81,14 +81,16 @@ class ReaderSettingsSheet extends StatelessWidget {
                   children: [
                     Text(
                       '翻页方式',
-                      style: TextStyle(color: textColor.withOpacity(0.75)),
+                      style: TextStyle(
+                        color: textColor.withValues(alpha: 0.75),
+                      ),
                     ),
                     const SizedBox(width: 16),
                     ChoiceChip(
                       label: const Text('左右翻页'),
                       selected: !controller.isScrollMode,
                       showCheckmark: false,
-                      selectedColor: Colors.orange.withOpacity(0.18),
+                      selectedColor: Colors.orange.withValues(alpha: 0.18),
                       onSelected: (_) => onModeChanged(false),
                     ),
                     const SizedBox(width: 8),
@@ -96,7 +98,7 @@ class ReaderSettingsSheet extends StatelessWidget {
                       label: const Text('上下滑动'),
                       selected: controller.isScrollMode,
                       showCheckmark: false,
-                      selectedColor: Colors.orange.withOpacity(0.18),
+                      selectedColor: Colors.orange.withValues(alpha: 0.18),
                       onSelected: (_) => onModeChanged(true),
                     ),
                   ],
@@ -105,7 +107,7 @@ class ReaderSettingsSheet extends StatelessWidget {
                 const SizedBox(height: 24),
                 Text(
                   '字体大小',
-                  style: TextStyle(color: textColor.withOpacity(0.75)),
+                  style: TextStyle(color: textColor.withValues(alpha: 0.75)),
                 ),
                 Slider(
                   value: settings.fontSize,
@@ -113,7 +115,7 @@ class ReaderSettingsSheet extends StatelessWidget {
                   max: 30,
                   divisions: 16,
                   activeColor: Colors.orange,
-                  inactiveColor: textColor.withOpacity(0.2),
+                  inactiveColor: textColor.withValues(alpha: 0.2),
                   onChanged: (v) {
                     onSettingsChanged(settings.copyWith(fontSize: v));
                   },
@@ -122,7 +124,7 @@ class ReaderSettingsSheet extends StatelessWidget {
                 const SizedBox(height: 12),
                 Text(
                   '行距',
-                  style: TextStyle(color: textColor.withOpacity(0.75)),
+                  style: TextStyle(color: textColor.withValues(alpha: 0.75)),
                 ),
                 Slider(
                   value: settings.lineHeight,
@@ -130,7 +132,7 @@ class ReaderSettingsSheet extends StatelessWidget {
                   max: 2.4,
                   divisions: 10,
                   activeColor: Colors.orange,
-                  inactiveColor: textColor.withOpacity(0.2),
+                  inactiveColor: textColor.withValues(alpha: 0.2),
                   onChanged: (v) {
                     onSettingsChanged(settings.copyWith(lineHeight: v));
                   },

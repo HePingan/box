@@ -24,7 +24,7 @@ class UpdateDialog extends StatefulWidget {
 class _UpdateDialogState extends State<UpdateDialog> {
   bool _downloading = false;
   double _progress = 0;
-// 优先显示后台填的 title，如果没有填 title，再退而求其次显示日期
+  // 优先显示后台填的 title，如果没有填 title，再退而求其次显示日期
   String _titleText() {
     final title = widget.manifest.title;
     if (title != null && title.isNotEmpty) {
@@ -53,9 +53,9 @@ class _UpdateDialogState extends State<UpdateDialog> {
       if (!mounted) return;
       setState(() => _downloading = false);
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('更新失败：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('更新失败：$e')));
     }
   }
 
@@ -79,9 +79,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                   width: double.infinity,
                   padding: const EdgeInsets.only(top: 28, bottom: 18),
                   color: const Color(0xFF66B7E8),
-                  child: const Center(
-                    child: _InfoIcon(),
-                  ),
+                  child: const Center(child: _InfoIcon()),
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
@@ -101,18 +99,28 @@ class _UpdateDialogState extends State<UpdateDialog> {
                       const SizedBox(height: 18),
                       Text(
                         '最新版本为：${manifest.latestVersionName} (${manifest.latestVersionCode})',
-                        style: const TextStyle(fontSize: 16, color: Color(0xFF333333)),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          color: Color(0xFF333333),
+                        ),
                       ),
                       const SizedBox(height: 10),
                       Text(
                         '已安装版本：${widget.currentVersionName} (${widget.currentVersionCode})',
-                        style: const TextStyle(fontSize: 16, color: Color(0xFF333333)),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          color: Color(0xFF333333),
+                        ),
                       ),
-                      if (manifest.notice != null && manifest.notice!.isNotEmpty) ...[
+                      if (manifest.notice != null &&
+                          manifest.notice!.isNotEmpty) ...[
                         const SizedBox(height: 14),
                         Text(
                           manifest.notice!,
-                          style: const TextStyle(fontSize: 14, color: Color(0xFF666666)),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: Color(0xFF666666),
+                          ),
                         ),
                       ],
                       if (manifest.changelog.isNotEmpty) ...[
@@ -131,7 +139,10 @@ class _UpdateDialogState extends State<UpdateDialog> {
                             padding: const EdgeInsets.only(bottom: 4),
                             child: Text(
                               '• $item',
-                              style: const TextStyle(fontSize: 13, color: Color(0xFF666666)),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF666666),
+                              ),
                             ),
                           ),
                         ),
@@ -142,7 +153,10 @@ class _UpdateDialogState extends State<UpdateDialog> {
                         child: OutlinedButton(
                           onPressed: _downloading ? null : _doUpdate,
                           style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Color(0xFF6FB7E8), width: 1.5),
+                            side: const BorderSide(
+                              color: Color(0xFF6FB7E8),
+                              width: 1.5,
+                            ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10),
                             ),
@@ -187,11 +201,7 @@ class _InfoIcon extends StatelessWidget {
         border: Border.all(color: Colors.white, width: 4),
       ),
       child: const Center(
-        child: Icon(
-          Icons.info_outline,
-          size: 36,
-          color: Colors.white,
-        ),
+        child: Icon(Icons.info_outline, size: 36, color: Colors.white),
       ),
     );
   }

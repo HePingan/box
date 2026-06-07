@@ -13,9 +13,8 @@ import '../services/vod_detail_fill_service.dart';
 import 'video_catalog_repository.dart';
 
 class VideoController extends ChangeNotifier {
-  VideoController({
-    VideoCatalogRepository? repository,
-  }) : _repository = repository ?? const VideoCatalogRepository();
+  VideoController({VideoCatalogRepository? repository})
+    : _repository = repository ?? const VideoCatalogRepository();
 
   final VideoCatalogRepository _repository;
 
@@ -160,7 +159,7 @@ class VideoController extends ChangeNotifier {
 
       if (_isStale(token)) return;
 
-      if (_errorMessage == null && selectedSource != null) {
+      if (_errorMessage == null) {
         await _saveLastSourceKey(_sourceKey(selectedSource));
       }
     } catch (e, st) {
@@ -169,9 +168,10 @@ class VideoController extends ChangeNotifier {
       AppLogger.instance.logError(e, st, 'VIDEO_CONTROLLER');
       _errorMessage = '初始化片源失败：$e';
     } finally {
-      if (_isStale(token)) return;
-      _isLoading = false;
-      _notify();
+      if (!_isStale(token)) {
+        _isLoading = false;
+        _notify();
+      }
     }
   }
 
@@ -391,10 +391,10 @@ class VideoController extends ChangeNotifier {
       AppLogger.instance.logError(e, st, 'VIDEO_CONTROLLER');
       _errorMessage = '加载失败：$e';
     } finally {
-      if (_isStale(token)) return;
-
-      _isLoading = false;
-      _notify();
+      if (!_isStale(token)) {
+        _isLoading = false;
+        _notify();
+      }
     }
   }
 
@@ -493,7 +493,10 @@ class VideoController extends ChangeNotifier {
       for (int i = 0; i < targetItems.length; i += batchSize) {
         if (_disposed || _isStale(token)) break;
 
-        final batch = targetItems.skip(i).take(batchSize).toList(growable: false);
+        final batch = targetItems
+            .skip(i)
+            .take(batchSize)
+            .toList(growable: false);
 
         final results = await Future.wait<VodItem?>(
           batch.map(

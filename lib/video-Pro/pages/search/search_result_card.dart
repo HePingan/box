@@ -66,8 +66,9 @@ class SearchResultCard extends StatelessWidget {
         color: Colors.grey.shade200,
         alignment: Alignment.center,
         child: const SizedBox(
-           width: 20, height: 20,
-           child: CircularProgressIndicator(strokeWidth: 2),
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
         ),
       ),
       errorWidget: (context, url, error) => _buildPlaceholder(),

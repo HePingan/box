@@ -1,3 +1,5 @@
+// ignore_for_file: non_const_argument_for_const_parameter
+
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -34,14 +36,7 @@ bool _asBool(dynamic value, [bool fallback = false]) {
   return fallback;
 }
 
-enum HomePluginArea {
-  recommend,
-  music,
-  video,
-  comic,
-  novel,
-  center,
-}
+enum HomePluginArea { recommend, music, video, comic, novel, center }
 
 extension HomePluginAreaX on HomePluginArea {
   String get label {
@@ -79,12 +74,7 @@ extension HomePluginAreaX on HomePluginArea {
   }
 }
 
-enum HomePluginActionType {
-  toast,
-  openDailyNews,
-  openNovelList,
-  openVideoList,
-}
+enum HomePluginActionType { toast, openDailyNews, openNovelList, openVideoList }
 
 extension HomePluginActionTypeX on HomePluginActionType {
   String get label {
@@ -154,11 +144,14 @@ class HomeCustomPluginConfig {
 
   bool get isValid => id.trim().isNotEmpty && title.trim().isNotEmpty;
 
-  IconData get iconData => IconData(
-        iconCodePoint,
-        fontFamily: iconFontFamily,
-        fontPackage: iconFontPackage,
-      );
+  IconData get iconData {
+    // Dynamic custom plugin icons are restored from persisted user config.
+    return IconData(
+      iconCodePoint,
+      fontFamily: iconFontFamily,
+      fontPackage: iconFontPackage,
+    );
+  }
 
   Color get color => Color(colorValue);
 
@@ -219,10 +212,13 @@ class HomeCustomPluginConfig {
       subtitle: _asString(json['subtitle']),
       iconCodePoint: _asInt(json['iconCodePoint'], Icons.extension.codePoint),
       iconFontFamily: _asString(json['iconFontFamily'], 'MaterialIcons'),
-      iconFontPackage:
-          json['iconFontPackage'] == null ? null : _asString(json['iconFontPackage']),
-      colorValue: _asInt(json['colorValue'], Colors.blue.value),
-      area: _areaFromName(_asString(json['area'], HomePluginArea.recommend.name)),
+      iconFontPackage: json['iconFontPackage'] == null
+          ? null
+          : _asString(json['iconFontPackage']),
+      colorValue: _asInt(json['colorValue'], Colors.blue.toARGB32()),
+      area: _areaFromName(
+        _asString(json['area'], HomePluginArea.recommend.name),
+      ),
       actionType: _actionFromName(
         _asString(json['actionType'], HomePluginActionType.toast.name),
       ),
@@ -247,8 +243,8 @@ class HomePluginSnapshot {
   });
 
   const HomePluginSnapshot.empty()
-      : enabledMap = const {},
-        customPlugins = const [];
+    : enabledMap = const {},
+      customPlugins = const [];
 
   Map<String, dynamic> toJson() {
     return {
@@ -293,7 +289,7 @@ class HomePluginSnapshot {
 
 class HomePluginPersistence {
   HomePluginPersistence({CacheStore? cache})
-      : _cache = cache ?? CacheStore(namespace: 'home_plugin_center');
+    : _cache = cache ?? CacheStore(namespace: 'home_plugin_center');
 
   final CacheStore _cache;
 
@@ -309,7 +305,9 @@ class HomePluginPersistence {
         }
         final decoded = jsonDecode(raw);
         if (decoded is Map) {
-          return HomePluginSnapshot.fromJson(Map<String, dynamic>.from(decoded));
+          return HomePluginSnapshot.fromJson(
+            Map<String, dynamic>.from(decoded),
+          );
         }
       }
 
@@ -421,10 +419,7 @@ class HomePluginHost {
     }
   }
 
-  List<HomePlugin> pluginsOf(
-    HomePluginArea area, {
-    bool onlyEnabled = true,
-  }) {
+  List<HomePlugin> pluginsOf(HomePluginArea area, {bool onlyEnabled = true}) {
     final list = _notifier.value.where((plugin) {
       if (plugin.area != area) return false;
       if (onlyEnabled && !plugin.enabled) return false;
@@ -434,10 +429,7 @@ class HomePluginHost {
     return _sorted(list);
   }
 
-  Future<void> register(
-    HomePlugin plugin, {
-    bool replace = true,
-  }) async {
+  Future<void> register(HomePlugin plugin, {bool replace = true}) async {
     await bootstrap();
 
     final normalized = _normalizeForRegister(plugin);
@@ -508,10 +500,7 @@ class HomePluginHost {
     return jsonEncode(snapshot.toJson());
   }
 
-  Future<void> importSnapshotJson(
-    String jsonText, {
-    bool merge = false,
-  }) async {
+  Future<void> importSnapshotJson(String jsonText, {bool merge = false}) async {
     await bootstrap();
 
     final raw = jsonText.trim();
@@ -546,10 +535,7 @@ class HomePluginHost {
     HomePluginSnapshot base,
     HomePluginSnapshot incoming,
   ) {
-    final enabled = <String, bool>{
-      ...base.enabledMap,
-      ...incoming.enabledMap,
-    };
+    final enabled = <String, bool>{...base.enabledMap, ...incoming.enabledMap};
 
     final customMap = <String, HomeCustomPluginConfig>{
       for (final item in base.customPlugins) item.id: item,
@@ -573,8 +559,10 @@ class HomePluginHost {
     for (final plugin in _notifier.value) {
       enabledMap[plugin.id] = plugin.enabled;
       if (!plugin.builtIn) {
-        final config = (plugin.customConfig ?? _fallbackConfigFromPlugin(plugin))
-            .copyWith(enabled: plugin.enabled);
+        final config =
+            (plugin.customConfig ?? _fallbackConfigFromPlugin(plugin)).copyWith(
+              enabled: plugin.enabled,
+            );
         if (config.isValid) {
           customPlugins.add(config);
         }
@@ -599,11 +587,7 @@ class HomePluginHost {
     for (final config in snapshot.customPlugins) {
       if (!config.isValid) continue;
       final enabled = snapshot.enabledMap[config.id] ?? config.enabled;
-      result.add(
-        _pluginFromCustomConfig(
-          config.copyWith(enabled: enabled),
-        ),
-      );
+      result.add(_pluginFromCustomConfig(config.copyWith(enabled: enabled)));
     }
 
     _notifier.value = _sorted(result);
@@ -613,10 +597,7 @@ class HomePluginHost {
     if (plugin.builtIn) return plugin;
 
     final config = plugin.customConfig ?? _fallbackConfigFromPlugin(plugin);
-    return plugin.copyWith(
-      enabled: config.enabled,
-      customConfig: config,
-    );
+    return plugin.copyWith(enabled: config.enabled, customConfig: config);
   }
 
   HomeCustomPluginConfig _fallbackConfigFromPlugin(HomePlugin plugin) {
@@ -627,7 +608,7 @@ class HomePluginHost {
       iconCodePoint: plugin.icon.codePoint,
       iconFontFamily: plugin.icon.fontFamily ?? 'MaterialIcons',
       iconFontPackage: plugin.icon.fontPackage,
-      colorValue: plugin.color.value,
+      colorValue: plugin.color.toARGB32(),
       area: plugin.area,
       actionType: HomePluginActionType.toast,
       payload: plugin.subtitle,
@@ -654,7 +635,9 @@ class HomePluginHost {
           case HomePluginActionType.toast:
             await _showSnack(
               context,
-              config.payload.trim().isEmpty ? '点击了 ${config.title}' : config.payload.trim(),
+              config.payload.trim().isEmpty
+                  ? '点击了 ${config.title}'
+                  : config.payload.trim(),
             );
             return;
           case HomePluginActionType.openDailyNews:
@@ -819,10 +802,7 @@ class HomePluginHost {
 class HomePluginApi {
   HomePluginApi._();
 
-  static Future<void> register(
-    HomePlugin plugin, {
-    bool replace = true,
-  }) {
+  static Future<void> register(HomePlugin plugin, {bool replace = true}) {
     return HomePluginHost.instance.register(plugin, replace: replace);
   }
 
@@ -846,15 +826,10 @@ class HomePluginApi {
     String jsonText, {
     bool merge = false,
   }) {
-    return HomePluginHost.instance.importSnapshotJson(
-      jsonText,
-      merge: merge,
-    );
+    return HomePluginHost.instance.importSnapshotJson(jsonText, merge: merge);
   }
 }
 
 Future<void> _showSnack(BuildContext context, String text) async {
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text(text)),
-  );
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 }

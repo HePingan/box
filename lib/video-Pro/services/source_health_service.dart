@@ -4,7 +4,6 @@ import '../models/video_category.dart';
 import '../models/video_source.dart';
 import '../models/vod_item.dart';
 import '../services/video_api_service.dart';
-import '../../utils/app_logger.dart';
 
 /// 单个视频源的健康检测结果
 class SourceCheckResult {
@@ -47,8 +46,6 @@ class SourceCheckResult {
 ///
 /// 建议后续将此文件移动到 lib/services/ 目录下更为合理
 class SourceHealthService {
-  static const String _logTag = 'SOURCE_HEALTH';
-
   final Duration timeout;
   final int maxConcurrent;
 
@@ -56,10 +53,6 @@ class SourceHealthService {
     this.timeout = const Duration(seconds: 8),
     this.maxConcurrent = 3,
   });
-
-  void _log(String message) {
-    AppLogger.instance.log(message, tag: _logTag);
-  }
 
   Future<SourceCheckResult> checkSource(VideoSource source) async {
     return _checkOne(source);
@@ -84,10 +77,14 @@ class SourceHealthService {
     final results = <SourceCheckResult>[];
 
     for (var i = 0; i < candidates.length; i += maxConcurrent) {
-      final end = (i + maxConcurrent) > candidates.length ? candidates.length : (i + maxConcurrent);
+      final end = (i + maxConcurrent) > candidates.length
+          ? candidates.length
+          : (i + maxConcurrent);
       final batch = candidates.sublist(i, end);
 
-      final batchResults = await Future.wait(batch.map((source) => _checkOne(source)));
+      final batchResults = await Future.wait(
+        batch.map((source) => _checkOne(source)),
+      );
 
       for (final result in batchResults) {
         results.add(result);
@@ -116,40 +113,105 @@ class SourceHealthService {
     final now = DateTime.now();
     final sourceUrl = source.url.trim();
     if (sourceUrl.isEmpty) {
-      return SourceCheckResult(source: source, success: false, stage: 'source', message: '源地址为空', checkedAt: now);
+      return SourceCheckResult(
+        source: source,
+        success: false,
+        stage: 'source',
+        message: '源地址为空',
+        checkedAt: now,
+      );
     }
 
     try {
       final categories = await _fetchCategories(source);
       if (categories.isEmpty) {
-        return SourceCheckResult(source: source, success: false, stage: 'categories', message: '分类为空', checkedAt: now);
+        return SourceCheckResult(
+          source: source,
+          success: false,
+          stage: 'categories',
+          message: '分类为空',
+          checkedAt: now,
+        );
       }
 
       final videos = await _fetchVideoList(source, categories.first);
       if (videos.isEmpty) {
-        return SourceCheckResult(source: source, success: false, stage: 'list', message: '视频列表为空', categoryCount: categories.length, checkedAt: now);
+        return SourceCheckResult(
+          source: source,
+          success: false,
+          stage: 'list',
+          message: '视频列表为空',
+          categoryCount: categories.length,
+          checkedAt: now,
+        );
       }
 
-      final detailBaseUrl = source.detailUrl.trim().isNotEmpty ? source.detailUrl.trim() : source.url.trim();
+      final detailBaseUrl = source.detailUrl.trim().isNotEmpty
+          ? source.detailUrl.trim()
+          : source.url.trim();
       final detail = await _fetchDetail(detailBaseUrl, videos.first);
       if (detail == null) {
-        return SourceCheckResult(source: source, success: false, stage: 'detail', message: '详情为空', categoryCount: categories.length, videoCount: videos.length, checkedAt: now);
+        return SourceCheckResult(
+          source: source,
+          success: false,
+          stage: 'detail',
+          message: '详情为空',
+          categoryCount: categories.length,
+          videoCount: videos.length,
+          checkedAt: now,
+        );
       }
 
       final playableUrl = _extractPlayableUrl(detail, source);
       if (playableUrl == null || playableUrl.trim().isEmpty) {
-        return SourceCheckResult(source: source, success: false, stage: 'detail', message: '未解析到播放地址', categoryCount: categories.length, videoCount: videos.length, checkedAt: now);
+        return SourceCheckResult(
+          source: source,
+          success: false,
+          stage: 'detail',
+          message: '未解析到播放地址',
+          categoryCount: categories.length,
+          videoCount: videos.length,
+          checkedAt: now,
+        );
       }
 
-      final playable = await _probePlayableUrl(playableUrl, baseUrl: detailBaseUrl, headers: _buildHeaders(source));
+      final playable = await _probePlayableUrl(
+        playableUrl,
+        baseUrl: detailBaseUrl,
+        headers: _buildHeaders(source),
+      );
 
       if (!playable) {
-        return SourceCheckResult(source: source, success: false, stage: 'play', message: '播放地址不可用', playableUrl: playableUrl, categoryCount: categories.length, videoCount: videos.length, checkedAt: now);
+        return SourceCheckResult(
+          source: source,
+          success: false,
+          stage: 'play',
+          message: '播放地址不可用',
+          playableUrl: playableUrl,
+          categoryCount: categories.length,
+          videoCount: videos.length,
+          checkedAt: now,
+        );
       }
 
-      return SourceCheckResult(source: source, success: true, stage: 'ok', message: '可用', playableUrl: playableUrl, categoryCount: categories.length, videoCount: videos.length, checkedAt: now);
+      return SourceCheckResult(
+        source: source,
+        success: true,
+        stage: 'ok',
+        message: '可用',
+        playableUrl: playableUrl,
+        categoryCount: categories.length,
+        videoCount: videos.length,
+        checkedAt: now,
+      );
     } catch (e) {
-      return SourceCheckResult(source: source, success: false, stage: 'exception', message: e.toString(), checkedAt: now);
+      return SourceCheckResult(
+        source: source,
+        success: false,
+        stage: 'exception',
+        message: e.toString(),
+        checkedAt: now,
+      );
     }
   }
 
@@ -157,12 +219,22 @@ class SourceHealthService {
     return await VideoApiService.fetchCategories(source.url).timeout(timeout);
   }
 
-  Future<List<VodItem>> _fetchVideoList(VideoSource source, VideoCategory category) async {
-    return await VideoApiService.fetchVideoList(baseUrl: source.url, page: 1, typeId: category.typeId,).timeout(timeout);
+  Future<List<VodItem>> _fetchVideoList(
+    VideoSource source,
+    VideoCategory category,
+  ) async {
+    return await VideoApiService.fetchVideoList(
+      baseUrl: source.url,
+      page: 1,
+      typeId: category.typeId,
+    ).timeout(timeout);
   }
 
   Future<dynamic> _fetchDetail(String detailBaseUrl, VodItem item) async {
-    return await VideoApiService.fetchDetail(detailBaseUrl, item.vodId).timeout(timeout);
+    return await VideoApiService.fetchDetail(
+      detailBaseUrl,
+      item.vodId,
+    ).timeout(timeout);
   }
 
   // =====================================================================
@@ -176,7 +248,7 @@ class SourceHealthService {
     for (final key in preferredKeys) {
       final value = _readDynamicProperty(detail, key);
       if (value is String && value.isNotEmpty) {
-        final url = _extractUrlFromText(value, source); 
+        final url = _extractUrlFromText(value, source);
         if (url != null) return url;
       }
     }
@@ -185,9 +257,12 @@ class SourceHealthService {
     try {
       final jsonStr = jsonEncode(detail);
       // 正则说明：寻找 http 开始，中间不包含双引号或空白，并以 m3u8 或 mp4 结尾的链接
-      final regex = RegExp(r'https?:\/\/[^"\s\\]+\.(?:m3u8|mp4)', caseSensitive: false);
+      final regex = RegExp(
+        r'https?:\/\/[^"\s\\]+\.(?:m3u8|mp4)',
+        caseSensitive: false,
+      );
       final match = regex.firstMatch(jsonStr);
-      
+
       if (match != null) {
         String url = match.group(0)!;
         // JSON 编码时经常把斜杠转义，这里要给它还原回来
@@ -203,14 +278,19 @@ class SourceHealthService {
     if (input.isEmpty) return null;
     input = input.replaceAll('\\', '');
 
-    final urlRegex = RegExp(r'''(https?:\/\/[^\s#\$"'<>\\]+|\/\/[^\s#\$"'<>\\]+)''', caseSensitive: false);
+    final urlRegex = RegExp(
+      r'''(https?:\/\/[^\s#\$"'<>\\]+|\/\/[^\s#\$"'<>\\]+)''',
+      caseSensitive: false,
+    );
     final match = urlRegex.firstMatch(input);
     if (match != null) {
       var url = match.group(0)!.trim();
       return url.startsWith('//') ? 'https:$url' : url;
     }
 
-    if (input.startsWith('/') || input.startsWith('./') || input.startsWith('../')) {
+    if (input.startsWith('/') ||
+        input.startsWith('./') ||
+        input.startsWith('../')) {
       final resolved = _resolveRelativeUrl(input, source);
       if (resolved != null && resolved.isNotEmpty) return resolved;
     }
@@ -235,7 +315,8 @@ class SourceHealthService {
   Map<String, String> _buildHeaders(VideoSource source) {
     final referer = source.url.trim();
     return <String, String>{
-      'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Flutter) AppleWebKit/537.36 Chrome/122.0 Mobile',
+      'User-Agent':
+          'Mozilla/5.0 (Linux; Android 13; Flutter) AppleWebKit/537.36 Chrome/122.0 Mobile',
       'Referer': referer,
       'Origin': _originOf(referer),
       'Accept': '*/*',
@@ -252,22 +333,30 @@ class SourceHealthService {
     }
   }
 
-  Future<bool> _probePlayableUrl(String rawUrl, {required String baseUrl, required Map<String, String> headers}) async {
+  Future<bool> _probePlayableUrl(
+    String rawUrl, {
+    required String baseUrl,
+    required Map<String, String> headers,
+  }) async {
     final url = _normalizeUrl(rawUrl, baseUrl);
     if (url == null || url.trim().isEmpty) return false;
 
     final isM3u8 = url.toLowerCase().contains('.m3u8');
-    final client = HttpClient()..connectionTimeout = timeout..idleTimeout = timeout;
+    final client = HttpClient()
+      ..connectionTimeout = timeout
+      ..idleTimeout = timeout;
 
     try {
       final uri = Uri.parse(url);
-      
+
       try {
         final headReq = await client.headUrl(uri);
         headers.forEach((k, v) => headReq.headers.set(k, v));
         final headResp = await headReq.close().timeout(timeout);
-        
-        if (headResp.statusCode >= 200 && headResp.statusCode < 400 && !isM3u8) {
+
+        if (headResp.statusCode >= 200 &&
+            headResp.statusCode < 400 &&
+            !isM3u8) {
           return true;
         }
       } catch (_) {}
@@ -282,7 +371,6 @@ class SourceHealthService {
 
       final body = await utf8.decodeStream(resp);
       return body.contains('#EXTM3U') || body.contains('#EXT-X');
-      
     } catch (_) {
       return false;
     } finally {
@@ -312,11 +400,16 @@ class SourceHealthService {
     if (item is Map) return item[key];
     try {
       switch (key) {
-        case 'vodPlayUrl': return item.vodPlayUrl;
-        case 'vod_play_url': return item.vodPlayUrl;
-        case 'playUrl': return item.playUrl;
-        case 'play_url': return item.playUrl;
-        default: return null;
+        case 'vodPlayUrl':
+          return item.vodPlayUrl;
+        case 'vod_play_url':
+          return item.vodPlayUrl;
+        case 'playUrl':
+          return item.playUrl;
+        case 'play_url':
+          return item.playUrl;
+        default:
+          return null;
       }
     } catch (_) {
       return null;

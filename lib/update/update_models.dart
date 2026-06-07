@@ -53,12 +53,14 @@ class UpdateManifest {
 
   factory UpdateManifest.fromJson(Map<String, dynamic> json) {
     return UpdateManifest(
-      schemaVersion: int.tryParse(json['schemaVersion']?.toString() ?? '1') ?? 1,
+      schemaVersion:
+          int.tryParse(json['schemaVersion']?.toString() ?? '1') ?? 1,
       appId: json['appId']?.toString() ?? '',
       platform: json['platform']?.toString() ?? '',
       channel: json['channel']?.toString() ?? 'release',
       packageName: json['packageName']?.toString() ?? '',
-      latestVersionCode: int.tryParse(json['latestVersionCode']?.toString() ?? '0') ?? 0,
+      latestVersionCode:
+          int.tryParse(json['latestVersionCode']?.toString() ?? '0') ?? 0,
       latestVersionName: json['latestVersionName']?.toString() ?? '',
       minSupportedVersionCode:
           int.tryParse(json['minSupportedVersionCode']?.toString() ?? '0') ?? 0,
@@ -110,7 +112,8 @@ class UpdateManifest {
       'signature': signature,
     };
   }
-/// 只有“确实存在新版本”的情况下，强制更新才生效。
+
+  /// 只有“确实存在新版本”的情况下，强制更新才生效。
   bool needForceUpdate(int currentVersionCode) {
     // 【核心拦截】：如果服务端的版本号 <= 手机现在的版本号，
     // 说明根本没新版本！管后台怎么勾【强制更新】，一律当做 false 处理！

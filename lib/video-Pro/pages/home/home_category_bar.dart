@@ -1,14 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../controller/video_controller.dart';
-import '../../models/video_category.dart';
 import 'home_utils.dart';
 
 class HomeCategoryBar extends StatelessWidget {
-  const HomeCategoryBar({
-    super.key,
-    required this.controller,
-  });
+  const HomeCategoryBar({super.key, required this.controller});
 
   final VideoController controller;
 
@@ -22,88 +18,152 @@ class HomeCategoryBar extends StatelessWidget {
 
     if (safeCategories.isEmpty) return const SizedBox.shrink();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111827),
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: const Color(0xFF273449)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF111827).withValues(alpha: 0.14),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              const Text(
-                '分类筛选',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFE08A).withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.tune_rounded,
+                  size: 18,
+                  color: Color(0xFFFFE08A),
                 ),
               ),
               const SizedBox(width: 8),
-              Text(
-                '如果上方快捷入口无影片，请在此选择精确子分类',
+              const Text(
+                '分类筛选',
                 style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.redAccent.shade200,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Text(
+                  '胶囊导航',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFFFFE08A),
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 8),
-        SizedBox(
-          height: 38,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            itemCount: safeCategories.length + 1,
-            itemBuilder: (context, index) {
-              final isAll = index == 0;
-              final String label =
-                  isAll ? '全部' : safeCategories[index - 1].typeName;
-              final int? typeId = isAll ? null : safeCategories[index - 1].typeId;
-              final bool isSelected = controller.currentTypeId == typeId;
+          const SizedBox(height: 10),
+          Text(
+            '左右滑动切换频道，首页海报墙会同步刷新',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.white.withValues(alpha: 0.60),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 44,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              itemCount: safeCategories.length + 1,
+              itemBuilder: (context, index) {
+                final isAll = index == 0;
+                final String label = isAll
+                    ? '全部'
+                    : safeCategories[index - 1].typeName;
+                final int? typeId = isAll
+                    ? null
+                    : safeCategories[index - 1].typeId;
+                final bool isSelected = controller.currentTypeId == typeId;
 
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: () => controller.setCategory(typeId),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
+                return Padding(
+                  padding: const EdgeInsets.only(right: 9),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: () => controller.setCategory(typeId),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      padding: const EdgeInsets.symmetric(horizontal: 17),
+                      decoration: BoxDecoration(
+                        gradient: isSelected
+                            ? const LinearGradient(
+                                colors: [Color(0xFFFFE08A), Color(0xFFFB923C)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              )
+                            : null,
                         color: isSelected
-                            ? Theme.of(context).colorScheme.primary
-                            : Colors.grey.shade300,
-                        width: 1,
+                            ? null
+                            : Colors.white.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: isSelected
+                              ? Colors.transparent
+                              : Colors.white.withValues(alpha: 0.10),
+                        ),
+                        boxShadow: isSelected
+                            ? [
+                                BoxShadow(
+                                  color: const Color(
+                                    0xFFFB923C,
+                                  ).withValues(alpha: 0.20),
+                                  blurRadius: 16,
+                                  offset: const Offset(0, 8),
+                                ),
+                              ]
+                            : null,
                       ),
-                    ),
-                    child: Center(
-                      child: Text(
-                        label,
-                        style: TextStyle(
-                          color: isSelected ? Colors.white : Colors.black87,
-                          fontWeight:
-                              isSelected ? FontWeight.bold : FontWeight.normal,
-                          fontSize: 13,
+                      child: Center(
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: isSelected
+                                ? const Color(0xFF111827)
+                                : Colors.white.withValues(alpha: 0.82),
+                            fontWeight: FontWeight.w900,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

@@ -22,11 +22,7 @@ class ReaderBottomBar extends StatelessWidget {
   final VoidCallback? onNext;
   final VoidCallback? onSettings;
 
-  Widget _action(
-    IconData icon,
-    String text,
-    VoidCallback? onTap,
-  ) {
+  Widget _action(IconData icon, String text, VoidCallback? onTap) {
     final disabled = onTap == null;
 
     return GestureDetector(
@@ -36,19 +32,9 @@ class ReaderBottomBar extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: 28,
-              color: textColor,
-            ),
+            Icon(icon, size: 28, color: textColor),
             const SizedBox(height: 2),
-            Text(
-              text,
-              style: TextStyle(
-                fontSize: 12,
-                color: textColor,
-              ),
-            ),
+            Text(text, style: TextStyle(fontSize: 12, color: textColor)),
           ],
         ),
       ),
@@ -58,30 +44,26 @@ class ReaderBottomBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.only(top: 16, bottom: 24),
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      padding: const EdgeInsets.only(top: 14, bottom: 18),
       decoration: BoxDecoration(
-        color: bgColor,
-        border: Border(
-          top: BorderSide(
-            color: textColor.withOpacity(0.08),
-            width: 1,
+        color: bgColor.withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: textColor.withValues(alpha: 0.08)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
           ),
-        ),
+        ],
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           _action(Icons.format_list_bulleted, '目录', onDirectory),
-          _action(
-            Icons.skip_previous_rounded,
-            '上一章',
-            onPrev,
-          ),
-          _action(
-            Icons.skip_next_rounded,
-            '下一章',
-            onNext,
-          ),
+          _action(Icons.skip_previous_rounded, '上一章', onPrev),
+          _action(Icons.skip_next_rounded, '下一章', onNext),
           _action(Icons.settings_outlined, '设置', onSettings),
         ],
       ),

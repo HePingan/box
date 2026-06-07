@@ -19,7 +19,9 @@ class _DailyNewsPageState extends State<DailyNewsPage> {
     // 初始化网页控制器，设置允许运行JS，并加载你提供的网址
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..loadRequest(Uri.parse('https://actcpc.heytapimage.com/oh5/3/1/index.html#/'));
+      ..loadRequest(
+        Uri.parse('https://actcpc.heytapimage.com/oh5/3/1/index.html#/'),
+      );
   }
 
   @override
@@ -38,8 +40,12 @@ class _DailyNewsPageState extends State<DailyNewsPage> {
         ),
         // 标题
         title: const Text(
-          '视界日报', 
-          style: TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.bold)
+          '视界日报',
+          style: TextStyle(
+            color: Colors.black87,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         centerTitle: false,
         // 右侧的刷新和更多按钮
@@ -58,7 +64,7 @@ class _DailyNewsPageState extends State<DailyNewsPage> {
           ),
         ],
       ),
-      
+
       // 主体部分显示网页视图
       body: WebViewWidget(controller: _controller),
     );

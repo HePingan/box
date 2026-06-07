@@ -10,9 +10,7 @@ import '../services/video_api_service.dart';
 ///
 /// 负责把 VideoApiService 和 Controller 隔开。
 class VideoCatalogRepository {
-  const VideoCatalogRepository({
-    this.pageSize = 20,
-  });
+  const VideoCatalogRepository({this.pageSize = 20});
 
   /// 用于判断是否还有下一页的保守估计
   final int pageSize;
@@ -135,11 +133,7 @@ class VideoCatalogRepository {
       );
 
       try {
-        final videos = await VideoApiService.fetchVideos(
-          url,
-          typeId,
-          page,
-        );
+        final videos = await VideoApiService.fetchVideos(url, typeId, page);
 
         _log(
           '[loadVideos] result url=$url '
@@ -171,10 +165,7 @@ class VideoCatalogRepository {
 
   /// API 候选地址：优先 url，其次 detailUrl
   List<String> _candidateApiUrls(VideoSource source) {
-    return _uniqueOrdered([
-      source.url,
-      source.detailUrl,
-    ]);
+    return _uniqueOrdered([source.url, source.detailUrl]);
   }
 
   /// 去重、清理空字符串、保留原顺序

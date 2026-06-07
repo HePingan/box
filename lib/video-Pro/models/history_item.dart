@@ -39,18 +39,18 @@ class HistoryItem {
   }
 
   Map<String, dynamic> toMap() => {
-        'storageKey': storageKey,
-        'vodId': vodId,
-        'vodName': vodName,
-        'vodPic': vodPic,
-        'sourceId': sourceId,
-        'sourceName': sourceName,
-        'episodeName': episodeName,
-        'episodeUrl': episodeUrl,
-        'position': position,
-        'duration': duration,
-        'updateTime': updateTime,
-      };
+    'storageKey': storageKey,
+    'vodId': vodId,
+    'vodName': vodName,
+    'vodPic': vodPic,
+    'sourceId': sourceId,
+    'sourceName': sourceName,
+    'episodeName': episodeName,
+    'episodeUrl': episodeUrl,
+    'position': position,
+    'duration': duration,
+    'updateTime': updateTime,
+  };
 
   factory HistoryItem.fromMap(Map<dynamic, dynamic> map) {
     int asInt(dynamic value) {

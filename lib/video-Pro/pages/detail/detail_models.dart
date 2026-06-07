@@ -1,23 +1,18 @@
 /// 详情页播放模型：选集、线路、默认播放定位
+library;
 
 class DetailPlayEpisode {
   final String name;
   final String url;
 
-  const DetailPlayEpisode({
-    required this.name,
-    required this.url,
-  });
+  const DetailPlayEpisode({required this.name, required this.url});
 }
 
 class DetailPlayLine {
   final String name;
   final List<DetailPlayEpisode> episodes;
 
-  const DetailPlayLine({
-    required this.name,
-    required this.episodes,
-  });
+  const DetailPlayLine({required this.name, required this.episodes});
 
   bool get isEmpty => episodes.isEmpty;
   bool get isNotEmpty => episodes.isNotEmpty;
@@ -37,8 +32,8 @@ class DetailPlaybackSelection {
   });
 
   const DetailPlaybackSelection.none()
-      : lineIndex = 0,
-        episodeIndex = 0,
-        url = null,
-        name = null;
+    : lineIndex = 0,
+      episodeIndex = 0,
+      url = null,
+      name = null;
 }

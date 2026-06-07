@@ -2,8 +2,8 @@ import 'core/cache_store.dart';
 import 'core/models.dart';
 import 'core/novel_repository.dart';
 import 'core/novel_source.dart';
-import 'core/rule_novel_source.dart';
 import 'core/novel_source_factory.dart';
+
 class NovelModule {
   static NovelRepository? _repository;
 
@@ -48,20 +48,17 @@ class _UnconfiguredSource implements NovelSource {
       Future.error(_error());
 
   @override
-  Future<List<NovelBook>> fetchByPath(String path) =>
-      Future.error(_error());
+  Future<List<NovelBook>> fetchByPath(String path) => Future.error(_error());
 
   @override
   Future<NovelDetail> fetchDetail({
     required String bookId,
     String? detailUrl,
-  }) =>
-      Future.error(_error());
+  }) => Future.error(_error());
 
   @override
   Future<ChapterContent> fetchChapter({
     required NovelDetail detail,
     required int chapterIndex,
-  }) =>
-      Future.error(_error());
+  }) => Future.error(_error());
 }

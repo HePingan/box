@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_drawer.dart';
+import 'design_system/app_theme.dart';
 import 'globals.dart';
 import 'home_page.dart';
 import 'plugin_tab.dart';
@@ -29,8 +30,10 @@ import 'novel/pages/source_manager/book_source_manager_page.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 证书忽略：IO 端生效，Web 端自动 no-op
-  enableInsecureCertificateOverrides();
+  // 证书忽略：仅调试环境启用，避免 release 全局接受不安全 HTTPS 证书。
+  if (kDebugMode) {
+    enableInsecureCertificateOverrides();
+  }
 
   await Hive.initFlutter();
 
@@ -61,12 +64,14 @@ Future<void> main() async {
     return true;
   };
 
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.dark,
-    systemNavigationBarColor: Colors.white,
-    systemNavigationBarIconBrightness: Brightness.dark,
-  ));
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+      systemNavigationBarColor: Colors.white,
+      systemNavigationBarIconBrightness: Brightness.dark,
+    ),
+  );
 
   // =========================
   // 小说模块：启动自动加载规则书源
@@ -107,9 +112,7 @@ Future<void> main() async {
               },
             ),
           ],
-          child: MyApp(
-            novelBootstrap: novelBootstrap,
-          ),
+          child: MyApp(novelBootstrap: novelBootstrap),
         ),
       );
     },
@@ -120,10 +123,7 @@ Future<void> main() async {
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({
-    super.key,
-    required this.novelBootstrap,
-  });
+  const MyApp({super.key, required this.novelBootstrap});
 
   final BookSourceBootstrapResult novelBootstrap;
 
@@ -136,30 +136,14 @@ class MyApp extends StatelessWidget {
       routes: {
         '/debug-log': (_) => const DebugLogPage(),
         '/book-source-manager': (_) => BookSourceManagerPage(
-              startupMessage: novelBootstrap.configured
-                  ? ''
-                  : novelBootstrap.message,
-            ),
+          startupMessage: novelBootstrap.configured
+              ? ''
+              : novelBootstrap.message,
+        ),
       },
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blueAccent,
-          brightness: Brightness.light,
-        ),
-        cardTheme: const CardThemeData(
-          elevation: 0.5,
-          margin: EdgeInsets.symmetric(vertical: 8),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(12)),
-          ),
-        ),
-        scaffoldBackgroundColor: const Color(0xFFF8F9FA),
-      ),
+      theme: AppTheme.light(),
       home: UpdateBootstrapPage(
-        nextPage: MainAppShell(
-          novelBootstrap: novelBootstrap,
-        ),
+        nextPage: MainAppShell(novelBootstrap: novelBootstrap),
         appId: 'box',
         checkUrl: 'https://box.hpa888.top/api/v1/app-updates/check',
         platform: 'android',
@@ -171,10 +155,7 @@ class MyApp extends StatelessWidget {
 }
 
 class MainAppShell extends StatefulWidget {
-  const MainAppShell({
-    super.key,
-    required this.novelBootstrap,
-  });
+  const MainAppShell({super.key, required this.novelBootstrap});
 
   final BookSourceBootstrapResult novelBootstrap;
 
@@ -191,7 +172,7 @@ class _MainAppShellState extends State<MainAppShell> {
     {
       'title': '首页',
       'icon': Icons.home_rounded,
-      'widget': const HomePage(),
+      'widget': HomePage(onSwitchTab: _onItemTapped),
     },
     {
       'title': '工具',
@@ -199,19 +180,14 @@ class _MainAppShellState extends State<MainAppShell> {
       'widget': const ToolPage(),
     },
     {
-      'title': '仓库',
-      'icon': Icons.inventory_2_rounded,
+      'title': '内容',
+      'icon': Icons.collections_bookmark_rounded,
       'widget': const WarehouseTab(),
     },
     {
-      'title': '插件',
+      'title': '扩展',
       'icon': Icons.extension_rounded,
       'widget': const PluginTab(),
-    },
-    {
-      'title': '视频',
-      'icon': Icons.smart_display_rounded,
-      'widget': const VideoListPage(),
     },
   ];
 
@@ -299,40 +275,108 @@ class _MainAppShellState extends State<MainAppShell> {
         },
         children: _tabs.map((tab) => tab['widget'] as Widget).toList(),
       ),
-      bottomNavigationBar: Container(
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.96),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF0F172A).withValues(alpha: 0.10),
+                blurRadius: 24,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Row(
+            children: List.generate(_tabs.length, (index) {
+              final tab = _tabs[index];
+              final selected = _currentIndex == index;
+              return Expanded(
+                child: _ShellNavItem(
+                  title: tab['title'] as String,
+                  icon: tab['icon'] as IconData,
+                  selected: selected,
+                  onTap: () => _onItemTapped(index),
+                ),
+              );
+            }),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ShellNavItem extends StatelessWidget {
+  const _ShellNavItem({
+    required this.title,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedColor = Theme.of(context).colorScheme.primary;
+    return InkWell(
+      borderRadius: BorderRadius.circular(22),
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         decoration: BoxDecoration(
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 10,
-              offset: const Offset(0, -2),
+          color: selected
+              ? selectedColor.withValues(alpha: 0.10)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              width: selected ? 31 : 28,
+              height: selected ? 31 : 28,
+              decoration: BoxDecoration(
+                gradient: selected
+                    ? const LinearGradient(
+                        colors: [Color(0xFF2563EB), Color(0xFF06B6D4)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      )
+                    : null,
+                color: selected ? null : const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                icon,
+                size: selected ? 18 : 17,
+                color: selected ? Colors.white : const Color(0xFF64748B),
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: selected ? selectedColor : const Color(0xFF64748B),
+                fontSize: 11,
+                fontWeight: selected ? FontWeight.w900 : FontWeight.w600,
+              ),
             ),
           ],
-        ),
-        child: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          onTap: _onItemTapped,
-          selectedItemColor: Theme.of(context).colorScheme.primary,
-          unselectedItemColor: Colors.grey.shade500,
-          backgroundColor: Colors.white,
-          showUnselectedLabels: true,
-          elevation: 0,
-          type: BottomNavigationBarType.fixed,
-          selectedLabelStyle: const TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 12,
-          ),
-          unselectedLabelStyle: const TextStyle(fontSize: 12),
-          items: _tabs.map((tab) {
-            return BottomNavigationBarItem(
-              icon: Icon(tab['icon'] as IconData),
-              label: tab['title'] as String,
-              activeIcon: Icon(
-                tab['icon'] as IconData,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-            );
-          }).toList(),
         ),
       ),
     );

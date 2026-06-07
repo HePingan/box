@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
 
 class PlayerBufferingOverlay extends StatelessWidget {
-  const PlayerBufferingOverlay({
-    super.key,
-    this.label = '加载中…',
-  });
+  const PlayerBufferingOverlay({super.key, this.label = '加载中…'});
 
   final String label;
 
@@ -17,7 +14,7 @@ class PlayerBufferingOverlay extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.6),
+            color: Colors.black.withValues(alpha: 0.6),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Row(
@@ -95,10 +92,7 @@ class PlayerErrorOverlay extends StatelessWidget {
 }
 
 class PlayerDebugOverlay extends StatelessWidget {
-  const PlayerDebugOverlay({
-    super.key,
-    required this.info,
-  });
+  const PlayerDebugOverlay({super.key, required this.info});
 
   final String info;
 
@@ -110,7 +104,7 @@ class PlayerDebugOverlay extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.45),
+          color: Colors.black.withValues(alpha: 0.45),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Text(

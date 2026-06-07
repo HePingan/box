@@ -45,7 +45,7 @@ class ReaderContinuousView extends StatelessWidget {
               padding: EdgeInsets.only(top: topPadding + 120),
               child: Center(
                 child: CircularProgressIndicator(
-                  color: textColor.withOpacity(0.35),
+                  color: textColor.withValues(alpha: 0.35),
                   strokeWidth: 2.5,
                 ),
               ),
@@ -54,7 +54,8 @@ class ReaderContinuousView extends StatelessWidget {
 
           if (index == controller.scrollItems.length) {
             final isLastInWholeBook =
-                controller.scrollItems.last.index >= controller.totalChapters - 1;
+                controller.scrollItems.last.index >=
+                controller.totalChapters - 1;
 
             if (isLastInWholeBook) {
               return Padding(
@@ -63,7 +64,7 @@ class ReaderContinuousView extends StatelessWidget {
                   child: Text(
                     '—— 全书完 ——',
                     style: TextStyle(
-                      color: textColor.withOpacity(0.4),
+                      color: textColor.withValues(alpha: 0.4),
                       letterSpacing: 2,
                     ),
                   ),
@@ -75,7 +76,7 @@ class ReaderContinuousView extends StatelessWidget {
               padding: const EdgeInsets.only(top: 50, bottom: 50),
               child: Center(
                 child: CircularProgressIndicator(
-                  color: textColor.withOpacity(0.35),
+                  color: textColor.withValues(alpha: 0.35),
                   strokeWidth: 2.5,
                 ),
               ),

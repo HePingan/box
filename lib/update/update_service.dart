@@ -39,8 +39,8 @@ class UpdateService {
           'channel': channel,
           'version_code': versionCode,
           'package_name': packageName,
-          if (deviceId != null) 'device_id': deviceId,
-          if (userId != null) 'user_id': userId,
+          'device_id': ?deviceId,
+          'user_id': ?userId,
           'ts': DateTime.now().millisecondsSinceEpoch,
         },
       );

@@ -43,3 +43,10 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Release artifacts / generated packages
+*.apk
+*.sha1
+artifacts/
+dist/
+release/

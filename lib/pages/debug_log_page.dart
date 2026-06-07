@@ -11,9 +11,9 @@ class DebugLogPage extends StatelessWidget {
     await Clipboard.setData(ClipboardData(text: text));
 
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('日志已复制到剪贴板')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('日志已复制到剪贴板')));
     }
   }
 
@@ -21,9 +21,9 @@ class DebugLogPage extends StatelessWidget {
     await AppLogger.instance.clear();
 
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('日志已清空')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('日志已清空')));
     }
   }
 
@@ -50,9 +50,7 @@ class DebugLogPage extends StatelessWidget {
           valueListenable: AppLogger.instance.lines,
           builder: (context, lines, _) {
             if (lines.isEmpty) {
-              return const Center(
-                child: Text('暂无日志'),
-              );
+              return const Center(child: Text('暂无日志'));
             }
 
             final text = lines.join('\n');

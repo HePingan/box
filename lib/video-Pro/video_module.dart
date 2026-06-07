@@ -49,14 +49,14 @@ class SourceVisibilityRecord {
   }
 
   Map<String, dynamic> toJson() => {
-        'key': key,
-        'manualHidden': manualHidden,
-        'autoHidden': autoHidden,
-        'failCount': failCount,
-        'lastCheckedAt': lastCheckedAt?.toIso8601String(),
-        'lastReason': lastReason,
-        'lastPlayable': lastPlayable,
-      };
+    'key': key,
+    'manualHidden': manualHidden,
+    'autoHidden': autoHidden,
+    'failCount': failCount,
+    'lastCheckedAt': lastCheckedAt?.toIso8601String(),
+    'lastReason': lastReason,
+    'lastPlayable': lastPlayable,
+  };
 
   factory SourceVisibilityRecord.fromJson(Map<String, dynamic> json) {
     final rawFailCount = json['failCount'];
@@ -73,7 +73,9 @@ class SourceVisibilityRecord {
           ? null
           : DateTime.tryParse(json['lastCheckedAt'].toString()),
       lastReason: json['lastReason']?.toString(),
-      lastPlayable: json['lastPlayable'] is bool ? json['lastPlayable'] as bool : null,
+      lastPlayable: json['lastPlayable'] is bool
+          ? json['lastPlayable'] as bool
+          : null,
     );
   }
 }
@@ -173,10 +175,7 @@ class VideoModule {
 
   static SourceVisibilityRecord getVisibilityRecord(VideoSource source) {
     final key = sourceKeyOf(source);
-    return _visibilityCache[key] ??
-        SourceVisibilityRecord(
-          key: key,
-        );
+    return _visibilityCache[key] ?? SourceVisibilityRecord(key: key);
   }
 
   static bool isSourceManuallyHidden(VideoSource source) {
@@ -206,10 +205,12 @@ class VideoModule {
     }
 
     return sources
-        .where((s) =>
-            s.isEnabled == true &&
-            s.url.trim().isNotEmpty &&
-            isSourceVisible(s))
+        .where(
+          (s) =>
+              s.isEnabled == true &&
+              s.url.trim().isNotEmpty &&
+              isSourceVisible(s),
+        )
         .toList(growable: false);
   }
 
@@ -221,10 +222,7 @@ class VideoModule {
     await ensureVisibilityLoaded();
 
     final key = sourceKeyOf(source);
-    final current = _visibilityCache[key] ??
-        SourceVisibilityRecord(
-          key: key,
-        );
+    final current = _visibilityCache[key] ?? SourceVisibilityRecord(key: key);
 
     _visibilityCache[key] = current.copyWith(
       manualHidden: hidden,
@@ -250,10 +248,7 @@ class VideoModule {
     await ensureVisibilityLoaded();
 
     final key = sourceKeyOf(source);
-    final current = _visibilityCache[key] ??
-        SourceVisibilityRecord(
-          key: key,
-        );
+    final current = _visibilityCache[key] ?? SourceVisibilityRecord(key: key);
 
     _visibilityCache[key] = current.copyWith(
       autoHidden: hidden,
@@ -275,10 +270,7 @@ class VideoModule {
     await ensureVisibilityLoaded();
 
     final key = sourceKeyOf(source);
-    final current = _visibilityCache[key] ??
-        SourceVisibilityRecord(
-          key: key,
-        );
+    final current = _visibilityCache[key] ?? SourceVisibilityRecord(key: key);
 
     _visibilityCache[key] = current.copyWith(
       autoHidden: false,
@@ -304,10 +296,7 @@ class VideoModule {
     await ensureVisibilityLoaded();
 
     final key = sourceKeyOf(source);
-    final current = _visibilityCache[key] ??
-        SourceVisibilityRecord(
-          key: key,
-        );
+    final current = _visibilityCache[key] ?? SourceVisibilityRecord(key: key);
 
     _visibilityCache[key] = current.copyWith(
       autoHidden: autoHide,
@@ -361,10 +350,9 @@ class VideoModule {
 
       try {
         final response = await http.get(Uri.parse(url)).timeout(timeout);
-        final body = utf8.decode(
-          response.bodyBytes,
-          allowMalformed: true,
-        ).trim();
+        final body = utf8
+            .decode(response.bodyBytes, allowMalformed: true)
+            .trim();
 
         AppLogger.instance.log(
           'probe status=${response.statusCode} '
@@ -375,10 +363,7 @@ class VideoModule {
 
         if (body.isNotEmpty) {
           final preview = body.length > 500 ? body.substring(0, 500) : body;
-          AppLogger.instance.log(
-            'probe preview:\n$preview',
-            tag: tag,
-          );
+          AppLogger.instance.log('probe preview:\n$preview', tag: tag);
         }
 
         if (response.statusCode != 200) {
@@ -390,10 +375,7 @@ class VideoModule {
         }
 
         if (body.isEmpty) {
-          AppLogger.instance.log(
-            'probe failed: empty body url=$url',
-            tag: tag,
-          );
+          AppLogger.instance.log('probe failed: empty body url=$url', tag: tag);
           continue;
         }
 
@@ -419,10 +401,7 @@ class VideoModule {
           );
         }
       } catch (e, st) {
-        AppLogger.instance.log(
-          'probe exception url=$url error=$e',
-          tag: tag,
-        );
+        AppLogger.instance.log('probe exception url=$url error=$e', tag: tag);
         AppLogger.instance.log(st.toString(), tag: tag);
       }
     }

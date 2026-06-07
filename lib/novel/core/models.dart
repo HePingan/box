@@ -1,8 +1,4 @@
-enum ReaderThemeMode {
-  warm,
-  paper,
-  dark,
-}
+enum ReaderThemeMode { warm, paper, dark }
 
 class NovelBook {
   final String id;
@@ -52,16 +48,16 @@ class NovelBook {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'title': title,
-        'author': author,
-        'intro': intro,
-        'coverUrl': coverUrl,
-        'detailUrl': detailUrl,
-        'category': category,
-        'status': status,
-        'wordCount': wordCount,
-      };
+    'id': id,
+    'title': title,
+    'author': author,
+    'intro': intro,
+    'coverUrl': coverUrl,
+    'detailUrl': detailUrl,
+    'category': category,
+    'status': status,
+    'wordCount': wordCount,
+  };
 
   factory NovelBook.fromJson(Map<String, dynamic> json) {
     return NovelBook(
@@ -82,15 +78,9 @@ class NovelChapter {
   final String title;
   final String url;
 
-  const NovelChapter({
-    required this.title,
-    required this.url,
-  });
+  const NovelChapter({required this.title, required this.url});
 
-  Map<String, dynamic> toJson() => {
-        'title': title,
-        'url': url,
-      };
+  Map<String, dynamic> toJson() => {'title': title, 'url': url};
 
   factory NovelChapter.fromJson(Map<String, dynamic> json) {
     return NovelChapter(
@@ -104,22 +94,21 @@ class NovelDetail {
   final NovelBook book;
   final List<NovelChapter> chapters;
 
-  const NovelDetail({
-    required this.book,
-    required this.chapters,
-  });
+  const NovelDetail({required this.book, required this.chapters});
 
   Map<String, dynamic> toJson() => {
-        'book': book.toJson(),
-        'chapters': chapters.map((e) => e.toJson()).toList(),
-      };
+    'book': book.toJson(),
+    'chapters': chapters.map((e) => e.toJson()).toList(),
+  };
 
   factory NovelDetail.fromJson(Map<String, dynamic> json) {
     final rawChapters = (json['chapters'] as List<dynamic>? ?? <dynamic>[]);
     return NovelDetail(
       book: NovelBook.fromJson(Map<String, dynamic>.from(json['book'] as Map)),
       chapters: rawChapters
-          .map((e) => NovelChapter.fromJson(Map<String, dynamic>.from(e as Map)))
+          .map(
+            (e) => NovelChapter.fromJson(Map<String, dynamic>.from(e as Map)),
+          )
           .toList(),
     );
   }
@@ -141,11 +130,11 @@ class ChapterContent {
   });
 
   Map<String, dynamic> toJson() => {
-        'title': title,
-        'content': content,
-        'chapterIndex': chapterIndex,
-        'sourceUrl': sourceUrl,
-      };
+    'title': title,
+    'content': content,
+    'chapterIndex': chapterIndex,
+    'sourceUrl': sourceUrl,
+  };
 
   factory ChapterContent.fromJson(
     Map<String, dynamic> json, {
@@ -177,12 +166,12 @@ class ReadingProgress {
   });
 
   Map<String, dynamic> toJson() => {
-        'bookId': bookId,
-        'chapterIndex': chapterIndex,
-        'chapterTitle': chapterTitle,
-        'scrollOffset': scrollOffset,
-        'updatedAt': updatedAt,
-      };
+    'bookId': bookId,
+    'chapterIndex': chapterIndex,
+    'chapterTitle': chapterTitle,
+    'scrollOffset': scrollOffset,
+    'updatedAt': updatedAt,
+  };
 
   factory ReadingProgress.fromJson(Map<String, dynamic> json) {
     return ReadingProgress(
@@ -219,10 +208,10 @@ class ReaderSettings {
   }
 
   Map<String, dynamic> toJson() => {
-        'fontSize': fontSize,
-        'lineHeight': lineHeight,
-        'themeMode': themeMode.name,
-      };
+    'fontSize': fontSize,
+    'lineHeight': lineHeight,
+    'themeMode': themeMode.name,
+  };
 
   factory ReaderSettings.fromJson(Map<String, dynamic> json) {
     final modeName = json['themeMode'] as String? ?? ReaderThemeMode.warm.name;

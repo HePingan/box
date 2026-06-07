@@ -15,7 +15,8 @@ class VodDetailFillService {
   static const Duration _timeout = Duration(seconds: 20);
   static const int _maxCacheSize = 100;
 
-  final LinkedHashMap<String, VodItem> _cache = LinkedHashMap<String, VodItem>();
+  final LinkedHashMap<String, VodItem> _cache =
+      LinkedHashMap<String, VodItem>();
   final Map<String, Future<VodItem?>> _inFlight = <String, Future<VodItem?>>{};
 
   void _log(String message) {
@@ -156,8 +157,10 @@ class VodDetailFillService {
         'baseUrl=$baseUrl vodId=$vodId',
       );
 
-      final detail = await VideoApiService.fetchDetail(baseUrl, vodId)
-          .timeout(_timeout);
+      final detail = await VideoApiService.fetchDetail(
+        baseUrl,
+        vodId,
+      ).timeout(_timeout);
 
       if (detail == null) {
         _log('[loadAndMerge] detail null key=$key');

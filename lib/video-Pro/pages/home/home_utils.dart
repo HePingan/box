@@ -28,8 +28,7 @@ const List<String> kHomeNsfwKeywords = [
 const bool kEnableHomeMediaProxy = true;
 
 /// 你的图片代理前缀
-const String kHomeMediaProxyPrefix =
-    'https://proxy.shuabu.eu.org/?url=';
+const String kHomeMediaProxyPrefix = 'https://proxy.shuabu.eu.org/?url=';
 
 final RegExp _nsfwRegex = RegExp(
   kHomeNsfwKeywords.map(RegExp.escape).join('|'),

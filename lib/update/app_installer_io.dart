@@ -44,7 +44,11 @@ class AppInstaller {
       final bytes = await File(savePath).readAsBytes();
       final digest = sha256.convert(bytes).toString();
       if (digest.toLowerCase() != manifest.sha256!.toLowerCase()) {
-        await File(savePath).delete().catchError((_) {});
+        try {
+          await File(savePath).delete();
+        } catch (_) {
+          // 删除失败不应掩盖真正的校验失败。
+        }
         throw Exception('APK 校验失败，文件可能损坏或被篡改');
       }
     }
@@ -57,7 +61,9 @@ class AppInstaller {
 
     // 如果不能安装，直接抛出红字错误
     if (result.type != ResultType.done) {
-      throw Exception('系统拒绝安装: ${result.message}\n请检查 AndroidManifest 权限配置是否生效');
+      throw Exception(
+        '系统拒绝安装: ${result.message}\n请检查 AndroidManifest 权限配置是否生效',
+      );
     }
   }
 }

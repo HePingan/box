@@ -14,10 +14,7 @@ import 'book_source_manager.dart';
 import 'book_source_model.dart';
 
 class BookSourceManagerPage extends StatefulWidget {
-  const BookSourceManagerPage({
-    super.key,
-    this.startupMessage = '',
-  });
+  const BookSourceManagerPage({super.key, this.startupMessage = ''});
 
   final String startupMessage;
 
@@ -47,20 +44,14 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
           return decoded
               .whereType<Map>()
               .map(
-                (e) => BookSourceModel.fromJson(
-                  Map<String, dynamic>.from(e),
-                ),
+                (e) => BookSourceModel.fromJson(Map<String, dynamic>.from(e)),
               )
               .toList();
         }
       } else if (t.startsWith('{')) {
         final decoded = jsonDecode(t);
         if (decoded is Map) {
-          return [
-            BookSourceModel.fromJson(
-              Map<String, dynamic>.from(decoded),
-            ),
-          ];
+          return [BookSourceModel.fromJson(Map<String, dynamic>.from(decoded))];
         }
       }
     } catch (_) {
@@ -78,9 +69,7 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
         final decoded = jsonDecode(b);
         if (decoded is Map) {
           result.add(
-            BookSourceModel.fromJson(
-              Map<String, dynamic>.from(decoded),
-            ),
+            BookSourceModel.fromJson(Map<String, dynamic>.from(decoded)),
           );
         }
       } catch (_) {}
@@ -97,9 +86,7 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
 
   void _showSnack(String text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text)),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
   Future<void> _showImportDialog() async {
@@ -109,16 +96,37 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('导入规则书源'),
+          title: const Text('导入书源规则 JSON'),
           content: SizedBox(
-            width: 560,
-            child: TextField(
-              controller: inputController,
-              maxLines: 16,
-              decoration: const InputDecoration(
-                hintText: '粘贴单个书源 JSON、多个书源数组 JSON，或按段分隔的多个 JSON',
-                border: OutlineInputBorder(),
-              ),
+            width: 580,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '粘贴单个书源、书源数组，或按空行分隔的多个 JSON。导入前会先做可用性预检查。',
+                  style: TextStyle(
+                    color: Colors.black54,
+                    fontSize: 12.5,
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: inputController,
+                  maxLines: 16,
+                  decoration: const InputDecoration(
+                    labelText: '书源规则 JSON',
+                    hintText:
+                        '[{"bookSourceName": "...", "bookSourceUrl": "..."}]',
+                    border: OutlineInputBorder(),
+                  ),
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12.5,
+                  ),
+                ),
+              ],
             ),
           ),
           actions: [
@@ -126,9 +134,10 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
               onPressed: () => Navigator.pop(context),
               child: const Text('取消'),
             ),
-            ElevatedButton(
+            FilledButton.icon(
               onPressed: () => Navigator.pop(context, inputController.text),
-              child: const Text('下一步'),
+              icon: const Icon(Icons.rule_folder_rounded),
+              label: const Text('预检查'),
             ),
           ],
         );
@@ -157,30 +166,52 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
         .where((e) => e.adapterKind == NovelSourceAdapterKind.unsupported)
         .length;
 
-    final ok = await showDialog<bool>(
+    final ok =
+        await showDialog<bool>(
           context: context,
           builder: (context) {
             return AlertDialog(
-              title: const Text('导入预检查'),
+              title: const Text('书源导入预检查'),
               content: SizedBox(
                 width: 680,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('检测到 ${sources.length} 条书源'),
+                    Text('检测到 ${sources.length} 条书源规则'),
                     const SizedBox(height: 8),
-                    Text('可用：$usableCount'),
-                    Text('部分支持：$partialCount'),
-                    Text('暂不支持：$unsupportedCount'),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _buildSimpleChip(
+                          text: '可用 $usableCount',
+                          color: Colors.green,
+                          backgroundColor: Colors.green.withValues(alpha: 0.10),
+                        ),
+                        _buildSimpleChip(
+                          text: '部分支持 $partialCount',
+                          color: Colors.orange,
+                          backgroundColor: Colors.orange.withValues(
+                            alpha: 0.10,
+                          ),
+                        ),
+                        _buildSimpleChip(
+                          text: '暂不支持 $unsupportedCount',
+                          color: Colors.redAccent,
+                          backgroundColor: Colors.redAccent.withValues(
+                            alpha: 0.10,
+                          ),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 14),
                     ConstrainedBox(
                       constraints: const BoxConstraints(maxHeight: 360),
                       child: ListView.separated(
                         shrinkWrap: true,
                         itemCount: reports.length,
-                        separatorBuilder: (_, __) =>
-                            const Divider(height: 16),
+                        separatorBuilder: (_, _) => const Divider(height: 16),
                         itemBuilder: (_, i) {
                           final report = reports[i];
                           final color = _reportColor(report);
@@ -206,7 +237,7 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
                                       vertical: 4,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: color.withOpacity(0.10),
+                                      color: color.withValues(alpha: 0.10),
                                       borderRadius: BorderRadius.circular(20),
                                     ),
                                     child: Text(
@@ -224,7 +255,9 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
                                       vertical: 4,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: Colors.blue.withOpacity(0.10),
+                                      color: Colors.blue.withValues(
+                                        alpha: 0.10,
+                                      ),
                                       borderRadius: BorderRadius.circular(20),
                                     ),
                                     child: Text(
@@ -270,9 +303,9 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
                   onPressed: () => Navigator.pop(context, false),
                   child: const Text('取消'),
                 ),
-                ElevatedButton(
+                FilledButton(
                   onPressed: () => Navigator.pop(context, true),
-                  child: const Text('确认导入'),
+                  child: const Text('确认导入书源'),
                 ),
               ],
             );
@@ -330,16 +363,32 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: Text(source == null ? '新增书源' : '编辑书源'),
+          title: Text(source == null ? '新增书源规则 JSON' : '编辑书源规则 JSON'),
           content: SizedBox(
             width: 620,
-            child: TextField(
-              controller: controller,
-              maxLines: 18,
-              decoration: const InputDecoration(
-                hintText: '请输入单个规则书源 JSON',
-                border: OutlineInputBorder(),
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '编辑单个书源对象；保存前会校验 JSON 格式。',
+                  style: TextStyle(color: Colors.black54, fontSize: 12.5),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: controller,
+                  maxLines: 18,
+                  decoration: const InputDecoration(
+                    labelText: '单个书源 JSON',
+                    hintText: '请输入单个规则书源 JSON',
+                    border: OutlineInputBorder(),
+                  ),
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12.5,
+                  ),
+                ),
+              ],
             ),
           ),
           actions: [
@@ -347,9 +396,9 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
               onPressed: () => Navigator.pop(context),
               child: const Text('取消'),
             ),
-            ElevatedButton(
+            FilledButton(
               onPressed: () => Navigator.pop(context, controller.text),
-              child: const Text('保存'),
+              child: const Text('保存规则'),
             ),
           ],
         );
@@ -434,16 +483,15 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
       },
     );
   }
-Future<void> _showDiagnostic(BookSourceModel source) async {
-  await Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) => BookSourceDiagnosticPage(
-        source: source,
+
+  Future<void> _showDiagnostic(BookSourceModel source) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BookSourceDiagnosticPage(source: source),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Future<void> _exportSource(BookSourceModel source) async {
     await Clipboard.setData(
@@ -502,9 +550,7 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const Center(
-        child: CircularProgressIndicator(),
-      ),
+      builder: (_) => const Center(child: CircularProgressIndicator()),
     );
 
     try {
@@ -528,7 +574,7 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
                   : ListView.separated(
                       shrinkWrap: true,
                       itemCount: preview.length,
-                      separatorBuilder: (_, __) => const Divider(height: 16),
+                      separatorBuilder: (_, _) => const Divider(height: 16),
                       itemBuilder: (_, i) {
                         final b = preview[i];
                         return Column(
@@ -578,7 +624,8 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
     final report = NovelSourceCapabilityDetector.detect(source.toJson());
 
     if (report.adapterKind == NovelSourceAdapterKind.unsupported) {
-      final ok = await showDialog<bool>(
+      final ok =
+          await showDialog<bool>(
             context: context,
             builder: (_) => AlertDialog(
               title: const Text('当前书源暂不完整支持'),
@@ -608,18 +655,14 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
 
     await manager.setCurrentSource(source.id, ensureEnabled: true);
 
-    NovelModule.configureRuleSource(
-      bookSourceJson: source.toJson(),
-    );
+    NovelModule.configureRuleSource(bookSourceJson: source.toJson());
 
     if (!mounted) return;
 
     _showSnack('已切换到书源：${source.bookSourceName}');
 
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(
-        builder: (_) => const NovelListPageWithProvider(),
-      ),
+      MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
       (_) => false,
     );
   }
@@ -646,7 +689,7 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: backgroundColor ?? color.withOpacity(0.12),
+        color: backgroundColor ?? color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
@@ -660,10 +703,7 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
     );
   }
 
-  Widget _buildStatusChips(
-    BookSourceModel source,
-    BookSourceManager manager,
-  ) {
+  Widget _buildStatusChips(BookSourceModel source, BookSourceManager manager) {
     final report = NovelSourceCapabilityDetector.detect(source.toJson());
     final chips = <Widget>[];
 
@@ -672,7 +712,7 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
         _buildSimpleChip(
           text: '当前使用',
           color: Colors.deepOrange,
-          backgroundColor: Colors.orange.withOpacity(0.12),
+          backgroundColor: Colors.orange.withValues(alpha: 0.12),
         ),
       );
     }
@@ -689,7 +729,7 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
         _buildSimpleChip(
           text: '支持发现页',
           color: Colors.blue,
-          backgroundColor: Colors.blue.withOpacity(0.10),
+          backgroundColor: Colors.blue.withValues(alpha: 0.10),
         ),
       );
     }
@@ -699,7 +739,7 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
       _buildSimpleChip(
         text: report.statusLabel,
         color: reportColor,
-        backgroundColor: reportColor.withOpacity(0.10),
+        backgroundColor: reportColor.withValues(alpha: 0.10),
       ),
     );
 
@@ -707,7 +747,7 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
       _buildSimpleChip(
         text: report.adapterLabel,
         color: Colors.indigo,
-        backgroundColor: Colors.indigo.withOpacity(0.10),
+        backgroundColor: Colors.indigo.withValues(alpha: 0.10),
       ),
     );
 
@@ -716,7 +756,7 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
         _buildSimpleChip(
           text: '警告 ${report.warnings.length}',
           color: Colors.orange,
-          backgroundColor: Colors.orange.withOpacity(0.10),
+          backgroundColor: Colors.orange.withValues(alpha: 0.10),
         ),
       );
     }
@@ -726,22 +766,15 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
         _buildSimpleChip(
           text: '阻塞 ${report.blockers.length}',
           color: Colors.redAccent,
-          backgroundColor: Colors.redAccent.withOpacity(0.10),
+          backgroundColor: Colors.redAccent.withValues(alpha: 0.10),
         ),
       );
     }
 
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: chips,
-    );
+    return Wrap(spacing: 8, runSpacing: 8, children: chips);
   }
 
-  Widget _buildSourceCard(
-    BookSourceModel source,
-    BookSourceManager manager,
-  ) {
+  Widget _buildSourceCard(BookSourceModel source, BookSourceManager manager) {
     final report = NovelSourceCapabilityDetector.detect(source.toJson());
     final reportColor = _reportColor(report);
 
@@ -753,14 +786,12 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
         ],
-        border: Border.all(
-          color: reportColor.withOpacity(0.08),
-        ),
+        border: Border.all(color: reportColor.withValues(alpha: 0.08)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -791,20 +822,14 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
               padding: const EdgeInsets.only(bottom: 6),
               child: Text(
                 '分组：${source.bookSourceGroup}',
-                style: const TextStyle(
-                  color: Colors.black54,
-                  fontSize: 12.5,
-                ),
+                style: const TextStyle(color: Colors.black54, fontSize: 12.5),
               ),
             ),
           Text(
             source.bookSourceUrl,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.black54,
-              fontSize: 12.5,
-            ),
+            style: const TextStyle(color: Colors.black54, fontSize: 12.5),
           ),
           if (source.searchUrl.isNotEmpty) ...[
             const SizedBox(height: 6),
@@ -812,29 +837,20 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
               '搜索：${source.searchUrl}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.black45,
-                fontSize: 12,
-              ),
+              style: const TextStyle(color: Colors.black45, fontSize: 12),
             ),
           ],
           if (report.primaryBlocker.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
               report.primaryBlocker,
-              style: const TextStyle(
-                color: Colors.redAccent,
-                fontSize: 12.2,
-              ),
+              style: const TextStyle(color: Colors.redAccent, fontSize: 12.2),
             ),
           ] else if (report.warnings.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
               report.warnings.first,
-              style: const TextStyle(
-                color: Colors.orange,
-                fontSize: 12.2,
-              ),
+              style: const TextStyle(color: Colors.orange, fontSize: 12.2),
             ),
           ],
           const SizedBox(height: 12),
@@ -891,10 +907,7 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
         elevation: 0,
         title: const Text(
           '书源管理',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
         ),
         actions: [
           IconButton(
@@ -927,15 +940,12 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
               margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
+                color: Colors.orange.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
                 widget.startupMessage,
-                style: const TextStyle(
-                  color: Colors.deepOrange,
-                  fontSize: 13,
-                ),
+                style: const TextStyle(color: Colors.deepOrange, fontSize: 13),
               ),
             ),
           if (manager.currentSource != null)
@@ -944,7 +954,7 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
               margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.08),
+                color: Colors.blue.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
@@ -1000,7 +1010,8 @@ Future<void> _showDiagnostic(BookSourceModel source) async {
                 : ListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
                     itemCount: sources.length,
-                    itemBuilder: (_, i) => _buildSourceCard(sources[i], manager),
+                    itemBuilder: (_, i) =>
+                        _buildSourceCard(sources[i], manager),
                   ),
           ),
         ],

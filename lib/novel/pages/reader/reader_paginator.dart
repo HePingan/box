@@ -142,10 +142,7 @@ class ReaderPaginator {
       while (low <= high) {
         final mid = low + ((high - low) ~/ 2);
 
-        painter.text = TextSpan(
-          text: text.substring(start, mid),
-          style: style,
-        );
+        painter.text = TextSpan(text: text.substring(start, mid), style: style);
         painter.layout(maxWidth: request.fitWidth);
 
         if (painter.height <= maxH) {

@@ -29,8 +29,7 @@ class VideoApiService {
   static bool enableVodMediaProxy = false;
 
   /// 你的可访问代理前缀
-  static const String _vodProxyPrefix =
-      'https://proxy.shuabu.eu.org/?url=';
+  static const String _vodProxyPrefix = 'https://proxy.shuabu.eu.org/?url=';
 
   static void _log(String message) {
     if (kDebugMode) {
@@ -51,19 +50,24 @@ class VideoApiService {
 
   static String _sampleVodItems(List<VodItem> items, {int limit = 3}) {
     if (items.isEmpty) return '[]';
-    return items.take(limit).map((e) {
-      return jsonEncode({
-        'vod_id': e.vodId,
-        'vod_name': e.vodName,
-        'vod_pic': e.vodPic,
-        'type_id': e.typeId,
-        'type_name': e.typeName,
-      });
-    }).join(' | ');
+    return items
+        .take(limit)
+        .map((e) {
+          return jsonEncode({
+            'vod_id': e.vodId,
+            'vod_name': e.vodName,
+            'vod_pic': e.vodPic,
+            'type_id': e.typeId,
+            'type_name': e.typeName,
+          });
+        })
+        .join(' | ');
   }
 
-  static String _sampleMapItems(List<Map<String, dynamic>> items,
-      {int limit = 2}) {
+  static String _sampleMapItems(
+    List<Map<String, dynamic>> items, {
+    int limit = 2,
+  }) {
     if (items.isEmpty) return '[]';
     return items
         .take(limit)
@@ -183,10 +187,7 @@ class VideoApiService {
     Duration timeout = _defaultTimeout,
     Map<String, String>? headers,
   }) async {
-    final mergedHeaders = <String, String>{
-      ..._headersForUrl(url),
-      if (headers != null) ...headers,
-    };
+    final mergedHeaders = <String, String>{..._headersForUrl(url), ...?headers};
 
     _log('[GET] url=$url');
 
@@ -342,39 +343,43 @@ class VideoApiService {
 
     final apiSite = map['api_site'] ?? map['apiSite'];
     if (apiSite is Map) {
-      return apiSite.entries.map((entry) {
-        final item = IsolateParser.asMap(entry.value) ?? <String, dynamic>{};
+      return apiSite.entries
+          .map((entry) {
+            final item =
+                IsolateParser.asMap(entry.value) ?? <String, dynamic>{};
 
-        return <String, dynamic>{
-          ...item,
-          'id': _asString(
-            item['id'] ?? item['sourceId'] ?? item['sid'] ?? entry.key,
-            entry.key.toString(),
-          ),
-          'name': _asString(
-            item['name'] ?? item['title'] ?? entry.key,
-            entry.key.toString(),
-          ),
-          'url': _asString(
-            item['url'] ??
-                item['api'] ??
-                item['apiUrl'] ??
-                item['api_url'] ??
-                '',
-          ),
-          'detailUrl': _asString(
-            item['detailUrl'] ??
-                item['detail'] ??
-                item['detail_url'] ??
-                item['detailurl'] ??
-                '',
-          ),
-          'isEnabled': _asBool(
-            item['isEnabled'] ?? item['enabled'] ?? item['status'],
-            true,
-          ),
-        };
-      }).where((e) => _asString(e['url']).isNotEmpty).toList(growable: false);
+            return <String, dynamic>{
+              ...item,
+              'id': _asString(
+                item['id'] ?? item['sourceId'] ?? item['sid'] ?? entry.key,
+                entry.key.toString(),
+              ),
+              'name': _asString(
+                item['name'] ?? item['title'] ?? entry.key,
+                entry.key.toString(),
+              ),
+              'url': _asString(
+                item['url'] ??
+                    item['api'] ??
+                    item['apiUrl'] ??
+                    item['api_url'] ??
+                    '',
+              ),
+              'detailUrl': _asString(
+                item['detailUrl'] ??
+                    item['detail'] ??
+                    item['detail_url'] ??
+                    item['detailurl'] ??
+                    '',
+              ),
+              'isEnabled': _asBool(
+                item['isEnabled'] ?? item['enabled'] ?? item['status'],
+                true,
+              ),
+            };
+          })
+          .where((e) => _asString(e['url']).isNotEmpty)
+          .toList(growable: false);
     }
 
     return const <Map<String, dynamic>>[];
@@ -510,9 +515,8 @@ class VideoApiService {
   }
 
   static Map<String, dynamic> _normalizeCategoryItem(Map<String, dynamic> raw) {
-    final typeId = int.tryParse(
-          _asString(raw['type_id'] ?? raw['typeId'] ?? raw['id']),
-        ) ??
+    final typeId =
+        int.tryParse(_asString(raw['type_id'] ?? raw['typeId'] ?? raw['id'])) ??
         0;
     final typeName = _asString(
       raw['type_name'] ?? raw['typeName'] ?? raw['name'] ?? raw['title'],
@@ -585,7 +589,9 @@ class VideoApiService {
     String? baseUrl,
   ) {
     if (items.isEmpty) return items;
-    return items.map((e) => _patchVodItemMedia(e, baseUrl)).toList(growable: false);
+    return items
+        .map((e) => _patchVodItemMedia(e, baseUrl))
+        .toList(growable: false);
   }
 
   static Future<List<VodItem>> _fetchVodListByParams(
@@ -772,7 +778,9 @@ class VideoApiService {
         'sampleKeys=${rawItems.isNotEmpty ? rawItems.first.keys.take(12).join(" | ") : "-"}',
       );
       if (rawItems.isNotEmpty) {
-        _log('[fetchSources] firstRaw=${_preview(jsonEncode(rawItems.first), max: 800)}');
+        _log(
+          '[fetchSources] firstRaw=${_preview(jsonEncode(rawItems.first), max: 800)}',
+        );
       }
 
       final sources = rawItems
@@ -836,14 +844,16 @@ class VideoApiService {
             _log('[fetchCategories] decodedType=${decoded.runtimeType}');
           } catch (_) {
             decoded = null;
-            _log('[fetchCategories] decode json failed, will try fallback parser');
+            _log(
+              '[fetchCategories] decode json failed, will try fallback parser',
+            );
           }
 
           final rawItems = decoded == null
               ? const <Map<String, dynamic>>[]
               : (params.isEmpty
-                  ? _extractCategoryItemsStrict(decoded)
-                  : _extractCategoryItemsBroad(decoded));
+                    ? _extractCategoryItemsStrict(decoded)
+                    : _extractCategoryItemsBroad(decoded));
 
           _log(
             '[fetchCategories] rawItems=${rawItems.length} '
@@ -878,7 +888,9 @@ class VideoApiService {
 
           if (items.isNotEmpty) return items;
         } catch (e, st) {
-          _log('[fetchCategories] candidate failed params=${_paramsText(params)} error=$e');
+          _log(
+            '[fetchCategories] candidate failed params=${_paramsText(params)} error=$e',
+          );
           _log(st.toString());
         }
       }
@@ -999,7 +1011,9 @@ class VideoApiService {
 
         if (items.isNotEmpty) return _patchVodItemsMedia(items, url);
       } catch (e, st) {
-        _log('[searchVideo] candidate failed params=${_paramsText(params)} error=$e');
+        _log(
+          '[searchVideo] candidate failed params=${_paramsText(params)} error=$e',
+        );
         _log(st.toString());
       }
     }
@@ -1088,9 +1102,13 @@ class VideoApiService {
           return _patchVodItemMedia(VodItem.fromJson(xmlMap), url);
         }
 
-        _log('[fetchDetail] no detail matched for params=${_paramsText(params)}');
+        _log(
+          '[fetchDetail] no detail matched for params=${_paramsText(params)}',
+        );
       } catch (e, st) {
-        _log('[fetchDetail] candidate failed params=${_paramsText(params)} error=$e');
+        _log(
+          '[fetchDetail] candidate failed params=${_paramsText(params)} error=$e',
+        );
         _log(st.toString());
       }
     }

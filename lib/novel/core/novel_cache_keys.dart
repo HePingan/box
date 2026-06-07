@@ -12,10 +12,7 @@ class NovelCacheKeys {
   }
 
   /// 书籍详情缓存
-  static String detail({
-    required String bookId,
-    String? detailUrl,
-  }) {
+  static String detail({required String bookId, String? detailUrl}) {
     final target = detailUrl != null && detailUrl.trim().isNotEmpty
         ? detailUrl.trim()
         : bookId;

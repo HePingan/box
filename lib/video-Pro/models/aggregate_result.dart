@@ -6,8 +6,5 @@ class AggregateResult {
   final VideoSource source;
   final VodItem video;
 
-  const AggregateResult({
-    required this.source,
-    required this.video,
-  });
+  const AggregateResult({required this.source, required this.video});
 }

@@ -122,10 +122,7 @@ class PlayerStreamResolver {
   /// 4. 只探测首个分片
   ///
   /// 任何一步失败都直接返回 false，避免播放器底层一直超时卡住。
-  Future<bool> probeHls(
-    Uri uri, {
-    required Map<String, String> headers,
-  }) async {
+  Future<bool> probeHls(Uri uri, {required Map<String, String> headers}) async {
     if (kIsWeb) return true;
     if (!uri.path.toLowerCase().contains('.m3u8')) return true;
 
@@ -224,10 +221,7 @@ class PlayerStreamResolver {
           final keyRes = await _httpGetWithTimeout(
             client,
             keyUri,
-            headers: {
-              ...headers,
-              'Range': 'bytes=0-15',
-            },
+            headers: {...headers, 'Range': 'bytes=0-15'},
           );
 
           AppLogger.instance.log(
@@ -252,10 +246,7 @@ class PlayerStreamResolver {
           final mapRes = await _httpGetWithTimeout(
             client,
             mapUri,
-            headers: {
-              ...headers,
-              'Range': 'bytes=0-63',
-            },
+            headers: {...headers, 'Range': 'bytes=0-63'},
           );
 
           AppLogger.instance.log(
@@ -275,10 +266,7 @@ class PlayerStreamResolver {
       }
 
       if (firstSegment == null || firstSegment.isEmpty) {
-        AppLogger.instance.log(
-          'HLS探测: media playlist 没有找到分片行',
-          tag: 'PLAYER',
-        );
+        AppLogger.instance.log('HLS探测: media playlist 没有找到分片行', tag: 'PLAYER');
         return true;
       }
 
@@ -287,10 +275,7 @@ class PlayerStreamResolver {
       final segRes = await _httpGetWithTimeout(
         client,
         segUri,
-        headers: {
-          ...headers,
-          'Range': 'bytes=0-63',
-        },
+        headers: {...headers, 'Range': 'bytes=0-63'},
       );
 
       AppLogger.instance.log(

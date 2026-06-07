@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
-import 'package:collection/collection.dart'; // 建议引入 collection 包以便使用 firstWhereOrNull
 
 import '../models/history_item.dart';
 
@@ -8,8 +7,6 @@ class HistoryController extends ChangeNotifier {
   static const String _boxName = 'play_history';
 
   Box<dynamic>? _box;
-  final Map<String, int> _lastSavedPosition = {};
-
   List<HistoryItem> _historyList = [];
   List<HistoryItem> get historyList => List.unmodifiable(_historyList);
 
@@ -59,10 +56,15 @@ class HistoryController extends ChangeNotifier {
     if (vodId.trim().isEmpty || position <= 0 || duration <= 0) return;
 
     final item = HistoryItem(
-      vodId: vodId, vodName: vodName, vodPic: vodPic,
-      sourceId: sourceId, sourceName: sourceName,
-      episodeName: episodeName, episodeUrl: episodeUrl,
-      position: position, duration: duration,
+      vodId: vodId,
+      vodName: vodName,
+      vodPic: vodPic,
+      sourceId: sourceId,
+      sourceName: sourceName,
+      episodeName: episodeName,
+      episodeUrl: episodeUrl,
+      position: position,
+      duration: duration,
       updateTime: DateTime.now().millisecondsSinceEpoch,
     );
 
@@ -70,14 +72,26 @@ class HistoryController extends ChangeNotifier {
 
     // 🏆 优化：直接使用内存里的数据做对比，不再高频读取 Hive
     final existingItem = _historyList.firstWhere(
-        (e) => e.storageKey == key, 
-        orElse: () => HistoryItem(vodId: '', vodName: '', vodPic: '', sourceId: '', sourceName: '', episodeName: '', episodeUrl: '', position: -1, duration: -1, updateTime: 0)
+      (e) => e.storageKey == key,
+      orElse: () => HistoryItem(
+        vodId: '',
+        vodName: '',
+        vodPic: '',
+        sourceId: '',
+        sourceName: '',
+        episodeName: '',
+        episodeUrl: '',
+        position: -1,
+        duration: -1,
+        updateTime: 0,
+      ),
     );
 
     if (existingItem.vodId.isNotEmpty) {
       final sameEpisode = existingItem.episodeUrl == item.episodeUrl;
       final sameDuration = existingItem.duration == item.duration;
-      final closePosition = (existingItem.position - item.position).abs() < 1000;
+      final closePosition =
+          (existingItem.position - item.position).abs() < 1000;
 
       // 如果差距小于 1 秒，直接砍掉这次落库操作
       if (sameEpisode && sameDuration && closePosition) return;
@@ -88,7 +102,7 @@ class HistoryController extends ChangeNotifier {
       await box.put(key, item.toMap());
       // 兼容旧 schema 清理
       if (key != vodId && box.containsKey(vodId)) await box.delete(vodId);
-      
+
       _upsertLocal(item);
     } catch (_) {}
   }
@@ -98,7 +112,11 @@ class HistoryController extends ChangeNotifier {
     await box.delete(item.storageKey);
     if (item.storageKey != item.vodId) await box.delete(item.vodId);
 
-    _historyList.removeWhere((e) => e.storageKey == item.storageKey || (e.vodId == item.vodId && e.sourceId == item.sourceId));
+    _historyList.removeWhere(
+      (e) =>
+          e.storageKey == item.storageKey ||
+          (e.vodId == item.vodId && e.sourceId == item.sourceId),
+    );
     notifyListeners();
   }
 

@@ -11,10 +11,7 @@ import 'video_detail_page.dart';
 class VideoSearchPage extends StatefulWidget {
   final VideoSource currentSource;
 
-  const VideoSearchPage({
-    super.key,
-    required this.currentSource,
-  });
+  const VideoSearchPage({super.key, required this.currentSource});
 
   @override
   State<VideoSearchPage> createState() => _VideoSearchPageState();
@@ -74,10 +71,8 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => VideoDetailPage(
-          source: widget.currentSource,
-          vodId: video.vodId,
-        ),
+        builder: (_) =>
+            VideoDetailPage(source: widget.currentSource, vodId: video.vodId),
       ),
     );
   }
@@ -134,32 +129,39 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : !_hasSearched
-              ? SearchEmptyState(message: '输入关键词开始搜索', icon: Icons.manage_search_rounded)
-              : _errorMessage != null
-                  ? _buildErrorView()
-                  : _results.isEmpty
-                      ? SearchEmptyState(message: '未找到相关视频', actionLabel: '重新搜索', onAction: _performSearch)
-                      : GridView.builder(
-                          padding: const EdgeInsets.all(12),
-                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: screenWidth > 600 ? 6 : 3,
-                            childAspectRatio: 0.55,
-                            crossAxisSpacing: 10,
-                            mainAxisSpacing: 10,
-                          ),
-                          itemCount: _results.length,
-                          itemBuilder: (context, index) {
-                            final video = _results[index];
-// 在 video_search_page.dart 中使用 SearchResultCard 的地方，改为：
-  return SearchResultCard(
-    title: _titleFor(video),
-    subtitle: _subtitleFor(video),
-    // 👇 就是把这里的属性名从 coverUrlFuture 改为 coverUrl 即可！
-    coverUrl: loadSearchVideoCover(video, widget.currentSource), 
-    onTap: () => _openDetail(video),
-  );
-                          },
-                        ),
+          ? SearchEmptyState(
+              message: '输入关键词开始搜索',
+              icon: Icons.manage_search_rounded,
+            )
+          : _errorMessage != null
+          ? _buildErrorView()
+          : _results.isEmpty
+          ? SearchEmptyState(
+              message: '未找到相关视频',
+              actionLabel: '重新搜索',
+              onAction: _performSearch,
+            )
+          : GridView.builder(
+              padding: const EdgeInsets.all(12),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: screenWidth > 600 ? 6 : 3,
+                childAspectRatio: 0.55,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
+              ),
+              itemCount: _results.length,
+              itemBuilder: (context, index) {
+                final video = _results[index];
+                // 在 video_search_page.dart 中使用 SearchResultCard 的地方，改为：
+                return SearchResultCard(
+                  title: _titleFor(video),
+                  subtitle: _subtitleFor(video),
+                  // 👇 就是把这里的属性名从 coverUrlFuture 改为 coverUrl 即可！
+                  coverUrl: loadSearchVideoCover(video, widget.currentSource),
+                  onTap: () => _openDetail(video),
+                );
+              },
+            ),
     );
   }
 
@@ -168,11 +170,26 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
         const SizedBox(height: 120),
-        Icon(Icons.error_outline_rounded, size: 72, color: Colors.grey.shade400),
+        Icon(
+          Icons.error_outline_rounded,
+          size: 72,
+          color: Colors.grey.shade400,
+        ),
         const SizedBox(height: 12),
-        Center(child: Text(_errorMessage ?? '搜索失败', style: TextStyle(color: Colors.grey.shade700, fontSize: 15))),
+        Center(
+          child: Text(
+            _errorMessage ?? '搜索失败',
+            style: TextStyle(color: Colors.grey.shade700, fontSize: 15),
+          ),
+        ),
         const SizedBox(height: 16),
-        Center(child: ElevatedButton.icon(onPressed: _performSearch, icon: const Icon(Icons.refresh_rounded), label: const Text('重试'))),
+        Center(
+          child: ElevatedButton.icon(
+            onPressed: _performSearch,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('重试'),
+          ),
+        ),
       ],
     );
   }
