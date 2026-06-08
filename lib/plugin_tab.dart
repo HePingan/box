@@ -1093,7 +1093,7 @@ class _PluginTabState extends State<PluginTab>
                 16,
                 10,
                 16,
-                AppTokens.pageBottomPadding,
+                AppTokens.pageBottomPadding + 32,
               ),
               children: [
                 _buildPluginHero(plugins.length),

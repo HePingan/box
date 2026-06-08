@@ -622,7 +622,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
                   ),
                 ),
                 const SliverToBoxAdapter(
-                  child: SizedBox(height: AppTokens.pageBottomPadding),
+                  child: SizedBox(height: AppTokens.pageBottomPadding + 32),
                 ),
               ],
             ),

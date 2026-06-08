@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../design_system/app_tokens.dart';
 import '../controllers/novel_detail_controller.dart';
 import '../core/models.dart';
 import '../core/rule_novel_source.dart';
@@ -767,7 +768,12 @@ class _NovelListPageState extends State<NovelListPage> {
   Widget _buildNotConfiguredView() {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(24, 40, 24, 24),
+      padding: const EdgeInsets.fromLTRB(
+        24,
+        40,
+        24,
+        AppTokens.pageBottomPadding + 32,
+      ),
       children: [
         const SizedBox(height: 80),
         const Icon(
@@ -840,6 +846,7 @@ class _NovelListPageState extends State<NovelListPage> {
       children: [
         const SizedBox(height: 180),
         Center(child: Text(text, style: errorStyle)),
+        const SizedBox(height: AppTokens.pageBottomPadding + 32),
       ],
     );
   }
@@ -864,7 +871,12 @@ class _NovelListPageState extends State<NovelListPage> {
     return ListView.builder(
       controller: _scrollController,
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+      padding: const EdgeInsets.fromLTRB(
+        16,
+        8,
+        16,
+        AppTokens.pageBottomPadding + 32,
+      ),
       itemCount: _books.length + 1,
       itemBuilder: (context, index) {
         if (index < _books.length) {
