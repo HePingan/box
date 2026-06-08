@@ -95,38 +95,48 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
     final text = await showDialog<String>(
       context: context,
       builder: (context) {
+        final maxDialogHeight = MediaQuery.sizeOf(context).height * 0.72;
+
         return AlertDialog(
           title: const Text('导入书源规则 JSON'),
-          content: SizedBox(
-            width: 580,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '粘贴单个书源、书源数组，或按空行分隔的多个 JSON。导入前会先做可用性预检查。',
-                  style: TextStyle(
-                    color: Colors.black54,
-                    fontSize: 12.5,
-                    height: 1.45,
+          content: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxDialogHeight),
+            child: SizedBox(
+              width: 580,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '粘贴单个书源、书源数组，或按空行分隔的多个 JSON。导入前会先做可用性预检查。',
+                    style: TextStyle(
+                      color: Colors.black54,
+                      fontSize: 12.5,
+                      height: 1.45,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: inputController,
-                  maxLines: 16,
-                  decoration: const InputDecoration(
-                    labelText: '书源规则 JSON',
-                    hintText:
-                        '[{"bookSourceName": "...", "bookSourceUrl": "..."}]',
-                    border: OutlineInputBorder(),
+                  const SizedBox(height: 10),
+                  Flexible(
+                    child: TextField(
+                      controller: inputController,
+                      minLines: 8,
+                      maxLines: null,
+                      expands: true,
+                      textAlignVertical: TextAlignVertical.top,
+                      decoration: const InputDecoration(
+                        labelText: '书源规则 JSON',
+                        hintText:
+                            '[{"bookSourceName": "...", "bookSourceUrl": "..."}]',
+                        border: OutlineInputBorder(),
+                      ),
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 12.5,
+                      ),
+                    ),
                   ),
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12.5,
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           actions: [
@@ -143,6 +153,7 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
         );
       },
     );
+    inputController.dispose();
 
     if (!mounted || text == null || text.trim().isEmpty) return;
 
@@ -362,33 +373,43 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
     final raw = await showDialog<String>(
       context: context,
       builder: (context) {
+        final maxDialogHeight = MediaQuery.sizeOf(context).height * 0.72;
+
         return AlertDialog(
           title: Text(source == null ? '新增书源规则 JSON' : '编辑书源规则 JSON'),
-          content: SizedBox(
-            width: 620,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '编辑单个书源对象；保存前会校验 JSON 格式。',
-                  style: TextStyle(color: Colors.black54, fontSize: 12.5),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: controller,
-                  maxLines: 18,
-                  decoration: const InputDecoration(
-                    labelText: '单个书源 JSON',
-                    hintText: '请输入单个规则书源 JSON',
-                    border: OutlineInputBorder(),
+          content: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxDialogHeight),
+            child: SizedBox(
+              width: 620,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '编辑单个书源对象；保存前会校验 JSON 格式。',
+                    style: TextStyle(color: Colors.black54, fontSize: 12.5),
                   ),
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12.5,
+                  const SizedBox(height: 10),
+                  Flexible(
+                    child: TextField(
+                      controller: controller,
+                      minLines: 8,
+                      maxLines: null,
+                      expands: true,
+                      textAlignVertical: TextAlignVertical.top,
+                      decoration: const InputDecoration(
+                        labelText: '单个书源 JSON',
+                        hintText: '请输入单个规则书源 JSON',
+                        border: OutlineInputBorder(),
+                      ),
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 12.5,
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           actions: [
@@ -404,6 +425,7 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
         );
       },
     );
+    controller.dispose();
 
     if (!mounted || raw == null || raw.trim().isEmpty) return;
 
@@ -544,6 +566,7 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
         );
       },
     );
+    keywordController.dispose();
 
     if (!mounted || keyword == null || keyword.trim().isEmpty) return;
 

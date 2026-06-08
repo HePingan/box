@@ -161,61 +161,66 @@ class _WarehouseTabState extends State<WarehouseTab>
               Text('新增${category.hubLabel}'),
             ],
           ),
-          content: SizedBox(
-            width: 420,
-            child: Form(
-              key: formKey,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextFormField(
-                      controller: titleController,
-                      decoration: const InputDecoration(
-                        labelText: '名称',
-                        hintText: '请输入标题',
+          content: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.72,
+            ),
+            child: SizedBox(
+              width: 420,
+              child: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextFormField(
+                        controller: titleController,
+                        decoration: const InputDecoration(
+                          labelText: '名称',
+                          hintText: '请输入标题',
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return '请输入标题';
+                          }
+                          return null;
+                        },
                       ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return '请输入标题';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 10),
-                    TextFormField(
-                      controller: subtitleController,
-                      decoration: const InputDecoration(
-                        labelText: '副标题',
-                        hintText: '作者 / 分类 / 导演 / 艺人',
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: subtitleController,
+                        decoration: const InputDecoration(
+                          labelText: '副标题',
+                          hintText: '作者 / 分类 / 导演 / 艺人',
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextFormField(
-                      controller: coverController,
-                      decoration: const InputDecoration(
-                        labelText: '封面地址',
-                        hintText: 'https://...',
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: coverController,
+                        decoration: const InputDecoration(
+                          labelText: '封面地址',
+                          hintText: 'https://...',
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextFormField(
-                      controller: detailController,
-                      decoration: const InputDecoration(
-                        labelText: '详情链接',
-                        hintText: '可选',
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: detailController,
+                        decoration: const InputDecoration(
+                          labelText: '详情链接',
+                          hintText: '可选',
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextFormField(
-                      controller: metaController,
-                      decoration: const InputDecoration(
-                        labelText: '备注',
-                        hintText: '可填写简介、状态等信息',
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: metaController,
+                        decoration: const InputDecoration(
+                          labelText: '备注',
+                          hintText: '可填写简介、状态等信息',
+                        ),
+                        maxLines: 3,
                       ),
-                      maxLines: 3,
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),

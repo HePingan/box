@@ -54,3 +54,15 @@
 - Verification: `dart format` completed for touched files; `flutter analyze` returned `No issues found!`.
 - Remaining risks: run full tests and Web GET gate, then inspect history/delete dialogs and reader settings small-width chip row next.
 
+## 2026-06-08 22:56 local — Batch 4 dialog overflow/resource cleanup
+- Files touched: `lib/novel/pages/source_manager/book_source_manager_page.dart`, `lib/warehouse_tab.dart`, `.hermes/progress/long-ui-bugfix-log.md`.
+- Bug/root cause: systematic dialog scan found active import/edit/add flows with tall fixed fields inside `AlertDialog`. The book-source import/editor dialogs used `TextField(maxLines: 16/18)` plus explanatory text without a screen-height cap, which can overflow on short phones or with keyboard/insets. Their `TextEditingController`s, plus the test-keyword controller, were not disposed after dialogs closed. The content-hub manual add dialog had scrollable form content but no explicit viewport cap, so dense text scale/small screens could still force actions off-screen.
+- Fix: added 72%-screen-height constraints to book-source import/editor JSON dialogs, made the JSON text fields fill the capped body, disposed dialog controllers after await, and capped the warehouse manual-add dialog content height while preserving its scrollable form.
+- Verification output:
+  - `dart format lib/novel/pages/source_manager/book_source_manager_page.dart lib/warehouse_tab.dart` → `Formatted 2 files (1 changed)`.
+  - `flutter analyze` → `No issues found! (ran in 12.8s)`.
+  - Initially attempted non-existent targeted tests `test/novel_source_manager_test.dart test/warehouse_store_test.dart`; corrected by listing `test/` and running the relevant available smoke slice.
+  - `flutter test test/smoke_test.dart` → `00:00 +1: All tests passed!`.
+  - `git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check` → clean. Plain `git diff --check` reports CRLF lines in `warehouse_tab.dart` as trailing-whitespace noise; the file is CRLF-formatted and analyzer/format are clean.
+  - Restarted this project's Flutter web-server on port 8080 and verified `curl -sS -o /tmp/flutter_preview.html -w 'code=%{http_code} size=%{size_download}\n' http://127.0.0.1:8080/` → `code=200 size=1494`.
+- Remaining risks: full `flutter test` was not rerun for this UI/layout-only batch; next batch should inspect async context/navigation flows in reader/source manager or long-label overflow in plugin market cards.
