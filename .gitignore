@@ -46,7 +46,19 @@ app.*.map.json
 
 # Release artifacts / generated packages
 *.apk
+*.aab
+*.zip
+*.jks
+*.keystore
 *.sha1
+key.properties
 artifacts/
 dist/
 release/
+
+# Local AI agent/helper artifacts
+.claude/
+.hermes/
+CLAUDE.md
+gpt55-code.cmd
+gpt55-code.sh
