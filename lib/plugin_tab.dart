@@ -5,6 +5,7 @@ import 'design_system/app_tokens.dart';
 import 'design_system/widgets/app_cards.dart';
 import 'novel/pages/source_manager/book_source_manager_page.dart';
 import 'plugin_manager.dart';
+import 'plugin_market/models/plugin_market_security.dart';
 import 'plugin_market_page.dart';
 import 'video_module.dart';
 
@@ -31,7 +32,7 @@ class _PluginTabState extends State<PluginTab>
 
   static const String _marketSignModeEnv = String.fromEnvironment(
     'PLUGIN_MARKET_SIGN_MODE',
-    defaultValue: 'none',
+    defaultValue: 'sha256',
   );
 
   static const String _marketSignSecret = String.fromEnvironment(

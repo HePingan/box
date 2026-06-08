@@ -1,12 +1,12 @@
-import 'dart:async';
 import 'dart:convert';
 
-import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'design_system/app_tokens.dart';
 import 'novel/core/cache_store.dart';
+import 'plugin_market/models/plugin_market_security.dart';
+import 'plugin_market/models/plugin_market_signature_verifier.dart';
 
 typedef MarketInstallHandler =
     Future<void> Function(MarketPluginTemplate template);
@@ -60,186 +60,6 @@ Color _parseColor(dynamic value, [Color fallback = const Color(0xFF4F46E5)]) {
   final parsed = int.tryParse(raw, radix: 16);
   if (parsed == null) return fallback;
   return Color(parsed);
-}
-
-enum PluginMarketChannel { stable, beta }
-
-extension PluginMarketChannelX on PluginMarketChannel {
-  String get label {
-    switch (this) {
-      case PluginMarketChannel.stable:
-        return 'Stable';
-      case PluginMarketChannel.beta:
-        return 'Beta';
-    }
-  }
-
-  String get code => name;
-}
-
-PluginMarketChannel _channelFromName(String raw) {
-  final text = raw.trim().toLowerCase();
-  if (text == 'beta') return PluginMarketChannel.beta;
-  return PluginMarketChannel.stable;
-}
-
-enum PluginMarketSignMode { none, sha256, hmacSha256 }
-
-String _signModeWireName(PluginMarketSignMode mode) {
-  switch (mode) {
-    case PluginMarketSignMode.none:
-      return 'none';
-    case PluginMarketSignMode.sha256:
-      return 'sha256';
-    case PluginMarketSignMode.hmacSha256:
-      return 'hmac-sha256';
-  }
-}
-
-PluginMarketSignMode _signModeFromWireName(String raw) {
-  final text = raw.trim().toLowerCase();
-  switch (text) {
-    case 'sha256':
-      return PluginMarketSignMode.sha256;
-    case 'hmac-sha256':
-    case 'hmac_sha256':
-    case 'hmacsha256':
-      return PluginMarketSignMode.hmacSha256;
-    case 'none':
-    default:
-      return PluginMarketSignMode.none;
-  }
-}
-
-class PluginMarketSecurityConfig {
-  final PluginMarketSignMode mode;
-
-  /// mode = hmacSha256 时需要设置
-  final String secret;
-
-  /// true: 验签失败也允许放行远程
-  /// false: 验签失败直接拒绝远程，走缓存/内置回退
-  final bool allowUnsigned;
-
-  const PluginMarketSecurityConfig({
-    this.mode = PluginMarketSignMode.none,
-    this.secret = '',
-    this.allowUnsigned = false,
-  });
-}
-
-class PluginMarketVerifyResult {
-  final bool passed;
-  final String message;
-  final String expected;
-  final String actual;
-
-  const PluginMarketVerifyResult({
-    required this.passed,
-    required this.message,
-    required this.expected,
-    required this.actual,
-  });
-}
-
-dynamic _canonicalizeJsonValue(dynamic value) {
-  if (value is Map) {
-    final entries = <MapEntry<String, dynamic>>[];
-    value.forEach((key, val) {
-      entries.add(MapEntry(key.toString(), val));
-    });
-    entries.sort((a, b) => a.key.compareTo(b.key));
-
-    final result = <String, dynamic>{};
-    for (final e in entries) {
-      result[e.key] = _canonicalizeJsonValue(e.value);
-    }
-    return result;
-  }
-
-  if (value is List) {
-    return value.map(_canonicalizeJsonValue).toList(growable: false);
-  }
-
-  return value;
-}
-
-String _canonicalJson(dynamic value) {
-  return jsonEncode(_canonicalizeJsonValue(value));
-}
-
-String _sha256Hex(String text) {
-  return sha256.convert(utf8.encode(text)).toString();
-}
-
-String _hmacSha256Hex(String text, String secret) {
-  final mac = Hmac(sha256, utf8.encode(secret));
-  return mac.convert(utf8.encode(text)).toString();
-}
-
-PluginMarketVerifyResult _verifySignatureForPayload({
-  required PluginMarketSecurityConfig security,
-  required PluginMarketChannel channel,
-  required int version,
-  required List<dynamic> plugins,
-  required String signature,
-}) {
-  if (security.mode == PluginMarketSignMode.none) {
-    return const PluginMarketVerifyResult(
-      passed: true,
-      message: '验签关闭',
-      expected: '',
-      actual: '',
-    );
-  }
-
-  final actual = signature.trim().toLowerCase();
-  if (actual.isEmpty) {
-    return const PluginMarketVerifyResult(
-      passed: false,
-      message: '缺少 signature',
-      expected: '',
-      actual: '',
-    );
-  }
-
-  final payload = <String, dynamic>{
-    'channel': channel.name,
-    'version': version <= 0 ? 1 : version,
-    'plugins': plugins,
-  };
-
-  final canonical = _canonicalJson(payload);
-
-  String expected = '';
-  switch (security.mode) {
-    case PluginMarketSignMode.none:
-      expected = '';
-      break;
-    case PluginMarketSignMode.sha256:
-      expected = _sha256Hex(canonical);
-      break;
-    case PluginMarketSignMode.hmacSha256:
-      if (security.secret.trim().isEmpty) {
-        return const PluginMarketVerifyResult(
-          passed: false,
-          message: 'HMAC 模式缺少 secret',
-          expected: '',
-          actual: '',
-        );
-      }
-      expected = _hmacSha256Hex(canonical, security.secret);
-      break;
-  }
-
-  final passed = actual == expected.toLowerCase();
-
-  return PluginMarketVerifyResult(
-    passed: passed,
-    message: passed ? '验签通过' : '签名不匹配',
-    expected: expected,
-    actual: actual,
-  );
 }
 
 class _MarketIconRegistry {
@@ -619,7 +439,7 @@ class PluginMarketManifest {
       'fetchedAt': fetchedAt.toIso8601String(),
       'channel': channel.name,
       'signatureVerified': signatureVerified,
-      'signatureMode': _signModeWireName(signatureMode),
+      'signatureMode': pluginMarketSignModeWireName(signatureMode),
       'signatureMessage': signatureMessage,
       'signatureValue': signatureValue,
       'plugins': templates.map((e) => e.toJson()).toList(),
@@ -651,11 +471,11 @@ class PluginMarketManifest {
       templates: _dedupTemplates(templates),
       source: 'cache',
       fetchedAt: fetchedAt,
-      channel: _channelFromName(
+      channel: pluginMarketChannelFromName(
         _safeString(json['channel'], defaultChannel.name),
       ),
       signatureVerified: _safeBool(json['signatureVerified'], false),
-      signatureMode: _signModeFromWireName(
+      signatureMode: pluginMarketSignModeFromWireName(
         _safeString(json['signatureMode'], 'none'),
       ),
       signatureMessage: _safeString(json['signatureMessage']),
@@ -747,7 +567,7 @@ class PluginMarketRepository {
       // 兼容老格式：直接数组
       if (decoded is List) {
         final plugins = decoded;
-        final verify = _verifySignatureForPayload(
+        final verify = verifyPluginMarketSignatureForPayload(
           security: security,
           channel: requestedChannel,
           version: 1,
@@ -814,7 +634,7 @@ class PluginMarketRepository {
         }
       }
 
-      final verify = _verifySignatureForPayload(
+      final verify = verifyPluginMarketSignatureForPayload(
         security: security,
         channel: actualChannel,
         version: version,
@@ -877,7 +697,7 @@ class PluginMarketRepository {
         for (final entry in channels.entries) {
           if (entry.value is Map) {
             node = entry.value;
-            actual = _channelFromName(entry.key);
+            actual = pluginMarketChannelFromName(entry.key);
             break;
           }
         }
@@ -1367,7 +1187,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
           _TagChip(text: '频道：${_currentChannel.label}'),
           _TagChip(text: '版本：v$_marketVersion'),
           _TagChip(text: '验签：${_verifyLabel()}'),
-          _TagChip(text: '模式：${_signModeWireName(_signatureMode)}'),
+          _TagChip(text: '模式：${pluginMarketSignModeWireName(_signatureMode)}'),
           _TagChip(text: '插件：${_allTemplates.length}'),
           _TagChip(text: '更新时间：${_fmtTime(_marketFetchedAt)}'),
           _TagChip(text: remote.isEmpty ? '远程：未配置' : '远程：已配置'),
