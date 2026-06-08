@@ -47,3 +47,10 @@
   - `curl -sS -o /tmp/flutter_preview.html -w 'code=%{http_code} size=%{size_download}\n' http://127.0.0.1:8080/` → `code=200 size=1494`.
 - Remaining risks: full tests were already green in Batch 1 and were not rerun for this layout-only padding change; next batch should target dialog/text overflow or a concrete async-context issue.
 
+## 2026-06-08 22:00 local - Batch 3 dialog/sheet overflow hardening
+- Files touched: `lib/update/update_dialog.dart`, `lib/video-Pro/pages/home/home_source_sheet.dart`, `lib/video-Pro/widgets/source_switch_sheet.dart`.
+- Evidence/root cause: scanned dialog/sheet surfaces after analyzer was already clean. Update dialog used a non-scrollable `Column(mainAxisSize: min)` with large 30px title plus unbounded notice/changelog text; long release notes on small phones could overflow or push the update action off-screen. Home source picker sheet relied on `Flexible` inside a shrink-wrap column without an explicit viewport cap; large source lists or small screens could create bottom sheet sizing/overflow risk. Source switch sheet header and list titles did not cap long source names/actions.
+- Fix: constrained update dialog to 86% screen height, moved release text into a scroll region, capped long title/notice/changelog text, and kept the update/progress action pinned below the scroll area. Added explicit max-height layout to the home source picker bottom sheet. Added ellipsis guards to source switch header action and source names.
+- Verification: `dart format` completed for touched files; `flutter analyze` returned `No issues found!`.
+- Remaining risks: run full tests and Web GET gate, then inspect history/delete dialogs and reader settings small-width chip row next.
+

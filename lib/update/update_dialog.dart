@@ -68,118 +68,148 @@ class _UpdateDialogState extends State<UpdateDialog> {
       child: Dialog(
         backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(22),
-          child: Container(
-            color: Colors.white,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.only(top: 28, bottom: 18),
-                  color: const Color(0xFF66B7E8),
-                  child: const Center(child: _InfoIcon()),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Center(
-                        child: Text(
-                          _titleText(),
-                          style: const TextStyle(
-                            fontSize: 30,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF222222),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 18),
-                      Text(
-                        '最新版本为：${manifest.latestVersionName} (${manifest.latestVersionCode})',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          color: Color(0xFF333333),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        '已安装版本：${widget.currentVersionName} (${widget.currentVersionCode})',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          color: Color(0xFF333333),
-                        ),
-                      ),
-                      if (manifest.notice != null &&
-                          manifest.notice!.isNotEmpty) ...[
-                        const SizedBox(height: 14),
-                        Text(
-                          manifest.notice!,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: Color(0xFF666666),
-                          ),
-                        ),
-                      ],
-                      if (manifest.changelog.isNotEmpty) ...[
-                        const SizedBox(height: 14),
-                        const Text(
-                          '更新内容：',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF333333),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        ...manifest.changelog.map(
-                          (item) => Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Text(
-                              '• $item',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: Color(0xFF666666),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 18),
-                      SizedBox(
-                        height: 48,
-                        child: OutlinedButton(
-                          onPressed: _downloading ? null : _doUpdate,
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(
-                              color: Color(0xFF6FB7E8),
-                              width: 1.5,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                          child: Text(
-                            _downloading
-                                ? '下载中 ${(100 * _progress).clamp(0, 100).toStringAsFixed(0)}%'
-                                : '更新',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              color: Color(0xFF5FADE0),
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (_downloading) ...[
-                        const SizedBox(height: 12),
-                        LinearProgressIndicator(value: _progress),
-                      ],
-                    ],
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.86,
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: Container(
+              color: Colors.white,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.only(top: 28, bottom: 18),
+                    color: const Color(0xFF66B7E8),
+                    child: const Center(child: _InfoIcon()),
                   ),
-                ),
-              ],
+                  Flexible(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Flexible(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Center(
+                                  child: Text(
+                                    _titleText(),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      fontSize: 30,
+                                      fontWeight: FontWeight.w600,
+                                      color: Color(0xFF222222),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 18),
+                                Text(
+                                  '最新版本为：${manifest.latestVersionName} (${manifest.latestVersionCode})',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    color: Color(0xFF333333),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  '已安装版本：${widget.currentVersionName} (${widget.currentVersionCode})',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    color: Color(0xFF333333),
+                                  ),
+                                ),
+                                if (manifest.notice != null &&
+                                    manifest.notice!.isNotEmpty) ...[
+                                  const SizedBox(height: 14),
+                                  Text(
+                                    manifest.notice!,
+                                    maxLines: 8,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      color: Color(0xFF666666),
+                                    ),
+                                  ),
+                                ],
+                                if (manifest.changelog.isNotEmpty) ...[
+                                  const SizedBox(height: 14),
+                                  const Text(
+                                    '更新内容：',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: Color(0xFF333333),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  ...manifest.changelog.map(
+                                    (item) => Padding(
+                                      padding: const EdgeInsets.only(bottom: 4),
+                                      child: Text(
+                                        '• $item',
+                                        maxLines: 3,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          color: Color(0xFF666666),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 18),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                height: 48,
+                                child: OutlinedButton(
+                                  onPressed: _downloading ? null : _doUpdate,
+                                  style: OutlinedButton.styleFrom(
+                                    side: const BorderSide(
+                                      color: Color(0xFF6FB7E8),
+                                      width: 1.5,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    _downloading
+                                        ? '下载中 ${(100 * _progress).clamp(0, 100).toStringAsFixed(0)}%'
+                                        : '更新',
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      color: Color(0xFF5FADE0),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (_downloading) ...[
+                                const SizedBox(height: 12),
+                                LinearProgressIndicator(value: _progress),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

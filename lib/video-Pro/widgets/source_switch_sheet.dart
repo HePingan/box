@@ -59,32 +59,45 @@ class _SourceSwitchSheetState extends State<SourceSwitchSheet> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
-                  const Text(
-                    '切换视频源',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  const Expanded(
+                    child: Text(
+                      '切换视频源',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
-                  const Spacer(),
-                  TextButton.icon(
-                    onPressed: _isScanning
-                        ? null
-                        : () async {
-                            setState(() => _isScanning = true);
-                            try {
-                              await widget.onScanAll();
-                            } finally {
-                              if (mounted) {
-                                setState(() => _isScanning = false);
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: TextButton.icon(
+                      onPressed: _isScanning
+                          ? null
+                          : () async {
+                              setState(() => _isScanning = true);
+                              try {
+                                await widget.onScanAll();
+                              } finally {
+                                if (mounted) {
+                                  setState(() => _isScanning = false);
+                                }
                               }
-                            }
-                          },
-                    icon: _isScanning
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.refresh, size: 18),
-                    label: Text(_isScanning ? '检测中' : '全量检测'),
+                            },
+                      icon: _isScanning
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.refresh, size: 18),
+                      label: Text(
+                        _isScanning ? '检测中' : '全量检测',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -126,6 +139,8 @@ class _SourceSwitchSheetState extends State<SourceSwitchSheet> {
                     ),
                     title: Text(
                       source.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontWeight: FontWeight.w600,
                         color: record.isHidden ? Colors.grey : Colors.black,
