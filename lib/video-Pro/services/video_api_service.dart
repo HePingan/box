@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../../utils/app_logger.dart';
+import '../config/video_proxy_config.dart';
 import '../models/video_category.dart';
 import '../models/video_source.dart';
 import '../models/vod_item.dart';
@@ -20,16 +21,32 @@ class VideoApiService {
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
   };
 
-  /// 是否强制把 VOD 源走代理
-  /// 你现在这个场景建议保持 true
-  static bool enableVodProxy = true;
+  static VideoProxyConfig vodProxyConfig = const VideoProxyConfig(
+    enabled: bool.fromEnvironment(
+      'VIDEO_VOD_PROXY_ENABLED',
+      defaultValue: true,
+    ),
+    mediaEnabled: bool.fromEnvironment(
+      'VIDEO_VOD_MEDIA_PROXY_ENABLED',
+      defaultValue: false,
+    ),
+    proxyPrefix: String.fromEnvironment(
+      'VIDEO_VOD_PROXY_PREFIX',
+      defaultValue: 'https://proxy.shuabu.eu.org/?url=',
+    ),
+  );
 
-  /// 是否把封面也通过代理加载
-  /// 如果你只是拿数据，可以先 false
-  static bool enableVodMediaProxy = false;
-
-  /// 你的可访问代理前缀
-  static const String _vodProxyPrefix = 'https://proxy.shuabu.eu.org/?url=';
+  static void configureVodProxy({
+    bool? enabled,
+    bool? mediaEnabled,
+    String? proxyPrefix,
+  }) {
+    vodProxyConfig = vodProxyConfig.copyWith(
+      enabled: enabled,
+      mediaEnabled: mediaEnabled,
+      proxyPrefix: proxyPrefix,
+    );
+  }
 
   static void _log(String message) {
     if (kDebugMode) {
@@ -75,68 +92,25 @@ class VideoApiService {
         .join(' | ');
   }
 
-  static bool _isProxyUrl(String url) {
-    final uri = Uri.tryParse(url.trim());
-    return uri != null && uri.host == 'proxy.shuabu.eu.org';
-  }
+  static bool _isProxyUrl(String url) => vodProxyConfig.isProxyUrl(url);
 
-  static String _wrapWithProxy(String url) {
-    final trimmed = url.trim();
-    if (trimmed.isEmpty) return trimmed;
-    if (trimmed.startsWith(_vodProxyPrefix)) return trimmed;
-    if (_isProxyUrl(trimmed)) return trimmed;
-    return '$_vodProxyPrefix${Uri.encodeComponent(trimmed)}';
-  }
+  static String _wrapWithProxy(String url) => vodProxyConfig.wrapWithProxy(url);
 
   /// 先补成标准 VOD 接口，再按需包代理
   static String _buildVodBaseUrl(String baseUrl) {
-    final normalized = _normalizeProvideVodEndpoint(baseUrl.trim());
-    if (normalized.isEmpty) return normalized;
-    if (!enableVodProxy) return normalized;
-    return _wrapWithProxy(normalized);
+    return vodProxyConfig.buildVodBaseUrl(baseUrl);
   }
 
   /// 智能拼接 query：
   /// - 普通 URL：直接追加参数
   /// - 带 ?url=xxx 的嵌套代理/转发 URL：把参数追加到真正的内层目标地址
   static String _withQuery(String baseUrl, Map<String, String> params) {
-    final trimmed = baseUrl.trim();
-    if (trimmed.isEmpty || params.isEmpty) return trimmed;
-
-    final uri = Uri.tryParse(trimmed);
-    if (uri == null || !uri.hasScheme) {
-      final separator = trimmed.contains('?') ? '&' : '?';
-      return '$trimmed$separator${params.entries.map((e) => '${e.key}=${Uri.encodeQueryComponent(e.value)}').join('&')}';
-    }
-
-    final query = Map<String, String>.from(uri.queryParameters);
-    final nestedTarget = query['url'];
-
-    if (nestedTarget != null && nestedTarget.trim().isNotEmpty) {
-      query['url'] = _withQuery(nestedTarget, params);
-      return uri.replace(queryParameters: query).toString();
-    }
-
-    query.addAll(params);
-    return uri.replace(queryParameters: query).toString();
+    return vodProxyConfig.withQuery(baseUrl, params);
   }
 
   /// 递归展开嵌套 url，用于推断真实目标站点
   static String _unwrapTargetUrl(String url, {int maxDepth = 3}) {
-    var current = url.trim();
-    if (current.isEmpty) return current;
-
-    for (var i = 0; i < maxDepth; i++) {
-      final uri = Uri.tryParse(current);
-      if (uri == null || !uri.hasScheme) break;
-
-      final nested = uri.queryParameters['url'];
-      if (nested == null || nested.trim().isEmpty) break;
-
-      current = nested.trim();
-    }
-
-    return current;
+    return vodProxyConfig.unwrapTargetUrl(url, maxDepth: maxDepth);
   }
 
   static Map<String, String> _headersForUrl(String url) {
@@ -158,28 +132,6 @@ class VideoApiService {
     }
 
     return headers;
-  }
-
-  /// 把裸域名自动补成标准 VOD 接口：
-  /// https://example.com  -> https://example.com/api.php/provide/vod
-  static String _normalizeProvideVodEndpoint(String baseUrl) {
-    final trimmed = baseUrl.trim();
-    if (trimmed.isEmpty) return trimmed;
-
-    final uri = Uri.tryParse(trimmed);
-    if (uri == null || !uri.hasScheme) return trimmed;
-
-    // 已经是标准接口就不动
-    if (uri.path.contains('/api.php/provide/vod')) {
-      return trimmed;
-    }
-
-    // 只对“纯根域名”自动补接口，避免破坏代理类 URL
-    if ((uri.path.isEmpty || uri.path == '/') && uri.queryParameters.isEmpty) {
-      return uri.replace(path: '/api.php/provide/vod').toString();
-    }
-
-    return trimmed;
   }
 
   static Future<String> _getRawString(
@@ -559,13 +511,13 @@ class VideoApiService {
 
     // 已经是绝对地址
     if (value.startsWith('http://') || value.startsWith('https://')) {
-      return enableVodMediaProxy ? _wrapWithProxy(value) : value;
+      return vodProxyConfig.mediaEnabled ? _wrapWithProxy(value) : value;
     }
 
     // 协议相对地址
     if (value.startsWith('//')) {
       final absolute = 'https:$value';
-      return enableVodMediaProxy ? _wrapWithProxy(absolute) : absolute;
+      return vodProxyConfig.mediaEnabled ? _wrapWithProxy(absolute) : absolute;
     }
 
     final origin = _originBase(_unwrapTargetUrl(baseUrl ?? ''));
@@ -574,7 +526,7 @@ class VideoApiService {
     final path = value.startsWith('/') ? value.substring(1) : value;
     final resolved = origin.resolve(path).toString();
 
-    if (!enableVodMediaProxy) return resolved;
+    if (!vodProxyConfig.mediaEnabled) return resolved;
     return _wrapWithProxy(resolved);
   }
 
@@ -818,7 +770,7 @@ class VideoApiService {
     _log(
       '[fetchCategories] start baseUrl=$baseUrl '
       'builtUrl=$url '
-      'enableVodProxy=$enableVodProxy',
+      'proxyEnabled=${vodProxyConfig.enabled}',
     );
 
     try {
@@ -922,8 +874,8 @@ class VideoApiService {
       'builtUrl=$url '
       'typeId=${typeId?.toString() ?? "all"} '
       'page=$page '
-      'enableVodProxy=$enableVodProxy '
-      'enableVodMediaProxy=$enableVodMediaProxy',
+      'proxyEnabled=${vodProxyConfig.enabled} '
+      'mediaProxyEnabled=${vodProxyConfig.mediaEnabled}',
     );
 
     final candidates = <Map<String, String>>[];

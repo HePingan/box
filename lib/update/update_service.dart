@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'update_models.dart';
+import 'update_response_parser.dart';
 
 class UpdateService {
   UpdateService._();
@@ -45,7 +46,7 @@ class UpdateService {
         },
       );
 
-      final map = _extractDataMap(res.data);
+      final map = extractUpdateDataMap(res.data);
       final manifest = UpdateManifest.fromJson(map);
 
       // 服务端返回的如果是“旧版本/同版本”，依然可以缓存，
@@ -64,30 +65,6 @@ class UpdateService {
 
       return cached;
     }
-  }
-
-  Map<String, dynamic> _extractDataMap(dynamic data) {
-    if (data is String) {
-      final decoded = jsonDecode(data);
-      if (decoded is Map<String, dynamic>) {
-        return _normalizeResponse(decoded);
-      }
-      throw Exception('接口返回不是 Map');
-    }
-
-    if (data is Map) {
-      return _normalizeResponse(Map<String, dynamic>.from(data));
-    }
-
-    throw Exception('不支持的返回类型：${data.runtimeType}');
-  }
-
-  Map<String, dynamic> _normalizeResponse(Map<String, dynamic> raw) {
-    // 兼容 {code:0, message:"ok", data:{...}}
-    if (raw['data'] is Map<String, dynamic>) {
-      return Map<String, dynamic>.from(raw['data'] as Map);
-    }
-    return raw;
   }
 
   Future<void> _saveCache(UpdateManifest manifest) async {

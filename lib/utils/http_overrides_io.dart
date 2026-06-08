@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 class MyHttpOverrides extends HttpOverrides {
   @override
   HttpClient createHttpClient(SecurityContext? context) {
@@ -10,5 +12,9 @@ class MyHttpOverrides extends HttpOverrides {
 }
 
 void enableInsecureCertificateOverrides() {
+  if (!kDebugMode) {
+    return;
+  }
+
   HttpOverrides.global = MyHttpOverrides();
 }

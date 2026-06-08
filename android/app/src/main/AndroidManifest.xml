@@ -13,7 +13,7 @@
         android:label="box"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true"> <!-- ★ 核心修改：允许 HTTP 明文协议的视频流正常播放 ★ -->
+        android:networkSecurityConfig="@xml/network_security_config">
         
         <activity
             android:name=".MainActivity"

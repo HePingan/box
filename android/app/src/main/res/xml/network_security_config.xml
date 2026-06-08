@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Default to HTTPS-only for app-owned services. Third-party HTTP media/source
+         compatibility should be enabled deliberately per domain instead of via a
+         global usesCleartextTraffic=true switch. -->
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

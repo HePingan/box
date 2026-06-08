@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_drawer.dart';
+import 'config/app_config.dart';
 import 'design_system/app_theme.dart';
 import 'globals.dart';
 import 'home_page.dart';
@@ -144,11 +145,11 @@ class MyApp extends StatelessWidget {
       theme: AppTheme.light(),
       home: UpdateBootstrapPage(
         nextPage: MainAppShell(novelBootstrap: novelBootstrap),
-        appId: 'box',
-        checkUrl: 'https://box.hpa888.top/api/v1/app-updates/check',
-        platform: 'android',
-        channel: 'release',
-        allowProceedOnCheckFailure: true,
+        appId: AppConfig.appId,
+        checkUrl: AppConfig.updateCheckUrl,
+        platform: AppConfig.updatePlatform,
+        channel: AppConfig.appChannel,
+        allowProceedOnCheckFailure: AppConfig.allowProceedOnCheckFailure,
       ),
     );
   }
