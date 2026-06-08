@@ -36,10 +36,14 @@
 - Verification output: Web preview remains healthy from Batch 0 with `GET /` returning `code=200 size=1494`; no code edits requiring another restart.
 - Remaining risks / next recovery step: Batch 2 should inspect concrete navigation/dialog layout behavior (especially bootstrap book-source dialog and long text on small widths) and create a targeted fix only if a reproducible layout or async-context issue is confirmed.
 
-## 2026-06-08 21:43 local - Batch 1/2 static scan + bottom-overlap fix
-- Files touched: `lib/plugin_tab.dart`, `lib/video-Pro/pages/video_sliver_home.dart`, `lib/novel/pages/novel_list_page.dart`.
-- Evidence/root cause: static scan found all tests passing and analyzer clean, so next concrete bug class was bottom navigation overlap. Main four tabs had extra spacer, but plugin tab, video sliver home, and novel list states still used only base or small bottom padding; last cards/empty states could sit under the floating bottom shell on phones.
-- Fix: increased bottom padding by `AppTokens.pageBottomPadding + 32` on plugin and video sliver pages; added shared bottom spacer import and bottom padding for novel not-configured, empty, and list states.
-- Verification: `dart format` completed; `flutter analyze` returned `No issues found!`; full `flutter test` returned `All tests passed!` (40 tests); Web preview `GET /` returned `code=200 size=1494`.
-- Remaining risks: next batch should inspect dialog/bottom-sheet layout and long text overflow in plugin/content management flows.
+## 2026-06-08 21:55 local — Batch 2 bottom-overlap fix
+- Files touched: `lib/novel/pages/novel_list_page.dart`, `lib/plugin_tab.dart`, `lib/video-Pro/pages/video_sliver_home.dart`, `.hermes/progress/long-ui-bugfix-log.md`.
+- Bug/root cause: static inspection found nested/secondary pages reachable from the compact shell still had shorter bottom padding than the floating 4-tab nav footprint. `NovelListPage` not-configured, loading/error, and list states used `24`/`20` bottom padding; `PluginTab` and `VideoSliverHome` used exactly `AppTokens.pageBottomPadding`, leaving little safety margin for phones with gesture/nav insets and the shell's rounded nav shadow.
+- Fix: imported `AppTokens` into `novel_list_page.dart`, applied `AppTokens.pageBottomPadding + 32` to the novel not-configured/list/error states, and added the same +32 safety margin to plugin/video sliver endings.
+- Verification output:
+  - `dart format lib/novel/pages/novel_list_page.dart lib/plugin_tab.dart lib/video-Pro/pages/video_sliver_home.dart` → `Formatted 3 files (0 changed)`.
+  - `flutter analyze` → `No issues found! (ran in 9.1s)`.
+  - Web preview restart: initial start reported port 8080 already bound by this project's Flutter web-server; inspected process list and verified the existing project server was live.
+  - `curl -sS -o /tmp/flutter_preview.html -w 'code=%{http_code} size=%{size_download}\n' http://127.0.0.1:8080/` → `code=200 size=1494`.
+- Remaining risks: full tests were already green in Batch 1 and were not rerun for this layout-only padding change; next batch should target dialog/text overflow or a concrete async-context issue.
 
