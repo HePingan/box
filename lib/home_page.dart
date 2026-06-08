@@ -92,7 +92,7 @@ class _HomePageState extends State<HomePage>
               builder: (context, _, _) => _buildFeatureSliver(),
             ),
             const SliverToBoxAdapter(
-              child: SizedBox(height: AppTokens.pageBottomPadding),
+              child: SizedBox(height: AppTokens.pageBottomPadding + 28),
             ),
           ],
         ),
@@ -102,8 +102,8 @@ class _HomePageState extends State<HomePage>
 
   Widget _buildHeroHeader() {
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [Color(0xFF0F172A), Color(0xFF1455D9), Color(0xFF36C2FF)],
@@ -151,7 +151,7 @@ class _HomePageState extends State<HomePage>
                     ),
                     SizedBox(width: 4),
                     Text(
-                      '今日工作台',
+                      '4-TAB HUB 2.0',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 11,
@@ -169,20 +169,52 @@ class _HomePageState extends State<HomePage>
               ),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.20)),
+            ),
+            child: const Row(
+              children: [
+                Icon(
+                  Icons.view_carousel_rounded,
+                  size: 18,
+                  color: Colors.white,
+                ),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'B2-A：四页导航 · 手机首屏压缩版',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 11),
           const Text(
-            '欢迎回来',
+            '四页工作台',
             style: TextStyle(
               color: Colors.white,
-              fontSize: 29,
+              fontSize: 25,
               height: 1.05,
               fontWeight: FontWeight.w900,
               letterSpacing: -0.5,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 5),
           Text(
-            '今天想做点什么？从工具、影视、小说或插件开始。',
+            '首页 / 工具 / 内容 / 扩展，首屏更短。',
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.84),
               fontSize: 13,
@@ -294,15 +326,15 @@ class _HomePageState extends State<HomePage>
   Widget _buildQuickDock() {
     final actions = <_HomeQuickAction>[
       _HomeQuickAction(
-        title: '工具搜索',
-        subtitle: '进入工具库',
+        title: '工具工作台',
+        subtitle: 'TOOLS STUDIO',
         icon: Icons.manage_search_rounded,
         color: const Color(0xFF2563EB),
         onTap: () => _switchToTab(1, '工具'),
       ),
       _HomeQuickAction(
-        title: '影视搜索',
-        subtitle: '聚合片源',
+        title: '内容入口',
+        subtitle: '影视 / 小说 / 收藏',
         icon: Icons.smart_display_rounded,
         color: const Color(0xFF10B981),
         onTap: () {
@@ -314,7 +346,7 @@ class _HomePageState extends State<HomePage>
       ),
       _HomeQuickAction(
         title: '小说书架',
-        subtitle: '阅读收藏',
+        subtitle: '阅读 / 书源 / 收藏',
         icon: Icons.menu_book_rounded,
         color: const Color(0xFFF59E0B),
         onTap: () {
@@ -325,8 +357,8 @@ class _HomePageState extends State<HomePage>
         },
       ),
       _HomeQuickAction(
-        title: '插件市场',
-        subtitle: '扩展能力',
+        title: '扩展控制台',
+        subtitle: '插件 / 规则 / 备份',
         icon: Icons.extension_rounded,
         color: const Color(0xFF8B5CF6),
         onTap: () => _switchToTab(3, '扩展'),
@@ -334,17 +366,24 @@ class _HomePageState extends State<HomePage>
     ];
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '快速开始',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w900,
-              color: AppTokens.textPrimary,
-            ),
+          const Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '快捷入口',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: AppTokens.textPrimary,
+                  ),
+                ),
+              ),
+              _MiniPill(label: '4 个主入口'),
+            ],
           ),
           const SizedBox(height: 12),
           GridView.builder(
@@ -355,7 +394,7 @@ class _HomePageState extends State<HomePage>
               crossAxisCount: 2,
               crossAxisSpacing: 12,
               mainAxisSpacing: 12,
-              childAspectRatio: 1.48,
+              childAspectRatio: 1.72,
             ),
             itemBuilder: (context, index) =>
                 _QuickDockCard(action: actions[index]),
@@ -648,6 +687,36 @@ class _NewsLine extends StatelessWidget {
   }
 }
 
+class _MiniPill extends StatelessWidget {
+  const _MiniPill({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: AppTokens.primaryBlue.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: AppTokens.primaryBlue.withValues(alpha: 0.16),
+        ),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: AppTokens.primaryBlue,
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
 class _QuickDockCard extends StatelessWidget {
   const _QuickDockCard({required this.action});
 
@@ -797,7 +866,7 @@ class _FeatureCard extends StatelessWidget {
                   ),
                   child: Icon(item.icon, color: Colors.white),
                 ),
-                const Spacer(),
+                const SizedBox(height: 12),
                 Text(
                   item.title,
                   maxLines: 1,
@@ -808,15 +877,15 @@ class _FeatureCard extends StatelessWidget {
                     fontWeight: FontWeight.w900,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Text(
                   item.subtitle,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.82),
-                    fontSize: 12,
-                    height: 1.25,
+                    fontSize: 11,
+                    height: 1.18,
                     fontWeight: FontWeight.w600,
                   ),
                 ),

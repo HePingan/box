@@ -499,7 +499,7 @@ class _PluginTabState extends State<PluginTab>
 
   Widget _buildPluginHero(int pluginCount) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [Color(0xFF111827), Color(0xFF7C3AED), Color(0xFFFF4D8D)],
@@ -521,8 +521,8 @@ class _PluginTabState extends State<PluginTab>
           Row(
             children: [
               Container(
-                width: 44,
-                height: 44,
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.16),
                   borderRadius: BorderRadius.circular(16),
@@ -549,7 +549,7 @@ class _PluginTabState extends State<PluginTab>
                   ),
                 ),
                 child: const Text(
-                  'MANAGEMENT HUB',
+                  'EXT HUB 2.1',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 11,
@@ -562,7 +562,7 @@ class _PluginTabState extends State<PluginTab>
           ),
           const SizedBox(height: 18),
           const Text(
-            '扩展管理中心',
+            '扩展控制台',
             style: TextStyle(
               color: Colors.white,
               fontSize: 29,
@@ -572,7 +572,7 @@ class _PluginTabState extends State<PluginTab>
           ),
           const SizedBox(height: 8),
           Text(
-            '插件、资源规则、数据备份、开发诊断统一收纳 · 阶段 5 新版',
+            'B2-A 四页统一 · 插件 / 资源规则 / 备份 / 诊断四区收纳',
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.84),
               fontSize: 13,
@@ -595,6 +595,34 @@ class _PluginTabState extends State<PluginTab>
                 child: _PluginHeroMetric(value: '片源', label: '影视规则'),
               ),
             ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.20)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.tune_rounded, size: 18, color: Colors.white),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '四页统一后：市场、规则、备份、诊断保持首屏优先',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 16),
           Row(
@@ -654,8 +682,8 @@ class _PluginTabState extends State<PluginTab>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const AppSectionHeader(
-          title: '插件',
-          subtitle: '安装市场模板，或创建自己的首页快捷能力',
+          title: '插件工作台',
+          subtitle: '市场模板、手动新增、已装管理分离展示',
           icon: Icons.extension_rounded,
         ),
         const SizedBox(height: 10),
@@ -693,8 +721,8 @@ class _PluginTabState extends State<PluginTab>
         ),
         const SizedBox(height: 20),
         const AppSectionHeader(
-          title: '资源规则',
-          subtitle: '书源和片源集中管理，避免散落在各功能页',
+          title: '资源规则中心',
+          subtitle: '书源 / 片源以管理入口呈现，不再像普通功能卡片',
           icon: Icons.rule_folder_rounded,
         ),
         const SizedBox(height: 10),

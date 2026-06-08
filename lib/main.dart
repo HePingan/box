@@ -279,8 +279,8 @@ class _MainAppShellState extends State<MainAppShell> {
       bottomNavigationBar: SafeArea(
         top: false,
         child: Container(
-          margin: const EdgeInsets.fromLTRB(18, 0, 18, 10),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          margin: const EdgeInsets.fromLTRB(18, 0, 18, 7),
+          padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.96),
             borderRadius: BorderRadius.circular(24),
@@ -293,19 +293,34 @@ class _MainAppShellState extends State<MainAppShell> {
               ),
             ],
           ),
-          child: Row(
-            children: List.generate(_tabs.length, (index) {
-              final tab = _tabs[index];
-              final selected = _currentIndex == index;
-              return Expanded(
-                child: _ShellNavItem(
-                  title: tab['title'] as String,
-                  icon: tab['icon'] as IconData,
-                  selected: selected,
-                  onTap: () => _onItemTapped(index),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                '4-TAB',
+                style: TextStyle(
+                  color: Color(0xFF2563EB),
+                  fontSize: 8,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.8,
                 ),
-              );
-            }),
+              ),
+              const SizedBox(height: 2),
+              Row(
+                children: List.generate(_tabs.length, (index) {
+                  final tab = _tabs[index];
+                  final selected = _currentIndex == index;
+                  return Expanded(
+                    child: _ShellNavItem(
+                      title: tab['title'] as String,
+                      icon: tab['icon'] as IconData,
+                      selected: selected,
+                      onTap: () => _onItemTapped(index),
+                    ),
+                  );
+                }),
+              ),
+            ],
           ),
         ),
       ),
@@ -335,7 +350,7 @@ class _ShellNavItem extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
         decoration: BoxDecoration(
           color: selected
               ? selectedColor.withValues(alpha: 0.10)
@@ -347,8 +362,8 @@ class _ShellNavItem extends StatelessWidget {
           children: [
             AnimatedContainer(
               duration: const Duration(milliseconds: 220),
-              width: selected ? 31 : 28,
-              height: selected ? 31 : 28,
+              width: selected ? 28 : 26,
+              height: selected ? 28 : 26,
               decoration: BoxDecoration(
                 gradient: selected
                     ? const LinearGradient(
@@ -362,18 +377,18 @@ class _ShellNavItem extends StatelessWidget {
               ),
               child: Icon(
                 icon,
-                size: selected ? 18 : 17,
+                size: selected ? 17 : 16,
                 color: selected ? Colors.white : const Color(0xFF64748B),
               ),
             ),
-            const SizedBox(height: 3),
+            const SizedBox(height: 2),
             Text(
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: selected ? selectedColor : const Color(0xFF64748B),
-                fontSize: 11,
+                fontSize: 10,
                 fontWeight: selected ? FontWeight.w900 : FontWeight.w600,
               ),
             ),

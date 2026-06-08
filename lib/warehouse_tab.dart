@@ -386,7 +386,7 @@ class _WarehouseTabState extends State<WarehouseTab>
 
   Widget _buildTopCard() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(32),
@@ -400,8 +400,8 @@ class _WarehouseTabState extends State<WarehouseTab>
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Container(
-                width: 56,
-                height: 56,
+                width: 46,
+                height: 46,
                 decoration: BoxDecoration(
                   gradient: AppTokens.emeraldGradient,
                   borderRadius: BorderRadius.circular(18),
@@ -416,22 +416,22 @@ class _WarehouseTabState extends State<WarehouseTab>
                 child: const Icon(
                   Icons.collections_bookmark_rounded,
                   color: Colors.white,
-                  size: 28,
+                  size: 24,
                 ),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 10),
               const Expanded(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '内容中心',
+                      '内容指挥台',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: AppTokens.textPrimary,
-                        fontSize: 30,
+                        fontSize: 25,
                         height: 1.05,
                         fontWeight: FontWeight.w900,
                         letterSpacing: -0.6,
@@ -439,26 +439,26 @@ class _WarehouseTabState extends State<WarehouseTab>
                     ),
                     SizedBox(height: 6),
                     Text(
-                      '入口优先 · 收藏聚合',
+                      'CONTENT HUB · 首屏压缩',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: AppTokens.textSecondary,
-                        fontSize: 14,
+                        fontSize: 12,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               SizedBox(
-                width: 50,
-                height: 50,
+                width: 42,
+                height: 42,
                 child: IconButton.filledTonal(
                   tooltip: '刷新',
                   onPressed: _refresh,
-                  icon: const Icon(Icons.refresh_rounded, size: 24),
+                  icon: const Icon(Icons.refresh_rounded, size: 21),
                   style: IconButton.styleFrom(
                     backgroundColor: const Color(0xFFEDEBFF),
                     foregroundColor: AppTokens.textPrimary,
@@ -469,7 +469,37 @@ class _WarehouseTabState extends State<WarehouseTab>
               ),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: AppTokens.emerald.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: AppTokens.emerald.withValues(alpha: 0.16),
+              ),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.bolt_rounded, size: 18, color: AppTokens.emerald),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '内容入口 / 收藏库 / 四页导航统一',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: AppTokens.textPrimary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
           Row(
             children: [
               Expanded(
@@ -512,8 +542,8 @@ class _WarehouseTabState extends State<WarehouseTab>
     required Color color,
   }) {
     return Container(
-      height: 78,
-      padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
+      height: 58,
+      padding: const EdgeInsets.fromLTRB(9, 7, 9, 7),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(20),
@@ -523,7 +553,7 @@ class _WarehouseTabState extends State<WarehouseTab>
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Icon(icon, color: color, size: 17),
+          Icon(icon, color: color, size: 15),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -561,9 +591,10 @@ class _WarehouseTabState extends State<WarehouseTab>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          '内容入口',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+        const AppSectionHeader(
+          title: '内容入口 · 优先操作区',
+          subtitle: '影视搜索和小说书架放在首屏第一优先级',
+          icon: Icons.dashboard_customize_rounded,
         ),
         const SizedBox(height: 9),
         Row(
@@ -637,7 +668,11 @@ class _WarehouseTabState extends State<WarehouseTab>
         return Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: Colors.white,
+            gradient: const LinearGradient(
+              colors: [Colors.white, Color(0xFFF8FBFF)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
             borderRadius: BorderRadius.circular(24),
             border: Border.all(color: const Color(0xFFE7ECF5)),
             boxShadow: AppTokens.shadowSm(color: AppTokens.primaryBlue),
@@ -661,7 +696,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                         ),
                         SizedBox(height: 3),
                         Text(
-                          '最近收藏 / 快速导入 / 分类管理',
+                          '最近收藏 / 快速导入 / 分类管理集中处理',
                           style: TextStyle(
                             fontSize: 12,
                             color: AppTokens.textSecondary,

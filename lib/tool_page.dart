@@ -269,7 +269,7 @@ class _ToolPageState extends State<ToolPage>
               ),
             ),
             const SliverToBoxAdapter(
-              child: SizedBox(height: AppTokens.pageBottomPadding),
+              child: SizedBox(height: AppTokens.pageBottomPadding + 28),
             ),
           ],
         ),
@@ -283,8 +283,8 @@ class _ToolPageState extends State<ToolPage>
       (sum, category) => sum + category.tools.length,
     );
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [Color(0xFF111827), Color(0xFF6D28D9), Color(0xFF22D3EE)],
@@ -332,7 +332,7 @@ class _ToolPageState extends State<ToolPage>
                     ),
                     SizedBox(width: 4),
                     Text(
-                      'TOOLS STUDIO',
+                      'TOOLS STUDIO 2.0',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 11,
@@ -350,26 +350,54 @@ class _ToolPageState extends State<ToolPage>
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
           const Text(
-            '工具工作台',
+            '工具台',
             style: TextStyle(
               color: Colors.white,
-              fontSize: 28,
+              fontSize: 25,
               fontWeight: FontWeight.w900,
               letterSpacing: -0.5,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 5),
           Text(
-            '新版工具页 · $totalTools 个工具 · 分类聚合',
+            '搜索优先 · 常用前置 · $totalTools 个入口',
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.82),
               fontSize: 13,
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 9),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.20)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.search_rounded, size: 18, color: Colors.white),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '搜索 / 热门 / 分类首屏直达',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
@@ -411,7 +439,7 @@ class _ToolPageState extends State<ToolPage>
           focusNode: _searchFocusNode,
           onChanged: _runFilter,
           decoration: InputDecoration(
-            hintText: '搜索：在线PS、天气、JSON、二维码',
+            hintText: '搜索：天气、JSON、二维码',
             hintStyle: const TextStyle(
               color: AppTokens.textSecondary,
               fontSize: 13,
@@ -451,7 +479,7 @@ class _ToolPageState extends State<ToolPage>
         children: [
           Expanded(
             child: AppGradientActionCard(
-              title: '热门工具',
+              title: '首屏热门',
               subtitle: '天气 / 翻译 / 二维码',
               icon: Icons.local_fire_department_rounded,
               gradient: AppTokens.blueGradient,
@@ -464,7 +492,7 @@ class _ToolPageState extends State<ToolPage>
           const SizedBox(width: 12),
           Expanded(
             child: AppGradientActionCard(
-              title: '常用工具',
+              title: '一键直达',
               subtitle: 'PS / JSON / 二维码',
               icon: Icons.rocket_launch_rounded,
               gradient: AppTokens.neonVioletGradient,
@@ -519,7 +547,7 @@ class _ToolPageState extends State<ToolPage>
       child: Row(
         children: [
           Text(
-            searching ? '搜索结果' : '全部分类',
+            searching ? '搜索结果' : '工具分类矩阵',
             style: TextStyle(
               color: AppTokens.textPrimary,
               fontSize: 22,
@@ -530,7 +558,7 @@ class _ToolPageState extends State<ToolPage>
           Text(
             searching
                 ? '${_displayCategories.length} 个分类匹配'
-                : '分类 · 状态 · 前 3 项',
+                : '新版卡片 · 状态 · 前 3 项',
             style: const TextStyle(
               color: AppTokens.textSecondary,
               fontSize: 12,
@@ -769,7 +797,11 @@ class _ExpandableCategoryCardState extends State<ExpandableCategoryCard> {
     return Container(
       margin: const EdgeInsets.only(bottom: 14.0),
       decoration: BoxDecoration(
-        color: Colors.white,
+        gradient: const LinearGradient(
+          colors: [Colors.white, Color(0xFFF8FBFF)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(26.0),
         border: Border.all(color: const Color(0xFFE7ECF5)),
         boxShadow: [
