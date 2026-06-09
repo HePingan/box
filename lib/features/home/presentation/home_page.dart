@@ -9,6 +9,9 @@ import 'package:box/novel/pages/novel_list_page.dart';
 import 'package:box/plugin_manager.dart';
 import 'package:box/video_module.dart';
 
+import '../application/home_models.dart';
+import 'widgets/home_widgets.dart';
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key, this.onSwitchTab});
 
@@ -30,11 +33,11 @@ class _HomePageState extends State<HomePage>
   int _selectedCategory = 0;
   List<String> _newsList = [];
 
-  static const List<_CategoryTab> _categories = [
-    _CategoryTab('推荐', Icons.auto_awesome_rounded, HomePluginArea.recommend),
-    _CategoryTab('音乐', Icons.graphic_eq_rounded, HomePluginArea.music),
-    _CategoryTab('影视', Icons.movie_filter_rounded, HomePluginArea.video),
-    _CategoryTab('漫画', Icons.palette_rounded, HomePluginArea.comic),
+  static const List<HomeCategoryTab> _categories = [
+    HomeCategoryTab('推荐', Icons.auto_awesome_rounded, HomePluginArea.recommend),
+    HomeCategoryTab('音乐', Icons.graphic_eq_rounded, HomePluginArea.music),
+    HomeCategoryTab('影视', Icons.movie_filter_rounded, HomePluginArea.video),
+    HomeCategoryTab('漫画', Icons.palette_rounded, HomePluginArea.comic),
   ];
 
   @override
@@ -124,7 +127,7 @@ class _HomePageState extends State<HomePage>
         children: [
           Row(
             children: [
-              _GlassIconButton(
+              HomeGlassIconButton(
                 icon: Icons.menu_rounded,
                 onTap: () => appScaffoldKey.currentState?.openDrawer(),
               ),
@@ -163,7 +166,7 @@ class _HomePageState extends State<HomePage>
                 ),
               ),
               const SizedBox(width: 10),
-              _GlassIconButton(
+              HomeGlassIconButton(
                 icon: Icons.refresh_rounded,
                 onTap: _fetchDailyNews,
               ),
@@ -317,22 +320,24 @@ class _HomePageState extends State<HomePage>
               ),
             )
           else
-            ..._newsList.take(2).map((newsText) => _NewsLine(text: newsText)),
+            ..._newsList
+                .take(2)
+                .map((newsText) => HomeNewsLine(text: newsText)),
         ],
       ),
     );
   }
 
   Widget _buildQuickDock() {
-    final actions = <_HomeQuickAction>[
-      _HomeQuickAction(
+    final actions = <HomeQuickAction>[
+      HomeQuickAction(
         title: '工具工作台',
         subtitle: 'TOOLS STUDIO',
         icon: Icons.manage_search_rounded,
         color: const Color(0xFF2563EB),
         onTap: () => _switchToTab(1, '工具'),
       ),
-      _HomeQuickAction(
+      HomeQuickAction(
         title: '内容入口',
         subtitle: '影视 / 小说 / 收藏',
         icon: Icons.smart_display_rounded,
@@ -344,7 +349,7 @@ class _HomePageState extends State<HomePage>
           );
         },
       ),
-      _HomeQuickAction(
+      HomeQuickAction(
         title: '小说书架',
         subtitle: '阅读 / 书源 / 收藏',
         icon: Icons.menu_book_rounded,
@@ -356,7 +361,7 @@ class _HomePageState extends State<HomePage>
           );
         },
       ),
-      _HomeQuickAction(
+      HomeQuickAction(
         title: '扩展控制台',
         subtitle: '插件 / 规则 / 备份',
         icon: Icons.extension_rounded,
@@ -382,7 +387,7 @@ class _HomePageState extends State<HomePage>
                   ),
                 ),
               ),
-              _MiniPill(label: '4 个主入口'),
+              HomeMiniPill(label: '4 个主入口'),
             ],
           ),
           const SizedBox(height: 12),
@@ -397,7 +402,7 @@ class _HomePageState extends State<HomePage>
               childAspectRatio: 1.72,
             ),
             itemBuilder: (context, index) =>
-                _QuickDockCard(action: actions[index]),
+                HomeQuickDockCard(action: actions[index]),
           ),
         ],
       ),
@@ -477,9 +482,9 @@ class _HomePageState extends State<HomePage>
     final items = _featureItemsFor(tab.area);
     final pluginItems = _pluginHost
         .pluginsOf(tab.area)
-        .map(_FeatureCardItem.fromPlugin)
+        .map(HomeFeatureCardItem.fromPlugin)
         .toList();
-    final merged = <String, _FeatureCardItem>{};
+    final merged = <String, HomeFeatureCardItem>{};
     for (final item in items) {
       merged[item.id] = item;
     }
@@ -514,16 +519,16 @@ class _HomePageState extends State<HomePage>
           mainAxisSpacing: 12,
           childAspectRatio: 1.08,
         ),
-        itemBuilder: (context, index) => _FeatureCard(item: all[index]),
+        itemBuilder: (context, index) => HomeFeatureCard(item: all[index]),
       ),
     );
   }
 
-  List<_FeatureCardItem> _featureItemsFor(HomePluginArea area) {
+  List<HomeFeatureCardItem> _featureItemsFor(HomePluginArea area) {
     switch (area) {
       case HomePluginArea.recommend:
         return [
-          _FeatureCardItem(
+          HomeFeatureCardItem(
             id: 'recommend_sniff',
             title: '资源嗅探',
             subtitle: '自动识别网页里的音视频与图片资源',
@@ -532,7 +537,7 @@ class _HomePageState extends State<HomePage>
             status: '开发中',
             onTap: (ctx) => _showSnack(ctx, '资源嗅探开发中...'),
           ),
-          _FeatureCardItem(
+          HomeFeatureCardItem(
             id: 'recommend_apps',
             title: '应用中心',
             subtitle: '实用软件、游戏工具与常用下载合集',
@@ -541,7 +546,7 @@ class _HomePageState extends State<HomePage>
             status: '开发中',
             onTap: (ctx) => _showSnack(ctx, '应用中心开发中...'),
           ),
-          _FeatureCardItem(
+          HomeFeatureCardItem(
             id: 'recommend_game',
             title: '怀旧游戏',
             subtitle: '街机、FC 与童年经典入口',
@@ -550,7 +555,7 @@ class _HomePageState extends State<HomePage>
             status: '开发中',
             onTap: (ctx) => _showSnack(ctx, '怀旧游戏开发中...'),
           ),
-          _FeatureCardItem(
+          HomeFeatureCardItem(
             id: 'recommend_video_parse',
             title: '短视频解析',
             subtitle: '短视频工具箱，需合法合规使用',
@@ -562,7 +567,7 @@ class _HomePageState extends State<HomePage>
         ];
       case HomePluginArea.music:
         return [
-          _FeatureCardItem(
+          HomeFeatureCardItem(
             id: 'music_search',
             title: '音乐搜索',
             subtitle: '搜索公开音乐资源与灵感歌单',
@@ -571,7 +576,7 @@ class _HomePageState extends State<HomePage>
             status: '开发中',
             onTap: (ctx) => _showSnack(ctx, '音乐搜索开发中...'),
           ),
-          _FeatureCardItem(
+          HomeFeatureCardItem(
             id: 'music_playlist',
             title: '歌单管理',
             subtitle: '收藏、创建、导入歌单',
@@ -583,7 +588,7 @@ class _HomePageState extends State<HomePage>
         ];
       case HomePluginArea.video:
         return [
-          _FeatureCardItem(
+          HomeFeatureCardItem(
             id: 'video_search',
             title: '影视搜索',
             subtitle: '聚合搜索影片、剧集与播放源',
@@ -600,7 +605,7 @@ class _HomePageState extends State<HomePage>
         ];
       case HomePluginArea.comic:
         return [
-          _FeatureCardItem(
+          HomeFeatureCardItem(
             id: 'comic_rank',
             title: '漫画排行',
             subtitle: '热门漫画榜单与推荐',
@@ -609,7 +614,7 @@ class _HomePageState extends State<HomePage>
             status: '开发中',
             onTap: (ctx) => _showSnack(ctx, '漫画排行开发中...'),
           ),
-          _FeatureCardItem(
+          HomeFeatureCardItem(
             id: 'comic_search',
             title: '漫画搜索',
             subtitle: '按关键词检索漫画内容',
@@ -624,334 +629,6 @@ class _HomePageState extends State<HomePage>
         return const [];
     }
   }
-}
-
-class _GlassIconButton extends StatelessWidget {
-  const _GlassIconButton({required this.icon, required this.onTap});
-
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: onTap,
-      child: Container(
-        width: 42,
-        height: 42,
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.16),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
-        ),
-        child: Icon(icon, color: Colors.white, size: 24),
-      ),
-    );
-  }
-}
-
-class _NewsLine extends StatelessWidget {
-  const _NewsLine({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF7F9FD),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.fiber_manual_record_rounded,
-            color: Color(0xFF3D7CFF),
-            size: 10,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MiniPill extends StatelessWidget {
-  const _MiniPill({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        color: AppTokens.primaryBlue.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: AppTokens.primaryBlue.withValues(alpha: 0.16),
-        ),
-      ),
-      child: Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
-          color: AppTokens.primaryBlue,
-          fontSize: 10,
-          fontWeight: FontWeight.w900,
-        ),
-      ),
-    );
-  }
-}
-
-class _QuickDockCard extends StatelessWidget {
-  const _QuickDockCard({required this.action});
-
-  final _HomeQuickAction action;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(24),
-      onTap: action.onTap,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: const Color(0xFFE7ECF5)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.045),
-              blurRadius: 18,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: action.color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(15),
-              ),
-              child: Icon(action.icon, color: action.color, size: 22),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              action.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTokens.textPrimary,
-                fontSize: 15,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              action.subtitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTokens.textSecondary,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FeatureCard extends StatelessWidget {
-  const _FeatureCard({required this.item});
-
-  final _FeatureCardItem item;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(28),
-      onTap: () async {
-        if (item.onTap != null) {
-          await item.onTap!(context);
-        }
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: item.gradient,
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(28),
-          boxShadow: [
-            BoxShadow(
-              color: item.gradient.first.withValues(alpha: 0.18),
-              blurRadius: 20,
-              offset: const Offset(0, 12),
-            ),
-          ],
-        ),
-        child: Stack(
-          children: [
-            Positioned(
-              right: -16,
-              bottom: -18,
-              child: Icon(
-                item.icon,
-                color: Colors.white.withValues(alpha: 0.18),
-                size: 92,
-              ),
-            ),
-            if (item.status != null)
-              Positioned(
-                top: 0,
-                right: 0,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.20),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.24),
-                    ),
-                  ),
-                  child: Text(
-                    item.status!,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-              ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.20),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.22),
-                    ),
-                  ),
-                  child: Icon(item.icon, color: Colors.white),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  item.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  item.subtitle,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.82),
-                    fontSize: 11,
-                    height: 1.18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FeatureCardItem {
-  const _FeatureCardItem({
-    required this.id,
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.gradient,
-    this.status,
-    this.onTap,
-  });
-
-  final String id;
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final List<Color> gradient;
-  final String? status;
-  final HomePluginTap? onTap;
-
-  factory _FeatureCardItem.fromPlugin(HomePlugin plugin) {
-    return _FeatureCardItem(
-      id: plugin.id,
-      title: plugin.title,
-      subtitle: plugin.subtitle,
-      icon: plugin.icon,
-      gradient: [plugin.color, plugin.color.withValues(alpha: 0.68)],
-      status: '插件',
-      onTap: plugin.onTap,
-    );
-  }
-}
-
-class _HomeQuickAction {
-  const _HomeQuickAction({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.color,
-    required this.onTap,
-  });
-
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-}
-
-class _CategoryTab {
-  const _CategoryTab(this.label, this.icon, this.area);
-
-  final String label;
-  final IconData icon;
-  final HomePluginArea area;
 }
 
 Future<void> _showSnack(BuildContext context, String text) async {
