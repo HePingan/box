@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../app_drawer.dart';
 import '../globals.dart';
-import '../home_page.dart';
+import '../features/content/presentation/warehouse_tab.dart';
+import '../features/extensions/presentation/plugin_tab.dart';
+import '../features/home/presentation/home_page.dart';
+import '../features/tools/presentation/tool_page.dart';
 import '../novel/pages/source_manager/book_source_bootstrap.dart';
 import '../novel/pages/source_manager/book_source_manager_page.dart';
-import '../plugin_tab.dart';
-import '../tool_page.dart';
-import '../warehouse_tab.dart';
 
 class MainAppShell extends StatefulWidget {
   const MainAppShell({super.key, required this.novelBootstrap});
