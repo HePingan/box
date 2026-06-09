@@ -12,6 +12,7 @@ import '../novel_list_page.dart';
 import 'book_source_diagnostic_page.dart';
 import 'book_source_manager.dart';
 import 'book_source_model.dart';
+import 'widgets/book_source_manager_widgets.dart';
 
 class BookSourceManagerPage extends StatefulWidget {
   const BookSourceManagerPage({super.key, this.startupMessage = ''});
@@ -76,12 +77,6 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
     }
 
     return result;
-  }
-
-  Color _reportColor(NovelSourceCapabilityReport report) {
-    if (report.isUsableForRead) return Colors.green;
-    if (report.isPartiallySupported) return Colors.orange;
-    return Colors.redAccent;
   }
 
   void _showSnack(String text) {
@@ -195,19 +190,19 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        _buildSimpleChip(
+                        BookSourceSimpleChip(
                           text: '可用 $usableCount',
                           color: Colors.green,
                           backgroundColor: Colors.green.withValues(alpha: 0.10),
                         ),
-                        _buildSimpleChip(
+                        BookSourceSimpleChip(
                           text: '部分支持 $partialCount',
                           color: Colors.orange,
                           backgroundColor: Colors.orange.withValues(
                             alpha: 0.10,
                           ),
                         ),
-                        _buildSimpleChip(
+                        BookSourceSimpleChip(
                           text: '暂不支持 $unsupportedCount',
                           color: Colors.redAccent,
                           backgroundColor: Colors.redAccent.withValues(
@@ -225,7 +220,7 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
                         separatorBuilder: (_, _) => const Divider(height: 16),
                         itemBuilder: (_, i) {
                           final report = reports[i];
-                          final color = _reportColor(report);
+                          final color = bookSourceReportColor(report);
 
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -704,220 +699,6 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
     );
   }
 
-  Widget _buildSimpleChip({
-    required String text,
-    required Color color,
-    Color? backgroundColor,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: backgroundColor ?? color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: color,
-          fontSize: 11.5,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatusChips(BookSourceModel source, BookSourceManager manager) {
-    final report = NovelSourceCapabilityDetector.detect(source.toJson());
-    final chips = <Widget>[];
-
-    if (manager.currentSourceId == source.id) {
-      chips.add(
-        _buildSimpleChip(
-          text: '当前使用',
-          color: Colors.deepOrange,
-          backgroundColor: Colors.orange.withValues(alpha: 0.12),
-        ),
-      );
-    }
-
-    chips.add(
-      _buildSimpleChip(
-        text: source.enabled ? '已启用' : '未启用',
-        color: source.enabled ? Colors.green : Colors.grey,
-      ),
-    );
-
-    if (source.exploreUrl.isNotEmpty) {
-      chips.add(
-        _buildSimpleChip(
-          text: '支持发现页',
-          color: Colors.blue,
-          backgroundColor: Colors.blue.withValues(alpha: 0.10),
-        ),
-      );
-    }
-
-    final reportColor = _reportColor(report);
-    chips.add(
-      _buildSimpleChip(
-        text: report.statusLabel,
-        color: reportColor,
-        backgroundColor: reportColor.withValues(alpha: 0.10),
-      ),
-    );
-
-    chips.add(
-      _buildSimpleChip(
-        text: report.adapterLabel,
-        color: Colors.indigo,
-        backgroundColor: Colors.indigo.withValues(alpha: 0.10),
-      ),
-    );
-
-    if (report.warnings.isNotEmpty) {
-      chips.add(
-        _buildSimpleChip(
-          text: '警告 ${report.warnings.length}',
-          color: Colors.orange,
-          backgroundColor: Colors.orange.withValues(alpha: 0.10),
-        ),
-      );
-    }
-
-    if (report.blockers.isNotEmpty) {
-      chips.add(
-        _buildSimpleChip(
-          text: '阻塞 ${report.blockers.length}',
-          color: Colors.redAccent,
-          backgroundColor: Colors.redAccent.withValues(alpha: 0.10),
-        ),
-      );
-    }
-
-    return Wrap(spacing: 8, runSpacing: 8, children: chips);
-  }
-
-  Widget _buildSourceCard(BookSourceModel source, BookSourceManager manager) {
-    final report = NovelSourceCapabilityDetector.detect(source.toJson());
-    final reportColor = _reportColor(report);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-        border: Border.all(color: reportColor.withValues(alpha: 0.08)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  source.bookSourceName.isNotEmpty
-                      ? source.bookSourceName
-                      : '未命名书源',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              Switch(
-                value: source.enabled,
-                onChanged: (v) => _toggleEnable(manager, source, v),
-              ),
-            ],
-          ),
-          _buildStatusChips(source, manager),
-          const SizedBox(height: 10),
-          if (source.bookSourceGroup.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Text(
-                '分组：${source.bookSourceGroup}',
-                style: const TextStyle(color: Colors.black54, fontSize: 12.5),
-              ),
-            ),
-          Text(
-            source.bookSourceUrl,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Colors.black54, fontSize: 12.5),
-          ),
-          if (source.searchUrl.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              '搜索：${source.searchUrl}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.black45, fontSize: 12),
-            ),
-          ],
-          if (report.primaryBlocker.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              report.primaryBlocker,
-              style: const TextStyle(color: Colors.redAccent, fontSize: 12.2),
-            ),
-          ] else if (report.warnings.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              report.warnings.first,
-              style: const TextStyle(color: Colors.orange, fontSize: 12.2),
-            ),
-          ],
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              ElevatedButton(
-                onPressed: () => _applySource(source),
-                child: Text(
-                  manager.currentSourceId == source.id ? '重新使用' : '启用并使用',
-                ),
-              ),
-              OutlinedButton(
-                onPressed: () => _showDiagnostic(source),
-                child: const Text('诊断'),
-              ),
-              OutlinedButton(
-                onPressed: () => _showEditorDialog(source: source),
-                child: const Text('编辑'),
-              ),
-              OutlinedButton(
-                onPressed: () => _testSource(source),
-                child: const Text('测试'),
-              ),
-              OutlinedButton(
-                onPressed: () => _exportSource(source),
-                child: const Text('导出'),
-              ),
-              OutlinedButton(
-                onPressed: () => _previewSource(source),
-                child: const Text('查看'),
-              ),
-              OutlinedButton(
-                onPressed: () => _confirmDelete(source),
-                child: const Text('删除'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final manager = context.watch<BookSourceManager>();
@@ -1033,8 +814,19 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
                 : ListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
                     itemCount: sources.length,
-                    itemBuilder: (_, i) =>
-                        _buildSourceCard(sources[i], manager),
+                    itemBuilder: (_, i) => BookSourceCard(
+                      source: sources[i],
+                      manager: manager,
+                      onToggleEnable: (v) =>
+                          _toggleEnable(manager, sources[i], v),
+                      onApply: () => _applySource(sources[i]),
+                      onDiagnostic: () => _showDiagnostic(sources[i]),
+                      onEdit: () => _showEditorDialog(source: sources[i]),
+                      onTest: () => _testSource(sources[i]),
+                      onExport: () => _exportSource(sources[i]),
+                      onPreview: () => _previewSource(sources[i]),
+                      onDelete: () => _confirmDelete(sources[i]),
+                    ),
                   ),
           ),
         ],
