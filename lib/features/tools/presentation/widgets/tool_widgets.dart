@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:box/design_system/app_tokens.dart';
+import 'package:box/features/api_hub/presentation/api_hub_page.dart';
 import 'package:box/features/tools/application/tool_catalog.dart';
 import 'package:box/tool_web_page.dart';
 
@@ -19,11 +20,11 @@ class ToolGlassButton extends StatelessWidget {
         width: 42,
         height: 42,
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.16),
+          color: const Color(0xFFF2F6FF),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
+          border: Border.all(color: const Color(0xFFE0E8F6)),
         ),
-        child: Icon(icon, color: Colors.white, size: 24),
+        child: Icon(icon, color: AppTokens.primaryBlue, size: 22),
       ),
     );
   }
@@ -38,31 +39,34 @@ class ToolMetric extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+        color: const Color(0xFFF6F8FD),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
+        border: Border.all(color: const Color(0xFFE7ECF5)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
             value,
             style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
+              color: AppTokens.textPrimary,
+              fontSize: 13,
               fontWeight: FontWeight.w900,
             ),
           ),
-          const SizedBox(height: 3),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.76),
-              fontSize: 11,
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTokens.textSecondary,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ],
@@ -78,70 +82,73 @@ class ToolHighlightCard extends StatelessWidget {
     required this.subtitle,
     required this.icon,
     required this.gradient,
+    this.onTap,
   });
 
   final String title;
   final String subtitle;
   final IconData icon;
   final List<Color> gradient;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 176,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: gradient,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    final color = gradient.first;
+    return InkWell(
+      borderRadius: BorderRadius.circular(22),
+      onTap: onTap,
+      child: Container(
+        width: 168,
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.94),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: const Color(0xFFE7ECF5)),
+          boxShadow: AppTokens.shadowSm(color: color),
         ),
-        borderRadius: BorderRadius.circular(26),
-        boxShadow: [
-          BoxShadow(
-            color: gradient.first.withValues(alpha: 0.16),
-            blurRadius: 18,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            right: -14,
-            bottom: -16,
-            child: Icon(
-              icon,
-              size: 72,
-              color: Colors.white.withValues(alpha: 0.18),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Icon(icon, color: color, size: 21),
             ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, color: Colors.white, size: 26),
-              const Spacer(),
-              Text(
-                title,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w900,
-                ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppTokens.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppTokens.textSecondary,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 4),
-              Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.80),
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -199,10 +206,36 @@ class _ExpandableCategoryCardState extends State<ExpandableCategoryCard> {
     }
   }
 
-  bool _isAvailableTool(String toolName) => toolName == '在线PS';
+  bool _isAvailableTool(String toolName) =>
+      ['在线PS', '汇率换算', '节假日查询', 'API能力中心'].contains(toolName);
 
   void _handleToolTap(String toolName) {
     if (_isAvailableTool(toolName)) {
+      if (toolName == '汇率换算') {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const ApiHubPage(initialTool: 'currency'),
+          ),
+        );
+        return;
+      }
+      if (toolName == '节假日查询') {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const ApiHubPage(initialTool: 'holidays'),
+          ),
+        );
+        return;
+      }
+      if (toolName == 'API能力中心') {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const ApiHubPage()),
+        );
+        return;
+      }
       Navigator.push(
         context,
         MaterialPageRoute(

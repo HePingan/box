@@ -18,161 +18,114 @@ class ExtensionHeroCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF111827), Color(0xFF7C3AED), Color(0xFFFF4D8D)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF7C3AED).withValues(alpha: 0.24),
-            blurRadius: 26,
-            offset: const Offset(0, 14),
-          ),
-        ],
+    return AppLightHeroCard(
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      eyebrow: '扩展管理中心',
+      title: '扩展中心',
+      subtitle: '插件、资源规则、备份与诊断统一管理',
+      badge: 'EXT HUB',
+      accentGradient: AppTokens.violetGradient,
+      leading: const _ExtensionLightIcon(
+        icon: Icons.admin_panel_settings_rounded,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      actions: [
+        GestureDetector(
+          onTap: onOpenMarket,
+          child: const AppStatusPill(
+            label: '插件市场',
+            icon: Icons.storefront_rounded,
+            color: AppTokens.violet,
+          ),
+        ),
+        GestureDetector(
+          onTap: onImportJson,
+          child: const AppStatusPill(
+            label: '导入',
+            icon: Icons.download_for_offline_rounded,
+            color: AppTokens.emerald,
+          ),
+        ),
+      ],
+      metrics: [
+        Expanded(
+          child: _ExtensionLightMetric(value: '$pluginCount', label: '插件'),
+        ),
+        const SizedBox(width: 8),
+        const Expanded(
+          child: _ExtensionLightMetric(value: '书源', label: '小说规则'),
+        ),
+        const SizedBox(width: 8),
+        const Expanded(
+          child: _ExtensionLightMetric(value: '片源', label: '影视规则'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ExtensionLightIcon extends StatelessWidget {
+  const _ExtensionLightIcon({required this.icon});
+
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        color: AppTokens.violet.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTokens.violet.withValues(alpha: 0.16)),
+      ),
+      child: const Icon(
+        Icons.admin_panel_settings_rounded,
+        color: AppTokens.violet,
+        size: 21,
+      ),
+    );
+  }
+}
+
+class _ExtensionLightMetric extends StatelessWidget {
+  const _ExtensionLightMetric({required this.value, required this.label});
+
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F8FD),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
+        border: Border.all(color: const Color(0xFFE7ECF5)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.22),
-                  ),
-                ),
-                child: const Icon(
-                  Icons.admin_panel_settings_rounded,
-                  color: Colors.white,
-                ),
+          Flexible(
+            child: Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTokens.textPrimary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w900,
               ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.22),
-                  ),
-                ),
-                child: const Text(
-                  'EXT HUB 2.1',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0.7,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          const Text(
-            '扩展控制台',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 29,
-              fontWeight: FontWeight.w900,
-              letterSpacing: -0.5,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(width: 4),
           Text(
-            'B2-A 四页统一 · 插件 / 资源规则 / 备份 / 诊断四区收纳',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.84),
-              fontSize: 13,
-              height: 1.45,
-              fontWeight: FontWeight.w600,
+            label,
+            style: const TextStyle(
+              color: AppTokens.textSecondary,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
             ),
-          ),
-          const SizedBox(height: 18),
-          Row(
-            children: [
-              Expanded(
-                child: PluginHeroMetric(value: '$pluginCount', label: '插件'),
-              ),
-              const SizedBox(width: 10),
-              const Expanded(
-                child: PluginHeroMetric(value: '书源', label: '小说规则'),
-              ),
-              const SizedBox(width: 10),
-              const Expanded(
-                child: PluginHeroMetric(value: '片源', label: '影视规则'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.20)),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.tune_rounded, size: 18, color: Colors.white),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '四页统一后：市场、规则、备份、诊断保持首屏优先',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: onOpenMarket,
-                  icon: const Icon(Icons.storefront_rounded),
-                  label: const Text('插件市场'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: const Color(0xFF7C3AED),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: onImportJson,
-                  icon: const Icon(Icons.download_for_offline_rounded),
-                  label: const Text('导入 JSON'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.55),
-                    ),
-                  ),
-                ),
-              ),
-            ],
           ),
         ],
       ),
@@ -572,50 +525,6 @@ class PluginStatusChip extends StatelessWidget {
           fontSize: 10,
           fontWeight: FontWeight.w900,
         ),
-      ),
-    );
-  }
-}
-
-class PluginHeroMetric extends StatelessWidget {
-  const PluginHeroMetric({super.key, required this.value, required this.label});
-
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.76),
-              fontSize: 11,
-            ),
-          ),
-        ],
       ),
     );
   }

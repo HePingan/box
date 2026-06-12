@@ -20,6 +20,9 @@ class AppTokens {
 
   // Surfaces and text.
   static const Color background = Color(0xFFF4F7FB);
+  static const Color pageGradientTop = Color(0xFFF0F5FF);
+  static const Color pageGradientMid = Color(0xFFF8FAFD);
+  static const Color pageGradientBottom = Color(0xFFF6F8FC);
   static const Color surface = Color(0xFFFFFFFF);
   static const Color surfaceMuted = Color(0xFFF1F5F9);
   static const Color surfaceTint = Color(0xFFEFF6FF);
@@ -51,8 +54,8 @@ class AppTokens {
   static const double radiusPill = 999;
 
   // Shell layout.
-  static const double shellBottomNavHeight = 86;
-  static const double pageBottomPadding = 112;
+  static const double shellBottomNavHeight = 68;
+  static const double pageBottomPadding = 96;
 
   static const double elevationLow = 0.5;
   static const double elevationNone = 0;
@@ -61,6 +64,13 @@ class AppTokens {
     colors: [primaryBlue, cyan],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
+  );
+
+  static const LinearGradient pageGradient = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [pageGradientTop, pageGradientMid, pageGradientBottom],
+    stops: [0, 0.36, 1],
   );
 
   static const LinearGradient auroraGradient = LinearGradient(

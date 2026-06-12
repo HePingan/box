@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_drawer.dart';
+import '../design_system/app_tokens.dart';
 import '../globals.dart';
 import '../features/content/presentation/warehouse_tab.dart';
 import '../features/extensions/presentation/plugin_tab.dart';
@@ -120,6 +121,7 @@ class _MainAppShellState extends State<MainAppShell> {
     return Scaffold(
       key: appScaffoldKey,
       drawer: const AppDrawer(),
+      drawerScrimColor: Colors.black.withValues(alpha: 0.30),
       body: PageView(
         controller: _pageController,
         physics: const NeverScrollableScrollPhysics(),
@@ -133,11 +135,11 @@ class _MainAppShellState extends State<MainAppShell> {
       bottomNavigationBar: SafeArea(
         top: false,
         child: Container(
-          margin: const EdgeInsets.fromLTRB(18, 0, 18, 7),
-          padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.96),
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(AppTokens.radiusPill),
             border: Border.all(color: const Color(0xFFE2E8F0)),
             boxShadow: [
               BoxShadow(
@@ -147,34 +149,19 @@ class _MainAppShellState extends State<MainAppShell> {
               ),
             ],
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                '4-TAB',
-                style: TextStyle(
-                  color: Color(0xFF2563EB),
-                  fontSize: 8,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0.8,
+          child: Row(
+            children: List.generate(_tabs.length, (index) {
+              final tab = _tabs[index];
+              final selected = _currentIndex == index;
+              return Expanded(
+                child: _ShellNavItem(
+                  title: tab['title'] as String,
+                  icon: tab['icon'] as IconData,
+                  selected: selected,
+                  onTap: () => _onItemTapped(index),
                 ),
-              ),
-              const SizedBox(height: 2),
-              Row(
-                children: List.generate(_tabs.length, (index) {
-                  final tab = _tabs[index];
-                  final selected = _currentIndex == index;
-                  return Expanded(
-                    child: _ShellNavItem(
-                      title: tab['title'] as String,
-                      icon: tab['icon'] as IconData,
-                      selected: selected,
-                      onTap: () => _onItemTapped(index),
-                    ),
-                  );
-                }),
-              ),
-            ],
+              );
+            }),
           ),
         ),
       ),
@@ -204,20 +191,18 @@ class _ShellNavItem extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
         decoration: BoxDecoration(
-          color: selected
-              ? selectedColor.withValues(alpha: 0.10)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(18),
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(AppTokens.radiusPill),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             AnimatedContainer(
               duration: const Duration(milliseconds: 220),
-              width: selected ? 28 : 26,
-              height: selected ? 28 : 26,
+              width: selected ? 25 : 23,
+              height: selected ? 25 : 23,
               decoration: BoxDecoration(
                 gradient: selected
                     ? const LinearGradient(
@@ -227,22 +212,22 @@ class _ShellNavItem extends StatelessWidget {
                       )
                     : null,
                 color: selected ? null : const Color(0xFFF1F5F9),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(AppTokens.radiusPill),
               ),
               child: Icon(
                 icon,
-                size: selected ? 17 : 16,
+                size: selected ? 15 : 14,
                 color: selected ? Colors.white : const Color(0xFF64748B),
               ),
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 0),
             Text(
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: selected ? selectedColor : const Color(0xFF64748B),
-                fontSize: 10,
+                fontSize: 9.5,
                 fontWeight: selected ? FontWeight.w900 : FontWeight.w600,
               ),
             ),

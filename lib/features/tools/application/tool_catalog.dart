@@ -36,6 +36,7 @@ List<ToolCategory> createDefaultToolCategories() {
         '菜谱大全',
         '全国降水量',
         '历史上的今天',
+        '节假日查询',
       ],
     ),
     ToolCategory(
@@ -92,6 +93,8 @@ List<ToolCategory> createDefaultToolCategories() {
         '快递查询',
         '天气预报',
         'IP地址查询',
+        '国内可用API',
+        'Open-Meteo天气',
         '归属地查询',
         '老黄历',
         '成语词典',
@@ -114,6 +117,8 @@ List<ToolCategory> createDefaultToolCategories() {
       tools: [
         'JSON格式化',
         '正则测试',
+        'DummyJSON测试数据',
+        '国内API清单',
         'Base64编解码',
         'MD5加密',
         '时间戳转换',
@@ -163,6 +168,7 @@ List<ToolCategory> createDefaultToolCategories() {
         '科学计算器',
         '亲戚称呼计算',
         '汇率换算',
+        'API能力中心',
         '房贷计算器',
         'BMI计算',
         '单位换算',

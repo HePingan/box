@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
+import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import 'package:box/novel/pages/source_manager/book_source_manager_page.dart';
 import 'package:box/plugin_manager.dart';
 import 'package:box/plugin_market/models/plugin_market_security.dart';
@@ -692,57 +693,54 @@ class _PluginTabState extends State<PluginTab>
   Widget build(BuildContext context) {
     super.build(context);
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF4F7FB),
-      body: SafeArea(
-        child: ValueListenableBuilder<List<HomePlugin>>(
-          valueListenable: _pluginHost.listenable,
-          builder: (context, plugins, _) {
-            final grouped = <HomePluginArea, List<HomePlugin>>{
-              for (final area in HomePluginArea.values) area: <HomePlugin>[],
-            };
+    return AppPageScaffold(
+      child: ValueListenableBuilder<List<HomePlugin>>(
+        valueListenable: _pluginHost.listenable,
+        builder: (context, plugins, _) {
+          final grouped = <HomePluginArea, List<HomePlugin>>{
+            for (final area in HomePluginArea.values) area: <HomePlugin>[],
+          };
 
-            for (final plugin in plugins) {
-              grouped[plugin.area]!.add(plugin);
-            }
+          for (final plugin in plugins) {
+            grouped[plugin.area]!.add(plugin);
+          }
 
-            for (final area in grouped.keys) {
-              grouped[area]!.sort((a, b) {
-                final c = a.sort.compareTo(b.sort);
-                if (c != 0) return c;
-                return a.title.compareTo(b.title);
-              });
-            }
+          for (final area in grouped.keys) {
+            grouped[area]!.sort((a, b) {
+              final c = a.sort.compareTo(b.sort);
+              if (c != 0) return c;
+              return a.title.compareTo(b.title);
+            });
+          }
 
-            return ListView(
-              physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(
-                16,
-                10,
-                16,
-                AppTokens.pageBottomPadding + 32,
+          return ListView(
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(
+              16,
+              10,
+              16,
+              AppTokens.pageBottomPadding + 32,
+            ),
+            children: [
+              ExtensionHeroCard(
+                pluginCount: plugins.length,
+                onOpenMarket: _openPluginMarket,
+                onImportJson: _showImportJsonDialog,
               ),
-              children: [
-                ExtensionHeroCard(
-                  pluginCount: plugins.length,
-                  onOpenMarket: _openPluginMarket,
-                  onImportJson: _showImportJsonDialog,
+              const SizedBox(height: 16),
+              _buildPluginEntryCards(),
+              const SizedBox(height: 18),
+              for (final area in HomePluginArea.values)
+                ExtensionPluginSection(
+                  area: area,
+                  plugins: grouped[area]!,
+                  onRunPlugin: _runPlugin,
+                  onToggleEnabled: _togglePluginEnabled,
+                  onUninstall: _uninstallPlugin,
                 ),
-                const SizedBox(height: 16),
-                _buildPluginEntryCards(),
-                const SizedBox(height: 18),
-                for (final area in HomePluginArea.values)
-                  ExtensionPluginSection(
-                    area: area,
-                    plugins: grouped[area]!,
-                    onRunPlugin: _runPlugin,
-                    onToggleEnabled: _togglePluginEnabled,
-                    onUninstall: _uninstallPlugin,
-                  ),
-              ],
-            );
-          },
-        ),
+            ],
+          );
+        },
       ),
     );
   }

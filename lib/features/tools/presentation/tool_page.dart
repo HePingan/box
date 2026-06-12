@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:box/globals.dart';
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
+import 'package:box/design_system/widgets/app_page_scaffold.dart';
+import 'package:box/features/api_hub/presentation/api_hub_page.dart';
 
 import '../application/tool_catalog.dart';
 import 'widgets/tool_widgets.dart';
@@ -62,37 +64,41 @@ class _ToolPageState extends State<ToolPage>
     }
   }
 
+  void _openApiHub([String? initialTool]) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ApiHubPage(initialTool: initialTool)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF4F7FB),
-      body: SafeArea(
-        child: CustomScrollView(
-          physics: const BouncingScrollPhysics(),
-          slivers: [
-            SliverToBoxAdapter(child: _buildToolHero()),
-            SliverToBoxAdapter(child: _buildSearchBar()),
-            SliverToBoxAdapter(child: _buildQuickGradientCards()),
-            SliverToBoxAdapter(child: _buildToolStats()),
-            SliverToBoxAdapter(child: _buildSectionTitle()),
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) => ExpandableCategoryCard(
-                    category: _displayCategories[index],
-                  ),
-                  childCount: _displayCategories.length,
-                ),
+    return AppPageScaffold(
+      child: CustomScrollView(
+        physics: const BouncingScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(child: _buildToolHero()),
+          SliverToBoxAdapter(child: _buildSearchBar()),
+          SliverToBoxAdapter(child: _buildApiHubFeatureCard()),
+          SliverToBoxAdapter(child: _buildQuickGradientCards()),
+          SliverToBoxAdapter(child: _buildToolStats()),
+          SliverToBoxAdapter(child: _buildSectionTitle()),
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) =>
+                    ExpandableCategoryCard(category: _displayCategories[index]),
+                childCount: _displayCategories.length,
               ),
             ),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: AppTokens.pageBottomPadding + 28),
-            ),
-          ],
-        ),
+          ),
+          const SliverToBoxAdapter(
+            child: SizedBox(height: AppTokens.pageBottomPadding + 28),
+          ),
+        ],
       ),
     );
   }
@@ -102,145 +108,40 @@ class _ToolPageState extends State<ToolPage>
       0,
       (sum, category) => sum + category.tools.length,
     );
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-      padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF111827), Color(0xFF6D28D9), Color(0xFF22D3EE)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    return AppLightHeroCard(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      eyebrow: '效率工具集合',
+      title: '工具台',
+      subtitle: '搜索优先 · 常用前置 · $totalTools 个入口',
+      badge: 'TOOLS',
+      accentGradient: AppTokens.violetGradient,
+      leading: ToolGlassButton(
+        icon: Icons.menu_rounded,
+        onTap: () => appScaffoldKey.currentState?.openDrawer(),
+      ),
+      actions: [
+        AppStatusPill(
+          label: '搜索 / 热门 / 分类首屏直达',
+          icon: Icons.search_rounded,
+          color: AppTokens.violet,
         ),
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF6D28D9).withValues(alpha: 0.22),
-            blurRadius: 26,
-            offset: const Offset(0, 14),
+      ],
+      metrics: [
+        Expanded(
+          child: ToolMetric(value: '${_allCategories.length}', label: '工具分类'),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: ToolMetric(value: '$totalTools', label: '功能入口'),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: ToolMetric(
+            value: '${_displayCategories.length}',
+            label: '分类匹配',
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              ToolGlassButton(
-                icon: Icons.menu_rounded,
-                onTap: () => appScaffoldKey.currentState?.openDrawer(),
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.22),
-                  ),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.auto_fix_high_rounded,
-                      size: 15,
-                      color: Color(0xFFFFE08A),
-                    ),
-                    SizedBox(width: 4),
-                    Text(
-                      'TOOLS STUDIO 2.0',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.7,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              ToolGlassButton(
-                icon: Icons.search_rounded,
-                onTap: () => _searchFocusNode.requestFocus(),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            '工具台',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 25,
-              fontWeight: FontWeight.w900,
-              letterSpacing: -0.5,
-            ),
-          ),
-          const SizedBox(height: 5),
-          Text(
-            '搜索优先 · 常用前置 · $totalTools 个入口',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.82),
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 9),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.20)),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.search_rounded, size: 18, color: Colors.white),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '搜索 / 热门 / 分类首屏直达',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: ToolMetric(
-                  value: '${_allCategories.length}',
-                  label: '工具分类',
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: ToolMetric(value: '$totalTools', label: '功能入口'),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: ToolMetric(
-                  value: '${_displayCategories.length}',
-                  label: '分类匹配',
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -292,36 +193,129 @@ class _ToolPageState extends State<ToolPage>
     );
   }
 
+  Widget _buildApiHubFeatureCard() {
+    final shortcuts = [
+      ('二维码', Icons.qr_code_2_rounded, 'qr'),
+      ('Mock用户', Icons.badge_rounded, 'mock'),
+      ('头像', Icons.account_circle_rounded, 'avatar'),
+      ('占位图', Icons.image_rounded, 'dummy_image'),
+      ('API清单', Icons.travel_explore_rounded, 'directory'),
+    ];
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: const Color(0xFFE7ECF5)),
+        boxShadow: AppTokens.shadowSm(color: AppTokens.violet),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  gradient: AppTokens.violetGradient,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(Icons.api_rounded, color: Colors.white),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'API 能力中心',
+                      style: TextStyle(
+                        color: AppTokens.textPrimary,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      '二维码 / Mock 用户 / 头像 / 占位图 / 国内可用清单',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: AppTokens.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              FilledButton.tonal(
+                onPressed: () => _openApiHub(),
+                child: const Text('进入'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: shortcuts.map((item) {
+              return ActionChip(
+                avatar: Icon(item.$2, size: 16),
+                label: Text(item.$1),
+                onPressed: () => _openApiHub(item.$3),
+                side: const BorderSide(color: Color(0xFFE7ECF5)),
+                backgroundColor: const Color(0xFFF8FAFC),
+                labelStyle: const TextStyle(fontWeight: FontWeight.w900),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildQuickGradientCards() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 2, 16, 12),
+    final actions = [
+      AppCompactActionCard(
+        title: '天气',
+        subtitle: 'Open-Meteo',
+        icon: Icons.wb_cloudy_rounded,
+        color: AppTokens.primaryBlue,
+        onTap: () => _openApiHub('weather'),
+      ),
+      AppCompactActionCard(
+        title: 'API目录',
+        subtitle: '国内可用',
+        icon: Icons.travel_explore_rounded,
+        color: AppTokens.emerald,
+        onTap: () => _openApiHub('directory'),
+      ),
+      AppCompactActionCard(
+        title: 'API Hub',
+        subtitle: '二维码/头像',
+        icon: Icons.api_rounded,
+        color: AppTokens.violet,
+        onTap: () => _openApiHub(),
+      ),
+    ];
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE9EEF7)),
+      ),
       child: Row(
         children: [
-          Expanded(
-            child: AppGradientActionCard(
-              title: '首屏热门',
-              subtitle: '天气 / 翻译 / 二维码',
-              icon: Icons.local_fire_department_rounded,
-              gradient: AppTokens.blueGradient,
-              onTap: () {
-                _searchController.text = '天气';
-                _runFilter('天气');
-              },
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: AppGradientActionCard(
-              title: '一键直达',
-              subtitle: 'PS / JSON / 二维码',
-              icon: Icons.rocket_launch_rounded,
-              gradient: AppTokens.neonVioletGradient,
-              onTap: () {
-                _searchController.text = '在线PS';
-                _runFilter('在线PS');
-              },
-            ),
-          ),
+          for (var i = 0; i < actions.length; i++) ...[
+            Expanded(child: actions[i]),
+            if (i != actions.length - 1) const SizedBox(width: 9),
+          ],
         ],
       ),
     );
@@ -329,24 +323,26 @@ class _ToolPageState extends State<ToolPage>
 
   Widget _buildToolStats() {
     return SizedBox(
-      height: 112,
+      height: 70,
       child: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
         children: [
           ToolHighlightCard(
-            title: '我的收藏',
-            subtitle: '高频工具一键直达',
-            icon: Icons.star_rounded,
+            title: '汇率换算',
+            subtitle: 'USD/CNY/EUR/JPY',
+            icon: Icons.currency_exchange_rounded,
             gradient: const [Color(0xFFFF7A45), Color(0xFFFFC53D)],
+            onTap: () => _openApiHub('currency'),
           ),
           const SizedBox(width: 12),
           ToolHighlightCard(
-            title: '近期更新',
-            subtitle: '新能力与修复记录',
-            icon: Icons.new_releases_rounded,
+            title: '节假日查询',
+            subtitle: '今年公开假日',
+            icon: Icons.event_available_rounded,
             gradient: const [Color(0xFF2563EB), Color(0xFF38BDF8)],
+            onTap: () => _openApiHub('holidays'),
           ),
           const SizedBox(width: 12),
           ToolHighlightCard(

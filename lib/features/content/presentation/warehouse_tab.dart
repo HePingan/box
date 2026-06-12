@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:box/design_system/app_tokens.dart';
+import 'package:box/design_system/widgets/app_page_scaffold.dart';
+import 'package:box/features/api_hub/presentation/api_hub_page.dart';
 import 'package:box/features/content/domain/warehouse_models.dart';
 import 'package:box/novel/core/bookshelf_manager.dart';
 import 'package:box/novel/pages/novel_detail_page.dart';
@@ -384,6 +386,13 @@ class _WarehouseTabState extends State<WarehouseTab>
     );
   }
 
+  void _openOpenLibrarySearch() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ApiHubPage(initialTool: 'books')),
+    );
+  }
+
   void _showHubComingSoon(String title) {
     ScaffoldMessenger.of(
       context,
@@ -434,84 +443,80 @@ class _WarehouseTabState extends State<WarehouseTab>
         statusBarIconBrightness: Brightness.dark,
         statusBarBrightness: Brightness.light,
       ),
-      child: Scaffold(
-        backgroundColor: const Color(0xFFF4F7FB),
-        body: SafeArea(
-          top: true,
-          bottom: false,
-          child: RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView(
-              physics: const AlwaysScrollableScrollPhysics(
-                parent: BouncingScrollPhysics(),
-              ),
-              padding: const EdgeInsets.fromLTRB(
-                16,
-                14,
-                16,
-                AppTokens.pageBottomPadding + 32,
-              ),
-              children: [
-                ContentHubTopCard(onRefresh: _refresh),
-                const SizedBox(height: 16),
-                ContentEntryGrid(
-                  onOpenVideoCenter: _openVideoCenter,
-                  onOpenNovelLibrary: _openNovelLibrary,
-                  onHubComingSoon: _showHubComingSoon,
-                ),
-                const SizedBox(height: 18),
-                ContentOverviewCard(
-                  future: _overviewFuture(),
-                  onOpenItem: _openItem,
-                  onShowCategoryPicker: _showCategoryPicker,
-                ),
-                const SizedBox(height: 18),
-                const WarehouseSectionHeader(
-                  title: '收藏库',
-                  subtitle: '我的书架 / 影视收藏 / 漫画收藏 / 音乐收藏',
-                ),
-                const SizedBox(height: 10),
-                WarehouseSection(
-                  category: WarehouseCategory.books,
-                  future: _bookFuture,
-                  emptyText: '从小说书架同步最近阅读，也可以手动收藏书籍链接',
-                  onAdd: _showAddDialog,
-                  onOpenItem: _openItem,
-                  onOpenVideoCenter: _openVideoCenter,
-                  onOpenNovelLibrary: _openNovelLibrary,
-                ),
-                const SizedBox(height: 12),
-                WarehouseSection(
-                  category: WarehouseCategory.comics,
-                  future: _comicFuture,
-                  emptyText: '漫画资源会集中放在这里，方便后续扩展漫画入口',
-                  onAdd: _showAddDialog,
-                  onOpenItem: _openItem,
-                  onOpenVideoCenter: _openVideoCenter,
-                  onOpenNovelLibrary: _openNovelLibrary,
-                ),
-                const SizedBox(height: 12),
-                WarehouseSection(
-                  category: WarehouseCategory.videos,
-                  future: _videoFuture,
-                  emptyText: '先去影视搜索发现内容，后续播放历史和收藏会聚合到这里',
-                  onAdd: _showAddDialog,
-                  onOpenItem: _openItem,
-                  onOpenVideoCenter: _openVideoCenter,
-                  onOpenNovelLibrary: _openNovelLibrary,
-                ),
-                const SizedBox(height: 12),
-                WarehouseSection(
-                  category: WarehouseCategory.music,
-                  future: _musicFuture,
-                  emptyText: '音乐链接、歌单和历史记录会集中收纳到这里',
-                  onAdd: _showAddDialog,
-                  onOpenItem: _openItem,
-                  onOpenVideoCenter: _openVideoCenter,
-                  onOpenNovelLibrary: _openNovelLibrary,
-                ),
-              ],
+      child: AppPageScaffold(
+        child: RefreshIndicator(
+          onRefresh: _refresh,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
             ),
+            padding: const EdgeInsets.fromLTRB(
+              16,
+              14,
+              16,
+              AppTokens.pageBottomPadding + 32,
+            ),
+            children: [
+              ContentHubTopCard(onRefresh: _refresh),
+              const SizedBox(height: 16),
+              ContentEntryGrid(
+                onOpenVideoCenter: _openVideoCenter,
+                onOpenNovelLibrary: _openNovelLibrary,
+                onOpenOpenLibrarySearch: _openOpenLibrarySearch,
+                onHubComingSoon: _showHubComingSoon,
+              ),
+              const SizedBox(height: 18),
+              ContentOverviewCard(
+                future: _overviewFuture(),
+                onOpenItem: _openItem,
+                onShowCategoryPicker: _showCategoryPicker,
+              ),
+              const SizedBox(height: 18),
+              const WarehouseSectionHeader(
+                title: '收藏库',
+                subtitle: '我的书架 / 影视收藏 / 漫画收藏 / 音乐收藏',
+              ),
+              const SizedBox(height: 10),
+              WarehouseSection(
+                category: WarehouseCategory.books,
+                future: _bookFuture,
+                emptyText: '从小说书架同步最近阅读，也可以手动收藏书籍链接',
+                onAdd: _showAddDialog,
+                onOpenItem: _openItem,
+                onOpenVideoCenter: _openVideoCenter,
+                onOpenNovelLibrary: _openNovelLibrary,
+              ),
+              const SizedBox(height: 12),
+              WarehouseSection(
+                category: WarehouseCategory.comics,
+                future: _comicFuture,
+                emptyText: '漫画资源会集中放在这里，方便后续扩展漫画入口',
+                onAdd: _showAddDialog,
+                onOpenItem: _openItem,
+                onOpenVideoCenter: _openVideoCenter,
+                onOpenNovelLibrary: _openNovelLibrary,
+              ),
+              const SizedBox(height: 12),
+              WarehouseSection(
+                category: WarehouseCategory.videos,
+                future: _videoFuture,
+                emptyText: '先去影视搜索发现内容，后续播放历史和收藏会聚合到这里',
+                onAdd: _showAddDialog,
+                onOpenItem: _openItem,
+                onOpenVideoCenter: _openVideoCenter,
+                onOpenNovelLibrary: _openNovelLibrary,
+              ),
+              const SizedBox(height: 12),
+              WarehouseSection(
+                category: WarehouseCategory.music,
+                future: _musicFuture,
+                emptyText: '音乐链接、歌单和历史记录会集中收纳到这里',
+                onAdd: _showAddDialog,
+                onOpenItem: _openItem,
+                onOpenVideoCenter: _openVideoCenter,
+                onOpenNovelLibrary: _openNovelLibrary,
+              ),
+            ],
           ),
         ),
       ),

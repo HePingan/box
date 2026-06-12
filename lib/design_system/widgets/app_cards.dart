@@ -408,3 +408,233 @@ class _GlassBadge extends StatelessWidget {
     );
   }
 }
+
+class AppLightHeroCard extends StatelessWidget {
+  const AppLightHeroCard({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.eyebrow,
+    this.badge,
+    this.leading,
+    this.metrics = const [],
+    this.actions = const [],
+    this.accentGradient = AppTokens.blueGradient,
+    this.margin = EdgeInsets.zero,
+    this.padding = const EdgeInsets.fromLTRB(16, 14, 16, 14),
+  });
+
+  final String title;
+  final String subtitle;
+  final String eyebrow;
+  final String? badge;
+  final Widget? leading;
+  final List<Widget> metrics;
+  final List<Widget> actions;
+  final Gradient accentGradient;
+  final EdgeInsetsGeometry margin;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: margin,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.86),
+        borderRadius: BorderRadius.circular(AppTokens.radiusXl),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.92)),
+        boxShadow: AppTokens.shadowLg(color: AppTokens.primaryBlue),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+        child: Stack(
+          children: [
+            Positioned(
+              right: -18,
+              top: -20,
+              child: Container(
+                width: 86,
+                height: 86,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: accentGradient,
+                ),
+                foregroundDecoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.72),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    ?leading,
+                    const Spacer(),
+                    if (badge != null) AppStatusPill(label: badge!),
+                  ],
+                ),
+                const SizedBox(height: 9),
+                Text(
+                  eyebrow,
+                  style: const TextStyle(
+                    color: AppTokens.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: AppTokens.textPrimary,
+                    fontSize: 25,
+                    height: 1.03,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.8,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: AppTokens.textSecondary,
+                    fontSize: 12,
+                    height: 1.2,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (metrics.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Row(children: metrics),
+                ],
+                if (actions.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Wrap(spacing: 8, runSpacing: 8, children: actions),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AppStatusPill extends StatelessWidget {
+  const AppStatusPill({
+    super.key,
+    required this.label,
+    this.icon,
+    this.color = AppTokens.primaryBlue,
+  });
+
+  final String label;
+  final IconData? icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
+        border: Border.all(color: color.withValues(alpha: 0.16)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class AppCompactActionCard extends StatelessWidget {
+  const AppCompactActionCard({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+    this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final card = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        border: Border.all(color: color.withValues(alpha: 0.12)),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+            ),
+            child: Icon(icon, color: color, size: 21),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: AppTokens.textPrimary,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            subtitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: AppTokens.textSecondary,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (onTap == null) return card;
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+      onTap: onTap,
+      child: card,
+    );
+  }
+}

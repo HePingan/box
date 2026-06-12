@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../design_system/app_tokens.dart';
+import '../../../design_system/widgets/app_cards.dart';
+import '../../../design_system/widgets/app_page_scaffold.dart';
 import '../controllers/novel_detail_controller.dart';
 import '../core/models.dart';
 import '../core/rule_novel_source.dart';
@@ -558,94 +560,54 @@ class _NovelListPageState extends State<NovelListPage> {
   }
 
   Widget _buildHeroSection() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF2E1065), Color(0xFF7C3AED), Color(0xFFF59E0B)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    return AppLightHeroCard(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      eyebrow: '阅读内容中心',
+      title: '小说书架',
+      subtitle: _currentSourceName.isNotEmpty
+          ? '当前书源：$_currentSourceName · 搜索与发现'
+          : '导入书源后即可搜索与发现新书',
+      badge: 'NOVEL',
+      accentGradient: AppTokens.violetGradient,
+      leading: _NovelLightIconButton(
+        icon: Icons.local_library_rounded,
+        onTap: _openSourceManager,
+      ),
+      actions: [
+        AppStatusPill(
+          label: '书源',
+          icon: Icons.tune_rounded,
+          color: AppTokens.violet,
         ),
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF7C3AED).withValues(alpha: 0.25),
-            blurRadius: 28,
-            offset: const Offset(0, 16),
+        AppStatusPill(
+          label: '刷新',
+          icon: Icons.refresh_rounded,
+          color: AppTokens.primaryBlue,
+        ),
+      ],
+      metrics: [
+        Expanded(
+          child: _NovelLightMetric(
+            value: '${_books.length}',
+            label: _searchMode ? '搜索结果' : '发现书籍',
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.24),
-                  ),
-                ),
-                child: const Icon(
-                  Icons.local_library_rounded,
-                  color: Colors.white,
-                ),
-              ),
-              const Spacer(),
-              _HeroAction(
-                icon: Icons.tune_rounded,
-                label: '书源',
-                onTap: _openSourceManager,
-              ),
-              const SizedBox(width: 8),
-              _HeroAction(
-                icon: Icons.refresh_rounded,
-                label: '刷新',
-                onTap: _handleRefresh,
-              ),
-            ],
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _NovelLightMetric(
+            value: '${_exploreEntries.length}',
+            label: '发现频道',
           ),
-          const SizedBox(height: 18),
-          const Text(
-            '小说书架 · 搜索 · 发现',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 28,
-              fontWeight: FontWeight.w900,
-              letterSpacing: -0.4,
-            ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _NovelLightMetric(
+            value: _supportsExplore ? '发现' : '搜索',
+            label: '当前模式',
           ),
-          const SizedBox(height: 8),
-          Text(
-            _currentSourceName.isNotEmpty
-                ? '当前书源：$_currentSourceName · 新版阅读入口'
-                : '导入书源后即可搜索与发现新书',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.82),
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              _HeroMetric(
-                value: '${_books.length}',
-                label: _searchMode ? '搜索结果' : '发现书籍',
-              ),
-              const SizedBox(width: 10),
-              _HeroMetric(value: '${_exploreEntries.length}', label: '发现频道'),
-              const SizedBox(width: 10),
-              _HeroMetric(value: _supportsExplore ? '发现' : '搜索', label: '当前模式'),
-            ],
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -931,131 +893,105 @@ class _NovelListPageState extends State<NovelListPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF6F3FF),
-      body: SafeArea(
-        bottom: false,
-        child: Column(
-          children: [
-            _buildHeroSection(),
-            _buildSearchBar(),
-            _buildSourceInfo(),
-            _buildExploreBar(),
-            if (_error.isNotEmpty && _books.isNotEmpty)
-              Container(
-                width: double.infinity,
-                margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _error,
-                  style: const TextStyle(
-                    color: Colors.redAccent,
-                    fontSize: 12.5,
-                  ),
-                ),
+    return AppPageScaffold(
+      safeBottom: false,
+      child: Column(
+        children: [
+          _buildHeroSection(),
+          _buildSearchBar(),
+          _buildSourceInfo(),
+          _buildExploreBar(),
+          if (_error.isNotEmpty && _books.isNotEmpty)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
               ),
-            Expanded(
-              child: RefreshIndicator(
-                onRefresh: _handleRefresh,
-                child: _buildListBody(),
+              child: Text(
+                _error,
+                style: const TextStyle(color: Colors.redAccent, fontSize: 12.5),
               ),
             ),
-          ],
-        ),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _handleRefresh,
+              child: _buildListBody(),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _HeroAction extends StatelessWidget {
-  const _HeroAction({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
+class _NovelLightIconButton extends StatelessWidget {
+  const _NovelLightIconButton({required this.icon, required this.onTap});
 
   final IconData icon;
-  final String label;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white.withValues(alpha: 0.16),
-      borderRadius: BorderRadius.circular(999),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(999),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 16, color: Colors.white),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: onTap,
+      child: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: const Color(0xFFF2F6FF),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE0E8F6)),
         ),
+        child: Icon(icon, color: AppTokens.violet, size: 21),
       ),
     );
   }
 }
 
-class _HeroMetric extends StatelessWidget {
-  const _HeroMetric({required this.value, required this.label});
+class _NovelLightMetric extends StatelessWidget {
+  const _NovelLightMetric({required this.value, required this.label});
 
   final String value;
   final String label;
 
   @override
   Widget build(BuildContext context) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.14),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F8FD),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
+        border: Border.all(color: const Color(0xFFE7ECF5)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Flexible(
+            child: Text(
               value,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                color: Colors.white,
-                fontSize: 17,
+                color: AppTokens.textPrimary,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w900,
               ),
             ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.72),
-                fontSize: 10.5,
-                fontWeight: FontWeight.w700,
-              ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppTokens.textSecondary,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

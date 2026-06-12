@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:box/design_system/app_tokens.dart';
+import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import 'package:box/features/extensions/market/data/plugin_market_manifest_repository.dart';
 import 'package:box/features/extensions/market/domain/plugin_market_manifest.dart';
 import 'package:box/plugin_market/models/plugin_market_security.dart';
@@ -716,101 +717,97 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
   Widget build(BuildContext context) {
     final visible = _visibleTemplates;
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF4F7FB),
-      body: SafeArea(
-        child: Column(
-          children: [
-            if (_marketLoading) const LinearProgressIndicator(minHeight: 2),
-            Expanded(
-              child: RefreshIndicator(
-                onRefresh: () => _loadMarket(forceRefresh: true),
-                child: CustomScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(
-                    parent: BouncingScrollPhysics(),
-                  ),
-                  slivers: [
-                    SliverToBoxAdapter(child: _buildMarketHero(visible.length)),
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
-                        child: TextField(
-                          controller: _searchController,
-                          onChanged: (v) => setState(() => _keyword = v),
-                          decoration: InputDecoration(
-                            filled: true,
-                            fillColor: Colors.white,
-                            isDense: true,
-                            hintText: '搜索插件名称/描述',
-                            prefixIcon: const Icon(Icons.search),
-                            suffixIcon: _keyword.trim().isEmpty
-                                ? null
-                                : IconButton(
-                                    onPressed: _resetFilters,
-                                    icon: const Icon(Icons.clear),
-                                  ),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(18),
-                              borderSide: const BorderSide(
-                                color: Color(0xFFE7ECF5),
-                              ),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(18),
-                              borderSide: const BorderSide(
-                                color: Color(0xFFE7ECF5),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    SliverToBoxAdapter(child: _buildChannelSwitch()),
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            _buildAreaChip('all', '全部'),
-                            _buildAreaChip('recommend', '推荐'),
-                            _buildAreaChip('music', '音乐'),
-                            _buildAreaChip('video', '影视'),
-                            _buildAreaChip('comic', '漫画'),
-                            _buildAreaChip('novel', '小说'),
-                          ],
-                        ),
-                      ),
-                    ),
-                    SliverToBoxAdapter(child: _buildMetaCard()),
-                    SliverToBoxAdapter(child: _buildSignatureWarning()),
-                    if (visible.isEmpty)
-                      SliverFillRemaining(
-                        hasScrollBody: false,
-                        child: Center(
-                          child: MarketEmptyState(
-                            loading: _marketLoading,
-                            onReset: _resetFilters,
-                          ),
-                        ),
-                      )
-                    else
-                      SliverPadding(
-                        padding: const EdgeInsets.fromLTRB(16, 2, 16, 104),
-                        sliver: SliverList.separated(
-                          itemCount: visible.length,
-                          separatorBuilder: (_, _) =>
-                              const SizedBox(height: 10),
-                          itemBuilder: (_, index) => _buildCard(visible[index]),
-                        ),
-                      ),
-                  ],
+    return AppPageScaffold(
+      child: Column(
+        children: [
+          if (_marketLoading) const LinearProgressIndicator(minHeight: 2),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: () => _loadMarket(forceRefresh: true),
+              child: CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
                 ),
+                slivers: [
+                  SliverToBoxAdapter(child: _buildMarketHero(visible.length)),
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+                      child: TextField(
+                        controller: _searchController,
+                        onChanged: (v) => setState(() => _keyword = v),
+                        decoration: InputDecoration(
+                          filled: true,
+                          fillColor: Colors.white,
+                          isDense: true,
+                          hintText: '搜索插件名称/描述',
+                          prefixIcon: const Icon(Icons.search),
+                          suffixIcon: _keyword.trim().isEmpty
+                              ? null
+                              : IconButton(
+                                  onPressed: _resetFilters,
+                                  icon: const Icon(Icons.clear),
+                                ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(18),
+                            borderSide: const BorderSide(
+                              color: Color(0xFFE7ECF5),
+                            ),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(18),
+                            borderSide: const BorderSide(
+                              color: Color(0xFFE7ECF5),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  SliverToBoxAdapter(child: _buildChannelSwitch()),
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _buildAreaChip('all', '全部'),
+                          _buildAreaChip('recommend', '推荐'),
+                          _buildAreaChip('music', '音乐'),
+                          _buildAreaChip('video', '影视'),
+                          _buildAreaChip('comic', '漫画'),
+                          _buildAreaChip('novel', '小说'),
+                        ],
+                      ),
+                    ),
+                  ),
+                  SliverToBoxAdapter(child: _buildMetaCard()),
+                  SliverToBoxAdapter(child: _buildSignatureWarning()),
+                  if (visible.isEmpty)
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Center(
+                        child: MarketEmptyState(
+                          loading: _marketLoading,
+                          onReset: _resetFilters,
+                        ),
+                      ),
+                    )
+                  else
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 2, 16, 104),
+                      sliver: SliverList.separated(
+                        itemCount: visible.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 10),
+                        itemBuilder: (_, index) => _buildCard(visible[index]),
+                      ),
+                    ),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

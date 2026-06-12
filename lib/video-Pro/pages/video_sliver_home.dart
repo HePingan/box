@@ -10,6 +10,8 @@ import '../models/vod_item.dart';
 import '../video_module.dart';
 import '../widgets/history_quick_view.dart';
 import '../../design_system/app_tokens.dart';
+import '../../design_system/widgets/app_cards.dart';
+import '../../design_system/widgets/app_page_scaffold.dart';
 import 'aggregate_search_page.dart';
 import 'home/home_category_bar.dart';
 import 'home/home_source_sheet.dart';
@@ -238,155 +240,56 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
     required VideoSource? source,
     required String subtitle,
   }) {
-    final sourceTitle = source?.name ?? '影视宇宙';
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF080A1F), Color(0xFF6D28D9), Color(0xFFEA580C)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    final sourceTitle = source?.name ?? '影视内容中心';
+    return AppLightHeroCard(
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      eyebrow: '影视聚合首页',
+      title: '光影剧场',
+      subtitle: '$sourceTitle · $subtitle',
+      badge: 'VIDEO',
+      accentGradient: AppTokens.violetGradient,
+      leading: const _VideoLightIcon(icon: Icons.local_movies_rounded),
+      actions: [
+        GestureDetector(
+          onTap: () => _openCurrentSourceSearch(controller),
+          child: const AppStatusPill(
+            label: '当前源搜索',
+            icon: Icons.search_rounded,
+            color: AppTokens.primaryBlue,
+          ),
         ),
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF6D28D9).withValues(alpha: 0.30),
-            blurRadius: 26,
-            offset: const Offset(0, 14),
+        GestureDetector(
+          onTap: _openAggregateSearch,
+          child: const AppStatusPill(
+            label: '聚合搜索',
+            icon: Icons.public_rounded,
+            color: AppTokens.violet,
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(15),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.22),
-                  ),
-                ),
-                child: const Icon(
-                  Icons.local_movies_rounded,
-                  color: Colors.white,
-                ),
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.22),
-                  ),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.auto_awesome_rounded,
-                      size: 15,
-                      color: Color(0xFFFFE08A),
-                    ),
-                    SizedBox(width: 4),
-                    Text(
-                      '新版海报墙',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.7,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+        ),
+      ],
+      metrics: [
+        Expanded(
+          child: _VideoLightMetric(
+            value: '${controller.sources.length}',
+            label: '片源',
           ),
-          const SizedBox(height: 16),
-          const Text(
-            '光影剧场',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 28,
-              fontWeight: FontWeight.w900,
-              letterSpacing: -0.5,
-            ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _VideoLightMetric(
+            value: '${controller.videoList.length}',
+            label: '影片',
           ),
-          const SizedBox(height: 8),
-          Text(
-            '$sourceTitle · $subtitle',
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.86),
-              fontSize: 13,
-              height: 1.45,
-              fontWeight: FontWeight.w600,
-            ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _VideoLightMetric(
+            value: _currentCategoryLabel(controller),
+            label: '分类',
           ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: _VideoHeroMetric(
-                  value: '${controller.sources.length}',
-                  label: '片源',
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _VideoHeroMetric(
-                  value: '${controller.videoList.length}',
-                  label: '影片',
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _VideoHeroMetric(
-                  value: _currentCategoryLabel(controller),
-                  label: '当前分类',
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton.icon(
-                onPressed: () => _openCurrentSourceSearch(controller),
-                icon: const Icon(Icons.search_rounded),
-                label: const Text('当前源搜索'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFFFE08A),
-                  foregroundColor: const Color(0xFF111827),
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: _openAggregateSearch,
-                icon: const Icon(Icons.public_rounded),
-                label: const Text('聚合搜索'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: BorderSide(color: Colors.white.withValues(alpha: 0.55)),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -400,8 +303,8 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
             : '已接入 ${controller.sources.length} 个片源 · 绿色净化';
 
         return Container(
-          color: const Color(0xFFF4F7FB),
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          color: Colors.transparent,
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
           child: _buildHeaderCard(
             context,
             controller: controller,
@@ -577,9 +480,9 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
           (history) => history.historyList.isNotEmpty,
         );
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF4F7FB),
-      body: RefreshIndicator(
+    return AppPageScaffold(
+      safeTop: false,
+      child: RefreshIndicator(
         onRefresh: _reloadCurrentSource,
         child: Center(
           child: SizedBox(
@@ -633,6 +536,71 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
   }
 }
 
+class _VideoLightIcon extends StatelessWidget {
+  const _VideoLightIcon({required this.icon});
+
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF2F6FF),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE0E8F6)),
+      ),
+      child: Icon(icon, color: AppTokens.primaryBlue, size: 21),
+    );
+  }
+}
+
+class _VideoLightMetric extends StatelessWidget {
+  const _VideoLightMetric({required this.value, required this.label});
+
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F8FD),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
+        border: Border.all(color: const Color(0xFFE7ECF5)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Flexible(
+            child: Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTokens.textPrimary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppTokens.textSecondary,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _VideoQuickPill extends StatelessWidget {
   const _VideoQuickPill({
     required this.icon,
@@ -680,49 +648,6 @@ class _VideoQuickPill extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _VideoHeroMetric extends StatelessWidget {
-  const _VideoHeroMetric({required this.value, required this.label});
-
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.20)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.72),
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
       ),
     );
   }
