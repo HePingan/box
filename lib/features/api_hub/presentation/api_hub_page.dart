@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:box/design_system/app_tokens.dart';
+import 'package:box/design_system/widgets/app_bottom_sheet.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 
@@ -1756,90 +1757,153 @@ class _ApiHubPageState extends State<ApiHubPage> {
   }
 
   void _showDirectoryDetail(PublicApiDirectoryEntry entry) {
-    showModalBottomSheet<void>(
+    showAppModalBottomSheet<void>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+      title: entry.name,
+      subtitle: '${entry.category} · ${entry.method} · ${entry.auth}',
       builder: (context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 16, 18, 22),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AppSectionHeader(
-                  title: entry.name,
-                  subtitle: entry.category,
-                  icon: Icons.api_rounded,
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    AppStatusPill(
-                      label: entry.isIntegrated ? '已接入' : '待接入',
-                      icon: entry.isIntegrated
-                          ? Icons.check_circle_rounded
-                          : Icons.add_task_rounded,
-                      color: entry.isIntegrated
-                          ? AppTokens.emerald
-                          : AppTokens.orange,
+        return SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  AppStatusPill(
+                    label: entry.isIntegrated ? '已接入' : '待接入',
+                    icon: entry.isIntegrated
+                        ? Icons.check_circle_rounded
+                        : Icons.add_task_rounded,
+                    color: entry.isIntegrated
+                        ? AppTokens.emerald
+                        : AppTokens.orange,
+                  ),
+                  if (entry.isRecommended)
+                    const AppStatusPill(
+                      label: '推荐接入',
+                      icon: Icons.star_rounded,
+                      color: AppTokens.violet,
                     ),
-                    if (entry.isRecommended)
-                      const AppStatusPill(
-                        label: '推荐接入',
-                        icon: Icons.star_rounded,
-                        color: AppTokens.violet,
-                      ),
-                    AppStatusPill(
-                      label: entry.latencyMs == null
-                          ? '耗时未知'
-                          : '${entry.latencyMs}ms',
-                      icon: Icons.speed_rounded,
-                      color: AppTokens.primaryBlue,
-                    ),
-                    AppStatusPill(
-                      label: 'HTTP ${entry.httpStatus ?? '--'}',
-                      icon: Icons.http_rounded,
-                      color: AppTokens.emerald,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(entry.description),
-                const SizedBox(height: 12),
-                SelectableText(
-                  entry.url,
-                  style: const TextStyle(
+                  AppStatusPill(
+                    label: entry.latencyMs == null
+                        ? '耗时未知'
+                        : '${entry.latencyMs}ms',
+                    icon: Icons.speed_rounded,
                     color: AppTokens.primaryBlue,
+                  ),
+                  AppStatusPill(
+                    label: 'HTTP ${entry.httpStatus ?? '--'}',
+                    icon: Icons.http_rounded,
+                    color: AppTokens.emerald,
+                  ),
+                  AppStatusPill(
+                    label: entry.https ? 'HTTPS' : 'HTTP',
+                    icon: Icons.lock_open_rounded,
+                    color: entry.https ? AppTokens.emerald : AppTokens.orange,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              _DirectoryDetailBlock(
+                title: '用途说明',
+                child: Text(
+                  entry.description,
+                  style: const TextStyle(
+                    color: AppTokens.textPrimary,
+                    height: 1.45,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: () => _copyText(entry.url, ' API URL'),
-                  icon: const Icon(Icons.copy_rounded),
-                  label: const Text('复制 URL'),
+              ),
+              const SizedBox(height: 10),
+              _DirectoryDetailBlock(
+                title: '接口地址',
+                child: SelectableText(
+                  entry.url,
+                  style: const TextStyle(
+                    color: AppTokens.primaryBlue,
+                    fontWeight: FontWeight.w800,
+                    height: 1.35,
+                  ),
                 ),
-                const SizedBox(height: 14),
-                Text(
-                  '接入建议：${entry.isIntegrated
-                      ? '已经作为工具接入，可继续打磨交互。'
+              ),
+              const SizedBox(height: 10),
+              _DirectoryDetailBlock(
+                title: '接入建议',
+                child: Text(
+                  entry.isIntegrated
+                      ? '已经作为 Box 工具接入，可继续打磨交互和错误状态。'
                       : entry.isRecommended
                       ? '适合作为下一批轻量工具接入，建议先验证具体接口文档和返回结构。'
-                      : '暂时保留为目录展示，后续按需求接入。'}',
-                  style: const TextStyle(color: AppTokens.textSecondary),
+                      : '暂时保留为目录展示，后续按具体使用场景再接入。',
+                  style: const TextStyle(
+                    color: AppTokens.textSecondary,
+                    height: 1.45,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.icon(
+                    onPressed: () => _copyText(entry.url, ' API URL'),
+                    icon: const Icon(Icons.copy_rounded),
+                    label: const Text('复制 URL'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _applyQrPreset(entry.url, size: '260x260');
+                    },
+                    icon: const Icon(Icons.qr_code_2_rounded),
+                    label: const Text('转二维码'),
+                  ),
+                ],
+              ),
+            ],
           ),
         );
       },
+    );
+  }
+}
+
+class _DirectoryDetailBlock extends StatelessWidget {
+  const _DirectoryDetailBlock({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE7ECF5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: AppTokens.textPrimary,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          child,
+        ],
+      ),
     );
   }
 }

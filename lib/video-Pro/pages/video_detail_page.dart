@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'package:box/design_system/widgets/app_page_scaffold.dart';
+
 import '../controller/video_detail_controller.dart';
 import '../models/video_source.dart';
 import '../widgets/video_play_container.dart';
@@ -93,9 +95,8 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
   Widget build(BuildContext context) {
     final controller = context.watch<VideoDetailController>();
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF4F7FB),
-      body: controller.isLoading
+    return AppPageScaffold(
+      child: controller.isLoading
           ? const Center(child: CircularProgressIndicator())
           : (controller.fullDetail == null
                 ? _buildErrorView(controller)
