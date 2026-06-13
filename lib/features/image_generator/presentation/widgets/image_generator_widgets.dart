@@ -4,6 +4,7 @@ import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
 
 import '../../domain/image_generator_models.dart';
+import '../../domain/image_generator_preflight.dart';
 import '../../domain/image_generator_presets.dart';
 
 class _SurfaceCard extends StatelessWidget {
@@ -496,6 +497,165 @@ class ImageGeneratorReferenceCard extends StatelessWidget {
                 style: TextStyle(color: AppTokens.textSecondary),
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+class ImageGeneratorRequestPreviewCard extends StatelessWidget {
+  const ImageGeneratorRequestPreviewCard({
+    super.key,
+    required this.endpoint,
+    required this.requestJson,
+    required this.preflightItems,
+    required this.onCopyRequestJson,
+  });
+
+  final String endpoint;
+  final String requestJson;
+  final List<ImageGeneratorPreflightItem> preflightItems;
+  final VoidCallback onCopyRequestJson;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SurfaceCard(
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: EdgeInsets.zero,
+        initiallyExpanded: false,
+        leading: const CircleAvatar(
+          radius: 18,
+          backgroundColor: Color(0xFFEDE9FE),
+          child: Icon(
+            Icons.fact_check_outlined,
+            color: AppTokens.violet,
+            size: 19,
+          ),
+        ),
+        title: const Text(
+          '请求预览 / 预检',
+          style: TextStyle(
+            fontWeight: FontWeight.w900,
+            color: AppTokens.textPrimary,
+          ),
+        ),
+        subtitle: const Text('本地静态检查，不真实请求接口，不会消耗额度'),
+        children: [
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.tonalIcon(
+                  onPressed: onCopyRequestJson,
+                  icon: const Icon(Icons.copy_all_rounded, size: 18),
+                  label: const Text('复制请求 JSON'),
+                ),
+                const AppStatusPill(
+                  label: 'Key 已隐藏',
+                  icon: Icons.visibility_off_outlined,
+                  color: AppTokens.success,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          _CodePreview(label: 'Endpoint', content: endpoint),
+          const SizedBox(height: 10),
+          const _CodePreview(label: 'Authorization', content: 'Bearer ****'),
+          const SizedBox(height: 10),
+          _CodePreview(label: 'JSON Body', content: requestJson, maxLines: 12),
+          const SizedBox(height: 12),
+          ...preflightItems.map(_PreflightRow.new),
+        ],
+      ),
+    );
+  }
+}
+
+class _CodePreview extends StatelessWidget {
+  const _CodePreview({
+    required this.label,
+    required this.content,
+    this.maxLines = 3,
+  });
+
+  final String label;
+  final String content;
+  final int maxLines;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: AppTokens.textSecondary,
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F172A),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: SelectableText(
+            content,
+            maxLines: maxLines,
+            style: const TextStyle(
+              color: Color(0xFFE2E8F0),
+              fontFamily: 'monospace',
+              fontSize: 12,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PreflightRow extends StatelessWidget {
+  const _PreflightRow(this.item);
+
+  final ImageGeneratorPreflightItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = switch (item.level) {
+      ImageGeneratorPreflightLevel.ok => Icons.check_circle_rounded,
+      ImageGeneratorPreflightLevel.warning => Icons.warning_amber_rounded,
+      ImageGeneratorPreflightLevel.error => Icons.error_rounded,
+    };
+    final color = switch (item.level) {
+      ImageGeneratorPreflightLevel.ok => AppTokens.success,
+      ImageGeneratorPreflightLevel.warning => AppTokens.warning,
+      ImageGeneratorPreflightLevel.error => Colors.red,
+    };
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              item.message,
+              style: const TextStyle(
+                color: AppTokens.textPrimary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
         ],
       ),
     );

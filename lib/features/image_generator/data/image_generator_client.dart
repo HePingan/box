@@ -11,32 +11,12 @@ class ImageGeneratorClient {
   final http.Client? _httpClient;
 
   Future<ImageGenerationResponse> generate(ImageGenerationParams params) async {
-    final base = params.baseUrl.trim().isEmpty
-        ? 'https://api.openai.com/v1'
-        : params.baseUrl.trim();
-    final endpoint = Uri.parse(
-      '${base.replaceAll(RegExp(r'/+$'), '')}/images/generations',
-    );
+    final endpoint = Uri.parse(params.endpoint);
     final client = _httpClient ?? http.Client();
     final closeClient = _httpClient == null;
 
     try {
-      final body = <String, dynamic>{
-        'model': params.model.trim().isEmpty
-            ? 'gpt-image-1'
-            : params.model.trim(),
-        'prompt': params.effectivePrompt,
-        'size': params.size,
-        'quality': params.quality,
-        'n': params.count.clamp(1, 4),
-      };
-      if (params.outputFormat.trim().isNotEmpty) {
-        body['output_format'] = params.outputFormat.trim();
-      }
-      final referenceUrl = params.referenceImageUrl.trim();
-      if (params.referenceImageField.shouldSend && referenceUrl.isNotEmpty) {
-        body[params.referenceImageField.wireName] = referenceUrl;
-      }
+      final body = params.toRequestBody();
 
       final response = await client
           .post(

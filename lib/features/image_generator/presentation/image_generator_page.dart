@@ -8,6 +8,7 @@ import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import '../data/image_generator_client.dart';
 import '../data/image_generator_store.dart';
 import '../domain/image_generator_models.dart';
+import '../domain/image_generator_preflight.dart';
 import '../domain/image_generator_presets.dart';
 import 'widgets/image_generator_widgets.dart';
 
@@ -109,6 +110,26 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       outputFormat: _outputFormat,
       count: _count,
     );
+  }
+
+  ImageGenerationParams _currentParams() {
+    return ImageGenerationParams(
+      baseUrl: _baseUrlController.text.trim(),
+      apiKey: _apiKeyController.text.trim(),
+      model: _modelController.text.trim(),
+      prompt: _promptController.text.trim(),
+      negativePrompt: _negativeController.text.trim(),
+      referenceImageUrl: _referenceImageController.text.trim(),
+      referenceImageField: _referenceImageField,
+      size: _size,
+      quality: _quality,
+      outputFormat: _outputFormat,
+      count: _count,
+    );
+  }
+
+  List<ImageGeneratorPreflightItem> _preflightItems() {
+    return buildImageGeneratorPreflight(_currentParams());
   }
 
   void _scheduleSaveDraft() {
@@ -254,21 +275,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     });
 
     try {
-      final response = await _client.generate(
-        ImageGenerationParams(
-          baseUrl: _baseUrlController.text,
-          apiKey: apiKey,
-          model: _modelController.text,
-          prompt: prompt,
-          negativePrompt: _negativeController.text,
-          referenceImageUrl: referenceUrl,
-          referenceImageField: _referenceImageField,
-          size: _size,
-          quality: _quality,
-          outputFormat: _outputFormat,
-          count: _count,
-        ),
-      );
+      final response = await _client.generate(_currentParams());
       final history = await _store.addHistory(
         ImageGenerationHistoryItem(
           prompt: prompt,
@@ -354,6 +361,14 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
               _referenceImageController.clear();
               _referenceImageField = ImageReferencePayloadField.none;
             }),
+          ),
+          const SizedBox(height: 12),
+          ImageGeneratorRequestPreviewCard(
+            endpoint: _currentParams().endpoint,
+            requestJson: _currentParams().prettyRequestJson,
+            preflightItems: _preflightItems(),
+            onCopyRequestJson: () =>
+                _copyText(_currentParams().prettyRequestJson),
           ),
           const SizedBox(height: 12),
           ImageGeneratorResultCard(

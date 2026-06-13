@@ -32,6 +32,38 @@ class ImageGenerationParams {
     if (negative.isEmpty) return prompt.trim();
     return '${prompt.trim()}\n\nNegative prompt: $negative';
   }
+
+  Map<String, dynamic> toRequestBody() {
+    final body = <String, dynamic>{
+      'model': model.trim().isEmpty ? 'gpt-image-1' : model.trim(),
+      'prompt': effectivePrompt,
+      'size': size,
+      'quality': quality,
+      'n': count.clamp(1, 4),
+    };
+    if (outputFormat.trim().isNotEmpty) {
+      body['output_format'] = outputFormat.trim();
+    }
+    final referenceUrl = referenceImageUrl.trim();
+    if (referenceImageField.shouldSend && referenceUrl.isNotEmpty) {
+      body[referenceImageField.wireName] = referenceUrl;
+    }
+    return body;
+  }
+
+  String get normalizedBaseUrl {
+    final base = baseUrl.trim().isEmpty
+        ? 'https://api.openai.com/v1'
+        : baseUrl.trim();
+    return base.replaceAll(RegExp(r'/+$'), '');
+  }
+
+  String get endpoint => '$normalizedBaseUrl/images/generations';
+
+  String get prettyRequestJson {
+    const encoder = JsonEncoder.withIndent('  ');
+    return encoder.convert(toRequestBody());
+  }
 }
 
 enum ImageReferencePayloadField {
