@@ -81,6 +81,8 @@ class _PluginTabState extends State<PluginTab>
         return HomePluginActionType.openNovelList;
       case 'openVideoList':
         return HomePluginActionType.openVideoList;
+      case 'openImageGenerator':
+        return HomePluginActionType.openImageGenerator;
       case 'toast':
       default:
         return HomePluginActionType.toast;

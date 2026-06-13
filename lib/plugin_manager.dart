@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'daily_news_page.dart';
+import 'features/image_generator/presentation/image_generator_page.dart';
 import 'novel/core/cache_store.dart';
 
 import 'novel/pages/novel_list_page.dart';
@@ -74,7 +75,13 @@ extension HomePluginAreaX on HomePluginArea {
   }
 }
 
-enum HomePluginActionType { toast, openDailyNews, openNovelList, openVideoList }
+enum HomePluginActionType {
+  toast,
+  openDailyNews,
+  openNovelList,
+  openVideoList,
+  openImageGenerator,
+}
 
 extension HomePluginActionTypeX on HomePluginActionType {
   String get label {
@@ -87,6 +94,8 @@ extension HomePluginActionTypeX on HomePluginActionType {
         return '打开小说列表';
       case HomePluginActionType.openVideoList:
         return '打开影视列表';
+      case HomePluginActionType.openImageGenerator:
+        return '打开 AI 生图';
     }
   }
 }
@@ -656,6 +665,12 @@ class HomePluginHost {
             await Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => VideoListPage()),
+            );
+            return;
+          case HomePluginActionType.openImageGenerator:
+            await Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ImageGeneratorPage()),
             );
             return;
         }

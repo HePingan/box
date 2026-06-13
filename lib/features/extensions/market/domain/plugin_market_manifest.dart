@@ -74,6 +74,9 @@ class _MarketIconRegistry {
     'music_note_outlined': Icons.music_note_outlined,
     'play_circle_outline': Icons.play_circle_outline,
     'image_outlined': Icons.image_outlined,
+    'auto_awesome_outlined': Icons.auto_awesome_outlined,
+    'auto_fix_high_outlined': Icons.auto_fix_high_outlined,
+    'palette_outlined': Icons.palette_outlined,
     'local_fire_department_outlined': Icons.local_fire_department_outlined,
   };
 
@@ -97,6 +100,7 @@ const Set<String> _allowedActionCodes = {
   'openDailyNews',
   'openNovelList',
   'openVideoList',
+  'openImageGenerator',
 };
 
 String _normalizeAreaCode(String areaCode) {
@@ -298,6 +302,17 @@ class MarketPluginTemplate {
       icon: Icons.newspaper_outlined,
       color: const Color(0xFF6A5AE0),
       sort: 10,
+    ),
+    MarketPluginTemplate(
+      id: 'market_image_generator',
+      title: 'AI 生图工坊',
+      subtitle: 'Prompt 生成图片，支持 OpenAI 兼容接口',
+      areaCode: 'recommend',
+      actionCode: 'openImageGenerator',
+      payload: '',
+      icon: Icons.auto_awesome_outlined,
+      color: const Color(0xFF8B5CF6),
+      sort: 12,
     ),
     MarketPluginTemplate(
       id: 'market_quick_note',

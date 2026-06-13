@@ -224,6 +224,8 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
         return '打开小说';
       case 'openVideoList':
         return '打开影视';
+      case 'openImageGenerator':
+        return '打开生图';
       default:
         return code;
     }
