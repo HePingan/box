@@ -89,6 +89,55 @@ class _AdminPageState extends State<AdminPage> {
     _showSnack('已更新 ${updated.username} 的额度');
   }
 
+  Future<void> _createAccount(
+    String username,
+    String password,
+    String role,
+    int dailyLimit,
+    int remaining,
+  ) async {
+    final session = _session;
+    if (session == null) return;
+    final created = await _client.createAccount(
+      serverUrl: session.serverUrl,
+      token: session.token,
+      username: username,
+      password: password,
+      role: role,
+      dailyLimit: dailyLimit,
+      remaining: remaining,
+    );
+    setState(() {
+      _users = [..._users, created]
+        ..sort((a, b) => a.username.compareTo(b.username));
+    });
+    _showSnack('已创建用户 ${created.username}');
+  }
+
+  Future<void> _updateAccount(
+    BoxAdminUserQuota user,
+    String role,
+    String status,
+    String password,
+  ) async {
+    final session = _session;
+    if (session == null) return;
+    final updated = await _client.updateAccount(
+      serverUrl: session.serverUrl,
+      token: session.token,
+      user: user,
+      role: role,
+      status: status,
+      password: password.trim().isEmpty ? null : password.trim(),
+    );
+    setState(() {
+      _users = _users
+          .map((item) => item.id == updated.id ? updated : item)
+          .toList(growable: false);
+    });
+    _showSnack('已更新 ${updated.username} 的账号设置');
+  }
+
   void _openQuotaSheet(BoxAdminUserQuota user) {
     showModalBottomSheet<void>(
       context: context,
@@ -98,6 +147,28 @@ class _AdminPageState extends State<AdminPage> {
         user: user,
         onSave: (dailyLimit, remaining) =>
             _updateQuota(user, dailyLimit, remaining),
+      ),
+    );
+  }
+
+  void _openCreateSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => CreateAccountSheet(onSave: _createAccount),
+    );
+  }
+
+  void _openAccountSheet(BoxAdminUserQuota user) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => AccountEditSheet(
+        user: user,
+        onSave: (role, status, password) =>
+            _updateAccount(user, role, status, password),
       ),
     );
   }
@@ -176,6 +247,17 @@ class _AdminPageState extends State<AdminPage> {
                   AdminErrorBanner(message: _error!),
                   const SizedBox(height: 12),
                 ],
+                if (session?.user.isAdmin == true) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _loading ? null : _openCreateSheet,
+                      icon: const Icon(Icons.person_add_alt_1_rounded),
+                      label: const Text('创建用户'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 if (_loading && _users.isEmpty)
                   const Center(
                     child: Padding(
@@ -205,6 +287,7 @@ class _AdminPageState extends State<AdminPage> {
                         user: user,
                         loading: _loading,
                         onEditQuota: () => _openQuotaSheet(user),
+                        onEditAccount: () => _openAccountSheet(user),
                       ),
                       const SizedBox(height: 12),
                     ],

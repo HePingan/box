@@ -48,6 +48,67 @@ class BoxAdminClient {
     );
   }
 
+  Future<BoxAdminUserQuota> createAccount({
+    required String serverUrl,
+    required String token,
+    required String username,
+    required String password,
+    required String role,
+    required int dailyLimit,
+    required int remaining,
+  }) async {
+    final response = await _httpClient.post(
+      _uri(serverUrl, '/admin/accounts'),
+      headers: _headers(token, json: true),
+      body: jsonEncode({
+        'username': username,
+        'password': password,
+        'role': role,
+        'dailyLimit': dailyLimit,
+        'remaining': remaining,
+      }),
+    );
+    return _parseUserWithQuota(_decodeResponse(response));
+  }
+
+  Future<BoxAdminUserQuota> updateAccount({
+    required String serverUrl,
+    required String token,
+    required BoxAdminUserQuota user,
+    String? role,
+    String? status,
+    String? password,
+  }) async {
+    final body = <String, dynamic>{};
+    if (role != null) body['role'] = role;
+    if (status != null) body['status'] = status;
+    if (password != null && password.isNotEmpty) body['password'] = password;
+    final response = await _httpClient.patch(
+      _uri(serverUrl, '/admin/accounts/${Uri.encodeComponent(user.id)}'),
+      headers: _headers(token, json: true),
+      body: jsonEncode(body),
+    );
+    final decoded = _decodeResponse(response);
+    return user.copyWith(
+      username: decoded['username']?.toString() ?? user.username,
+      role: decoded['role']?.toString() ?? user.role,
+      status: decoded['status']?.toString() ?? user.status,
+    );
+  }
+
+  static BoxAdminUserQuota _parseUserWithQuota(Map<String, dynamic> decoded) {
+    final user = decoded['user'];
+    final quota = decoded['quota'];
+    if (user is Map) {
+      return BoxAdminUserQuota.fromAdminMaps(
+        id: user['id']?.toString() ?? '',
+        account: Map<String, dynamic>.from(user),
+        quota: quota is Map ? Map<String, dynamic>.from(quota) : const {},
+      );
+    }
+    return BoxAdminUserQuota.fromFlatJson(decoded);
+  }
+
   static Uri _uri(String serverUrl, String path) =>
       Uri.parse('${BoxAccountClient.normalizeServerUrl(serverUrl)}$path');
 

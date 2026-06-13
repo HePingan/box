@@ -53,7 +53,7 @@ Flutter Web 调试需要后端允许 CORS：
 
 ```http
 Access-Control-Allow-Origin: *
-Access-Control-Allow-Methods: GET, POST, OPTIONS
+Access-Control-Allow-Methods: GET, POST, PATCH, OPTIONS
 Access-Control-Allow-Headers: Content-Type, Authorization
 ```
 
@@ -431,6 +431,54 @@ X-Admin-Token: <IMAGE_ADMIN_TOKEN>
 ```http
 GET /admin/image/users
 ```
+
+创建用户：
+
+```http
+POST /admin/accounts
+Content-Type: application/json
+Authorization: Bearer <admin...ken>
+```
+
+```json
+{
+  "username": "user001",
+  "password": "initial-pass",
+  "role": "user",
+  "dailyLimit": 20,
+  "remaining": 20
+}
+```
+
+约束：
+
+- `username` 必填，大小写不允许重复。
+- `password` 必填，长度至少 6 位，服务端只保存 salted sha256 hash。
+- `role` 只允许 `user` / `admin`。
+- 创建后自动初始化 quota。
+
+更新用户角色/状态/密码：
+
+```http
+PATCH /admin/accounts/u_xxx
+Content-Type: application/json
+Authorization: Bearer <admin...ken>
+```
+
+```json
+{
+  "role": "user",
+  "status": "disabled",
+  "password": "new-pass"
+}
+```
+
+约束：
+
+- 字段均可选；不传或传空密码表示不修改密码。
+- `status` 只允许 `normal` / `disabled`。
+- 不允许降级或禁用最后一个正常管理员账号。
+- 禁用账号会清理该账号已有 session。
 
 调整用户额度：
 

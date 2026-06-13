@@ -172,6 +172,17 @@ class PlatformQuotaServer {
       await jsonResponse(request.response, HttpStatus.ok, store.toAdminJson());
       return;
     }
+    if (request.method == 'POST' && path == '/admin/accounts') {
+      if (!await requireAdmin(request)) return;
+      await createAccount(request);
+      return;
+    }
+    final accountMatch = RegExp(r'^/admin/accounts/([^/]+)$').firstMatch(path);
+    if (request.method == 'PATCH' && accountMatch != null) {
+      if (!await requireAdmin(request)) return;
+      await updateAccount(request, Uri.decodeComponent(accountMatch.group(1)!));
+      return;
+    }
     final quotaMatch = RegExp(
       r'^/admin/image/users/([^/]+)/quota$',
     ).firstMatch(path);
@@ -306,6 +317,125 @@ class PlatformQuotaServer {
     );
     await store.save();
     await jsonText(request.response, HttpStatus.ok, upstream.text);
+  }
+
+  Future<void> createAccount(HttpRequest request) async {
+    final decoded = await readJsonObject(request);
+    if (decoded == null) return;
+    final username = decoded['username']?.toString().trim() ?? '';
+    final password = decoded['password']?.toString() ?? '';
+    final roleText = decoded['role']?.toString().trim() ?? 'user';
+    if (username.isEmpty) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '用户名不能为空'},
+      });
+      return;
+    }
+    if (password.length < 6) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '密码长度至少 6 位'},
+      });
+      return;
+    }
+    final role = parseRole(roleText);
+    if (role == null) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '角色只支持 user 或 admin'},
+      });
+      return;
+    }
+    if (store.accountByUsername(username) != null) {
+      await jsonResponse(request.response, HttpStatus.conflict, {
+        'error': {'message': '用户名已存在'},
+      });
+      return;
+    }
+    final id = store.nextAccountId();
+    final account = Account(
+      id: id,
+      username: username,
+      passwordHash: hashPassword(password),
+      role: role,
+      status: 'normal',
+      createdAt: DateTime.now(),
+      lastLoginAt: null,
+    );
+    store.accounts[id] = account;
+    final dailyLimit = asInt(decoded['dailyLimit'], config.defaultQuota);
+    final remaining = asInt(decoded['remaining'], dailyLimit);
+    store.quotas[id] = UserQuota(
+      remaining: remaining < 0 ? 0 : remaining,
+      dailyLimit: dailyLimit < 0 ? 0 : dailyLimit,
+      usedToday: 0,
+      totalLimit: dailyLimit < 0 ? 0 : dailyLimit,
+      status: 'normal',
+      message: '平台额度可用',
+    );
+    await store.save();
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'user': account.toPublicJson(),
+      'quota': store.quota(id).toQuotaJson(),
+    });
+  }
+
+  Future<void> updateAccount(HttpRequest request, String userId) async {
+    final account = store.accounts[userId];
+    if (account == null) {
+      await jsonResponse(request.response, HttpStatus.notFound, {
+        'error': {'message': '用户不存在'},
+      });
+      return;
+    }
+    final decoded = await readJsonObject(request);
+    if (decoded == null) return;
+
+    var nextRole = account.role;
+    var nextStatus = account.status;
+    if (decoded.containsKey('role')) {
+      final role = parseRole(decoded['role']?.toString().trim() ?? '');
+      if (role == null) {
+        await jsonResponse(request.response, HttpStatus.badRequest, {
+          'error': {'message': '角色只支持 user 或 admin'},
+        });
+        return;
+      }
+      nextRole = role;
+    }
+    if (decoded.containsKey('status')) {
+      final status = decoded['status']?.toString().trim() ?? '';
+      if (status != 'normal' && status != 'disabled') {
+        await jsonResponse(request.response, HttpStatus.badRequest, {
+          'error': {'message': '状态只支持 normal 或 disabled'},
+        });
+        return;
+      }
+      nextStatus = status;
+    }
+    if ((nextRole != AccountRole.admin || nextStatus != 'normal') &&
+        store.isLastActiveAdmin(userId)) {
+      await jsonResponse(request.response, HttpStatus.conflict, {
+        'error': {'message': '不能降级或禁用最后一个管理员。'},
+      });
+      return;
+    }
+    if (decoded.containsKey('password')) {
+      final password = decoded['password']?.toString() ?? '';
+      if (password.isNotEmpty && password.length < 6) {
+        await jsonResponse(request.response, HttpStatus.badRequest, {
+          'error': {'message': '密码长度至少 6 位'},
+        });
+        return;
+      }
+      if (password.isNotEmpty) account.passwordHash = hashPassword(password);
+    }
+
+    account.role = nextRole;
+    account.status = nextStatus;
+    if (nextStatus != 'normal') {
+      store.sessions.removeWhere((_, s) => s.userId == userId);
+    }
+    await store.save();
+    await jsonResponse(request.response, HttpStatus.ok, account.toPublicJson());
   }
 
   Future<void> setQuota(HttpRequest request, String userId) async {
@@ -566,6 +696,22 @@ class StateStore {
   UserQuota quota(String id) =>
       quotas.putIfAbsent(id, () => UserQuota.defaultFor(defaultQuota));
 
+  String nextAccountId() {
+    String id;
+    do {
+      id = 'u_${randomBase64(9)}';
+    } while (accounts.containsKey(id));
+    return id;
+  }
+
+  bool isLastActiveAdmin(String id) {
+    final activeAdmins = accounts.values.where(
+      (account) =>
+          account.role == AccountRole.admin && account.status == 'normal',
+    );
+    return activeAdmins.length == 1 && activeAdmins.first.id == id;
+  }
+
   void addUsage(UsageRecord record) {
     usage.insert(0, record);
     if (usage.length > 200) usage.removeRange(200, usage.length);
@@ -629,8 +775,8 @@ class Account {
 
   final String id;
   final String username;
-  final String passwordHash;
-  final AccountRole role;
+  String passwordHash;
+  AccountRole role;
   String status;
   final DateTime createdAt;
   DateTime? lastLoginAt;
@@ -818,6 +964,12 @@ class UpstreamResponse {
   }
 }
 
+AccountRole? parseRole(String value) {
+  if (value == 'user') return AccountRole.user;
+  if (value == 'admin') return AccountRole.admin;
+  return null;
+}
+
 String? bearerToken(HttpRequest request) {
   final auth = request.headers.value(HttpHeaders.authorizationHeader) ?? '';
   final match = RegExp(
@@ -896,7 +1048,10 @@ int? asNullableInt(dynamic value) {
 
 void cors(HttpResponse response) {
   response.headers.set('Access-Control-Allow-Origin', '*');
-  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  response.headers.set(
+    'Access-Control-Allow-Methods',
+    'GET, POST, PATCH, OPTIONS',
+  );
   response.headers.set(
     'Access-Control-Allow-Headers',
     'Content-Type, Authorization, X-User-Id, X-Admin-Token',
