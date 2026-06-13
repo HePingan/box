@@ -11,6 +11,8 @@ import '../data/public_api_client.dart';
 import '../data/public_api_index_loader.dart';
 import '../domain/public_api_models.dart';
 
+import 'widgets/api_hub_widgets.dart';
+
 class ApiHubPage extends StatefulWidget {
   const ApiHubPage({super.key, this.initialTool});
 
@@ -453,15 +455,15 @@ class _ApiHubPageState extends State<ApiHubPage> {
       ],
       metrics: const [
         Expanded(
-          child: _ApiMetric(value: '12', label: '保留能力'),
+          child: ApiHubMetric(value: '12', label: '保留能力'),
         ),
         SizedBox(width: 8),
         Expanded(
-          child: _ApiMetric(value: '5', label: '在线可测'),
+          child: ApiHubMetric(value: '5', label: '在线可测'),
         ),
         SizedBox(width: 8),
         Expanded(
-          child: _ApiMetric(value: 'Web', label: '可预览'),
+          child: ApiHubMetric(value: 'Web', label: '可预览'),
         ),
       ],
     );
@@ -506,7 +508,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
                 final selected = _activeTool == id;
                 return Padding(
                   padding: const EdgeInsets.only(right: 8),
-                  child: _ApiQuickChip(
+                  child: ApiHubQuickChip(
                     tool: tool,
                     selected: selected,
                     onTap: () => _switchTool(id),
@@ -591,7 +593,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
         spacing: 10,
         runSpacing: 10,
         children: tools.map((tool) {
-          return _ApiToolCard(
+          return ApiHubToolCard(
             tool: tool,
             selected: _activeTool == tool.id,
             onTap: () => _switchTool(tool.id),
@@ -603,7 +605,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
 
   Widget _buildActivePanel() {
     if (_error != null) {
-      return _ApiPanel(
+      return ApiHubPanel(
         title: '加载失败',
         subtitle: _error!,
         icon: Icons.error_outline_rounded,
@@ -616,7 +618,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
     }
 
     if (_loading) {
-      return const _ApiPanel(
+      return const ApiHubPanel(
         title: '正在请求公开 API',
         subtitle: '首次加载可能受网络或免费接口限流影响',
         icon: Icons.cloud_sync_rounded,
@@ -660,7 +662,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
 
   Widget _buildCurrencyPanel() {
     final codes = const ['USD', 'CNY', 'EUR', 'JPY', 'HKD', 'GBP'];
-    return _ApiPanel(
+    return ApiHubPanel(
       title: 'Frankfurter 汇率换算',
       subtitle: '免费外汇接口，适合工具页汇率能力',
       icon: Icons.currency_exchange_rounded,
@@ -678,13 +680,13 @@ class _ApiHubPageState extends State<ApiHubPage> {
                 ),
               ),
               const SizedBox(width: 8),
-              _CurrencyDropDown(
+              ApiHubCurrencyDropDown(
                 value: _from,
                 codes: codes,
                 onChanged: (v) => setState(() => _from = v),
               ),
               const SizedBox(width: 8),
-              _CurrencyDropDown(
+              ApiHubCurrencyDropDown(
                 value: _to,
                 codes: codes,
                 onChanged: (v) => setState(() => _to = v),
@@ -734,7 +736,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
       return date != null &&
           !date.isBefore(DateTime(now.year, now.month, now.day));
     }).toList();
-    return _ApiPanel(
+    return ApiHubPanel(
       title: 'Nager.Date 节假日',
       subtitle: '${now.year} 年中国公开节假日，首页工作台可复用',
       icon: Icons.event_available_rounded,
@@ -768,7 +770,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
 
   Widget _buildWeatherPanel() {
     final weather = _weather;
-    return _ApiPanel(
+    return ApiHubPanel(
       title: 'Open-Meteo 天气预报',
       subtitle: '输入经纬度获取 3 天天气，默认上海',
       icon: Icons.wb_cloudy_rounded,
@@ -828,7 +830,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
               ],
             ),
             const SizedBox(height: 8),
-            ...weather.daily.map(_WeatherDailyTile.new),
+            ...weather.daily.map(ApiHubWeatherDailyTile.new),
           ],
         ],
       ),
@@ -837,7 +839,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
 
   Widget _buildIpPanel() {
     final info = _ipInfo;
-    return _ApiPanel(
+    return ApiHubPanel(
       title: 'IPinfo 当前公网 IP',
       subtitle: '查询当前网络出口 IP、地区、运营商/组织信息',
       icon: Icons.public_rounded,
@@ -934,7 +936,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
 
   Widget _buildShortLinkPanel() {
     final result = _shortLink;
-    return _ApiPanel(
+    return ApiHubPanel(
       title: 'CleanURI 短链接生成',
       subtitle: '把长链接压缩为短链，再一键转二维码，适合手机分享 Web/APK/API 地址',
       icon: Icons.link_rounded,
@@ -968,7 +970,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
             ],
           ),
           const SizedBox(height: 10),
-          _SearchRow(
+          ApiHubSearchRow(
             controller: _shortLinkController,
             label: '长链接，例如 https://example.com/path',
             buttonLabel: '生成短链',
@@ -1045,7 +1047,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
 
   Widget _buildQrPanel() {
     final result = _qrCode;
-    return _ApiPanel(
+    return ApiHubPanel(
       title: 'QR Server 二维码生成',
       subtitle: '把文本、链接或 APK 下载地址生成二维码，适合手机扫码测试',
       icon: Icons.qr_code_2_rounded,
@@ -1172,7 +1174,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
 
   Widget _buildAvatarPanel() {
     final result = _avatar;
-    return _ApiPanel(
+    return ApiHubPanel(
       title: 'UI Avatars 头像生成',
       subtitle: '国内网络实测 1 秒左右可用，按名称生成 PNG 头像',
       icon: Icons.account_circle_rounded,
@@ -1311,7 +1313,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
 
   Widget _buildCoverPanel() {
     final result = _coverImage;
-    return _ApiPanel(
+    return ApiHubPanel(
       title: 'Picsum 随机封面 / 测试封面',
       subtitle: '生成可复用的横图、竖图、内容封面 URL，适合 Flutter UI 占位',
       icon: Icons.photo_size_select_actual_rounded,
@@ -1440,7 +1442,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
 
   Widget _buildDummyImagePanel() {
     final result = _dummyImage;
-    return _ApiPanel(
+    return ApiHubPanel(
       title: 'DummyImage 占位图生成器',
       subtitle: '生成可复制的占位图 URL，适合 UI 原型、封面占位和测试数据',
       icon: Icons.image_rounded,
@@ -1567,14 +1569,14 @@ class _ApiHubPageState extends State<ApiHubPage> {
 
   Widget _buildDictionaryPanel() {
     final result = _dictionary;
-    return _ApiPanel(
+    return ApiHubPanel(
       title: 'Free Dictionary 英文词典',
       subtitle: '查询释义、词性和例句',
       icon: Icons.translate_rounded,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _SearchRow(
+          ApiHubSearchRow(
             controller: _wordController,
             label: '英文单词',
             buttonLabel: '查询',
@@ -1597,7 +1599,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
               ),
             ),
             const SizedBox(height: 8),
-            ...result.meanings.map(_DictionaryMeaningTile.new),
+            ...result.meanings.map(ApiHubDictionaryMeaningTile.new),
           ],
         ],
       ),
@@ -1605,7 +1607,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
   }
 
   Widget _buildMockPanel() {
-    return _ApiPanel(
+    return ApiHubPanel(
       title: 'DummyJSON Mock 用户',
       subtitle: '快速获取头像、姓名、邮箱、地区等用户资料，适合列表和资料卡测试',
       icon: Icons.badge_rounded,
@@ -1628,7 +1630,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
             )
           else
             ..._mockUsers.map(
-              (user) => _MockUserTile(
+              (user) => ApiHubMockUserTile(
                 user,
                 onCopy: () => _copyText(user.copyText, '用户资料'),
               ),
@@ -1651,7 +1653,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
       'Games & Comics',
     ];
     final visibleEntries = _filteredDirectoryEntries();
-    return _ApiPanel(
+    return ApiHubPanel(
       title: '国内可用 API 清单',
       subtitle: '从免密钥 HTTPS 候选中实测筛出 80 个可用接口，按分类继续接入工具',
       icon: Icons.travel_explore_rounded,
@@ -1707,7 +1709,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
             }).toList(),
           ),
           const SizedBox(height: 10),
-          _SearchRow(
+          ApiHubSearchRow(
             controller: _directoryController,
             label: '筛选：weather / ip / food / game / government',
             buttonLabel: '筛选',
@@ -1746,7 +1748,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
             ...visibleEntries
                 .take(30)
                 .map(
-                  (entry) => _DirectoryEntryTile(
+                  (entry) => ApiHubDirectoryEntryTile(
                     entry,
                     onTap: () => _showDirectoryDetail(entry),
                   ),
@@ -1806,7 +1808,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
                 ],
               ),
               const SizedBox(height: 14),
-              _DirectoryDetailBlock(
+              ApiHubDirectoryDetailBlock(
                 title: '用途说明',
                 child: Text(
                   entry.description,
@@ -1818,7 +1820,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
                 ),
               ),
               const SizedBox(height: 10),
-              _DirectoryDetailBlock(
+              ApiHubDirectoryDetailBlock(
                 title: '接口地址',
                 child: SelectableText(
                   entry.url,
@@ -1830,7 +1832,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
                 ),
               ),
               const SizedBox(height: 10),
-              _DirectoryDetailBlock(
+              ApiHubDirectoryDetailBlock(
                 title: '接入建议',
                 child: Text(
                   entry.isIntegrated
@@ -1868,440 +1870,6 @@ class _ApiHubPageState extends State<ApiHubPage> {
             ],
           ),
         );
-      },
-    );
-  }
-}
-
-class _DirectoryDetailBlock extends StatelessWidget {
-  const _DirectoryDetailBlock({required this.title, required this.child});
-
-  final String title;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: AppTokens.textPrimary,
-              fontSize: 13,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 8),
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-class _ApiMetric extends StatelessWidget {
-  const _ApiMetric({required this.value, required this.label});
-
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF6F8FD),
-        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
-      ),
-      child: Text(
-        '$value $label',
-        textAlign: TextAlign.center,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
-          color: AppTokens.textPrimary,
-          fontSize: 11,
-          fontWeight: FontWeight.w900,
-        ),
-      ),
-    );
-  }
-}
-
-class _ApiQuickChip extends StatelessWidget {
-  const _ApiQuickChip({
-    required this.tool,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final PublicApiToolDefinition tool;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
-          decoration: BoxDecoration(
-            color: selected
-                ? tool.color.withValues(alpha: 0.14)
-                : const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-            border: Border.all(
-              color: selected
-                  ? tool.color.withValues(alpha: 0.48)
-                  : const Color(0xFFE7ECF5),
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(tool.icon, size: 17, color: tool.color),
-              const SizedBox(width: 6),
-              Text(
-                tool.title,
-                style: TextStyle(
-                  color: selected ? tool.color : AppTokens.textPrimary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ApiToolCard extends StatelessWidget {
-  const _ApiToolCard({
-    required this.tool,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final PublicApiToolDefinition tool;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 156,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: selected ? tool.color.withValues(alpha: 0.12) : Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: selected
-                  ? tool.color.withValues(alpha: 0.55)
-                  : const Color(0xFFE9EEF7),
-            ),
-            boxShadow: selected ? AppTokens.shadowSm(color: tool.color) : null,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CircleAvatar(
-                radius: 17,
-                backgroundColor: tool.color.withValues(alpha: 0.12),
-                child: Icon(tool.icon, color: tool.color, size: 18),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                tool.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AppTokens.textPrimary,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                tool.provider,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AppTokens.textSecondary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ApiPanel extends StatelessWidget {
-  const _ApiPanel({
-    required this.title,
-    required this.subtitle,
-    required this.child,
-    required this.icon,
-  });
-
-  final String title;
-  final String subtitle;
-  final Widget child;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(26),
-        border: Border.all(color: const Color(0xFFE9EEF7)),
-        boxShadow: AppTokens.shadowSm(color: AppTokens.primaryBlue),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          AppSectionHeader(title: title, subtitle: subtitle, icon: icon),
-          const SizedBox(height: 12),
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-class _SearchRow extends StatelessWidget {
-  const _SearchRow({
-    required this.controller,
-    required this.label,
-    required this.buttonLabel,
-    required this.onSubmit,
-  });
-
-  final TextEditingController controller;
-  final String label;
-  final String buttonLabel;
-  final VoidCallback onSubmit;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: TextField(
-            controller: controller,
-            textInputAction: TextInputAction.search,
-            onSubmitted: (_) => onSubmit(),
-            decoration: InputDecoration(
-              labelText: label,
-              prefixIcon: const Icon(Icons.search_rounded),
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        FilledButton(onPressed: onSubmit, child: Text(buttonLabel)),
-      ],
-    );
-  }
-}
-
-class _WeatherDailyTile extends StatelessWidget {
-  const _WeatherDailyTile(this.item);
-
-  final WeatherDailyResult item;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: CircleAvatar(
-        backgroundColor: AppTokens.primaryBlue.withValues(alpha: 0.12),
-        child: const Icon(
-          Icons.calendar_today_rounded,
-          color: AppTokens.primaryBlue,
-        ),
-      ),
-      title: Text(item.date),
-      subtitle: Text(
-        '最高 ${item.maxTemperature?.toStringAsFixed(1) ?? '--'}°C · 最低 ${item.minTemperature?.toStringAsFixed(1) ?? '--'}°C · code ${item.weatherCode ?? '--'}',
-      ),
-    );
-  }
-}
-
-class _DictionaryMeaningTile extends StatelessWidget {
-  const _DictionaryMeaningTile(this.meaning);
-
-  final DictionaryMeaningResult meaning;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: CircleAvatar(
-        backgroundColor: AppTokens.violet.withValues(alpha: 0.12),
-        child: const Icon(Icons.text_fields_rounded, color: AppTokens.violet),
-      ),
-      title: Text(
-        meaning.definition,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Text(
-        [
-          meaning.partOfSpeech,
-          meaning.example,
-        ].where((e) => e.isNotEmpty).join(' · '),
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-    );
-  }
-}
-
-class _MockUserTile extends StatelessWidget {
-  const _MockUserTile(this.user, {required this.onCopy});
-
-  final MockUserResult user;
-  final VoidCallback onCopy;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: user.image.isEmpty
-            ? Container(
-                width: 50,
-                height: 50,
-                color: AppTokens.emerald.withValues(alpha: 0.12),
-                child: const Icon(Icons.person_rounded),
-              )
-            : Image.network(
-                user.image,
-                width: 50,
-                height: 50,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => Container(
-                  width: 50,
-                  height: 50,
-                  color: AppTokens.emerald.withValues(alpha: 0.12),
-                  child: const Icon(Icons.person_rounded),
-                ),
-              ),
-      ),
-      title: Text(user.fullName, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        [
-          if (user.email.isNotEmpty) user.email,
-          if (user.city.isNotEmpty) user.city,
-          if (user.company.isNotEmpty) user.company,
-        ].join(' · '),
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: IconButton(
-        onPressed: onCopy,
-        icon: const Icon(Icons.copy_rounded),
-        tooltip: '复制用户资料',
-      ),
-    );
-  }
-}
-
-class _DirectoryEntryTile extends StatelessWidget {
-  const _DirectoryEntryTile(this.entry, {required this.onTap});
-
-  final PublicApiDirectoryEntry entry;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      onTap: onTap,
-      leading: CircleAvatar(
-        backgroundColor: AppTokens.orange.withValues(alpha: 0.12),
-        child: const Icon(Icons.cloud_done_rounded, color: AppTokens.orange),
-      ),
-      title: Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        '${entry.category} · ${entry.auth} · ${entry.https ? 'HTTPS' : 'HTTP'} · CORS ${entry.cors}\n'
-        '${entry.description}\n'
-        '${entry.url}',
-        maxLines: 4,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(
-            entry.latencyMs == null ? '--ms' : '${entry.latencyMs}ms',
-            style: const TextStyle(fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 4),
-          Icon(
-            entry.isIntegrated
-                ? Icons.check_circle_rounded
-                : Icons.chevron_right_rounded,
-            color: entry.isIntegrated
-                ? AppTokens.emerald
-                : AppTokens.textSecondary,
-            size: 18,
-          ),
-        ],
-      ),
-      isThreeLine: true,
-    );
-  }
-}
-
-class _CurrencyDropDown extends StatelessWidget {
-  const _CurrencyDropDown({
-    required this.value,
-    required this.codes,
-    required this.onChanged,
-  });
-
-  final String value;
-  final List<String> codes;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return DropdownButton<String>(
-      value: value,
-      items: codes
-          .map((code) => DropdownMenuItem(value: code, child: Text(code)))
-          .toList(),
-      onChanged: (value) {
-        if (value != null) onChanged(value);
       },
     );
   }
