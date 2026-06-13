@@ -23,6 +23,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   final ImageGeneratorClient _client = const ImageGeneratorClient();
   final ImageGeneratorStore _store = const ImageGeneratorStore();
   final TextEditingController _baseUrlController = TextEditingController();
+  final TextEditingController _platformBaseUrlController =
+      TextEditingController();
   final TextEditingController _apiKeyController = TextEditingController();
   final TextEditingController _modelController = TextEditingController();
   final TextEditingController _promptController = TextEditingController();
@@ -36,6 +38,9 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   String _outputFormat = 'png';
   ImageReferencePayloadField _referenceImageField =
       ImageReferencePayloadField.none;
+  ImageGeneratorAccessMode _accessMode = ImageGeneratorAccessMode.ownKey;
+  ImagePlatformQuota? _platformQuota;
+  String? _platformError;
   int _count = 1;
   bool _loading = false;
   bool _loadingModels = false;
@@ -55,6 +60,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     _loadStoredState();
     for (final controller in [
       _baseUrlController,
+      _platformBaseUrlController,
       _modelController,
       _promptController,
       _negativeController,
@@ -69,6 +75,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     _draftDebounce?.cancel();
     _saveDraftNow();
     _baseUrlController.dispose();
+    _platformBaseUrlController.dispose();
     _apiKeyController.dispose();
     _modelController.dispose();
     _promptController.dispose();
@@ -90,6 +97,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
 
   void _applyDraft(ImageGeneratorDraft draft, {bool notify = true}) {
     _baseUrlController.text = draft.baseUrl;
+    _platformBaseUrlController.text = draft.platformBaseUrl;
+    _accessMode = draft.accessMode;
     _modelController.text = draft.model;
     _promptController.text = draft.prompt;
     _negativeController.text = draft.negativePrompt;
@@ -105,6 +114,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   ImageGeneratorDraft _currentDraft() {
     return ImageGeneratorDraft(
       baseUrl: _baseUrlController.text.trim(),
+      platformBaseUrl: _platformBaseUrlController.text.trim(),
+      accessMode: _accessMode,
       model: _modelController.text.trim(),
       prompt: _promptController.text.trim(),
       negativePrompt: _negativeController.text.trim(),
@@ -134,6 +145,33 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   }
 
   List<ImageGeneratorPreflightItem> _preflightItems() {
+    if (_accessMode == ImageGeneratorAccessMode.platformQuota) {
+      final items = <ImageGeneratorPreflightItem>[];
+      if (_platformBaseUrlController.text.trim().isEmpty) {
+        items.add(
+          const ImageGeneratorPreflightItem(
+            message: '平台服务地址未配置，需后端提供额度代理。',
+            level: ImageGeneratorPreflightLevel.error,
+          ),
+        );
+      } else {
+        items.add(
+          const ImageGeneratorPreflightItem(
+            message: '平台额度模式不会在前端使用管理员 API Key。',
+            level: ImageGeneratorPreflightLevel.ok,
+          ),
+        );
+      }
+      if (_promptController.text.trim().isEmpty) {
+        items.add(
+          const ImageGeneratorPreflightItem(
+            message: 'Prompt 为空。',
+            level: ImageGeneratorPreflightLevel.warning,
+          ),
+        );
+      }
+      return items;
+    }
     return buildImageGeneratorPreflight(_currentParams());
   }
 
@@ -197,6 +235,10 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   }
 
   Future<void> _fetchModels() async {
+    if (_accessMode == ImageGeneratorAccessMode.platformQuota) {
+      await _fetchPlatformModels();
+      return;
+    }
     final apiKey = _apiKeyController.text.trim();
     if (apiKey.isEmpty) {
       setState(() => _modelListError = '请先填写 API Key，再获取模型列表。');
@@ -233,6 +275,75 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
         _loadingModels = false;
       });
     }
+  }
+
+  Future<void> _fetchPlatformModels() async {
+    final platformBase = _platformBaseUrlController.text.trim();
+    if (platformBase.isEmpty) {
+      setState(() => _modelListError = '请先填写平台服务地址。');
+      return;
+    }
+    setState(() {
+      _loadingModels = true;
+      _modelListError = null;
+    });
+    try {
+      final models = await _client.fetchPlatformModels(
+        platformBaseUrl: platformBase,
+      );
+      if (!mounted) return;
+      setState(() {
+        _availableModels = models;
+        _showAllModels = false;
+        _loadingModels = false;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已获取平台模型 ${models.length} 个')));
+    } on ImageGeneratorException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _modelListError = e.message;
+        _loadingModels = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _modelListError = '获取平台模型失败：$e';
+        _loadingModels = false;
+      });
+    }
+  }
+
+  Future<void> _refreshPlatformQuota() async {
+    final platformBase = _platformBaseUrlController.text.trim();
+    if (platformBase.isEmpty) {
+      setState(() => _platformError = '平台服务地址未配置');
+      return;
+    }
+    setState(() => _platformError = null);
+    try {
+      final quota = await _client.fetchPlatformQuota(
+        platformBaseUrl: platformBase,
+      );
+      if (!mounted) return;
+      setState(() => _platformQuota = quota);
+    } on ImageGeneratorException catch (e) {
+      if (!mounted) return;
+      setState(() => _platformError = e.message);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _platformError = '获取平台额度失败：$e');
+    }
+  }
+
+  void _setAccessMode(ImageGeneratorAccessMode mode) {
+    setState(() {
+      _accessMode = mode;
+      _error = null;
+      _modelListError = null;
+    });
+    _scheduleSaveDraft();
   }
 
   void _applyModel(String model) {
@@ -360,8 +471,13 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       setState(() => _error = '请先输入 Prompt');
       return;
     }
-    if (apiKey.isEmpty) {
+    if (_accessMode == ImageGeneratorAccessMode.ownKey && apiKey.isEmpty) {
       setState(() => _error = '请先填写 API Key');
+      return;
+    }
+    if (_accessMode == ImageGeneratorAccessMode.platformQuota &&
+        _platformBaseUrlController.text.trim().isEmpty) {
+      setState(() => _error = '请先填写平台服务地址，或切回自带 Key 模式。');
       return;
     }
     final referenceUrl = _referenceImageController.text.trim();
@@ -387,7 +503,12 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     });
 
     try {
-      final response = await _client.generate(params);
+      final response = _accessMode == ImageGeneratorAccessMode.platformQuota
+          ? await _client.generateWithPlatformQuota(
+              platformBaseUrl: _platformBaseUrlController.text.trim(),
+              params: params,
+            )
+          : await _client.generate(params);
       final history = await _store.addHistory(
         ImageGenerationHistoryItem(
           prompt: prompt,
@@ -457,6 +578,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             baseUrlController: _baseUrlController,
             apiKeyController: _apiKeyController,
             modelController: _modelController,
+            platformBaseUrlController: _platformBaseUrlController,
+            accessMode: _accessMode,
             quickProfiles: imageApiQuickProfiles,
             availableModels: _visibleModels,
             totalModelCount: _availableModels.length,
@@ -467,10 +590,20 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             onResetDraft: _resetDraft,
             onFetchModels: _fetchModels,
             onApplyModel: _applyModel,
+            onAccessModeChanged: _setAccessMode,
             onToggleShowAllModels: _availableModels.isEmpty
                 ? null
                 : () => setState(() => _showAllModels = !_showAllModels),
           ),
+          if (_accessMode == ImageGeneratorAccessMode.platformQuota) ...[
+            const SizedBox(height: 12),
+            ImageGeneratorPlatformQuotaCard(
+              quota: _platformQuota,
+              error: _platformError,
+              platformBaseUrl: _platformBaseUrlController.text.trim(),
+              onRefresh: _refreshPlatformQuota,
+            ),
+          ],
           const SizedBox(height: 12),
           ImageGeneratorPromptCard(
             promptController: _promptController,

@@ -79,6 +79,8 @@ class ImageGeneratorConfigCard extends StatelessWidget {
     required this.baseUrlController,
     required this.apiKeyController,
     required this.modelController,
+    required this.platformBaseUrlController,
+    required this.accessMode,
     required this.quickProfiles,
     required this.availableModels,
     required this.totalModelCount,
@@ -89,12 +91,15 @@ class ImageGeneratorConfigCard extends StatelessWidget {
     required this.onResetDraft,
     required this.onFetchModels,
     required this.onApplyModel,
+    required this.onAccessModeChanged,
     required this.onToggleShowAllModels,
   });
 
   final TextEditingController baseUrlController;
   final TextEditingController apiKeyController;
   final TextEditingController modelController;
+  final TextEditingController platformBaseUrlController;
+  final ImageGeneratorAccessMode accessMode;
   final List<ImageApiQuickProfile> quickProfiles;
   final List<String> availableModels;
   final int totalModelCount;
@@ -105,6 +110,7 @@ class ImageGeneratorConfigCard extends StatelessWidget {
   final VoidCallback onResetDraft;
   final VoidCallback onFetchModels;
   final ValueChanged<String> onApplyModel;
+  final ValueChanged<ImageGeneratorAccessMode> onAccessModeChanged;
   final VoidCallback? onToggleShowAllModels;
 
   @override
@@ -116,7 +122,9 @@ class ImageGeneratorConfigCard extends StatelessWidget {
           _SectionTitle(
             icon: Icons.tune_rounded,
             title: '接口配置',
-            subtitle: 'Base URL、模型和提示词会自动记住；API Key 不保存',
+            subtitle: accessMode == ImageGeneratorAccessMode.ownKey
+                ? '自带 Key 直连接口；API Key 不保存'
+                : '平台额度通过后端代理调用，前端不内置管理员 Key',
             trailing: TextButton.icon(
               onPressed: onResetDraft,
               icon: const Icon(Icons.restart_alt_rounded, size: 18),
@@ -124,37 +132,70 @@ class ImageGeneratorConfigCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: quickProfiles
+          SegmentedButton<ImageGeneratorAccessMode>(
+            segments: ImageGeneratorAccessMode.values
                 .map(
-                  (profile) => ActionChip(
-                    avatar: const Icon(Icons.flash_on_rounded, size: 16),
-                    label: Text(profile.title),
-                    tooltip: profile.description,
-                    onPressed: () => onApplyQuickProfile(profile),
+                  (mode) => ButtonSegment<ImageGeneratorAccessMode>(
+                    value: mode,
+                    label: Text(mode.label),
+                    icon: Icon(
+                      mode == ImageGeneratorAccessMode.ownKey
+                          ? Icons.key_rounded
+                          : Icons.admin_panel_settings_rounded,
+                    ),
                   ),
                 )
                 .toList(),
+            selected: {accessMode},
+            onSelectionChanged: (values) => onAccessModeChanged(values.first),
           ),
           const SizedBox(height: 12),
-          TextField(
-            controller: baseUrlController,
-            decoration: const InputDecoration(
-              labelText: 'Base URL',
-              hintText: 'https://api.openai.com/v1 或中转地址',
+          if (accessMode == ImageGeneratorAccessMode.ownKey) ...[
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: quickProfiles
+                  .map(
+                    (profile) => ActionChip(
+                      avatar: const Icon(Icons.flash_on_rounded, size: 16),
+                      label: Text(profile.title),
+                      tooltip: profile.description,
+                      onPressed: () => onApplyQuickProfile(profile),
+                    ),
+                  )
+                  .toList(),
             ),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: apiKeyController,
-            obscureText: true,
-            decoration: const InputDecoration(
-              labelText: 'API Key',
-              hintText: 'sk-...（仅本次使用，不保存）',
+            const SizedBox(height: 12),
+            TextField(
+              controller: baseUrlController,
+              decoration: const InputDecoration(
+                labelText: 'Base URL',
+                hintText: 'https://api.openai.com/v1 或中转地址',
+              ),
             ),
-          ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: apiKeyController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'API Key',
+                hintText: 'sk-...（仅本次使用，不保存）',
+              ),
+            ),
+          ] else ...[
+            TextField(
+              controller: platformBaseUrlController,
+              decoration: const InputDecoration(
+                labelText: '平台服务地址',
+                hintText: 'https://your-domain.com，例如后端额度代理',
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '平台额度模式会请求 /api/image/quota、/api/image/models、/api/image/generate；管理员 Key 必须只保存在后端。',
+              style: TextStyle(color: AppTokens.textSecondary, fontSize: 12),
+            ),
+          ],
           const SizedBox(height: 10),
           TextField(
             controller: modelController,
@@ -186,7 +227,13 @@ class ImageGeneratorConfigCard extends StatelessWidget {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.cloud_sync_rounded, size: 18),
-                  label: Text(loadingModels ? '获取中' : '获取模型列表'),
+                  label: Text(
+                    loadingModels
+                        ? '获取中'
+                        : accessMode == ImageGeneratorAccessMode.ownKey
+                        ? '获取模型列表'
+                        : '获取平台模型',
+                  ),
                 ),
               ),
               if (totalModelCount > 0) ...[
@@ -236,6 +283,91 @@ class ImageGeneratorConfigCard extends StatelessWidget {
                   .toList(),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class ImageGeneratorPlatformQuotaCard extends StatelessWidget {
+  const ImageGeneratorPlatformQuotaCard({
+    super.key,
+    required this.quota,
+    required this.error,
+    required this.platformBaseUrl,
+    required this.onRefresh,
+  });
+
+  final ImagePlatformQuota? quota;
+  final String? error;
+  final String platformBaseUrl;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final item = quota;
+    return _SurfaceCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SectionTitle(
+            icon: Icons.account_balance_wallet_rounded,
+            title: '平台额度',
+            subtitle: platformBaseUrl.isEmpty
+                ? '请先填写平台服务地址'
+                : '由后端统一保管管理员 Key、鉴权、扣减额度',
+            trailing: FilledButton.tonalIcon(
+              onPressed: onRefresh,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('刷新额度'),
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (error != null && error!.trim().isNotEmpty) ...[
+            Text(
+              error!,
+              style: const TextStyle(
+                color: Colors.red,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              AppStatusPill(
+                label: item == null ? '剩余额度：未知' : '剩余额度：${item.remaining}',
+                icon: Icons.bolt_rounded,
+                color: item == null || item.hasQuota
+                    ? AppTokens.success
+                    : Colors.red,
+              ),
+              AppStatusPill(
+                label: item == null ? '今日已用：未知' : '今日已用：${item.usedToday}',
+                icon: Icons.today_rounded,
+                color: AppTokens.primaryBlue,
+              ),
+              AppStatusPill(
+                label: item == null ? '每日额度：未知' : '每日额度：${item.dailyLimit}',
+                icon: Icons.event_available_rounded,
+                color: AppTokens.violet,
+              ),
+            ],
+          ),
+          if (item?.message.trim().isNotEmpty ?? false) ...[
+            const SizedBox(height: 10),
+            Text(
+              item!.message,
+              style: const TextStyle(color: AppTokens.textSecondary),
+            ),
+          ],
+          const SizedBox(height: 10),
+          const Text(
+            '安全说明：前端不会内置管理员 Key；真实扣费、限流、用户鉴权必须由平台后端完成。',
+            style: TextStyle(color: AppTokens.textSecondary, fontSize: 12),
+          ),
         ],
       ),
     );

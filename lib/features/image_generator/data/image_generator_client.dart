@@ -37,32 +37,114 @@ class ImageGeneratorClient {
       if (decoded is! Map<String, dynamic>) {
         throw const ImageGeneratorException('模型接口返回格式不是 JSON 对象');
       }
-      final data = decoded['data'];
-      if (data is! List) {
-        throw ImageGeneratorException('模型接口没有返回 data 列表：${_preview(text)}');
-      }
-      final models =
-          data
-              .map((item) {
-                if (item is Map && item['id'] != null) {
-                  return item['id'].toString();
-                }
-                if (item is String) return item;
-                return '';
-              })
-              .map((item) => item.trim())
-              .where((item) => item.isNotEmpty)
-              .toSet()
-              .toList()
-            ..sort();
-      if (models.isEmpty) {
-        throw ImageGeneratorException('模型接口返回为空：${_preview(text)}');
-      }
-      return models;
+      return _parseModelList(decoded, text);
     } on ImageGeneratorException {
       rethrow;
     } catch (e) {
       throw ImageGeneratorException('获取模型列表失败：$e');
+    } finally {
+      if (closeClient) client.close();
+    }
+  }
+
+  Future<ImagePlatformQuota> fetchPlatformQuota({
+    required String platformBaseUrl,
+  }) async {
+    final endpoint = Uri.parse(
+      '${platformBaseUrl.trim().replaceAll(RegExp(r'/+$'), '')}/api/image/quota',
+    );
+    final client = _httpClient ?? http.Client();
+    final closeClient = _httpClient == null;
+    try {
+      final response = await client
+          .get(endpoint)
+          .timeout(const Duration(seconds: 20));
+      final text = utf8.decode(response.bodyBytes);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ImageGeneratorException(
+          _extractError(text, response.statusCode),
+          statusCode: response.statusCode,
+          rawPreview: _preview(text),
+        );
+      }
+      final decoded = jsonDecode(text);
+      if (decoded is! Map<String, dynamic>) {
+        throw const ImageGeneratorException('额度接口返回格式不是 JSON 对象');
+      }
+      return ImagePlatformQuota.fromJson(decoded);
+    } on ImageGeneratorException {
+      rethrow;
+    } catch (e) {
+      throw ImageGeneratorException('获取平台额度失败：$e');
+    } finally {
+      if (closeClient) client.close();
+    }
+  }
+
+  Future<List<String>> fetchPlatformModels({
+    required String platformBaseUrl,
+  }) async {
+    final endpoint = Uri.parse(
+      '${platformBaseUrl.trim().replaceAll(RegExp(r'/+$'), '')}/api/image/models',
+    );
+    final client = _httpClient ?? http.Client();
+    final closeClient = _httpClient == null;
+    try {
+      final response = await client
+          .get(endpoint)
+          .timeout(const Duration(seconds: 20));
+      final text = utf8.decode(response.bodyBytes);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ImageGeneratorException(
+          _extractError(text, response.statusCode),
+          statusCode: response.statusCode,
+          rawPreview: _preview(text),
+        );
+      }
+      final decoded = jsonDecode(text);
+      if (decoded is! Map<String, dynamic>) {
+        throw const ImageGeneratorException('平台模型接口返回格式不是 JSON 对象');
+      }
+      return _parseModelList(decoded, text);
+    } on ImageGeneratorException {
+      rethrow;
+    } catch (e) {
+      throw ImageGeneratorException('获取平台模型失败：$e');
+    } finally {
+      if (closeClient) client.close();
+    }
+  }
+
+  Future<ImageGenerationResponse> generateWithPlatformQuota({
+    required String platformBaseUrl,
+    required ImageGenerationParams params,
+  }) async {
+    final endpoint = Uri.parse(
+      '${platformBaseUrl.trim().replaceAll(RegExp(r'/+$'), '')}/api/image/generate',
+    );
+    final client = _httpClient ?? http.Client();
+    final closeClient = _httpClient == null;
+    try {
+      final response = await client
+          .post(
+            endpoint,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(params.toRequestBody()),
+          )
+          .timeout(const Duration(seconds: 90));
+      final text = utf8.decode(response.bodyBytes);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ImageGeneratorException(
+          _extractError(text, response.statusCode),
+          statusCode: response.statusCode,
+          rawPreview: _preview(text),
+        );
+      }
+      return _parseGenerationResponse(text, params.outputFormat);
+    } on ImageGeneratorException {
+      rethrow;
+    } catch (e) {
+      throw ImageGeneratorException('平台额度生图失败：$e');
     } finally {
       if (closeClient) client.close();
     }
@@ -96,51 +178,7 @@ class ImageGeneratorClient {
         );
       }
 
-      final decoded = jsonDecode(text);
-      if (decoded is! Map<String, dynamic>) {
-        throw const ImageGeneratorException('接口返回格式不是 JSON 对象');
-      }
-
-      final data = decoded['data'];
-      if (data is! List || data.isEmpty) {
-        throw ImageGeneratorException('接口没有返回图片数据：${_preview(text)}');
-      }
-
-      final images = <GeneratedImageResult>[];
-      for (final item in data) {
-        if (item is! Map) continue;
-        final map = Map<String, dynamic>.from(item);
-        final url = _asString(map['url']);
-        final b64 = _asString(map['b64_json']);
-        final revised = _asString(map['revised_prompt']);
-        if (url.isNotEmpty) {
-          images.add(
-            GeneratedImageResult(
-              image: url,
-              rawUrl: url,
-              revisedPrompt: revised.isEmpty ? null : revised,
-            ),
-          );
-        } else if (b64.isNotEmpty) {
-          images.add(
-            GeneratedImageResult(
-              image: 'data:image/${params.outputFormat};base64,$b64',
-              revisedPrompt: revised.isEmpty ? null : revised,
-            ),
-          );
-        }
-      }
-
-      if (images.isEmpty) {
-        throw ImageGeneratorException(
-          '未识别到 url 或 b64_json 图片字段：${_preview(text)}',
-        );
-      }
-
-      return ImageGenerationResponse(
-        images: images,
-        rawPreview: _preview(text),
-      );
+      return _parseGenerationResponse(text, params.outputFormat);
     } on ImageGeneratorException {
       rethrow;
     } catch (e) {
@@ -148,6 +186,82 @@ class ImageGeneratorClient {
     } finally {
       if (closeClient) client.close();
     }
+  }
+
+  static List<String> _parseModelList(
+    Map<String, dynamic> decoded,
+    String text,
+  ) {
+    final data = decoded['data'] ?? decoded['models'];
+    if (data is! List) {
+      throw ImageGeneratorException('模型接口没有返回 data 列表：${_preview(text)}');
+    }
+    final models =
+        data
+            .map((item) {
+              if (item is Map && item['id'] != null) {
+                return item['id'].toString();
+              }
+              if (item is String) return item;
+              return '';
+            })
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+    if (models.isEmpty) {
+      throw ImageGeneratorException('模型接口返回为空：${_preview(text)}');
+    }
+    return models;
+  }
+
+  static ImageGenerationResponse _parseGenerationResponse(
+    String text,
+    String outputFormat,
+  ) {
+    final decoded = jsonDecode(text);
+    if (decoded is! Map<String, dynamic>) {
+      throw const ImageGeneratorException('接口返回格式不是 JSON 对象');
+    }
+
+    final data = decoded['data'];
+    if (data is! List || data.isEmpty) {
+      throw ImageGeneratorException('接口没有返回图片数据：${_preview(text)}');
+    }
+
+    final images = <GeneratedImageResult>[];
+    for (final item in data) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      final url = _asString(map['url']);
+      final b64 = _asString(map['b64_json']);
+      final revised = _asString(map['revised_prompt']);
+      if (url.isNotEmpty) {
+        images.add(
+          GeneratedImageResult(
+            image: url,
+            rawUrl: url,
+            revisedPrompt: revised.isEmpty ? null : revised,
+          ),
+        );
+      } else if (b64.isNotEmpty) {
+        images.add(
+          GeneratedImageResult(
+            image: 'data:image/$outputFormat;base64,$b64',
+            revisedPrompt: revised.isEmpty ? null : revised,
+          ),
+        );
+      }
+    }
+
+    if (images.isEmpty) {
+      throw ImageGeneratorException(
+        '未识别到 url 或 b64_json 图片字段：${_preview(text)}',
+      );
+    }
+
+    return ImageGenerationResponse(images: images, rawPreview: _preview(text));
   }
 
   static String _extractError(String text, int statusCode) {

@@ -1,5 +1,23 @@
 import 'dart:convert';
 
+enum ImageGeneratorAccessMode {
+  ownKey('ownKey', '自带 Key'),
+  platformQuota('platformQuota', '平台额度');
+
+  const ImageGeneratorAccessMode(this.wireName, this.label);
+
+  final String wireName;
+  final String label;
+
+  static ImageGeneratorAccessMode fromWireName(String value) {
+    final normalized = value.trim();
+    for (final mode in ImageGeneratorAccessMode.values) {
+      if (mode.wireName == normalized || mode.name == normalized) return mode;
+    }
+    return ImageGeneratorAccessMode.ownKey;
+  }
+}
+
 class ImageGenerationParams {
   const ImageGenerationParams({
     required this.baseUrl,
@@ -93,6 +111,8 @@ enum ImageReferencePayloadField {
 class ImageGeneratorDraft {
   const ImageGeneratorDraft({
     required this.baseUrl,
+    required this.platformBaseUrl,
+    required this.accessMode,
     required this.model,
     required this.prompt,
     required this.negativePrompt,
@@ -107,6 +127,8 @@ class ImageGeneratorDraft {
   factory ImageGeneratorDraft.defaults() {
     return const ImageGeneratorDraft(
       baseUrl: 'https://api.openai.com/v1',
+      platformBaseUrl: '',
+      accessMode: ImageGeneratorAccessMode.ownKey,
       model: 'gpt-image-1',
       prompt: '一张用于工具箱 App 的 AI 生图入口海报，蓝紫渐变，玻璃拟态，科技感构图，移动端 UI 宣传图',
       negativePrompt: '低清晰度，文字错误，水印，畸形手指',
@@ -123,6 +145,13 @@ class ImageGeneratorDraft {
     final defaults = ImageGeneratorDraft.defaults();
     return ImageGeneratorDraft(
       baseUrl: _asString(json['baseUrl'], defaults.baseUrl),
+      platformBaseUrl: _asString(
+        json['platformBaseUrl'],
+        defaults.platformBaseUrl,
+      ),
+      accessMode: ImageGeneratorAccessMode.fromWireName(
+        _asString(json['accessMode'], defaults.accessMode.wireName),
+      ),
       model: _asString(json['model'], defaults.model),
       prompt: _asString(json['prompt'], defaults.prompt),
       negativePrompt: _asString(
@@ -141,6 +170,8 @@ class ImageGeneratorDraft {
   }
 
   final String baseUrl;
+  final String platformBaseUrl;
+  final ImageGeneratorAccessMode accessMode;
   final String model;
   final String prompt;
   final String negativePrompt;
@@ -154,6 +185,8 @@ class ImageGeneratorDraft {
   Map<String, dynamic> toJson() {
     return {
       'baseUrl': baseUrl,
+      'platformBaseUrl': platformBaseUrl,
+      'accessMode': accessMode.wireName,
       'model': model,
       'prompt': prompt,
       'negativePrompt': negativePrompt,
@@ -165,6 +198,45 @@ class ImageGeneratorDraft {
       'count': count,
     };
   }
+}
+
+class ImagePlatformQuota {
+  const ImagePlatformQuota({
+    required this.remaining,
+    required this.dailyLimit,
+    required this.usedToday,
+    this.totalLimit,
+    this.status = 'normal',
+    this.message = '',
+  });
+
+  factory ImagePlatformQuota.fromJson(Map<String, dynamic> json) {
+    return ImagePlatformQuota(
+      remaining: _asInt(
+        json['remaining'] ?? json['remainingQuota'] ?? json['quota'],
+        0,
+      ),
+      dailyLimit: _asInt(json['dailyLimit'] ?? json['dailyQuota'], 0),
+      usedToday: _asInt(
+        json['usedToday'] ?? json['dailyUsed'] ?? json['used'],
+        0,
+      ),
+      totalLimit: json['totalLimit'] == null
+          ? null
+          : _asInt(json['totalLimit'], 0),
+      status: _asString(json['status'], 'normal'),
+      message: _asString(json['message']),
+    );
+  }
+
+  final int remaining;
+  final int dailyLimit;
+  final int usedToday;
+  final int? totalLimit;
+  final String status;
+  final String message;
+
+  bool get hasQuota => remaining > 0;
 }
 
 class GeneratedImageResult {
