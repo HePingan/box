@@ -10,6 +10,64 @@ class ImageGeneratorClient {
 
   final http.Client? _httpClient;
 
+  Future<List<String>> fetchModels({
+    required String baseUrl,
+    required String apiKey,
+  }) async {
+    final base = baseUrl.trim().isEmpty
+        ? 'https://api.openai.com/v1'
+        : baseUrl.trim();
+    final endpoint = Uri.parse('${base.replaceAll(RegExp(r'/+$'), '')}/models');
+    final client = _httpClient ?? http.Client();
+    final closeClient = _httpClient == null;
+
+    try {
+      final response = await client
+          .get(endpoint, headers: {'Authorization': 'Bearer ${apiKey.trim()}'})
+          .timeout(const Duration(seconds: 30));
+      final text = utf8.decode(response.bodyBytes);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ImageGeneratorException(
+          _extractError(text, response.statusCode),
+          statusCode: response.statusCode,
+          rawPreview: _preview(text),
+        );
+      }
+      final decoded = jsonDecode(text);
+      if (decoded is! Map<String, dynamic>) {
+        throw const ImageGeneratorException('模型接口返回格式不是 JSON 对象');
+      }
+      final data = decoded['data'];
+      if (data is! List) {
+        throw ImageGeneratorException('模型接口没有返回 data 列表：${_preview(text)}');
+      }
+      final models =
+          data
+              .map((item) {
+                if (item is Map && item['id'] != null) {
+                  return item['id'].toString();
+                }
+                if (item is String) return item;
+                return '';
+              })
+              .map((item) => item.trim())
+              .where((item) => item.isNotEmpty)
+              .toSet()
+              .toList()
+            ..sort();
+      if (models.isEmpty) {
+        throw ImageGeneratorException('模型接口返回为空：${_preview(text)}');
+      }
+      return models;
+    } on ImageGeneratorException {
+      rethrow;
+    } catch (e) {
+      throw ImageGeneratorException('获取模型列表失败：$e');
+    } finally {
+      if (closeClient) client.close();
+    }
+  }
+
   Future<ImageGenerationResponse> generate(ImageGenerationParams params) async {
     final endpoint = Uri.parse(params.endpoint);
     final client = _httpClient ?? http.Client();

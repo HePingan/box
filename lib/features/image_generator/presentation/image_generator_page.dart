@@ -38,9 +38,13 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       ImageReferencePayloadField.none;
   int _count = 1;
   bool _loading = false;
+  bool _loadingModels = false;
+  bool _showAllModels = false;
   bool _draftLoaded = false;
   String? _error;
+  String? _modelListError;
   ImageGeneratorRequestDiagnostics? _lastDiagnostics;
+  List<String> _availableModels = const [];
   List<GeneratedImageResult> _results = const [];
   List<ImageGenerationHistoryItem> _history = const [];
 
@@ -163,6 +167,80 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     if (hasDataUrl) return 'data URL';
     if (hasUrl) return 'URL';
     return '';
+  }
+
+  List<String> get _recommendedModels {
+    const keywords = [
+      'gpt-image',
+      'dall-e',
+      'image',
+      'imagen',
+      'flux',
+      'stable',
+      'sd',
+      'midjourney',
+    ];
+    final recommended = _availableModels
+        .where(
+          (model) =>
+              keywords.any((keyword) => model.toLowerCase().contains(keyword)),
+        )
+        .toList();
+    return recommended.isEmpty
+        ? _availableModels.take(12).toList()
+        : recommended;
+  }
+
+  List<String> get _visibleModels {
+    if (_showAllModels) return _availableModels;
+    return _recommendedModels;
+  }
+
+  Future<void> _fetchModels() async {
+    final apiKey = _apiKeyController.text.trim();
+    if (apiKey.isEmpty) {
+      setState(() => _modelListError = '请先填写 API Key，再获取模型列表。');
+      return;
+    }
+    setState(() {
+      _loadingModels = true;
+      _modelListError = null;
+    });
+    try {
+      final models = await _client.fetchModels(
+        baseUrl: _baseUrlController.text.trim(),
+        apiKey: apiKey,
+      );
+      if (!mounted) return;
+      setState(() {
+        _availableModels = models;
+        _showAllModels = false;
+        _loadingModels = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已获取 ${models.length} 个模型，API Key 未保存')),
+      );
+    } on ImageGeneratorException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _modelListError = e.message;
+        _loadingModels = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _modelListError = '获取模型列表失败：$e';
+        _loadingModels = false;
+      });
+    }
+  }
+
+  void _applyModel(String model) {
+    setState(() => _modelController.text = model);
+    _scheduleSaveDraft();
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已选择模型 $model')));
   }
 
   void _scheduleSaveDraft() {
@@ -380,8 +458,18 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             apiKeyController: _apiKeyController,
             modelController: _modelController,
             quickProfiles: imageApiQuickProfiles,
+            availableModels: _visibleModels,
+            totalModelCount: _availableModels.length,
+            showingAllModels: _showAllModels,
+            loadingModels: _loadingModels,
+            modelListError: _modelListError,
             onApplyQuickProfile: _applyQuickProfile,
             onResetDraft: _resetDraft,
+            onFetchModels: _fetchModels,
+            onApplyModel: _applyModel,
+            onToggleShowAllModels: _availableModels.isEmpty
+                ? null
+                : () => setState(() => _showAllModels = !_showAllModels),
           ),
           const SizedBox(height: 12),
           ImageGeneratorPromptCard(

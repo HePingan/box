@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
@@ -79,16 +80,32 @@ class ImageGeneratorConfigCard extends StatelessWidget {
     required this.apiKeyController,
     required this.modelController,
     required this.quickProfiles,
+    required this.availableModels,
+    required this.totalModelCount,
+    required this.showingAllModels,
+    required this.loadingModels,
+    required this.modelListError,
     required this.onApplyQuickProfile,
     required this.onResetDraft,
+    required this.onFetchModels,
+    required this.onApplyModel,
+    required this.onToggleShowAllModels,
   });
 
   final TextEditingController baseUrlController;
   final TextEditingController apiKeyController;
   final TextEditingController modelController;
   final List<ImageApiQuickProfile> quickProfiles;
+  final List<String> availableModels;
+  final int totalModelCount;
+  final bool showingAllModels;
+  final bool loadingModels;
+  final String? modelListError;
   final ValueChanged<ImageApiQuickProfile> onApplyQuickProfile;
   final VoidCallback onResetDraft;
+  final VoidCallback onFetchModels;
+  final ValueChanged<String> onApplyModel;
+  final VoidCallback? onToggleShowAllModels;
 
   @override
   Widget build(BuildContext context) {
@@ -141,11 +158,84 @@ class ImageGeneratorConfigCard extends StatelessWidget {
           const SizedBox(height: 10),
           TextField(
             controller: modelController,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: '模型',
               hintText: 'gpt-image-1',
+              suffixIcon: IconButton(
+                tooltip: '复制模型名',
+                onPressed: () {
+                  final text = modelController.text.trim();
+                  if (text.isNotEmpty) {
+                    Clipboard.setData(ClipboardData(text: text));
+                  }
+                },
+                icon: const Icon(Icons.copy_rounded),
+              ),
             ),
           ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: loadingModels ? null : onFetchModels,
+                  icon: loadingModels
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.cloud_sync_rounded, size: 18),
+                  label: Text(loadingModels ? '获取中' : '获取模型列表'),
+                ),
+              ),
+              if (totalModelCount > 0) ...[
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: onToggleShowAllModels,
+                  child: Text(
+                    showingAllModels ? '只看推荐' : '全部 $totalModelCount',
+                  ),
+                ),
+              ],
+            ],
+          ),
+          if (modelListError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              modelListError!,
+              style: const TextStyle(
+                color: Colors.red,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          if (availableModels.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              showingAllModels ? '全部模型（点击填入）' : '推荐生图模型（点击填入）',
+              style: const TextStyle(
+                color: AppTokens.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: availableModels
+                  .map(
+                    (model) => ActionChip(
+                      avatar: const Icon(Icons.smart_toy_outlined, size: 16),
+                      label: Text(model),
+                      tooltip: model,
+                      onPressed: () => onApplyModel(model),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ],
         ],
       ),
     );
