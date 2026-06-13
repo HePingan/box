@@ -576,13 +576,13 @@ class _NovelListPageState extends State<NovelListPage> {
       ),
       actions: [
         AppStatusPill(
-          label: '书源',
+          label: '书源管理',
           icon: Icons.tune_rounded,
           color: AppTokens.violet,
         ),
         AppStatusPill(
-          label: '刷新',
-          icon: Icons.refresh_rounded,
+          label: _loading ? '加载中' : '刷新',
+          icon: _loading ? Icons.sync_rounded : Icons.refresh_rounded,
           color: AppTokens.primaryBlue,
         ),
       ],
