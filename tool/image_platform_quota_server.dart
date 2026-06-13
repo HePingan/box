@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
+
+import 'package:crypto/crypto.dart';
 
 const _defaultHost = '127.0.0.1';
 const _defaultPort = 8788;
@@ -20,17 +23,23 @@ Future<void> main(List<String> args) async {
   final config = ServerConfig.from(args, Platform.environment);
   final store = StateStore(config.statePath, config.defaultQuota);
   await store.load();
+  await store.bootstrapAdmin(config);
 
   final server = await HttpServer.bind(config.host, config.port);
-  stdout.writeln('AI image platform quota proxy server running:');
+  stdout.writeln('Box image platform quota server running:');
   stdout.writeln('  http://${config.host}:${config.port}');
   stdout.writeln('Admin base URL: ${config.adminBaseUrl}');
   stdout.writeln('Admin API key configured: ${config.adminApiKey.isNotEmpty}');
   stdout.writeln('State path: ${config.statePath}');
-  stdout.writeln('Endpoints:');
+  stdout.writeln('Auth endpoints:');
+  stdout.writeln('  POST /api/auth/login');
+  stdout.writeln('  GET  /api/auth/me');
+  stdout.writeln('  POST /api/auth/logout');
+  stdout.writeln('Image endpoints:');
   stdout.writeln('  GET  /api/image/quota');
   stdout.writeln('  GET  /api/image/models');
   stdout.writeln('  POST /api/image/generate');
+  stdout.writeln('Admin endpoints:');
   stdout.writeln('  GET  /admin/image/users');
   stdout.writeln('  POST /admin/image/users/<userId>/quota');
 
@@ -54,7 +63,9 @@ class ServerConfig {
     required this.port,
     required this.adminBaseUrl,
     required this.adminApiKey,
-    required this.adminToken,
+    required this.legacyAdminToken,
+    required this.bootstrapAdminUsername,
+    required this.bootstrapAdminPassword,
     required this.allowedModels,
     required this.defaultQuota,
     required this.statePath,
@@ -86,7 +97,9 @@ class ServerConfig {
           .trim()
           .replaceAll(RegExp(r'/+$'), ''),
       adminApiKey: env['IMAGE_ADMIN_API_KEY'] ?? '',
-      adminToken: env['IMAGE_ADMIN_TOKEN'] ?? '',
+      legacyAdminToken: env['IMAGE_ADMIN_TOKEN'] ?? '',
+      bootstrapAdminUsername: env['BOX_ADMIN_USERNAME'] ?? 'admin',
+      bootstrapAdminPassword: env['BOX_ADMIN_PASSWORD'] ?? '',
       allowedModels: allowed,
       defaultQuota: int.tryParse(env['IMAGE_DEFAULT_QUOTA'] ?? '') ?? 20,
       statePath: env['IMAGE_STATE_PATH'] ?? _defaultStatePath,
@@ -97,7 +110,9 @@ class ServerConfig {
   final int port;
   final String adminBaseUrl;
   final String adminApiKey;
-  final String adminToken;
+  final String legacyAdminToken;
+  final String bootstrapAdminUsername;
+  final String bootstrapAdminPassword;
   final List<String> allowedModels;
   final int defaultQuota;
   final String statePath;
@@ -113,7 +128,7 @@ class PlatformQuotaServer {
     cors(request.response);
     final path = request.uri.path;
     stdout.writeln(
-      '${DateTime.now().toIso8601String()} ${request.method} $path user=${userIdOf(request)}',
+      '${DateTime.now().toIso8601String()} ${request.method} $path',
     );
 
     if (request.method == 'OPTIONS') {
@@ -121,21 +136,40 @@ class PlatformQuotaServer {
       await request.response.close();
       return;
     }
+
+    if (request.method == 'POST' && path == '/api/auth/login') {
+      await login(request);
+      return;
+    }
+    if (request.method == 'GET' && path == '/api/auth/me') {
+      await me(request);
+      return;
+    }
+    if (request.method == 'POST' && path == '/api/auth/logout') {
+      await logout(request);
+      return;
+    }
     if (request.method == 'GET' && path == '/api/image/quota') {
-      await quota(request);
+      final account = await requireUser(request);
+      if (account == null) return;
+      await quota(request, account);
       return;
     }
     if (request.method == 'GET' && path == '/api/image/models') {
+      final account = await requireUser(request);
+      if (account == null) return;
       await models(request);
       return;
     }
     if (request.method == 'POST' && path == '/api/image/generate') {
-      await generate(request);
+      final account = await requireUser(request);
+      if (account == null) return;
+      await generate(request, account);
       return;
     }
     if (request.method == 'GET' && path == '/admin/image/users') {
       if (!await requireAdmin(request)) return;
-      await jsonResponse(request.response, HttpStatus.ok, store.toJson());
+      await jsonResponse(request.response, HttpStatus.ok, store.toAdminJson());
       return;
     }
     final quotaMatch = RegExp(
@@ -151,8 +185,52 @@ class PlatformQuotaServer {
     });
   }
 
-  Future<void> quota(HttpRequest request) async {
-    final user = store.user(userIdOf(request));
+  Future<void> login(HttpRequest request) async {
+    final body = await readJsonObject(request);
+    if (body == null) return;
+    final username = body['username']?.toString().trim() ?? '';
+    final password = body['password']?.toString() ?? '';
+    final account = store.accountByUsername(username);
+    if (account == null ||
+        account.status != 'normal' ||
+        !verifyPassword(password, account.passwordHash)) {
+      await jsonResponse(request.response, HttpStatus.unauthorized, {
+        'error': {'message': '用户名或密码错误'},
+      });
+      return;
+    }
+    account.lastLoginAt = DateTime.now();
+    final token = newToken('box_session');
+    store.sessions[token] = AuthSession(
+      token: token,
+      userId: account.id,
+      createdAt: DateTime.now(),
+      expiresAt: DateTime.now().add(const Duration(days: 30)),
+    );
+    await store.save();
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'token': token,
+      'user': account.toPublicJson(),
+    });
+  }
+
+  Future<void> me(HttpRequest request) async {
+    final account = await requireUser(request);
+    if (account == null) return;
+    await jsonResponse(request.response, HttpStatus.ok, account.toPublicJson());
+  }
+
+  Future<void> logout(HttpRequest request) async {
+    final token = bearerToken(request);
+    if (token != null) {
+      store.sessions.remove(token);
+      await store.save();
+    }
+    await jsonResponse(request.response, HttpStatus.ok, {'ok': true});
+  }
+
+  Future<void> quota(HttpRequest request, Account account) async {
+    final user = store.quota(account.id);
     await jsonResponse(request.response, HttpStatus.ok, user.toQuotaJson());
   }
 
@@ -161,7 +239,7 @@ class PlatformQuotaServer {
     await jsonResponse(request.response, HttpStatus.ok, {'models': models});
   }
 
-  Future<void> generate(HttpRequest request) async {
+  Future<void> generate(HttpRequest request, Account account) async {
     if (config.adminApiKey.trim().isEmpty) {
       await jsonResponse(request.response, HttpStatus.serviceUnavailable, {
         'error': {'message': '平台后端未配置 IMAGE_ADMIN_API_KEY，无法代理真实生图。'},
@@ -169,14 +247,8 @@ class PlatformQuotaServer {
       return;
     }
 
-    final raw = await utf8.decoder.bind(request).join();
-    final decoded = raw.trim().isEmpty ? <String, dynamic>{} : jsonDecode(raw);
-    if (decoded is! Map<String, dynamic>) {
-      await jsonResponse(request.response, HttpStatus.badRequest, {
-        'error': {'message': '请求体必须是 JSON 对象'},
-      });
-      return;
-    }
+    final decoded = await readJsonObject(request);
+    if (decoded == null) return;
     final prompt = decoded['prompt']?.toString().trim() ?? '';
     if (prompt.isEmpty) {
       await jsonResponse(request.response, HttpStatus.badRequest, {
@@ -197,11 +269,10 @@ class PlatformQuotaServer {
     }
 
     final cost = calculateCost(decoded);
-    final userId = userIdOf(request);
-    final user = store.user(userId);
+    final user = store.quota(account.id);
     if (user.status != 'normal') {
       await jsonResponse(request.response, HttpStatus.forbidden, {
-        'error': {'message': '用户状态不可用：${user.status}'},
+        'error': {'message': '用户额度状态不可用：${user.status}'},
       });
       return;
     }
@@ -216,7 +287,7 @@ class PlatformQuotaServer {
     if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
       store.addUsage(
         UsageRecord.failed(
-          userId,
+          account.id,
           model,
           cost,
           upstream.statusCode,
@@ -231,22 +302,16 @@ class PlatformQuotaServer {
     user.remaining -= cost;
     user.usedToday += cost;
     store.addUsage(
-      UsageRecord.success(userId, model, cost, upstream.statusCode),
+      UsageRecord.success(account.id, model, cost, upstream.statusCode),
     );
     await store.save();
     await jsonText(request.response, HttpStatus.ok, upstream.text);
   }
 
   Future<void> setQuota(HttpRequest request, String userId) async {
-    final raw = await utf8.decoder.bind(request).join();
-    final decoded = raw.trim().isEmpty ? <String, dynamic>{} : jsonDecode(raw);
-    if (decoded is! Map<String, dynamic>) {
-      await jsonResponse(request.response, HttpStatus.badRequest, {
-        'error': {'message': '请求体必须是 JSON 对象'},
-      });
-      return;
-    }
-    final user = store.user(userId);
+    final decoded = await readJsonObject(request);
+    if (decoded == null) return;
+    final user = store.quota(userId);
     user.remaining = asInt(decoded['remaining'], user.remaining);
     user.dailyLimit = asInt(decoded['dailyLimit'], user.dailyLimit);
     user.usedToday = asInt(decoded['usedToday'], user.usedToday);
@@ -259,21 +324,79 @@ class PlatformQuotaServer {
     await jsonResponse(request.response, HttpStatus.ok, user.toQuotaJson());
   }
 
+  Future<Account?> requireUser(HttpRequest request) async {
+    final token = bearerToken(request);
+    if (token == null || token.isEmpty) {
+      await jsonResponse(request.response, HttpStatus.unauthorized, {
+        'error': {'message': '请先登录 Box 账号。'},
+      });
+      return null;
+    }
+    final session = store.sessions[token];
+    if (session == null || session.expiresAt.isBefore(DateTime.now())) {
+      if (session != null) {
+        store.sessions.remove(token);
+        await store.save();
+      }
+      await jsonResponse(request.response, HttpStatus.unauthorized, {
+        'error': {'message': '登录已失效，请重新登录。'},
+      });
+      return null;
+    }
+    final account = store.accounts[session.userId];
+    if (account == null || account.status != 'normal') {
+      await jsonResponse(request.response, HttpStatus.forbidden, {
+        'error': {'message': '账号不可用。'},
+      });
+      return null;
+    }
+    return account;
+  }
+
   Future<bool> requireAdmin(HttpRequest request) async {
-    if (config.adminToken.isEmpty) {
-      await jsonResponse(request.response, HttpStatus.unauthorized, {
-        'error': {'message': '未配置 IMAGE_ADMIN_TOKEN，管理接口已关闭。'},
+    final account = await accountFromRequest(request);
+    if (account != null) {
+      if (account.role == AccountRole.admin && account.status == 'normal') {
+        return true;
+      }
+      await jsonResponse(request.response, HttpStatus.forbidden, {
+        'error': {'message': '需要管理员账号。'},
       });
       return false;
     }
-    final token = request.headers.value('x-admin-token') ?? '';
-    if (token != config.adminToken) {
-      await jsonResponse(request.response, HttpStatus.unauthorized, {
-        'error': {'message': 'X-Admin-Token 无效。'},
-      });
-      return false;
+
+    final legacyToken = request.headers.value('x-admin-token') ?? '';
+    if (config.legacyAdminToken.isNotEmpty &&
+        legacyToken == config.legacyAdminToken) {
+      return true;
     }
-    return true;
+
+    await jsonResponse(request.response, HttpStatus.unauthorized, {
+      'error': {'message': '请使用管理员账号登录后操作。'},
+    });
+    return false;
+  }
+
+  Future<Account?> accountFromRequest(HttpRequest request) async {
+    final token = bearerToken(request);
+    if (token == null || token.isEmpty) return null;
+    final session = store.sessions[token];
+    if (session == null || session.expiresAt.isBefore(DateTime.now())) {
+      return null;
+    }
+    return store.accounts[session.userId];
+  }
+
+  Future<Map<String, dynamic>?> readJsonObject(HttpRequest request) async {
+    final raw = await utf8.decoder.bind(request).join();
+    final decoded = raw.trim().isEmpty ? <String, dynamic>{} : jsonDecode(raw);
+    if (decoded is! Map<String, dynamic>) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '请求体必须是 JSON 对象'},
+      });
+      return null;
+    }
+    return decoded;
   }
 
   Future<List<String>> allowedModels() async {
@@ -340,28 +463,57 @@ class StateStore {
 
   final String path;
   final int defaultQuota;
-  final users = <String, UserQuota>{};
+  final accounts = <String, Account>{};
+  final quotas = <String, UserQuota>{};
+  final sessions = <String, AuthSession>{};
   final usage = <UsageRecord>[];
 
   Future<void> load() async {
     final file = File(path);
     if (!await file.exists()) {
-      users['demo'] = UserQuota.defaultFor(defaultQuota);
+      quotas['demo'] = UserQuota.defaultFor(defaultQuota);
       await save();
       return;
     }
     final decoded = jsonDecode(await file.readAsString());
     if (decoded is! Map<String, dynamic>) return;
-    final rawUsers = decoded['users'];
-    if (rawUsers is Map) {
-      rawUsers.forEach((key, value) {
+
+    final rawAccounts = decoded['accounts'];
+    if (rawAccounts is Map) {
+      rawAccounts.forEach((key, value) {
         if (value is Map) {
-          users[key.toString()] = UserQuota.fromJson(
+          accounts[key.toString()] = Account.fromJson(
             Map<String, dynamic>.from(value),
           );
         }
       });
     }
+
+    final rawQuotas = decoded['quotas'] ?? decoded['users'];
+    if (rawQuotas is Map) {
+      rawQuotas.forEach((key, value) {
+        if (value is Map) {
+          quotas[key.toString()] = UserQuota.fromJson(
+            Map<String, dynamic>.from(value),
+          );
+        }
+      });
+    }
+
+    final rawSessions = decoded['sessions'];
+    if (rawSessions is Map) {
+      rawSessions.forEach((key, value) {
+        if (value is Map) {
+          final session = AuthSession.fromJson(
+            Map<String, dynamic>.from(value),
+          );
+          if (session.expiresAt.isAfter(DateTime.now())) {
+            sessions[key.toString()] = session;
+          }
+        }
+      });
+    }
+
     final rawUsage = decoded['usage'];
     if (rawUsage is List) {
       for (final item in rawUsage) {
@@ -370,11 +522,49 @@ class StateStore {
         }
       }
     }
-    users.putIfAbsent('demo', () => UserQuota.defaultFor(defaultQuota));
   }
 
-  UserQuota user(String id) =>
-      users.putIfAbsent(id, () => UserQuota.defaultFor(defaultQuota));
+  Future<void> bootstrapAdmin(ServerConfig config) async {
+    if (accounts.values.any((account) => account.role == AccountRole.admin)) {
+      return;
+    }
+    if (config.bootstrapAdminPassword.trim().isEmpty) {
+      stdout.writeln(
+        'No admin account exists. Set BOX_ADMIN_PASSWORD once to bootstrap admin user.',
+      );
+      await save();
+      return;
+    }
+    final adminId = 'u_admin';
+    accounts[adminId] = Account(
+      id: adminId,
+      username: config.bootstrapAdminUsername,
+      passwordHash: hashPassword(config.bootstrapAdminPassword),
+      role: AccountRole.admin,
+      status: 'normal',
+      createdAt: DateTime.now(),
+      lastLoginAt: null,
+    );
+    quotas.putIfAbsent(
+      adminId,
+      () => UserQuota.defaultFor(config.defaultQuota),
+    );
+    await save();
+    stdout.writeln(
+      'Bootstrapped admin account: ${config.bootstrapAdminUsername}',
+    );
+  }
+
+  Account? accountByUsername(String username) {
+    final normalized = username.toLowerCase();
+    for (final account in accounts.values) {
+      if (account.username.toLowerCase() == normalized) return account;
+    }
+    return null;
+  }
+
+  UserQuota quota(String id) =>
+      quotas.putIfAbsent(id, () => UserQuota.defaultFor(defaultQuota));
 
   void addUsage(UsageRecord record) {
     usage.insert(0, record);
@@ -382,7 +572,17 @@ class StateStore {
   }
 
   Map<String, dynamic> toJson() => {
-    'users': users.map((key, value) => MapEntry(key, value.toJson())),
+    'accounts': accounts.map((key, value) => MapEntry(key, value.toJson())),
+    'quotas': quotas.map((key, value) => MapEntry(key, value.toJson())),
+    'sessions': sessions.map((key, value) => MapEntry(key, value.toJson())),
+    'usage': usage.map((item) => item.toJson()).toList(),
+  };
+
+  Map<String, dynamic> toAdminJson() => {
+    'accounts': accounts.map(
+      (key, value) => MapEntry(key, value.toPublicJson()),
+    ),
+    'quotas': quotas.map((key, value) => MapEntry(key, value.toJson())),
     'usage': usage.map((item) => item.toJson()).toList(),
   };
 
@@ -392,6 +592,99 @@ class StateStore {
     const encoder = JsonEncoder.withIndent('  ');
     await file.writeAsString(encoder.convert(toJson()));
   }
+}
+
+enum AccountRole {
+  user,
+  admin;
+
+  static AccountRole fromWire(String value) =>
+      value == 'admin' ? AccountRole.admin : AccountRole.user;
+
+  String get wireName => name;
+}
+
+class Account {
+  Account({
+    required this.id,
+    required this.username,
+    required this.passwordHash,
+    required this.role,
+    required this.status,
+    required this.createdAt,
+    required this.lastLoginAt,
+  });
+
+  factory Account.fromJson(Map<String, dynamic> json) => Account(
+    id: json['id']?.toString() ?? '',
+    username: json['username']?.toString() ?? '',
+    passwordHash: json['passwordHash']?.toString() ?? '',
+    role: AccountRole.fromWire(json['role']?.toString() ?? 'user'),
+    status: json['status']?.toString() ?? 'normal',
+    createdAt:
+        DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+        DateTime.now(),
+    lastLoginAt: DateTime.tryParse(json['lastLoginAt']?.toString() ?? ''),
+  );
+
+  final String id;
+  final String username;
+  final String passwordHash;
+  final AccountRole role;
+  String status;
+  final DateTime createdAt;
+  DateTime? lastLoginAt;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'username': username,
+    'passwordHash': passwordHash,
+    'role': role.wireName,
+    'status': status,
+    'createdAt': createdAt.toIso8601String(),
+    'lastLoginAt': lastLoginAt?.toIso8601String(),
+  };
+
+  Map<String, dynamic> toPublicJson() => {
+    'id': id,
+    'username': username,
+    'role': role.wireName,
+    'status': status,
+    'createdAt': createdAt.toIso8601String(),
+    'lastLoginAt': lastLoginAt?.toIso8601String(),
+  };
+}
+
+class AuthSession {
+  const AuthSession({
+    required this.token,
+    required this.userId,
+    required this.createdAt,
+    required this.expiresAt,
+  });
+
+  factory AuthSession.fromJson(Map<String, dynamic> json) => AuthSession(
+    token: json['token']?.toString() ?? '',
+    userId: json['userId']?.toString() ?? '',
+    createdAt:
+        DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+        DateTime.now(),
+    expiresAt:
+        DateTime.tryParse(json['expiresAt']?.toString() ?? '') ??
+        DateTime.now(),
+  );
+
+  final String token;
+  final String userId;
+  final DateTime createdAt;
+  final DateTime expiresAt;
+
+  Map<String, dynamic> toJson() => {
+    'token': token,
+    'userId': userId,
+    'createdAt': createdAt.toIso8601String(),
+    'expiresAt': expiresAt.toIso8601String(),
+  };
 }
 
 class UserQuota {
@@ -525,12 +818,36 @@ class UpstreamResponse {
   }
 }
 
-String userIdOf(HttpRequest request) {
-  final header = request.headers.value('x-user-id')?.trim();
-  if (header != null && header.isNotEmpty) return header;
-  final query = request.uri.queryParameters['userId']?.trim();
-  if (query != null && query.isNotEmpty) return query;
-  return 'demo';
+String? bearerToken(HttpRequest request) {
+  final auth = request.headers.value(HttpHeaders.authorizationHeader) ?? '';
+  final match = RegExp(
+    r'^Bearer\s+(.+)$',
+    caseSensitive: false,
+  ).firstMatch(auth.trim());
+  return match?.group(1)?.trim();
+}
+
+String hashPassword(String password) {
+  final salt = randomBase64(16);
+  final digest = sha256.convert(utf8.encode('$salt:$password')).toString();
+  return 'sha256:$salt:$digest';
+}
+
+bool verifyPassword(String password, String stored) {
+  final parts = stored.split(':');
+  if (parts.length != 3 || parts[0] != 'sha256') return false;
+  final digest = sha256
+      .convert(utf8.encode('${parts[1]}:$password'))
+      .toString();
+  return digest == parts[2];
+}
+
+String newToken(String prefix) => '${prefix}_${randomBase64(32)}';
+
+String randomBase64(int bytes) {
+  final random = Random.secure();
+  final values = List<int>.generate(bytes, (_) => random.nextInt(256));
+  return base64UrlEncode(values).replaceAll('=', '');
 }
 
 int calculateCost(Map<String, dynamic> body) {

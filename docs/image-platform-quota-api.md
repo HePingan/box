@@ -33,9 +33,18 @@ https://your-domain.com
 前端会拼接以下接口：
 
 ```text
+POST /api/auth/login
+GET  /api/auth/me
+POST /api/auth/logout
 GET  /api/image/quota
 GET  /api/image/models
 POST /api/image/generate
+```
+
+除登录接口外，真实代理服务要求携带：
+
+```http
+Authorization: Bearer <box-session-token>
 ```
 
 ## CORS
@@ -52,14 +61,62 @@ Access-Control-Allow-Headers: Content-Type, Authorization
 
 ## 鉴权建议
 
-当前前端 scaffold 不强制鉴权头，但真实后端应使用任一方式识别用户：
+真实代理服务内置 Box 账号登录接口。Flutter 端应先登录，再用返回的 session token 访问平台额度和管理员接口。
 
-- App 登录态 Cookie
-- `Authorization: Bearer <user-token>`
-- 设备绑定 token
-- 网关层统一鉴权
+### POST /api/auth/login
 
-不要把管理员 Key 下发给前端。
+```http
+POST /api/auth/login
+Content-Type: application/json
+```
+
+```json
+{
+  "username": "admin",
+  "password": "your-password"
+}
+```
+
+返回：
+
+```json
+{
+  "token": "box_session_xxx",
+  "user": {
+    "id": "u_admin",
+    "username": "admin",
+    "role": "admin",
+    "status": "normal"
+  }
+}
+```
+
+### GET /api/auth/me
+
+```http
+GET /api/auth/me
+Authorization: Bearer <box-session-token>
+```
+
+返回当前用户公开信息。
+
+### POST /api/auth/logout
+
+```http
+POST /api/auth/logout
+Authorization: Bearer <box-session-token>
+```
+
+服务端会删除当前 session。
+
+角色：
+
+| role | 说明 |
+| --- | --- |
+| `user` | 普通用户，可使用自己的生图额度 |
+| `admin` | 管理员，可使用生图额度，也可访问 `/admin/*` |
+
+不要把管理员 Key 下发给前端。管理员账号只代表“可操作后台”，上游 API Key 仍只保存在服务器环境变量。
 
 ## GET /api/image/quota
 
@@ -280,6 +337,8 @@ Content-Type: application/json
 ```bash
 IMAGE_ADMIN_BASE_URL=https://api.openai.com/v1 \
 IMAGE_ADMIN_API_KEY=sk-xxx \
+BOX_ADMIN_USERNAME=admin \
+BOX_ADMIN_PASSWORD=change-me-now \
 IMAGE_ADMIN_TOKEN=local-admin-token \
 IMAGE_DEFAULT_QUOTA=20 \
 PORT=8788 \
@@ -302,6 +361,8 @@ http://127.0.0.1:8788
 | `PORT` | `8788` | 监听端口 |
 | `IMAGE_ADMIN_BASE_URL` | `https://api.openai.com/v1` | 上游 OpenAI 兼容 Base URL |
 | `IMAGE_ADMIN_API_KEY` | 空 | 上游管理员 Key。为空时不允许真实生图 |
+| `BOX_ADMIN_USERNAME` | `admin` | 首次初始化管理员用户名 |
+| `BOX_ADMIN_PASSWORD` | 空 | 首次初始化管理员密码。已有管理员后不再生效 |
 | `IMAGE_ALLOWED_MODELS` | 空 | 逗号分隔模型白名单，例如 `gpt-image-1,dall-e-3` |
 | `IMAGE_DEFAULT_QUOTA` | `20` | 新用户默认额度 |
 | `IMAGE_STATE_PATH` | `.var/image_platform_state.json` | JSON 状态文件 |
@@ -315,25 +376,22 @@ dart run tool/image_platform_quota_server.dart --host 0.0.0.0 --port 8788
 
 ### 用户识别
 
-最小实现支持：
+真实代理服务通过登录 session 识别用户：
 
 ```http
-X-User-Id: demo
+Authorization: Bearer <box-session-token>
 ```
 
-也支持 query：
+首次启动时，如果状态文件中还没有管理员账号，且提供了 `BOX_ADMIN_PASSWORD`，服务会创建：
 
 ```text
-/api/image/quota?userId=demo
+username = BOX_ADMIN_USERNAME 或 admin
+role     = admin
 ```
 
-如果都没有，默认用户为：
+密码只保存 salted sha256 hash，不保存明文。
 
-```text
-demo
-```
-
-真实生产环境应接入登录态或网关鉴权，不应只依赖用户自填 header。
+如果没有携带 token，`/api/image/*` 会返回 `401`。
 
 ### 状态文件
 
@@ -345,6 +403,8 @@ demo
 
 保存内容包括：
 
+- Box 账号
+- 登录 session
 - 用户额度
 - 今日已用
 - 用户状态
@@ -354,7 +414,13 @@ demo
 
 ### 管理接口
 
-管理接口需要：
+管理接口需要管理员登录 token：
+
+```http
+Authorization: Bearer <admin-box-session-token>
+```
+
+也兼容早期本地调试用：
 
 ```http
 X-Admin-Token: <IMAGE_ADMIN_TOKEN>
@@ -371,7 +437,7 @@ GET /admin/image/users
 ```http
 POST /admin/image/users/demo/quota
 Content-Type: application/json
-X-Admin-Token: <IMAGE_ADMIN_TOKEN>
+Authorization: Bearer <admin-box-session-token>
 ```
 
 ```json
