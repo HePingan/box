@@ -33,6 +33,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   String _size = '1024x1024';
   String _quality = 'auto';
   String _outputFormat = 'png';
+  ImageReferencePayloadField _referenceImageField =
+      ImageReferencePayloadField.none;
   int _count = 1;
   bool _loading = false;
   bool _draftLoaded = false;
@@ -86,6 +88,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     _promptController.text = draft.prompt;
     _negativeController.text = draft.negativePrompt;
     _referenceImageController.text = draft.referenceImageUrl;
+    _referenceImageField = draft.referenceImageField;
     _size = draft.size;
     _quality = draft.quality;
     _outputFormat = draft.outputFormat;
@@ -100,6 +103,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       prompt: _promptController.text.trim(),
       negativePrompt: _negativeController.text.trim(),
       referenceImageUrl: _referenceImageController.text.trim(),
+      referenceImageField: _referenceImageField,
       size: _size,
       quality: _quality,
       outputFormat: _outputFormat,
@@ -193,6 +197,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       _promptController.text = item.prompt;
       _negativeController.text = item.negativePrompt;
       _modelController.text = item.model;
+      _referenceImageController.text = item.referenceImageUrl;
+      _referenceImageField = item.referenceImageField;
       _size = item.size;
       _quality = item.quality;
       _outputFormat = item.outputFormat;
@@ -226,6 +232,20 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       setState(() => _error = '请先填写 API Key');
       return;
     }
+    final referenceUrl = _referenceImageController.text.trim();
+    if (_referenceImageField.shouldSend && referenceUrl.isEmpty) {
+      setState(() => _error = '请先填写参考图 URL，或把参考图字段改为“不发送”。');
+      return;
+    }
+    if (!_referenceImageField.shouldSend && referenceUrl.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            '参考图当前仅保存/预览，不会发送给接口；如需发送请选 image/reference_image/input_image。',
+          ),
+        ),
+      );
+    }
 
     await _saveDraftNow();
     setState(() {
@@ -241,6 +261,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
           model: _modelController.text,
           prompt: prompt,
           negativePrompt: _negativeController.text,
+          referenceImageUrl: referenceUrl,
+          referenceImageField: _referenceImageField,
           size: _size,
           quality: _quality,
           outputFormat: _outputFormat,
@@ -251,6 +273,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
         ImageGenerationHistoryItem(
           prompt: prompt,
           negativePrompt: _negativeController.text.trim(),
+          referenceImageUrl: referenceUrl,
+          referenceImageField: _referenceImageField,
           model: _modelController.text.trim().isEmpty
               ? 'gpt-image-1'
               : _modelController.text.trim(),
@@ -323,7 +347,13 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
           const SizedBox(height: 12),
           ImageGeneratorReferenceCard(
             controller: _referenceImageController,
-            onClear: () => _setParam(() => _referenceImageController.clear()),
+            payloadField: _referenceImageField,
+            onPayloadFieldChanged: (value) =>
+                _setParam(() => _referenceImageField = value),
+            onClear: () => _setParam(() {
+              _referenceImageController.clear();
+              _referenceImageField = ImageReferencePayloadField.none;
+            }),
           ),
           const SizedBox(height: 12),
           ImageGeneratorResultCard(
@@ -336,7 +366,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             onRestoreHistory: _restoreHistory,
             onClearHistory: _clearHistory,
             parameterSummary:
-                '${_modelController.text.trim().isEmpty ? 'gpt-image-1' : _modelController.text.trim()} · $_size · $_quality · $_outputFormat · $_count 张',
+                '${_modelController.text.trim().isEmpty ? 'gpt-image-1' : _modelController.text.trim()} · $_size · $_quality · $_outputFormat · $_count 张${_referenceImageField.shouldSend ? ' · 参考图:${_referenceImageField.wireName}' : ''}',
             currentPrompt: _promptController.text.trim(),
             currentNegativePrompt: _negativeController.text.trim(),
           ),

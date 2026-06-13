@@ -33,6 +33,10 @@ class ImageGeneratorClient {
       if (params.outputFormat.trim().isNotEmpty) {
         body['output_format'] = params.outputFormat.trim();
       }
+      final referenceUrl = params.referenceImageUrl.trim();
+      if (params.referenceImageField.shouldSend && referenceUrl.isNotEmpty) {
+        body[params.referenceImageField.wireName] = referenceUrl;
+      }
 
       final response = await client
           .post(

@@ -403,10 +403,14 @@ class ImageGeneratorReferenceCard extends StatelessWidget {
   const ImageGeneratorReferenceCard({
     super.key,
     required this.controller,
+    required this.payloadField,
+    required this.onPayloadFieldChanged,
     required this.onClear,
   });
 
   final TextEditingController controller;
+  final ImageReferencePayloadField payloadField;
+  final ValueChanged<ImageReferencePayloadField> onPayloadFieldChanged;
   final VoidCallback onClear;
 
   @override
@@ -420,7 +424,7 @@ class ImageGeneratorReferenceCard extends StatelessWidget {
           _SectionTitle(
             icon: Icons.photo_filter_rounded,
             title: '参考图 / 图生图（实验）',
-            subtitle: '先保存参考图 URL 和预览，暂未接入图生图请求',
+            subtitle: '选择字段后，请求 JSON 会携带公网参考图 URL',
             trailing: hasUrl
                 ? TextButton.icon(
                     onPressed: onClear,
@@ -435,6 +439,30 @@ class ImageGeneratorReferenceCard extends StatelessWidget {
             decoration: const InputDecoration(
               labelText: '参考图 URL（可选）',
               hintText: 'https://.../reference.png，用于后续图生图/风格参考',
+            ),
+          ),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<ImageReferencePayloadField>(
+            initialValue: payloadField,
+            decoration: const InputDecoration(labelText: '请求字段'),
+            items: ImageReferencePayloadField.values
+                .map(
+                  (field) =>
+                      DropdownMenuItem(value: field, child: Text(field.label)),
+                )
+                .toList(),
+            onChanged: (field) {
+              if (field != null) onPayloadFieldChanged(field);
+            },
+          ),
+          const SizedBox(height: 8),
+          Text(
+            payloadField.shouldSend
+                ? '生成时会附加 JSON 字段：${payloadField.wireName} = 当前参考图 URL。'
+                : '当前仅保存和预览参考图，不会发送给接口。',
+            style: const TextStyle(
+              color: AppTokens.textSecondary,
+              fontSize: 12,
             ),
           ),
           const SizedBox(height: 10),
@@ -464,7 +492,7 @@ class ImageGeneratorReferenceCard extends StatelessWidget {
                 border: Border.all(color: const Color(0xFFE7ECF5)),
               ),
               child: const Text(
-                '后续可扩展到 OpenAI edits、Responses input_image 或 fal.ai；当前不改变文生图请求逻辑。',
+                '填写公网可访问图片 URL，并选择 image/reference_image/input_image 等中转兼容字段；不发送时仅作为草稿预览。',
                 style: TextStyle(color: AppTokens.textSecondary),
               ),
             ),

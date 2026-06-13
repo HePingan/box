@@ -10,6 +10,8 @@ class ImageGenerationParams {
     required this.quality,
     required this.outputFormat,
     this.negativePrompt = '',
+    this.referenceImageUrl = '',
+    this.referenceImageField = ImageReferencePayloadField.none,
     this.count = 1,
   });
 
@@ -21,12 +23,38 @@ class ImageGenerationParams {
   final String size;
   final String quality;
   final String outputFormat;
+  final String referenceImageUrl;
+  final ImageReferencePayloadField referenceImageField;
   final int count;
 
   String get effectivePrompt {
     final negative = negativePrompt.trim();
     if (negative.isEmpty) return prompt.trim();
     return '${prompt.trim()}\n\nNegative prompt: $negative';
+  }
+}
+
+enum ImageReferencePayloadField {
+  none('', '不发送'),
+  image('image', 'image'),
+  referenceImage('reference_image', 'reference_image'),
+  inputImage('input_image', 'input_image');
+
+  const ImageReferencePayloadField(this.wireName, this.label);
+
+  final String wireName;
+  final String label;
+
+  bool get shouldSend => this != ImageReferencePayloadField.none;
+
+  static ImageReferencePayloadField fromWireName(String value) {
+    final normalized = value.trim();
+    for (final field in ImageReferencePayloadField.values) {
+      if (field.wireName == normalized || field.name == normalized) {
+        return field;
+      }
+    }
+    return ImageReferencePayloadField.none;
   }
 }
 
@@ -37,6 +65,7 @@ class ImageGeneratorDraft {
     required this.prompt,
     required this.negativePrompt,
     required this.referenceImageUrl,
+    required this.referenceImageField,
     required this.size,
     required this.quality,
     required this.outputFormat,
@@ -50,6 +79,7 @@ class ImageGeneratorDraft {
       prompt: '一张用于工具箱 App 的 AI 生图入口海报，蓝紫渐变，玻璃拟态，科技感构图，移动端 UI 宣传图',
       negativePrompt: '低清晰度，文字错误，水印，畸形手指',
       referenceImageUrl: '',
+      referenceImageField: ImageReferencePayloadField.none,
       size: '1024x1024',
       quality: 'auto',
       outputFormat: 'png',
@@ -68,6 +98,9 @@ class ImageGeneratorDraft {
         defaults.negativePrompt,
       ),
       referenceImageUrl: _asString(json['referenceImageUrl']),
+      referenceImageField: ImageReferencePayloadField.fromWireName(
+        _asString(json['referenceImageField']),
+      ),
       size: _asString(json['size'], defaults.size),
       quality: _asString(json['quality'], defaults.quality),
       outputFormat: _asString(json['outputFormat'], defaults.outputFormat),
@@ -80,6 +113,7 @@ class ImageGeneratorDraft {
   final String prompt;
   final String negativePrompt;
   final String referenceImageUrl;
+  final ImageReferencePayloadField referenceImageField;
   final String size;
   final String quality;
   final String outputFormat;
@@ -92,6 +126,7 @@ class ImageGeneratorDraft {
       'prompt': prompt,
       'negativePrompt': negativePrompt,
       'referenceImageUrl': referenceImageUrl,
+      'referenceImageField': referenceImageField.wireName,
       'size': size,
       'quality': quality,
       'outputFormat': outputFormat,
@@ -125,6 +160,8 @@ class ImageGenerationHistoryItem {
   const ImageGenerationHistoryItem({
     required this.prompt,
     required this.negativePrompt,
+    required this.referenceImageUrl,
+    required this.referenceImageField,
     required this.model,
     required this.size,
     required this.quality,
@@ -138,6 +175,10 @@ class ImageGenerationHistoryItem {
     return ImageGenerationHistoryItem(
       prompt: _asString(json['prompt']),
       negativePrompt: _asString(json['negativePrompt']),
+      referenceImageUrl: _asString(json['referenceImageUrl']),
+      referenceImageField: ImageReferencePayloadField.fromWireName(
+        _asString(json['referenceImageField']),
+      ),
       model: _asString(json['model'], 'gpt-image-1'),
       size: _asString(json['size'], '1024x1024'),
       quality: _asString(json['quality'], 'auto'),
@@ -155,6 +196,8 @@ class ImageGenerationHistoryItem {
 
   final String prompt;
   final String negativePrompt;
+  final String referenceImageUrl;
+  final ImageReferencePayloadField referenceImageField;
   final String model;
   final String size;
   final String quality;
@@ -168,6 +211,8 @@ class ImageGenerationHistoryItem {
     return {
       'prompt': prompt,
       'negativePrompt': negativePrompt,
+      'referenceImageUrl': referenceImageUrl,
+      'referenceImageField': referenceImageField.wireName,
       'model': model,
       'size': size,
       'quality': quality,
