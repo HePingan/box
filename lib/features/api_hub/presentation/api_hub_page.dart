@@ -11,6 +11,7 @@ import '../data/public_api_client.dart';
 import '../data/public_api_index_loader.dart';
 import '../domain/public_api_models.dart';
 
+import 'widgets/api_hub_tool_panels.dart';
 import 'widgets/api_hub_widgets.dart';
 
 class ApiHubPage extends StatefulWidget {
@@ -661,179 +662,28 @@ class _ApiHubPageState extends State<ApiHubPage> {
   }
 
   Widget _buildCurrencyPanel() {
-    final codes = const ['USD', 'CNY', 'EUR', 'JPY', 'HKD', 'GBP'];
-    return ApiHubPanel(
-      title: 'Frankfurter 汇率换算',
-      subtitle: '免费外汇接口，适合工具页汇率能力',
-      icon: Icons.currency_exchange_rounded,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _amountController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: '金额'),
-                  onSubmitted: (_) => _loadCurrency(),
-                ),
-              ),
-              const SizedBox(width: 8),
-              ApiHubCurrencyDropDown(
-                value: _from,
-                codes: codes,
-                onChanged: (v) => setState(() => _from = v),
-              ),
-              const SizedBox(width: 8),
-              ApiHubCurrencyDropDown(
-                value: _to,
-                codes: codes,
-                onChanged: (v) => setState(() => _to = v),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          FilledButton.icon(
-            onPressed: _loadCurrency,
-            icon: const Icon(Icons.sync_alt_rounded),
-            label: const Text('换算'),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            _converted == null
-                ? '暂无换算结果'
-                : '${_amountController.text} $_from ≈ ${_converted!.toStringAsFixed(2)} $_to',
-            style: const TextStyle(
-              color: AppTokens.textPrimary,
-              fontSize: 20,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _rates.entries
-                .map(
-                  (e) => AppStatusPill(
-                    label: '${e.key} ${e.value.toStringAsFixed(2)}',
-                    icon: Icons.trending_up_rounded,
-                    color: AppTokens.emerald,
-                  ),
-                )
-                .toList(),
-          ),
-        ],
-      ),
+    return ApiHubCurrencyPanel(
+      amountController: _amountController,
+      from: _from,
+      to: _to,
+      converted: _converted,
+      rates: _rates,
+      onFromChanged: (v) => setState(() => _from = v),
+      onToChanged: (v) => setState(() => _to = v),
+      onSubmit: _loadCurrency,
     );
   }
 
   Widget _buildHolidayPanel() {
-    final now = DateTime.now();
-    final upcoming = _holidays.where((item) {
-      final date = DateTime.tryParse(item.date);
-      return date != null &&
-          !date.isBefore(DateTime(now.year, now.month, now.day));
-    }).toList();
-    return ApiHubPanel(
-      title: 'Nager.Date 节假日',
-      subtitle: '${now.year} 年中国公开节假日，首页工作台可复用',
-      icon: Icons.event_available_rounded,
-      child: Column(
-        children: [
-          if (_holidays.isEmpty)
-            const AppEmptyState(
-              title: '暂无节假日数据',
-              message: '接口可能暂未提供当前地区',
-              icon: Icons.event_busy_rounded,
-            )
-          else
-            ...(upcoming.isEmpty ? _holidays : upcoming).take(8).map((item) {
-              return ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: CircleAvatar(
-                  backgroundColor: AppTokens.orange.withValues(alpha: 0.12),
-                  child: const Icon(
-                    Icons.event_available_rounded,
-                    color: AppTokens.orange,
-                  ),
-                ),
-                title: Text(item.localName),
-                subtitle: Text('${item.date} · ${item.name}'),
-              );
-            }),
-        ],
-      ),
-    );
+    return ApiHubHolidayPanel(holidays: _holidays);
   }
 
   Widget _buildWeatherPanel() {
-    final weather = _weather;
-    return ApiHubPanel(
-      title: 'Open-Meteo 天气预报',
-      subtitle: '输入经纬度获取 3 天天气，默认上海',
-      icon: Icons.wb_cloudy_rounded,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _latController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: '纬度'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: TextField(
-                  controller: _lonController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: '经度'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton(onPressed: _loadWeather, child: const Text('查询')),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (weather == null)
-            const AppEmptyState(
-              title: '暂无天气',
-              message: '输入坐标后查询',
-              icon: Icons.wb_cloudy_rounded,
-            )
-          else ...[
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                AppStatusPill(
-                  label:
-                      '当前 ${weather.currentTemperature?.toStringAsFixed(1) ?? '--'}°C',
-                  icon: Icons.thermostat_rounded,
-                  color: AppTokens.primaryBlue,
-                ),
-                AppStatusPill(
-                  label:
-                      '风速 ${weather.currentWindSpeed?.toStringAsFixed(1) ?? '--'} km/h',
-                  icon: Icons.air_rounded,
-                  color: AppTokens.emerald,
-                ),
-                AppStatusPill(
-                  label: weather.timezone,
-                  icon: Icons.public_rounded,
-                  color: AppTokens.violet,
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            ...weather.daily.map(ApiHubWeatherDailyTile.new),
-          ],
-        ],
-      ),
+    return ApiHubWeatherPanel(
+      latController: _latController,
+      lonController: _lonController,
+      weather: _weather,
+      onSubmit: _loadWeather,
     );
   }
 
