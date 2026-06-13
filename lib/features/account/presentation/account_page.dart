@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../design_system/app_tokens.dart';
 import '../../../design_system/widgets/app_cards.dart';
 import '../../../design_system/widgets/app_page_scaffold.dart';
+import '../../../app/app_routes.dart';
 import '../data/account_client.dart';
 import '../data/account_store.dart';
 import '../domain/account_models.dart';
@@ -125,8 +126,8 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
-  void _showAdminComingSoon() {
-    _showSnack('管理后台将在下一批接入；当前已具备管理员登录态。');
+  void _openAdmin() {
+    Navigator.of(context).pushNamed(AppRoutes.accountAdmin);
   }
 
   void _showSnack(String message) {
@@ -203,7 +204,7 @@ class _AccountPageState extends State<AccountPage> {
                     loading: _loading,
                     onRefresh: _loadSession,
                     onLogout: _logout,
-                    onAdminTap: _showAdminComingSoon,
+                    onAdminTap: _openAdmin,
                   ),
                 const SizedBox(height: 12),
                 const AccountNoticeCard(),
