@@ -4,6 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../../design_system/app_tokens.dart';
+import '../../../design_system/widgets/app_cards.dart';
+import '../../../design_system/widgets/app_page_scaffold.dart';
+
 import '../../core/novel_source_capability.dart';
 import '../../core/novel_source_capability_detector.dart';
 import '../../core/novel_source_factory.dart';
@@ -699,120 +703,241 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
     );
   }
 
+  Widget _buildManagerHero(BookSourceManager manager, int visibleCount) {
+    final total = manager.items.length;
+    final enabled = manager.enabledItems.length;
+    final currentName = manager.currentSource?.bookSourceName.trim();
+
+    return AppLightHeroCard(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      eyebrow: 'SOURCE RULES',
+      title: '书源管理',
+      subtitle: currentName != null && currentName.isNotEmpty
+          ? '当前默认：$currentName'
+          : '导入、预检查并启用小说规则源',
+      badge: '小说',
+      accentGradient: AppTokens.violetGradient,
+      leading: IconButton.filledTonal(
+        onPressed: () => Navigator.maybePop(context),
+        icon: const Icon(Icons.arrow_back_rounded),
+      ),
+      actions: [
+        AppStatusPill(
+          label: '全部 $total',
+          icon: Icons.rule_folder_rounded,
+          color: AppTokens.violet,
+        ),
+        AppStatusPill(
+          label: '启用 $enabled',
+          icon: Icons.check_circle_rounded,
+          color: AppTokens.emerald,
+        ),
+        if (_keyword.trim().isNotEmpty)
+          AppStatusPill(
+            label: '匹配 $visibleCount',
+            icon: Icons.search_rounded,
+            color: AppTokens.primaryBlue,
+          ),
+      ],
+    );
+  }
+
+  Widget _buildStartupBanner() {
+    if (widget.startupMessage.trim().isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTokens.warning.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        border: Border.all(color: AppTokens.warning.withValues(alpha: 0.18)),
+      ),
+      child: Text(
+        widget.startupMessage,
+        style: const TextStyle(
+          color: AppTokens.warning,
+          fontSize: 12.5,
+          height: 1.45,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickActions() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: AppCompactActionCard(
+              title: '导入书源',
+              subtitle: 'JSON / 预检查',
+              icon: Icons.playlist_add_rounded,
+              color: AppTokens.violet,
+              onTap: _showImportDialog,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: AppCompactActionCard(
+              title: '新增规则',
+              subtitle: '手动编辑',
+              icon: Icons.add_box_rounded,
+              color: AppTokens.primaryBlue,
+              onTap: () => _showEditorDialog(),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: AppCompactActionCard(
+              title: '导出',
+              subtitle: '当前书源',
+              icon: Icons.ios_share_rounded,
+              color: AppTokens.emerald,
+              onTap: _exportCurrentSource,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchBox() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppTokens.divider),
+        boxShadow: AppTokens.shadowSm(color: AppTokens.violet),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.search_rounded, color: AppTokens.violet),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              onChanged: (v) => setState(() => _keyword = v),
+              decoration: const InputDecoration(
+                hintText: '搜索名称 / 分组 / 域名',
+                border: InputBorder.none,
+                isDense: true,
+              ),
+            ),
+          ),
+          if (_keyword.isNotEmpty)
+            IconButton(
+              tooltip: '清空',
+              icon: const Icon(Icons.close_rounded),
+              onPressed: () {
+                _searchController.clear();
+                setState(() => _keyword = '');
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptySources() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        16,
+        44,
+        16,
+        AppTokens.pageBottomPadding,
+      ),
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(22, 26, 22, 24),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.9),
+            borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+            border: Border.all(color: AppTokens.divider),
+            boxShadow: AppTokens.shadowSm(),
+          ),
+          child: Column(
+            children: [
+              Container(
+                width: 62,
+                height: 62,
+                decoration: BoxDecoration(
+                  color: AppTokens.surfaceTint,
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: Icon(
+                  _keyword.trim().isEmpty
+                      ? Icons.rule_folder_outlined
+                      : Icons.search_off_rounded,
+                  color: AppTokens.violet,
+                  size: 32,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                _keyword.trim().isEmpty ? '还没有书源' : '没有找到匹配的书源',
+                style: const TextStyle(
+                  color: AppTokens.textPrimary,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _keyword.trim().isEmpty
+                    ? '点击“导入书源”粘贴 JSON，系统会先做可用性预检查。'
+                    : '换个关键词，或清空搜索查看全部书源。',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: AppTokens.textSecondary,
+                  fontSize: 12.5,
+                  height: 1.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (_keyword.trim().isEmpty) ...[
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: _showImportDialog,
+                  icon: const Icon(Icons.playlist_add_rounded),
+                  label: const Text('导入书源'),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final manager = context.watch<BookSourceManager>();
     final sources = manager.search(_keyword);
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F8FA),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        title: const Text(
-          '书源管理',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-        ),
-        actions: [
-          IconButton(
-            tooltip: '新增书源',
-            onPressed: () => _showEditorDialog(),
-            icon: const Icon(Icons.add_box_outlined),
-          ),
-          IconButton(
-            tooltip: '导入书源',
-            onPressed: _showImportDialog,
-            icon: const Icon(Icons.playlist_add),
-          ),
-          IconButton(
-            tooltip: '导出当前书源',
-            onPressed: _exportCurrentSource,
-            icon: const Icon(Icons.ios_share_outlined),
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showImportDialog,
-        icon: const Icon(Icons.add),
-        label: const Text('导入书源'),
-      ),
-      body: Column(
+    return AppPageScaffold(
+      safeBottom: false,
+      child: Column(
         children: [
-          if (widget.startupMessage.trim().isNotEmpty)
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                widget.startupMessage,
-                style: const TextStyle(color: Colors.deepOrange, fontSize: 13),
-              ),
-            ),
-          if (manager.currentSource != null)
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.blue.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                '当前默认书源：${manager.currentSource!.bookSourceName}',
-                style: const TextStyle(
-                  color: Colors.blue,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
-            child: TextField(
-              controller: _searchController,
-              onChanged: (v) => setState(() => _keyword = v),
-              decoration: InputDecoration(
-                hintText: '搜索书源名称 / 分组 / 域名',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _keyword.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() => _keyword = '');
-                        },
-                      )
-                    : null,
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                  borderSide: BorderSide.none,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
+          _buildManagerHero(manager, sources.length),
+          _buildStartupBanner(),
+          _buildQuickActions(),
+          _buildSearchBox(),
           Expanded(
             child: sources.isEmpty
-                ? ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 40, 16, 100),
-                    children: [
-                      Center(
-                        child: Text(
-                          _keyword.trim().isEmpty
-                              ? '还没有书源，点击右下角“导入书源”开始'
-                              : '没有找到匹配的书源',
-                          style: const TextStyle(color: Colors.black54),
-                        ),
-                      ),
-                    ],
-                  )
+                ? _buildEmptySources()
                 : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+                    padding: const EdgeInsets.fromLTRB(
+                      16,
+                      0,
+                      16,
+                      AppTokens.pageBottomPadding + 32,
+                    ),
                     itemCount: sources.length,
                     itemBuilder: (_, i) => BookSourceCard(
                       source: sources[i],

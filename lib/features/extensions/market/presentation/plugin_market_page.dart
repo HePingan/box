@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:box/design_system/app_tokens.dart';
+import 'package:box/design_system/widgets/app_bottom_sheet.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import 'package:box/features/extensions/market/data/plugin_market_manifest_repository.dart';
 import 'package:box/features/extensions/market/domain/plugin_market_manifest.dart';
@@ -338,24 +339,64 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     required String confirmText,
     required bool destructive,
   }) async {
-    final result = await showDialog<bool>(
+    final result = await showAppModalBottomSheet<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            style: destructive
-                ? FilledButton.styleFrom(backgroundColor: AppTokens.rose)
-                : null,
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(confirmText),
-          ),
-        ],
+      builder: (dialogContext) => AppBottomSheetFrame(
+        title: title,
+        subtitle: destructive ? '批量卸载会立即从当前设备移除插件' : '请确认本次批量操作',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: destructive
+                    ? AppTokens.rose.withValues(alpha: 0.08)
+                    : AppTokens.surfaceTint,
+                borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+                border: Border.all(
+                  color: destructive
+                      ? AppTokens.rose.withValues(alpha: 0.18)
+                      : AppTokens.divider,
+                ),
+              ),
+              child: Text(
+                message,
+                style: TextStyle(
+                  color: destructive ? AppTokens.rose : AppTokens.textSecondary,
+                  fontSize: 13,
+                  height: 1.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('取消'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton(
+                    style: destructive
+                        ? FilledButton.styleFrom(
+                            backgroundColor: AppTokens.rose,
+                          )
+                        : null,
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: Text(confirmText),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
     return result ?? false;
