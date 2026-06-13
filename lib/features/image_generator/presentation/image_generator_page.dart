@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 
 import '../data/image_generator_client.dart';
+import '../data/image_generator_store.dart';
 import '../domain/image_generator_models.dart';
 import 'widgets/image_generator_widgets.dart';
 
@@ -16,36 +19,108 @@ class ImageGeneratorPage extends StatefulWidget {
 
 class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   final ImageGeneratorClient _client = const ImageGeneratorClient();
-  final TextEditingController _baseUrlController = TextEditingController(
-    text: 'https://api.openai.com/v1',
-  );
+  final ImageGeneratorStore _store = const ImageGeneratorStore();
+  final TextEditingController _baseUrlController = TextEditingController();
   final TextEditingController _apiKeyController = TextEditingController();
-  final TextEditingController _modelController = TextEditingController(
-    text: 'gpt-image-1',
-  );
-  final TextEditingController _promptController = TextEditingController(
-    text: '一张用于工具箱 App 的 AI 生图入口海报，蓝紫渐变，玻璃拟态，科技感构图，移动端 UI 宣传图',
-  );
-  final TextEditingController _negativeController = TextEditingController(
-    text: '低清晰度，文字错误，水印，畸形手指',
-  );
+  final TextEditingController _modelController = TextEditingController();
+  final TextEditingController _promptController = TextEditingController();
+  final TextEditingController _negativeController = TextEditingController();
 
+  Timer? _draftDebounce;
   String _size = '1024x1024';
   String _quality = 'auto';
   String _outputFormat = 'png';
   int _count = 1;
   bool _loading = false;
+  bool _draftLoaded = false;
   String? _error;
   List<GeneratedImageResult> _results = const [];
+  List<ImageGenerationHistoryItem> _history = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _applyDraft(ImageGeneratorDraft.defaults(), notify: false);
+    _loadStoredState();
+    for (final controller in [
+      _baseUrlController,
+      _modelController,
+      _promptController,
+      _negativeController,
+    ]) {
+      controller.addListener(_scheduleSaveDraft);
+    }
+  }
 
   @override
   void dispose() {
+    _draftDebounce?.cancel();
+    _saveDraftNow();
     _baseUrlController.dispose();
     _apiKeyController.dispose();
     _modelController.dispose();
     _promptController.dispose();
     _negativeController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadStoredState() async {
+    final draft = await _store.loadDraft();
+    final history = await _store.loadHistory();
+    if (!mounted) return;
+    setState(() {
+      _applyDraft(draft, notify: false);
+      _history = history;
+      _draftLoaded = true;
+    });
+  }
+
+  void _applyDraft(ImageGeneratorDraft draft, {bool notify = true}) {
+    _baseUrlController.text = draft.baseUrl;
+    _modelController.text = draft.model;
+    _promptController.text = draft.prompt;
+    _negativeController.text = draft.negativePrompt;
+    _size = draft.size;
+    _quality = draft.quality;
+    _outputFormat = draft.outputFormat;
+    _count = draft.count;
+    if (notify) _scheduleSaveDraft();
+  }
+
+  ImageGeneratorDraft _currentDraft() {
+    return ImageGeneratorDraft(
+      baseUrl: _baseUrlController.text.trim(),
+      model: _modelController.text.trim(),
+      prompt: _promptController.text.trim(),
+      negativePrompt: _negativeController.text.trim(),
+      size: _size,
+      quality: _quality,
+      outputFormat: _outputFormat,
+      count: _count,
+    );
+  }
+
+  void _scheduleSaveDraft() {
+    if (!_draftLoaded) return;
+    _draftDebounce?.cancel();
+    _draftDebounce = Timer(const Duration(milliseconds: 450), _saveDraftNow);
+  }
+
+  Future<void> _saveDraftNow() async {
+    if (!_draftLoaded) return;
+    try {
+      await _store.saveDraft(_currentDraft());
+    } catch (_) {}
+  }
+
+  Future<void> _resetDraft() async {
+    _draftDebounce?.cancel();
+    await _store.resetDraft();
+    if (!mounted) return;
+    setState(() => _applyDraft(ImageGeneratorDraft.defaults(), notify: false));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('已恢复默认生图参数，API Key 未保存')));
   }
 
   void _appendStyle(String style) {
@@ -64,6 +139,38 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     ).showSnackBar(const SnackBar(content: Text('已复制到剪贴板')));
   }
 
+  void _setParam(VoidCallback update) {
+    setState(update);
+    _scheduleSaveDraft();
+  }
+
+  void _restoreHistory(ImageGenerationHistoryItem item) {
+    setState(() {
+      _promptController.text = item.prompt;
+      _negativeController.text = item.negativePrompt;
+      _modelController.text = item.model;
+      _size = item.size;
+      _quality = item.quality;
+      _outputFormat = item.outputFormat;
+      _results = item.images
+          .map((image) => GeneratedImageResult(image: image, rawUrl: image))
+          .toList();
+    });
+    _scheduleSaveDraft();
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('已复用最近生成参数')));
+  }
+
+  Future<void> _clearHistory() async {
+    await _store.clearHistory();
+    if (!mounted) return;
+    setState(() => _history = const []);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('已清空最近生成记录')));
+  }
+
   Future<void> _generate() async {
     final prompt = _promptController.text.trim();
     final apiKey = _apiKeyController.text.trim();
@@ -76,6 +183,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       return;
     }
 
+    await _saveDraftNow();
     setState(() {
       _loading = true;
       _error = null;
@@ -95,9 +203,24 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
           count: _count,
         ),
       );
+      final history = await _store.addHistory(
+        ImageGenerationHistoryItem(
+          prompt: prompt,
+          negativePrompt: _negativeController.text.trim(),
+          model: _modelController.text.trim().isEmpty
+              ? 'gpt-image-1'
+              : _modelController.text.trim(),
+          size: _size,
+          quality: _quality,
+          outputFormat: _outputFormat,
+          createdAt: DateTime.now(),
+          images: response.images.map((e) => e.image).toList(),
+        ),
+      );
       if (!mounted) return;
       setState(() {
         _results = response.images;
+        _history = history;
         _loading = false;
       });
     } on ImageGeneratorException catch (e) {
@@ -128,6 +251,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             baseUrlController: _baseUrlController,
             apiKeyController: _apiKeyController,
             modelController: _modelController,
+            onResetDraft: _resetDraft,
           ),
           const SizedBox(height: 12),
           ImageGeneratorPromptCard(
@@ -141,19 +265,22 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             quality: _quality,
             outputFormat: _outputFormat,
             count: _count,
-            onSizeChanged: (value) => setState(() => _size = value),
-            onQualityChanged: (value) => setState(() => _quality = value),
+            onSizeChanged: (value) => _setParam(() => _size = value),
+            onQualityChanged: (value) => _setParam(() => _quality = value),
             onOutputFormatChanged: (value) =>
-                setState(() => _outputFormat = value),
-            onCountChanged: (value) => setState(() => _count = value),
+                _setParam(() => _outputFormat = value),
+            onCountChanged: (value) => _setParam(() => _count = value),
           ),
           const SizedBox(height: 12),
           ImageGeneratorResultCard(
             loading: _loading,
             error: _error,
             results: _results,
+            history: _history,
             onGenerate: _generate,
             onCopy: _copyText,
+            onRestoreHistory: _restoreHistory,
+            onClearHistory: _clearHistory,
           ),
         ],
       ),

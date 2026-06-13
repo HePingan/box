@@ -6,19 +6,15 @@ import 'package:box/design_system/widgets/app_cards.dart';
 import '../../domain/image_generator_models.dart';
 
 class _SurfaceCard extends StatelessWidget {
-  const _SurfaceCard({
-    required this.child,
-    this.padding = const EdgeInsets.all(16),
-  });
+  const _SurfaceCard({required this.child});
 
   final Widget child;
-  final EdgeInsetsGeometry padding;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: padding,
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.92),
         borderRadius: BorderRadius.circular(AppTokens.radiusXl),
@@ -58,7 +54,7 @@ class ImageGeneratorHeader extends StatelessWidget {
               ),
               SizedBox(height: 3),
               Text(
-                'OpenAI 兼容 Images API · 文生图 MVP',
+                'OpenAI 兼容 Images API · 文生图增强版',
                 style: TextStyle(color: AppTokens.textSecondary),
               ),
             ],
@@ -80,23 +76,29 @@ class ImageGeneratorConfigCard extends StatelessWidget {
     required this.baseUrlController,
     required this.apiKeyController,
     required this.modelController,
+    required this.onResetDraft,
   });
 
   final TextEditingController baseUrlController;
   final TextEditingController apiKeyController;
   final TextEditingController modelController;
+  final VoidCallback onResetDraft;
 
   @override
   Widget build(BuildContext context) {
     return _SurfaceCard(
-      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _SectionTitle(
+          _SectionTitle(
             icon: Icons.tune_rounded,
             title: '接口配置',
-            subtitle: 'API Key 仅用于当前页面请求，第一版不做持久化保存',
+            subtitle: 'Base URL、模型和提示词会自动记住；API Key 不保存',
+            trailing: TextButton.icon(
+              onPressed: onResetDraft,
+              icon: const Icon(Icons.restart_alt_rounded, size: 18),
+              label: const Text('重置'),
+            ),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -112,7 +114,7 @@ class ImageGeneratorConfigCard extends StatelessWidget {
             obscureText: true,
             decoration: const InputDecoration(
               labelText: 'API Key',
-              hintText: 'sk-...',
+              hintText: 'sk-...（仅本次使用，不保存）',
             ),
           ),
           const SizedBox(height: 10),
@@ -150,10 +152,11 @@ class ImageGeneratorPromptCard extends StatelessWidget {
       '国风插画，水墨质感，东方美学',
       '产品海报，极简背景，商业摄影',
       'App 图标，圆角，3D 质感，纯色背景',
+      '电商主图，白底，主体突出，高转化率',
+      '社交媒体封面，强视觉中心，大胆配色',
     ];
 
     return _SurfaceCard(
-      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -228,7 +231,6 @@ class ImageGeneratorParamsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _SurfaceCard(
-      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -280,20 +282,25 @@ class ImageGeneratorResultCard extends StatelessWidget {
     required this.loading,
     required this.error,
     required this.results,
+    required this.history,
     required this.onGenerate,
     required this.onCopy,
+    required this.onRestoreHistory,
+    required this.onClearHistory,
   });
 
   final bool loading;
   final String? error;
   final List<GeneratedImageResult> results;
+  final List<ImageGenerationHistoryItem> history;
   final VoidCallback onGenerate;
   final ValueChanged<String> onCopy;
+  final ValueChanged<ImageGenerationHistoryItem> onRestoreHistory;
+  final VoidCallback onClearHistory;
 
   @override
   Widget build(BuildContext context) {
     return _SurfaceCard(
-      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -303,7 +310,7 @@ class ImageGeneratorResultCard extends StatelessWidget {
                 child: _SectionTitle(
                   icon: Icons.image_rounded,
                   title: '生成结果',
-                  subtitle: '生成后可预览 URL 图片或 base64 data URL',
+                  subtitle: '生成后自动写入最近记录，可快速复用提示词',
                 ),
               ),
               FilledButton.icon(
@@ -349,6 +356,13 @@ class ImageGeneratorResultCard extends StatelessWidget {
             ...results.map(
               (item) => _GeneratedImageTile(item: item, onCopy: onCopy),
             ),
+          const SizedBox(height: 6),
+          _HistorySection(
+            history: history,
+            onRestore: onRestoreHistory,
+            onCopy: onCopy,
+            onClear: onClearHistory,
+          ),
         ],
       ),
     );
@@ -428,16 +442,170 @@ class _GeneratedImageTile extends StatelessWidget {
   }
 }
 
+class _HistorySection extends StatelessWidget {
+  const _HistorySection({
+    required this.history,
+    required this.onRestore,
+    required this.onCopy,
+    required this.onClear,
+  });
+
+  final List<ImageGenerationHistoryItem> history;
+  final ValueChanged<ImageGenerationHistoryItem> onRestore;
+  final ValueChanged<String> onCopy;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    if (history.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: 24),
+        _SectionTitle(
+          icon: Icons.history_rounded,
+          title: '最近生成',
+          subtitle: '保留最近 12 条，不保存 API Key',
+          trailing: TextButton.icon(
+            onPressed: onClear,
+            icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+            label: const Text('清空'),
+          ),
+        ),
+        const SizedBox(height: 10),
+        ...history.map(
+          (item) => _HistoryTile(
+            item: item,
+            onRestore: () => onRestore(item),
+            onCopy: onCopy,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _HistoryTile extends StatelessWidget {
+  const _HistoryTile({
+    required this.item,
+    required this.onRestore,
+    required this.onCopy,
+  });
+
+  final ImageGenerationHistoryItem item;
+  final VoidCallback onRestore;
+  final ValueChanged<String> onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final firstImage = item.images.isEmpty ? null : item.images.first;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE7ECF5)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: firstImage == null
+                ? Container(
+                    width: 58,
+                    height: 58,
+                    color: const Color(0xFFEFF3F9),
+                    child: const Icon(Icons.image_not_supported_outlined),
+                  )
+                : Image.network(
+                    firstImage,
+                    width: 58,
+                    height: 58,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => Container(
+                      width: 58,
+                      height: 58,
+                      color: const Color(0xFFEFF3F9),
+                      child: const Icon(Icons.broken_image_outlined),
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.prompt,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTokens.textPrimary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${_formatTime(item.createdAt)} · ${item.model} · ${item.size} · ${item.images.length} 张',
+                  style: const TextStyle(
+                    color: AppTokens.textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: onRestore,
+                      icon: const Icon(Icons.replay_rounded, size: 18),
+                      label: const Text('复用'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => onCopy(item.prompt),
+                      icon: const Icon(Icons.copy_rounded, size: 18),
+                      label: const Text('复制 Prompt'),
+                    ),
+                    if (firstImage != null)
+                      OutlinedButton.icon(
+                        onPressed: () => onCopy(firstImage),
+                        icon: const Icon(Icons.link_rounded, size: 18),
+                        label: const Text('复制图链'),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatTime(DateTime value) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(value.month)}-${two(value.day)} ${two(value.hour)}:${two(value.minute)}';
+  }
+}
+
 class _SectionTitle extends StatelessWidget {
   const _SectionTitle({
     required this.icon,
     required this.title,
     required this.subtitle,
+    this.trailing,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -469,6 +637,7 @@ class _SectionTitle extends StatelessWidget {
             ],
           ),
         ),
+        if (trailing != null) ...[const SizedBox(width: 8), trailing!],
       ],
     );
   }
