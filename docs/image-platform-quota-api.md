@@ -273,6 +273,133 @@ Content-Type: application/json
 参考图：额外 1 点
 ```
 
+## 真实平台额度代理服务
+
+项目还提供一个最小真实代理服务：
+
+```bash
+IMAGE_ADMIN_BASE_URL=https://api.openai.com/v1 \
+IMAGE_ADMIN_API_KEY=sk-xxx \
+IMAGE_ADMIN_TOKEN=local-admin-token \
+IMAGE_DEFAULT_QUOTA=20 \
+PORT=8788 \
+dart run tool/image_platform_quota_server.dart
+```
+
+默认监听：
+
+```text
+http://127.0.0.1:8788
+```
+
+前端「平台服务地址」填入该地址即可使用真实平台额度代理。
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `HOST` | `127.0.0.1` | 监听地址 |
+| `PORT` | `8788` | 监听端口 |
+| `IMAGE_ADMIN_BASE_URL` | `https://api.openai.com/v1` | 上游 OpenAI 兼容 Base URL |
+| `IMAGE_ADMIN_API_KEY` | 空 | 上游管理员 Key。为空时不允许真实生图 |
+| `IMAGE_ALLOWED_MODELS` | 空 | 逗号分隔模型白名单，例如 `gpt-image-1,dall-e-3` |
+| `IMAGE_DEFAULT_QUOTA` | `20` | 新用户默认额度 |
+| `IMAGE_STATE_PATH` | `.var/image_platform_state.json` | JSON 状态文件 |
+| `IMAGE_ADMIN_TOKEN` | 空 | 管理接口 token。为空时管理接口关闭 |
+
+也可用启动参数覆盖监听地址：
+
+```bash
+dart run tool/image_platform_quota_server.dart --host 0.0.0.0 --port 8788
+```
+
+### 用户识别
+
+最小实现支持：
+
+```http
+X-User-Id: demo
+```
+
+也支持 query：
+
+```text
+/api/image/quota?userId=demo
+```
+
+如果都没有，默认用户为：
+
+```text
+demo
+```
+
+真实生产环境应接入登录态或网关鉴权，不应只依赖用户自填 header。
+
+### 状态文件
+
+服务会写入：
+
+```text
+.var/image_platform_state.json
+```
+
+保存内容包括：
+
+- 用户额度
+- 今日已用
+- 用户状态
+- 最近用量记录
+
+不要把真实生产状态文件提交到 Git。
+
+### 管理接口
+
+管理接口需要：
+
+```http
+X-Admin-Token: <IMAGE_ADMIN_TOKEN>
+```
+
+查看用户与用量：
+
+```http
+GET /admin/image/users
+```
+
+调整用户额度：
+
+```http
+POST /admin/image/users/demo/quota
+Content-Type: application/json
+X-Admin-Token: <IMAGE_ADMIN_TOKEN>
+```
+
+```json
+{
+  "remaining": 50,
+  "dailyLimit": 50,
+  "usedToday": 0,
+  "totalLimit": 100,
+  "status": "normal",
+  "message": "已充值 50 点"
+}
+```
+
+### 真实生图代理流程
+
+`POST /api/image/generate` 会：
+
+1. 校验后端是否配置 `IMAGE_ADMIN_API_KEY`。
+2. 读取用户额度。
+3. 校验 prompt、模型白名单和用户状态。
+4. 按 `n`、`quality`、参考图字段计算消耗。
+5. 额度不足返回 `429`，不请求上游。
+6. 请求 `{IMAGE_ADMIN_BASE_URL}/images/generations`。
+7. 上游失败：记录失败用量，不扣额度，透传上游响应。
+8. 上游成功：扣减额度，记录成功用量，返回上游 JSON。
+
+当前 MVP 为轻量 JSON 文件存储，适合本地/小规模内测；生产环境建议改为数据库事务、正式鉴权、限流与审计日志。
+
 ## 本地 Mock 服务
 
 项目提供开发用脚本：
