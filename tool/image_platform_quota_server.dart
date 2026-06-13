@@ -41,6 +41,8 @@ Future<void> main(List<String> args) async {
   stdout.writeln('  POST /api/image/generate');
   stdout.writeln('Admin endpoints:');
   stdout.writeln('  GET  /admin/image/users');
+  stdout.writeln('  GET  /admin/image/provider');
+  stdout.writeln('  POST /admin/image/provider');
   stdout.writeln('  POST /admin/image/users/<userId>/quota');
 
   await for (final request in server) {
@@ -172,6 +174,16 @@ class PlatformQuotaServer {
       await jsonResponse(request.response, HttpStatus.ok, store.toAdminJson());
       return;
     }
+    if (request.method == 'GET' && path == '/admin/image/provider') {
+      if (!await requireAdmin(request)) return;
+      await getProvider(request);
+      return;
+    }
+    if (request.method == 'POST' && path == '/admin/image/provider') {
+      if (!await requireAdmin(request)) return;
+      await updateProvider(request);
+      return;
+    }
     if (request.method == 'POST' && path == '/admin/accounts') {
       if (!await requireAdmin(request)) return;
       await createAccount(request);
@@ -251,9 +263,10 @@ class PlatformQuotaServer {
   }
 
   Future<void> generate(HttpRequest request, Account account) async {
-    if (config.adminApiKey.trim().isEmpty) {
+    final provider = effectiveProvider();
+    if (provider.apiKey.trim().isEmpty) {
       await jsonResponse(request.response, HttpStatus.serviceUnavailable, {
-        'error': {'message': '平台后端未配置 IMAGE_ADMIN_API_KEY，无法代理真实生图。'},
+        'error': {'message': '平台后端未配置上游 API Key，无法代理真实生图。'},
       });
       return;
     }
@@ -317,6 +330,49 @@ class PlatformQuotaServer {
     );
     await store.save();
     await jsonText(request.response, HttpStatus.ok, upstream.text);
+  }
+
+  Future<void> getProvider(HttpRequest request) async {
+    await jsonResponse(
+      request.response,
+      HttpStatus.ok,
+      store.providerPublicJson(config),
+    );
+  }
+
+  Future<void> updateProvider(HttpRequest request) async {
+    final decoded = await readJsonObject(request);
+    if (decoded == null) return;
+    final baseUrl = decoded['baseUrl']?.toString().trim() ?? '';
+    final parsedBaseUrl = Uri.tryParse(baseUrl);
+    if (baseUrl.isEmpty ||
+        parsedBaseUrl == null ||
+        (parsedBaseUrl.scheme != 'http' && parsedBaseUrl.scheme != 'https')) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': 'Base URL 必须是 http/https 地址'},
+      });
+      return;
+    }
+    final clearApiKey = decoded['clearApiKey'] == true;
+    final apiKey = decoded['apiKey']?.toString() ?? '';
+    final previous = store.providerConfig;
+    final nextApiKeyCipher = clearApiKey
+        ? ''
+        : apiKey.trim().isEmpty
+        ? previous?.apiKeyCipher ?? encodeProviderApiKey(config.adminApiKey)
+        : encodeProviderApiKey(apiKey.trim());
+    store.providerConfig = ProviderConfig(
+      baseUrl: baseUrl.replaceAll(RegExp(r'/+$'), ''),
+      apiKeyCipher: nextApiKeyCipher,
+      allowedModels: parseAllowedModels(decoded['allowedModels']),
+      updatedAt: DateTime.now(),
+    );
+    await store.save();
+    await jsonResponse(
+      request.response,
+      HttpStatus.ok,
+      store.providerPublicJson(config),
+    );
   }
 
   Future<void> createAccount(HttpRequest request) async {
@@ -529,10 +585,13 @@ class PlatformQuotaServer {
     return decoded;
   }
 
+  EffectiveProvider effectiveProvider() => store.effectiveProvider(config);
+
   Future<List<String>> allowedModels() async {
-    if (config.allowedModels.isNotEmpty) return config.allowedModels;
-    if (config.adminApiKey.trim().isEmpty) return ['gpt-image-1', 'dall-e-3'];
-    final upstream = await getUpstreamModels();
+    final provider = effectiveProvider();
+    if (provider.allowedModels.isNotEmpty) return provider.allowedModels;
+    if (provider.apiKey.trim().isEmpty) return ['gpt-image-1', 'dall-e-3'];
+    final upstream = await getUpstreamModels(provider);
     if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
       throw HttpException(
         '上游模型接口失败：${upstream.statusCode} ${upstream.preview}',
@@ -549,14 +608,14 @@ class PlatformQuotaServer {
     return recommended.isEmpty ? models.take(12).toList() : recommended;
   }
 
-  Future<UpstreamResponse> getUpstreamModels() async {
+  Future<UpstreamResponse> getUpstreamModels(EffectiveProvider provider) async {
     final client = HttpClient();
     try {
-      final uri = Uri.parse('${config.adminBaseUrl}/models');
+      final uri = Uri.parse('${provider.baseUrl}/models');
       final req = await client.getUrl(uri).timeout(const Duration(seconds: 20));
       req.headers.set(
         HttpHeaders.authorizationHeader,
-        'Bearer ${config.adminApiKey}',
+        'Bearer ${provider.apiKey}',
       );
       final resp = await req.close().timeout(const Duration(seconds: 30));
       final text = await utf8.decoder.bind(resp).join();
@@ -567,15 +626,16 @@ class PlatformQuotaServer {
   }
 
   Future<UpstreamResponse> postUpstream(Map<String, dynamic> body) async {
+    final provider = effectiveProvider();
     final client = HttpClient();
     try {
-      final uri = Uri.parse('${config.adminBaseUrl}/images/generations');
+      final uri = Uri.parse('${provider.baseUrl}/images/generations');
       final req = await client
           .postUrl(uri)
           .timeout(const Duration(seconds: 20));
       req.headers.set(
         HttpHeaders.authorizationHeader,
-        'Bearer ${config.adminApiKey}',
+        'Bearer ${provider.apiKey}',
       );
       req.headers.contentType = ContentType.json;
       req.write(jsonEncode(body));
@@ -597,6 +657,7 @@ class StateStore {
   final quotas = <String, UserQuota>{};
   final sessions = <String, AuthSession>{};
   final usage = <UsageRecord>[];
+  ProviderConfig? providerConfig;
 
   Future<void> load() async {
     final file = File(path);
@@ -607,6 +668,13 @@ class StateStore {
     }
     final decoded = jsonDecode(await file.readAsString());
     if (decoded is! Map<String, dynamic>) return;
+
+    final rawProvider = decoded['providerConfig'];
+    if (rawProvider is Map) {
+      providerConfig = ProviderConfig.fromJson(
+        Map<String, dynamic>.from(rawProvider),
+      );
+    }
 
     final rawAccounts = decoded['accounts'];
     if (rawAccounts is Map) {
@@ -718,6 +786,7 @@ class StateStore {
   }
 
   Map<String, dynamic> toJson() => {
+    if (providerConfig != null) 'providerConfig': providerConfig!.toJson(),
     'accounts': accounts.map((key, value) => MapEntry(key, value.toJson())),
     'quotas': quotas.map((key, value) => MapEntry(key, value.toJson())),
     'sessions': sessions.map((key, value) => MapEntry(key, value.toJson())),
@@ -731,6 +800,34 @@ class StateStore {
     'quotas': quotas.map((key, value) => MapEntry(key, value.toJson())),
     'usage': usage.map((item) => item.toJson()).toList(),
   };
+
+  EffectiveProvider effectiveProvider(ServerConfig config) {
+    final provider = providerConfig;
+    final providerApiKey = provider == null
+        ? ''
+        : decodeProviderApiKey(provider.apiKeyCipher);
+    return EffectiveProvider(
+      baseUrl: (provider?.baseUrl.trim().isNotEmpty ?? false)
+          ? provider!.baseUrl
+          : config.adminBaseUrl,
+      apiKey: provider == null ? config.adminApiKey : providerApiKey,
+      allowedModels: (provider?.allowedModels.isNotEmpty ?? false)
+          ? provider!.allowedModels
+          : config.allowedModels,
+      updatedAt: provider?.updatedAt,
+    );
+  }
+
+  Map<String, dynamic> providerPublicJson(ServerConfig config) {
+    final provider = effectiveProvider(config);
+    return {
+      'baseUrl': provider.baseUrl,
+      'apiKeyMask': maskApiKey(provider.apiKey),
+      'hasApiKey': provider.apiKey.trim().isNotEmpty,
+      'allowedModels': provider.allowedModels,
+      'updatedAt': provider.updatedAt?.toIso8601String(),
+    };
+  }
 
   Future<void> save() async {
     final file = File(path);
@@ -952,6 +1049,48 @@ class UsageRecord {
   };
 }
 
+class ProviderConfig {
+  const ProviderConfig({
+    required this.baseUrl,
+    required this.apiKeyCipher,
+    required this.allowedModels,
+    required this.updatedAt,
+  });
+
+  factory ProviderConfig.fromJson(Map<String, dynamic> json) => ProviderConfig(
+    baseUrl: (json['baseUrl']?.toString() ?? '').replaceAll(RegExp(r'/+$'), ''),
+    apiKeyCipher: json['apiKeyCipher']?.toString() ?? '',
+    allowedModels: parseAllowedModels(json['allowedModels']),
+    updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? ''),
+  );
+
+  final String baseUrl;
+  final String apiKeyCipher;
+  final List<String> allowedModels;
+  final DateTime? updatedAt;
+
+  Map<String, dynamic> toJson() => {
+    'baseUrl': baseUrl,
+    'apiKeyCipher': apiKeyCipher,
+    'allowedModels': allowedModels,
+    'updatedAt': updatedAt?.toIso8601String(),
+  };
+}
+
+class EffectiveProvider {
+  const EffectiveProvider({
+    required this.baseUrl,
+    required this.apiKey,
+    required this.allowedModels,
+    required this.updatedAt,
+  });
+
+  final String baseUrl;
+  final String apiKey;
+  final List<String> allowedModels;
+  final DateTime? updatedAt;
+}
+
 class UpstreamResponse {
   const UpstreamResponse(this.statusCode, this.text);
 
@@ -1012,6 +1151,46 @@ int calculateCost(Map<String, dynamic> body) {
     cost += 1;
   }
   return cost;
+}
+
+List<String> parseAllowedModels(dynamic value) {
+  Iterable<dynamic> raw;
+  if (value is List) {
+    raw = value;
+  } else {
+    raw = (value?.toString() ?? '').split(',');
+  }
+  final result =
+      raw
+          .map((item) => item.toString().trim())
+          .where((item) => item.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
+  return result;
+}
+
+String encodeProviderApiKey(String apiKey) =>
+    base64UrlEncode(utf8.encode(apiKey)).replaceAll('=', '');
+
+String decodeProviderApiKey(String cipher) {
+  if (cipher.trim().isEmpty) return '';
+  try {
+    var normalized = cipher.trim();
+    while (normalized.length % 4 != 0) {
+      normalized += '=';
+    }
+    return utf8.decode(base64Url.decode(normalized));
+  } catch (_) {
+    return cipher;
+  }
+}
+
+String maskApiKey(String apiKey) {
+  final value = apiKey.trim();
+  if (value.isEmpty) return '';
+  if (value.length <= 8) return '****';
+  return '${value.substring(0, 3)}...${value.substring(value.length - 4)}';
 }
 
 List<String> parseModels(dynamic decoded) {

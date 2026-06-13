@@ -21,6 +21,7 @@ class _AdminPageState extends State<AdminPage> {
   final _client = BoxAdminClient();
 
   BoxAccountSession? _session;
+  BoxAdminProviderConfig? _provider;
   List<BoxAdminUserQuota> _users = const [];
   bool _loading = false;
   String? _error;
@@ -52,12 +53,17 @@ class _AdminPageState extends State<AdminPage> {
         });
         return;
       }
+      final provider = await _client.fetchProvider(
+        serverUrl: session.serverUrl,
+        token: session.token,
+      );
       final users = await _client.fetchUsers(
         serverUrl: session.serverUrl,
         token: session.token,
       );
       setState(() {
         _session = session;
+        _provider = provider;
         _users = users;
       });
     } catch (error) {
@@ -87,6 +93,26 @@ class _AdminPageState extends State<AdminPage> {
           .toList(growable: false);
     });
     _showSnack('已更新 ${updated.username} 的额度');
+  }
+
+  Future<void> _updateProvider(
+    String baseUrl,
+    String apiKey,
+    List<String> allowedModels,
+    bool clearApiKey,
+  ) async {
+    final session = _session;
+    if (session == null) return;
+    final updated = await _client.updateProvider(
+      serverUrl: session.serverUrl,
+      token: session.token,
+      baseUrl: baseUrl,
+      apiKey: apiKey,
+      allowedModels: allowedModels,
+      clearApiKey: clearApiKey,
+    );
+    setState(() => _provider = updated);
+    _showSnack('已保存上游 Provider 配置');
   }
 
   Future<void> _createAccount(
@@ -148,6 +174,18 @@ class _AdminPageState extends State<AdminPage> {
         onSave: (dailyLimit, remaining) =>
             _updateQuota(user, dailyLimit, remaining),
       ),
+    );
+  }
+
+  void _openProviderSheet() {
+    final provider = _provider;
+    if (provider == null) return;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) =>
+          ProviderConfigSheet(provider: provider, onSave: _updateProvider),
     );
   }
 
@@ -248,6 +286,12 @@ class _AdminPageState extends State<AdminPage> {
                   const SizedBox(height: 12),
                 ],
                 if (session?.user.isAdmin == true) ...[
+                  AdminProviderCard(
+                    provider: _provider,
+                    loading: _loading,
+                    onConfigure: _openProviderSheet,
+                  ),
+                  const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(

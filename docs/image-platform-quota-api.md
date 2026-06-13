@@ -432,6 +432,51 @@ X-Admin-Token: <IMAGE_ADMIN_TOKEN>
 GET /admin/image/users
 ```
 
+查看上游 Provider 配置：
+
+```http
+GET /admin/image/provider
+Authorization: Bearer <admin...ken>
+```
+
+返回不会包含明文 API Key：
+
+```json
+{
+  "baseUrl": "https://api.openai.com/v1",
+  "apiKeyMask": "sk-...abcd",
+  "hasApiKey": true,
+  "allowedModels": ["gpt-image-1", "dall-e-3"],
+  "updatedAt": "2026-06-14T07:30:00.000"
+}
+```
+
+保存上游 Provider 配置：
+
+```http
+POST /admin/image/provider
+Content-Type: application/json
+Authorization: Bearer <admin...ken>
+```
+
+```json
+{
+  "baseUrl": "https://api.openai.com/v1",
+  "apiKey": "sk-xxx",
+  "allowedModels": ["gpt-image-1", "dall-e-3"]
+}
+```
+
+规则：
+
+- `baseUrl` 必须是 `http` / `https` 地址。
+- `apiKey` 为空或不传表示保持旧 key 不变。
+- `clearApiKey: true` 表示清空 key。
+- `allowedModels` 支持数组，也支持逗号分隔字符串。
+- 返回只包含 `apiKeyMask` / `hasApiKey`，不会返回明文 key。
+- 状态文件中的 `providerConfig.apiKeyCipher` 是 MVP 存储字段，不是生产安全方案；生产必须接入 KMS / Secret Manager。
+- `providerConfig` 优先于环境变量 `IMAGE_ADMIN_BASE_URL` / `IMAGE_ADMIN_API_KEY` / `IMAGE_ALLOWED_MODELS`。
+
 创建用户：
 
 ```http

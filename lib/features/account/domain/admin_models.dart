@@ -83,3 +83,37 @@ class BoxAdminUserQuota {
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 }
+
+class BoxAdminProviderConfig {
+  const BoxAdminProviderConfig({
+    required this.baseUrl,
+    required this.apiKeyMask,
+    required this.hasApiKey,
+    required this.allowedModels,
+    required this.updatedAt,
+  });
+
+  final String baseUrl;
+  final String apiKeyMask;
+  final bool hasApiKey;
+  final List<String> allowedModels;
+  final DateTime? updatedAt;
+
+  factory BoxAdminProviderConfig.fromJson(Map<String, dynamic> json) {
+    final rawModels = json['allowedModels'];
+    final models = rawModels is List
+        ? rawModels.map((item) => item.toString()).toList()
+        : (rawModels?.toString() ?? '')
+              .split(',')
+              .map((item) => item.trim())
+              .where((item) => item.isNotEmpty)
+              .toList();
+    return BoxAdminProviderConfig(
+      baseUrl: json['baseUrl']?.toString() ?? '',
+      apiKeyMask: json['apiKeyMask']?.toString() ?? '',
+      hasApiKey: json['hasApiKey'] == true,
+      allowedModels: models,
+      updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? ''),
+    );
+  }
+}

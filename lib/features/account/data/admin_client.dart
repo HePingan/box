@@ -11,6 +11,38 @@ class BoxAdminClient {
 
   final http.Client _httpClient;
 
+  Future<BoxAdminProviderConfig> fetchProvider({
+    required String serverUrl,
+    required String token,
+  }) async {
+    final response = await _httpClient.get(
+      _uri(serverUrl, '/admin/image/provider'),
+      headers: _headers(token),
+    );
+    return BoxAdminProviderConfig.fromJson(_decodeResponse(response));
+  }
+
+  Future<BoxAdminProviderConfig> updateProvider({
+    required String serverUrl,
+    required String token,
+    required String baseUrl,
+    required String apiKey,
+    required List<String> allowedModels,
+    required bool clearApiKey,
+  }) async {
+    final response = await _httpClient.post(
+      _uri(serverUrl, '/admin/image/provider'),
+      headers: _headers(token, json: true),
+      body: jsonEncode({
+        'baseUrl': baseUrl,
+        if (apiKey.trim().isNotEmpty) 'apiKey': apiKey.trim(),
+        'clearApiKey': clearApiKey,
+        'allowedModels': allowedModels,
+      }),
+    );
+    return BoxAdminProviderConfig.fromJson(_decodeResponse(response));
+  }
+
   Future<List<BoxAdminUserQuota>> fetchUsers({
     required String serverUrl,
     required String token,

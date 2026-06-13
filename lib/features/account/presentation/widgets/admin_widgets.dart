@@ -3,6 +3,114 @@ import 'package:flutter/material.dart';
 import '../../../../design_system/app_tokens.dart';
 import '../../domain/admin_models.dart';
 
+class AdminProviderCard extends StatelessWidget {
+  const AdminProviderCard({
+    super.key,
+    required this.provider,
+    required this.loading,
+    required this.onConfigure,
+  });
+
+  final BoxAdminProviderConfig? provider;
+  final bool loading;
+  final VoidCallback onConfigure;
+
+  @override
+  Widget build(BuildContext context) {
+    final item = provider;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+        border: Border.all(color: AppTokens.divider),
+        boxShadow: AppTokens.shadowSm(),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const CircleAvatar(
+                backgroundColor: Color(0xFFEFF6FF),
+                child: Icon(Icons.hub_rounded, color: AppTokens.primaryBlue),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '上游 Provider',
+                      style: TextStyle(
+                        color: AppTokens.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      item?.baseUrl.isNotEmpty == true
+                          ? item!.baseUrl
+                          : '未读取配置',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppTokens.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _MetricPill(
+                label: 'API Key',
+                value: item?.hasApiKey == true ? item!.apiKeyMask : '未配置',
+                icon: Icons.key_rounded,
+                color: item?.hasApiKey == true
+                    ? AppTokens.success
+                    : AppTokens.warning,
+              ),
+              _MetricPill(
+                label: '模型数',
+                value: (item?.allowedModels.length ?? 0).toString(),
+                icon: Icons.auto_awesome_rounded,
+                color: AppTokens.info,
+              ),
+            ],
+          ),
+          if (item?.allowedModels.isNotEmpty == true) ...[
+            const SizedBox(height: 10),
+            Text(
+              item!.allowedModels.join(', '),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppTokens.textSecondary),
+            ),
+          ],
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: loading || item == null ? null : onConfigure,
+              icon: const Icon(Icons.settings_rounded, size: 18),
+              label: const Text('配置上游'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class AdminUserQuotaCard extends StatelessWidget {
   const AdminUserQuotaCard({
     super.key,
@@ -325,6 +433,141 @@ class _QuotaEditSheetState extends State<QuotaEditSheet> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class ProviderConfigSheet extends StatefulWidget {
+  const ProviderConfigSheet({
+    super.key,
+    required this.provider,
+    required this.onSave,
+  });
+
+  final BoxAdminProviderConfig provider;
+  final Future<void> Function(
+    String baseUrl,
+    String apiKey,
+    List<String> allowedModels,
+    bool clearApiKey,
+  )
+  onSave;
+
+  @override
+  State<ProviderConfigSheet> createState() => _ProviderConfigSheetState();
+}
+
+class _ProviderConfigSheetState extends State<ProviderConfigSheet> {
+  late final TextEditingController _baseUrlController;
+  late final TextEditingController _apiKeyController;
+  late final TextEditingController _modelsController;
+  bool _clearApiKey = false;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _baseUrlController = TextEditingController(text: widget.provider.baseUrl);
+    _apiKeyController = TextEditingController();
+    _modelsController = TextEditingController(
+      text: widget.provider.allowedModels.join(', '),
+    );
+  }
+
+  @override
+  void dispose() {
+    _baseUrlController.dispose();
+    _apiKeyController.dispose();
+    _modelsController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final baseUrl = _baseUrlController.text.trim();
+    final uri = Uri.tryParse(baseUrl);
+    if (baseUrl.isEmpty ||
+        uri == null ||
+        (uri.scheme != 'http' && uri.scheme != 'https')) {
+      setState(() => _error = 'Base URL 必须是 http/https 地址。');
+      return;
+    }
+    final models =
+        _modelsController.text
+            .split(',')
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await widget.onSave(
+        baseUrl,
+        _apiKeyController.text.trim(),
+        models,
+        _clearApiKey,
+      );
+      if (mounted) Navigator.of(context).pop();
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = error.toString();
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _SheetFrame(
+      title: '配置上游 Provider',
+      children: [
+        TextField(
+          controller: _baseUrlController,
+          keyboardType: TextInputType.url,
+          decoration: const InputDecoration(
+            labelText: 'Base URL',
+            prefixIcon: Icon(Icons.link_rounded),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _apiKeyController,
+          obscureText: true,
+          enabled: !_clearApiKey,
+          decoration: InputDecoration(
+            labelText: 'API Key（留空则不修改）',
+            helperText: widget.provider.hasApiKey
+                ? '当前：${widget.provider.apiKeyMask}'
+                : '当前未配置',
+            prefixIcon: const Icon(Icons.key_rounded),
+          ),
+        ),
+        CheckboxListTile(
+          value: _clearApiKey,
+          onChanged: (value) => setState(() => _clearApiKey = value ?? false),
+          contentPadding: EdgeInsets.zero,
+          title: const Text('清空 API Key'),
+          subtitle: const Text('勾选后会清除后端保存的上游 Key'),
+        ),
+        TextField(
+          controller: _modelsController,
+          minLines: 2,
+          maxLines: 4,
+          decoration: const InputDecoration(
+            labelText: '允许模型（逗号分隔）',
+            helperText: '例如 gpt-image-1, dall-e-3',
+            prefixIcon: Icon(Icons.auto_awesome_rounded),
+          ),
+        ),
+        _SheetError(message: _error),
+        _SheetSaveButton(saving: _saving, onPressed: _save),
+      ],
     );
   }
 }
