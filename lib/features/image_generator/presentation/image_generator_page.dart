@@ -175,6 +175,19 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     return buildImageGeneratorPreflight(_currentParams());
   }
 
+  String get _platformGenerateEndpoint {
+    final base = _platformBaseUrlController.text.trim().replaceAll(
+      RegExp(r'/+$'),
+      '',
+    );
+    return base.isEmpty ? '/api/image/generate' : '$base/api/image/generate';
+  }
+
+  String get _activeEndpoint =>
+      _accessMode == ImageGeneratorAccessMode.platformQuota
+      ? _platformGenerateEndpoint
+      : _currentParams().endpoint;
+
   ImageGeneratorRequestDiagnostics _buildDiagnostics({
     required ImageGenerationParams params,
     required bool success,
@@ -186,7 +199,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   }) {
     return ImageGeneratorRequestDiagnostics(
       createdAt: DateTime.now(),
-      endpoint: params.endpoint,
+      endpoint: _activeEndpoint,
       requestJson: params.prettyRequestJson,
       referenceField: params.referenceImageField,
       success: success,
@@ -538,6 +551,9 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
         );
         _loading = false;
       });
+      if (_accessMode == ImageGeneratorAccessMode.platformQuota) {
+        unawaited(_refreshPlatformQuota());
+      }
     } on ImageGeneratorException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -638,7 +654,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
           ),
           const SizedBox(height: 12),
           ImageGeneratorRequestPreviewCard(
-            endpoint: _currentParams().endpoint,
+            endpoint: _activeEndpoint,
             requestJson: _currentParams().prettyRequestJson,
             preflightItems: _preflightItems(),
             onCopyRequestJson: () =>
