@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'app/app_routes.dart';
+
 class AppDrawer extends StatelessWidget {
   const AppDrawer({super.key});
 
@@ -32,25 +34,29 @@ class AppDrawer extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildHeaderCard(),
+                    _buildHeaderCard(context),
                     const SizedBox(height: 12),
                     _buildSectionCard(
                       title: '导航',
                       children: [
                         _buildNavItem(
+                          context,
                           icon: Icons.home_rounded,
                           title: '首页',
                           isSelected: true,
                         ),
                         _buildNavItem(
+                          context,
                           icon: Icons.handyman_rounded,
                           title: '工具',
                         ),
                         _buildNavItem(
+                          context,
                           icon: Icons.collections_bookmark_rounded,
                           title: '内容',
                         ),
                         _buildNavItem(
+                          context,
                           icon: Icons.extension_rounded,
                           title: '扩展',
                         ),
@@ -60,14 +66,24 @@ class AppDrawer extends StatelessWidget {
                       title: '更多',
                       children: [
                         _buildNavItem(
+                          context,
+                          icon: Icons.account_circle_rounded,
+                          title: '账号中心',
+                          subtitle: '登录 Box 后端与管理员后台',
+                          onTap: () => _openAccount(context),
+                        ),
+                        _buildNavItem(
+                          context,
                           icon: Icons.settings_outlined,
                           title: '设置',
                         ),
                         _buildNavItem(
+                          context,
                           icon: Icons.feedback_outlined,
                           title: '反馈',
                         ),
                         _buildNavItem(
+                          context,
                           icon: Icons.info_outline_rounded,
                           title: '关于',
                         ),
@@ -141,10 +157,13 @@ class AppDrawer extends StatelessWidget {
     return widgets;
   }
 
-  Widget _buildNavItem({
+  Widget _buildNavItem(
+    BuildContext context, {
     required IconData icon,
     required String title,
+    String? subtitle,
     bool isSelected = false,
+    VoidCallback? onTap,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -171,6 +190,17 @@ class AppDrawer extends StatelessWidget {
               color: isSelected ? _primaryColor : const Color(0xFF1F2933),
             ),
           ),
+          subtitle: subtitle == null
+              ? null
+              : Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFF75808C),
+                  ),
+                ),
           trailing: const Icon(
             Icons.chevron_right_rounded,
             size: 20,
@@ -179,13 +209,13 @@ class AppDrawer extends StatelessWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
-          onTap: () {},
+          onTap: onTap,
         ),
       ),
     );
   }
 
-  Widget _buildHeaderCard() {
+  Widget _buildHeaderCard(BuildContext context) {
     return Container(
       padding: const EdgeInsets.fromLTRB(13, 12, 13, 12),
       decoration: BoxDecoration(
@@ -240,7 +270,7 @@ class AppDrawer extends StatelessWidget {
             ),
           ),
           TextButton(
-            onPressed: () {},
+            onPressed: () => _openAccount(context),
             style: TextButton.styleFrom(
               foregroundColor: Colors.white,
               backgroundColor: _primaryColor,
@@ -255,6 +285,11 @@ class AppDrawer extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  void _openAccount(BuildContext context) {
+    Navigator.of(context).pop();
+    Navigator.of(context).pushNamed(AppRoutes.account);
   }
 
   Widget _buildFooter() {
