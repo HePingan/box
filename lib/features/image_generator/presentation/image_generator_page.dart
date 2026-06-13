@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
+import 'package:box/features/account/data/account_store.dart';
+import 'package:box/features/account/domain/account_models.dart';
 
 import '../data/image_generator_client.dart';
 import '../data/image_generator_store.dart';
@@ -22,6 +24,7 @@ class ImageGeneratorPage extends StatefulWidget {
 class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   final ImageGeneratorClient _client = const ImageGeneratorClient();
   final ImageGeneratorStore _store = const ImageGeneratorStore();
+  final BoxAccountStore _accountStore = BoxAccountStore();
   final TextEditingController _baseUrlController = TextEditingController();
   final TextEditingController _platformBaseUrlController =
       TextEditingController();
@@ -39,6 +42,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   ImageReferencePayloadField _referenceImageField =
       ImageReferencePayloadField.none;
   ImageGeneratorAccessMode _accessMode = ImageGeneratorAccessMode.ownKey;
+  BoxAccountSession? _accountSession;
   ImagePlatformQuota? _platformQuota;
   String? _platformError;
   int _count = 1;
@@ -58,6 +62,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     super.initState();
     _applyDraft(ImageGeneratorDraft.defaults(), notify: false);
     _loadStoredState();
+    _loadAccountSession();
     for (final controller in [
       _baseUrlController,
       _platformBaseUrlController,
@@ -90,9 +95,46 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     if (!mounted) return;
     setState(() {
       _applyDraft(draft, notify: false);
+      _syncPlatformUrlFromAccountIfNeeded();
       _history = history;
       _draftLoaded = true;
     });
+  }
+
+  Future<void> _loadAccountSession() async {
+    final session = await _accountStore.loadSession();
+    if (!mounted) return;
+    setState(() {
+      _accountSession = session;
+      _syncPlatformUrlFromAccountIfNeeded();
+    });
+  }
+
+  String? get _platformToken => _accountSession?.token;
+
+  String? get _platformAccountLabel {
+    final session = _accountSession;
+    if (session == null) return null;
+    final role = session.user.isAdmin ? '管理员' : '普通用户';
+    return '${session.user.username} · $role';
+  }
+
+  bool _ensurePlatformSession() {
+    if (_accessMode != ImageGeneratorAccessMode.platformQuota) return true;
+    if (_accountSession != null) return true;
+    setState(() {
+      _error = '请先在账号中心登录 Box 账号，再使用平台额度模式。';
+      _platformError = '未登录 Box 账号。';
+    });
+    return false;
+  }
+
+  void _syncPlatformUrlFromAccountIfNeeded() {
+    final serverUrl = _accountSession?.serverUrl.trim() ?? '';
+    if (serverUrl.isEmpty) return;
+    if (_platformBaseUrlController.text.trim().isEmpty) {
+      _platformBaseUrlController.text = serverUrl;
+    }
   }
 
   void _applyDraft(ImageGeneratorDraft draft, {bool notify = true}) {
@@ -151,6 +193,13 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
         items.add(
           const ImageGeneratorPreflightItem(
             message: '平台服务地址未配置，需后端提供额度代理。',
+            level: ImageGeneratorPreflightLevel.error,
+          ),
+        );
+      } else if (_accountSession == null) {
+        items.add(
+          const ImageGeneratorPreflightItem(
+            message: '平台额度模式需要先在账号中心登录 Box 账号。',
             level: ImageGeneratorPreflightLevel.error,
           ),
         );
@@ -301,8 +350,13 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       _modelListError = null;
     });
     try {
+      if (!_ensurePlatformSession()) {
+        setState(() => _loadingModels = false);
+        return;
+      }
       final models = await _client.fetchPlatformModels(
         platformBaseUrl: platformBase,
+        platformToken: _platformToken,
       );
       if (!mounted) return;
       setState(() {
@@ -336,8 +390,10 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     }
     setState(() => _platformError = null);
     try {
+      if (!_ensurePlatformSession()) return;
       final quota = await _client.fetchPlatformQuota(
         platformBaseUrl: platformBase,
+        platformToken: _platformToken,
       );
       if (!mounted) return;
       setState(() => _platformQuota = quota);
@@ -493,6 +549,10 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       setState(() => _error = '请先填写平台服务地址，或切回自带 Key 模式。');
       return;
     }
+    if (_accessMode == ImageGeneratorAccessMode.platformQuota &&
+        !_ensurePlatformSession()) {
+      return;
+    }
     final referenceUrl = _referenceImageController.text.trim();
     if (_referenceImageField.shouldSend && referenceUrl.isEmpty) {
       setState(() => _error = '请先填写参考图 URL，或把参考图字段改为“不发送”。');
@@ -520,6 +580,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
           ? await _client.generateWithPlatformQuota(
               platformBaseUrl: _platformBaseUrlController.text.trim(),
               params: params,
+              platformToken: _platformToken,
             )
           : await _client.generate(params);
       final history = await _store.addHistory(
@@ -610,6 +671,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             onToggleShowAllModels: _availableModels.isEmpty
                 ? null
                 : () => setState(() => _showAllModels = !_showAllModels),
+            platformAccountLabel: _platformAccountLabel,
+            onReloadAccount: _loadAccountSession,
           ),
           if (_accessMode == ImageGeneratorAccessMode.platformQuota) ...[
             const SizedBox(height: 12),
@@ -617,6 +680,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
               quota: _platformQuota,
               error: _platformError,
               platformBaseUrl: _platformBaseUrlController.text.trim(),
+              accountLabel: _platformAccountLabel,
               onRefresh: _refreshPlatformQuota,
             ),
           ],

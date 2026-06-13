@@ -49,6 +49,7 @@ class ImageGeneratorClient {
 
   Future<ImagePlatformQuota> fetchPlatformQuota({
     required String platformBaseUrl,
+    String? platformToken,
   }) async {
     final endpoint = Uri.parse(
       '${platformBaseUrl.trim().replaceAll(RegExp(r'/+$'), '')}/api/image/quota',
@@ -57,7 +58,7 @@ class ImageGeneratorClient {
     final closeClient = _httpClient == null;
     try {
       final response = await client
-          .get(endpoint)
+          .get(endpoint, headers: _platformHeaders(platformToken))
           .timeout(const Duration(seconds: 20));
       final text = utf8.decode(response.bodyBytes);
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -83,6 +84,7 @@ class ImageGeneratorClient {
 
   Future<List<String>> fetchPlatformModels({
     required String platformBaseUrl,
+    String? platformToken,
   }) async {
     final endpoint = Uri.parse(
       '${platformBaseUrl.trim().replaceAll(RegExp(r'/+$'), '')}/api/image/models',
@@ -91,7 +93,7 @@ class ImageGeneratorClient {
     final closeClient = _httpClient == null;
     try {
       final response = await client
-          .get(endpoint)
+          .get(endpoint, headers: _platformHeaders(platformToken))
           .timeout(const Duration(seconds: 20));
       final text = utf8.decode(response.bodyBytes);
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -118,6 +120,7 @@ class ImageGeneratorClient {
   Future<ImageGenerationResponse> generateWithPlatformQuota({
     required String platformBaseUrl,
     required ImageGenerationParams params,
+    String? platformToken,
   }) async {
     final endpoint = Uri.parse(
       '${platformBaseUrl.trim().replaceAll(RegExp(r'/+$'), '')}/api/image/generate',
@@ -128,7 +131,7 @@ class ImageGeneratorClient {
       final response = await client
           .post(
             endpoint,
-            headers: {'Content-Type': 'application/json'},
+            headers: _platformHeaders(platformToken, json: true),
             body: jsonEncode(params.toRequestBody()),
           )
           .timeout(const Duration(seconds: 90));
@@ -186,6 +189,18 @@ class ImageGeneratorClient {
     } finally {
       if (closeClient) client.close();
     }
+  }
+
+  static Map<String, String> _platformHeaders(
+    String? token, {
+    bool json = false,
+  }) {
+    final headers = <String, String>{
+      if (json) 'Content-Type': 'application/json',
+    };
+    final trimmed = token?.trim() ?? '';
+    if (trimmed.isNotEmpty) headers['Authorization'] = 'Bearer $trimmed';
+    return headers;
   }
 
   static List<String> _parseModelList(

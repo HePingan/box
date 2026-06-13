@@ -93,6 +93,8 @@ class ImageGeneratorConfigCard extends StatelessWidget {
     required this.onApplyModel,
     required this.onAccessModeChanged,
     required this.onToggleShowAllModels,
+    required this.platformAccountLabel,
+    required this.onReloadAccount,
   });
 
   final TextEditingController baseUrlController;
@@ -112,6 +114,8 @@ class ImageGeneratorConfigCard extends StatelessWidget {
   final ValueChanged<String> onApplyModel;
   final ValueChanged<ImageGeneratorAccessMode> onAccessModeChanged;
   final VoidCallback? onToggleShowAllModels;
+  final String? platformAccountLabel;
+  final VoidCallback onReloadAccount;
 
   @override
   Widget build(BuildContext context) {
@@ -189,6 +193,30 @@ class ImageGeneratorConfigCard extends StatelessWidget {
                 labelText: '平台服务地址',
                 hintText: 'https://your-domain.com，例如后端额度代理',
               ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: AppStatusPill(
+                    label: platformAccountLabel == null
+                        ? '未登录 Box 账号'
+                        : '当前账号：$platformAccountLabel',
+                    icon: platformAccountLabel == null
+                        ? Icons.account_circle_outlined
+                        : Icons.verified_user_rounded,
+                    color: platformAccountLabel == null
+                        ? AppTokens.warning
+                        : AppTokens.success,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: onReloadAccount,
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: const Text('同步账号'),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             const Text(
@@ -295,12 +323,14 @@ class ImageGeneratorPlatformQuotaCard extends StatelessWidget {
     required this.quota,
     required this.error,
     required this.platformBaseUrl,
+    required this.accountLabel,
     required this.onRefresh,
   });
 
   final ImagePlatformQuota? quota;
   final String? error;
   final String platformBaseUrl;
+  final String? accountLabel;
   final VoidCallback onRefresh;
 
   @override
@@ -337,6 +367,15 @@ class ImageGeneratorPlatformQuotaCard extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
+              AppStatusPill(
+                label: accountLabel == null ? '账号：未登录' : '账号：$accountLabel',
+                icon: accountLabel == null
+                    ? Icons.account_circle_outlined
+                    : Icons.verified_user_rounded,
+                color: accountLabel == null
+                    ? AppTokens.warning
+                    : AppTokens.success,
+              ),
               AppStatusPill(
                 label: item == null ? '剩余额度：未知' : '剩余额度：${item.remaining}',
                 icon: Icons.bolt_rounded,
