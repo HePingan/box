@@ -8,6 +8,7 @@ import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import '../data/image_generator_client.dart';
 import '../data/image_generator_store.dart';
 import '../domain/image_generator_models.dart';
+import '../domain/image_generator_presets.dart';
 import 'widgets/image_generator_widgets.dart';
 
 class ImageGeneratorPage extends StatefulWidget {
@@ -131,6 +132,43 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     );
   }
 
+  void _applyQuickProfile(ImageApiQuickProfile profile) {
+    setState(() {
+      _baseUrlController.text = profile.baseUrl;
+      _modelController.text = profile.model;
+    });
+    _scheduleSaveDraft();
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已套用 ${profile.title} 配置')));
+  }
+
+  void _applyPromptPreset(ImagePromptPreset preset) {
+    setState(() {
+      _promptController.text = preset.prompt;
+      _negativeController.text = preset.negativePrompt;
+      _size = preset.size;
+      _quality = preset.quality;
+      _outputFormat = preset.outputFormat;
+    });
+    _scheduleSaveDraft();
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已套用 ${preset.title} 模板')));
+  }
+
+  void _optimizePrompt() {
+    final optimized = optimizeImagePrompt(_promptController.text);
+    setState(() => _promptController.text = optimized);
+    _promptController.selection = TextSelection.fromPosition(
+      TextPosition(offset: _promptController.text.length),
+    );
+    _scheduleSaveDraft();
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('已按本地规则优化 Prompt')));
+  }
+
   Future<void> _copyText(String text) async {
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
@@ -251,13 +289,18 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             baseUrlController: _baseUrlController,
             apiKeyController: _apiKeyController,
             modelController: _modelController,
+            quickProfiles: imageApiQuickProfiles,
+            onApplyQuickProfile: _applyQuickProfile,
             onResetDraft: _resetDraft,
           ),
           const SizedBox(height: 12),
           ImageGeneratorPromptCard(
             promptController: _promptController,
             negativeController: _negativeController,
+            presets: imagePromptPresets,
             onAppendStyle: _appendStyle,
+            onApplyPreset: _applyPromptPreset,
+            onOptimizePrompt: _optimizePrompt,
           ),
           const SizedBox(height: 12),
           ImageGeneratorParamsCard(
@@ -281,6 +324,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             onCopy: _copyText,
             onRestoreHistory: _restoreHistory,
             onClearHistory: _clearHistory,
+            parameterSummary:
+                '${_modelController.text.trim().isEmpty ? 'gpt-image-1' : _modelController.text.trim()} · $_size · $_quality · $_outputFormat · $_count 张',
           ),
         ],
       ),

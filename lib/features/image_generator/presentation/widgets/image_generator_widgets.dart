@@ -4,6 +4,7 @@ import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
 
 import '../../domain/image_generator_models.dart';
+import '../../domain/image_generator_presets.dart';
 
 class _SurfaceCard extends StatelessWidget {
   const _SurfaceCard({required this.child});
@@ -76,12 +77,16 @@ class ImageGeneratorConfigCard extends StatelessWidget {
     required this.baseUrlController,
     required this.apiKeyController,
     required this.modelController,
+    required this.quickProfiles,
+    required this.onApplyQuickProfile,
     required this.onResetDraft,
   });
 
   final TextEditingController baseUrlController;
   final TextEditingController apiKeyController;
   final TextEditingController modelController;
+  final List<ImageApiQuickProfile> quickProfiles;
+  final ValueChanged<ImageApiQuickProfile> onApplyQuickProfile;
   final VoidCallback onResetDraft;
 
   @override
@@ -99,6 +104,21 @@ class ImageGeneratorConfigCard extends StatelessWidget {
               icon: const Icon(Icons.restart_alt_rounded, size: 18),
               label: const Text('重置'),
             ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: quickProfiles
+                .map(
+                  (profile) => ActionChip(
+                    avatar: const Icon(Icons.flash_on_rounded, size: 16),
+                    label: Text(profile.title),
+                    tooltip: profile.description,
+                    onPressed: () => onApplyQuickProfile(profile),
+                  ),
+                )
+                .toList(),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -136,12 +156,18 @@ class ImageGeneratorPromptCard extends StatelessWidget {
     super.key,
     required this.promptController,
     required this.negativeController,
+    required this.presets,
     required this.onAppendStyle,
+    required this.onApplyPreset,
+    required this.onOptimizePrompt,
   });
 
   final TextEditingController promptController;
   final TextEditingController negativeController;
+  final List<ImagePromptPreset> presets;
   final ValueChanged<String> onAppendStyle;
+  final ValueChanged<ImagePromptPreset> onApplyPreset;
+  final VoidCallback onOptimizePrompt;
 
   @override
   Widget build(BuildContext context) {
@@ -160,10 +186,31 @@ class ImageGeneratorPromptCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _SectionTitle(
+          _SectionTitle(
             icon: Icons.auto_awesome_rounded,
             title: '提示词',
             subtitle: '描述主体、风格、镜头、光线、构图和用途',
+            trailing: FilledButton.tonalIcon(
+              onPressed: onOptimizePrompt,
+              icon: const Icon(Icons.auto_fix_high_rounded, size: 18),
+              label: const Text('优化'),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 118,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: presets.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final preset = presets[index];
+                return _PromptPresetCard(
+                  preset: preset,
+                  onTap: () => onApplyPreset(preset),
+                );
+              },
+            ),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -201,6 +248,82 @@ class ImageGeneratorPromptCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _PromptPresetCard extends StatelessWidget {
+  const _PromptPresetCard({required this.preset, required this.onTap});
+
+  final ImagePromptPreset preset;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        width: 168,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              AppTokens.primaryBlue.withValues(alpha: 0.10),
+              AppTokens.violet.withValues(alpha: 0.10),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: AppTokens.primaryBlue.withValues(alpha: 0.16),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.auto_awesome_rounded,
+                  size: 18,
+                  color: AppTokens.primaryBlue,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    preset.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppTokens.textPrimary,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              preset.description,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTokens.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+            const Spacer(),
+            Text(
+              '${preset.size} · ${preset.quality}',
+              style: const TextStyle(
+                color: AppTokens.primaryBlue,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -287,6 +410,7 @@ class ImageGeneratorResultCard extends StatelessWidget {
     required this.onCopy,
     required this.onRestoreHistory,
     required this.onClearHistory,
+    required this.parameterSummary,
   });
 
   final bool loading;
@@ -297,6 +421,7 @@ class ImageGeneratorResultCard extends StatelessWidget {
   final ValueChanged<String> onCopy;
   final ValueChanged<ImageGenerationHistoryItem> onRestoreHistory;
   final VoidCallback onClearHistory;
+  final String parameterSummary;
 
   @override
   Widget build(BuildContext context) {
@@ -325,6 +450,25 @@ class ImageGeneratorResultCard extends StatelessWidget {
                 label: Text(loading ? '生成中' : '开始生成'),
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppTokens.primaryBlue.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: AppTokens.primaryBlue.withValues(alpha: 0.18),
+              ),
+            ),
+            child: Text(
+              '当前参数：$parameterSummary',
+              style: const TextStyle(
+                color: AppTokens.primaryBlue,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
           ),
           if (error != null) ...[
             const SizedBox(height: 12),
