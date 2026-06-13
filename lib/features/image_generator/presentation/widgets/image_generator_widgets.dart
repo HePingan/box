@@ -662,6 +662,139 @@ class _PreflightRow extends StatelessWidget {
   }
 }
 
+class ImageGeneratorDiagnosticsCard extends StatelessWidget {
+  const ImageGeneratorDiagnosticsCard({
+    super.key,
+    required this.diagnostics,
+    required this.onCopyDiagnostics,
+    required this.onCopyRequestJson,
+  });
+
+  final ImageGeneratorRequestDiagnostics? diagnostics;
+  final VoidCallback? onCopyDiagnostics;
+  final VoidCallback? onCopyRequestJson;
+
+  @override
+  Widget build(BuildContext context) {
+    final item = diagnostics;
+    final color = item == null
+        ? AppTokens.textSecondary
+        : item.success
+        ? AppTokens.success
+        : Colors.red;
+    final icon = item == null
+        ? Icons.history_toggle_off_rounded
+        : item.success
+        ? Icons.check_circle_rounded
+        : Icons.error_rounded;
+    return _SurfaceCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SectionTitle(
+            icon: Icons.troubleshoot_rounded,
+            title: '最近一次请求诊断',
+            subtitle: item == null
+                ? '生成后显示 endpoint、状态码、返回摘要，便于截图排查'
+                : '${item.timeLabel} · ${item.statusLabel}',
+          ),
+          const SizedBox(height: 12),
+          if (item == null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE7ECF5)),
+              ),
+              child: const Text(
+                '暂无真实请求记录。请求预览不会消耗额度，诊断卡只记录本页最近一次真实生成结果。',
+                style: TextStyle(color: AppTokens.textSecondary),
+              ),
+            )
+          else ...[
+            Row(
+              children: [
+                Icon(icon, color: color, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    item.statusLabel,
+                    style: TextStyle(color: color, fontWeight: FontWeight.w900),
+                  ),
+                ),
+                Text(
+                  item.timeLabel,
+                  style: const TextStyle(
+                    color: AppTokens.textSecondary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _CodePreview(label: 'Endpoint', content: item.endpoint),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                AppStatusPill(
+                  label: '参考图：${item.referenceLabel}',
+                  icon: Icons.photo_filter_rounded,
+                  color: AppTokens.primaryBlue,
+                ),
+                if (item.success)
+                  AppStatusPill(
+                    label: '图片 ${item.imageCount} 张',
+                    icon: Icons.image_rounded,
+                    color: AppTokens.success,
+                  ),
+                if (item.success && item.resultFormat.isNotEmpty)
+                  AppStatusPill(
+                    label: item.resultFormat,
+                    icon: Icons.link_rounded,
+                    color: AppTokens.violet,
+                  ),
+              ],
+            ),
+            if (!item.success && item.message.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _CodePreview(label: '错误', content: item.message, maxLines: 6),
+            ],
+            if (item.rawPreview.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _CodePreview(
+                label: '原始响应摘要',
+                content: item.rawPreview,
+                maxLines: 5,
+              ),
+            ],
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.tonalIcon(
+                  onPressed: onCopyDiagnostics,
+                  icon: const Icon(Icons.assignment_rounded, size: 18),
+                  label: const Text('复制诊断信息'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onCopyRequestJson,
+                  icon: const Icon(Icons.copy_all_rounded, size: 18),
+                  label: const Text('复制请求 JSON'),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class ImageGeneratorResultCard extends StatelessWidget {
   const ImageGeneratorResultCard({
     super.key,

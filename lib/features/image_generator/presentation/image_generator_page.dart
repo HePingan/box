@@ -40,6 +40,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   bool _loading = false;
   bool _draftLoaded = false;
   String? _error;
+  ImageGeneratorRequestDiagnostics? _lastDiagnostics;
   List<GeneratedImageResult> _results = const [];
   List<ImageGenerationHistoryItem> _history = const [];
 
@@ -130,6 +131,38 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
 
   List<ImageGeneratorPreflightItem> _preflightItems() {
     return buildImageGeneratorPreflight(_currentParams());
+  }
+
+  ImageGeneratorRequestDiagnostics _buildDiagnostics({
+    required ImageGenerationParams params,
+    required bool success,
+    int? statusCode,
+    String message = '',
+    String rawPreview = '',
+    int imageCount = 0,
+    String resultFormat = '',
+  }) {
+    return ImageGeneratorRequestDiagnostics(
+      createdAt: DateTime.now(),
+      endpoint: params.endpoint,
+      requestJson: params.prettyRequestJson,
+      referenceField: params.referenceImageField,
+      success: success,
+      statusCode: statusCode,
+      message: message,
+      rawPreview: rawPreview,
+      imageCount: imageCount,
+      resultFormat: resultFormat,
+    );
+  }
+
+  String _resultFormat(List<GeneratedImageResult> images) {
+    final hasDataUrl = images.any((image) => image.isDataUrl);
+    final hasUrl = images.any((image) => !image.isDataUrl);
+    if (hasDataUrl && hasUrl) return 'URL + data URL';
+    if (hasDataUrl) return 'data URL';
+    if (hasUrl) return 'URL';
+    return '';
   }
 
   void _scheduleSaveDraft() {
@@ -269,13 +302,14 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     }
 
     await _saveDraftNow();
+    final params = _currentParams();
     setState(() {
       _loading = true;
       _error = null;
     });
 
     try {
-      final response = await _client.generate(_currentParams());
+      final response = await _client.generate(params);
       final history = await _store.addHistory(
         ImageGenerationHistoryItem(
           prompt: prompt,
@@ -296,18 +330,37 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       setState(() {
         _results = response.images;
         _history = history;
+        _lastDiagnostics = _buildDiagnostics(
+          params: params,
+          success: true,
+          rawPreview: response.rawPreview,
+          imageCount: response.images.length,
+          resultFormat: _resultFormat(response.images),
+        );
         _loading = false;
       });
     } on ImageGeneratorException catch (e) {
       if (!mounted) return;
       setState(() {
         _error = e.message;
+        _lastDiagnostics = _buildDiagnostics(
+          params: params,
+          success: false,
+          statusCode: e.statusCode,
+          message: e.message,
+          rawPreview: e.rawPreview,
+        );
         _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _error = '生成失败：$e';
+        _lastDiagnostics = _buildDiagnostics(
+          params: params,
+          success: false,
+          message: '生成失败：$e',
+        );
         _loading = false;
       });
     }
@@ -369,6 +422,16 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             preflightItems: _preflightItems(),
             onCopyRequestJson: () =>
                 _copyText(_currentParams().prettyRequestJson),
+          ),
+          const SizedBox(height: 12),
+          ImageGeneratorDiagnosticsCard(
+            diagnostics: _lastDiagnostics,
+            onCopyDiagnostics: _lastDiagnostics == null
+                ? null
+                : () => _copyText(_lastDiagnostics!.toCopyText()),
+            onCopyRequestJson: _lastDiagnostics == null
+                ? null
+                : () => _copyText(_lastDiagnostics!.requestJson),
           ),
           const SizedBox(height: 12),
           ImageGeneratorResultCard(

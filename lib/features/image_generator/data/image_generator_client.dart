@@ -31,7 +31,11 @@ class ImageGeneratorClient {
 
       final text = utf8.decode(response.bodyBytes);
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw ImageGeneratorException(_extractError(text, response.statusCode));
+        throw ImageGeneratorException(
+          _extractError(text, response.statusCode),
+          statusCode: response.statusCode,
+          rawPreview: _preview(text),
+        );
       }
 
       final decoded = jsonDecode(text);
@@ -135,9 +139,15 @@ class ImageGeneratorClient {
 }
 
 class ImageGeneratorException implements Exception {
-  const ImageGeneratorException(this.message);
+  const ImageGeneratorException(
+    this.message, {
+    this.statusCode,
+    this.rawPreview = '',
+  });
 
   final String message;
+  final int? statusCode;
+  final String rawPreview;
 
   @override
   String toString() => message;

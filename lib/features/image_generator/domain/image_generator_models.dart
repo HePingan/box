@@ -188,6 +188,75 @@ class ImageGenerationResponse {
   final String rawPreview;
 }
 
+class ImageGeneratorRequestDiagnostics {
+  const ImageGeneratorRequestDiagnostics({
+    required this.createdAt,
+    required this.endpoint,
+    required this.requestJson,
+    required this.referenceField,
+    required this.success,
+    this.statusCode,
+    this.message = '',
+    this.rawPreview = '',
+    this.imageCount = 0,
+    this.resultFormat = '',
+  });
+
+  final DateTime createdAt;
+  final String endpoint;
+  final String requestJson;
+  final ImageReferencePayloadField referenceField;
+  final bool success;
+  final int? statusCode;
+  final String message;
+  final String rawPreview;
+  final int imageCount;
+  final String resultFormat;
+
+  String get statusLabel {
+    if (success) return '请求成功';
+    final code = statusCode;
+    if (code == null) return '请求失败';
+    return '请求失败 HTTP $code';
+  }
+
+  String get timeLabel {
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${two(createdAt.hour)}:${two(createdAt.minute)}:${two(createdAt.second)}';
+  }
+
+  String get referenceLabel {
+    if (!referenceField.shouldSend) return '不发送';
+    return referenceField.wireName;
+  }
+
+  String toCopyText() {
+    final buffer = StringBuffer()
+      ..writeln('AI 生图请求诊断')
+      ..writeln('时间: ${createdAt.toIso8601String()}')
+      ..writeln('状态: $statusLabel')
+      ..writeln('Endpoint: $endpoint')
+      ..writeln('参考图字段: $referenceLabel')
+      ..writeln()
+      ..writeln('JSON Body:')
+      ..writeln(requestJson);
+    if (success) {
+      buffer
+        ..writeln()
+        ..writeln('图片数量: $imageCount')
+        ..writeln('返回格式: ${resultFormat.isEmpty ? '未知' : resultFormat}');
+    } else {
+      buffer
+        ..writeln()
+        ..writeln('错误: ${message.isEmpty ? '未知错误' : message}');
+      if (rawPreview.isNotEmpty) {
+        buffer.writeln('原始响应: $rawPreview');
+      }
+    }
+    return buffer.toString().trimRight();
+  }
+}
+
 class ImageGenerationHistoryItem {
   const ImageGenerationHistoryItem({
     required this.prompt,
