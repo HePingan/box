@@ -26,6 +26,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   final TextEditingController _modelController = TextEditingController();
   final TextEditingController _promptController = TextEditingController();
   final TextEditingController _negativeController = TextEditingController();
+  final TextEditingController _referenceImageController =
+      TextEditingController();
 
   Timer? _draftDebounce;
   String _size = '1024x1024';
@@ -48,6 +50,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       _modelController,
       _promptController,
       _negativeController,
+      _referenceImageController,
     ]) {
       controller.addListener(_scheduleSaveDraft);
     }
@@ -62,6 +65,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     _modelController.dispose();
     _promptController.dispose();
     _negativeController.dispose();
+    _referenceImageController.dispose();
     super.dispose();
   }
 
@@ -81,6 +85,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     _modelController.text = draft.model;
     _promptController.text = draft.prompt;
     _negativeController.text = draft.negativePrompt;
+    _referenceImageController.text = draft.referenceImageUrl;
     _size = draft.size;
     _quality = draft.quality;
     _outputFormat = draft.outputFormat;
@@ -94,6 +99,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       model: _modelController.text.trim(),
       prompt: _promptController.text.trim(),
       negativePrompt: _negativeController.text.trim(),
+      referenceImageUrl: _referenceImageController.text.trim(),
       size: _size,
       quality: _quality,
       outputFormat: _outputFormat,
@@ -315,6 +321,11 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             onCountChanged: (value) => _setParam(() => _count = value),
           ),
           const SizedBox(height: 12),
+          ImageGeneratorReferenceCard(
+            controller: _referenceImageController,
+            onClear: () => _setParam(() => _referenceImageController.clear()),
+          ),
+          const SizedBox(height: 12),
           ImageGeneratorResultCard(
             loading: _loading,
             error: _error,
@@ -326,6 +337,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             onClearHistory: _clearHistory,
             parameterSummary:
                 '${_modelController.text.trim().isEmpty ? 'gpt-image-1' : _modelController.text.trim()} · $_size · $_quality · $_outputFormat · $_count 张',
+            currentPrompt: _promptController.text.trim(),
+            currentNegativePrompt: _negativeController.text.trim(),
           ),
         ],
       ),

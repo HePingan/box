@@ -399,6 +399,81 @@ class ImageGeneratorParamsCard extends StatelessWidget {
   }
 }
 
+class ImageGeneratorReferenceCard extends StatelessWidget {
+  const ImageGeneratorReferenceCard({
+    super.key,
+    required this.controller,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = controller.text.trim();
+    final hasUrl = value.isNotEmpty;
+    return _SurfaceCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SectionTitle(
+            icon: Icons.photo_filter_rounded,
+            title: '参考图 / 图生图（实验）',
+            subtitle: '先保存参考图 URL 和预览，暂未接入图生图请求',
+            trailing: hasUrl
+                ? TextButton.icon(
+                    onPressed: onClear,
+                    icon: const Icon(Icons.clear_rounded, size: 18),
+                    label: const Text('清空'),
+                  )
+                : null,
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              labelText: '参考图 URL（可选）',
+              hintText: 'https://.../reference.png，用于后续图生图/风格参考',
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (hasUrl)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Image.network(
+                value,
+                width: double.infinity,
+                height: 180,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => Container(
+                  height: 110,
+                  alignment: Alignment.center,
+                  color: const Color(0xFFEFF3F9),
+                  child: const Text('参考图预览失败，但 URL 会保存在草稿中'),
+                ),
+              ),
+            )
+          else
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE7ECF5)),
+              ),
+              child: const Text(
+                '后续可扩展到 OpenAI edits、Responses input_image 或 fal.ai；当前不改变文生图请求逻辑。',
+                style: TextStyle(color: AppTokens.textSecondary),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class ImageGeneratorResultCard extends StatelessWidget {
   const ImageGeneratorResultCard({
     super.key,
@@ -411,6 +486,8 @@ class ImageGeneratorResultCard extends StatelessWidget {
     required this.onRestoreHistory,
     required this.onClearHistory,
     required this.parameterSummary,
+    required this.currentPrompt,
+    required this.currentNegativePrompt,
   });
 
   final bool loading;
@@ -422,6 +499,8 @@ class ImageGeneratorResultCard extends StatelessWidget {
   final ValueChanged<ImageGenerationHistoryItem> onRestoreHistory;
   final VoidCallback onClearHistory;
   final String parameterSummary;
+  final String currentPrompt;
+  final String currentNegativePrompt;
 
   @override
   Widget build(BuildContext context) {
@@ -498,7 +577,13 @@ class ImageGeneratorResultCard extends StatelessWidget {
             )
           else
             ...results.map(
-              (item) => _GeneratedImageTile(item: item, onCopy: onCopy),
+              (item) => _GeneratedImageTile(
+                item: item,
+                onCopy: onCopy,
+                prompt: currentPrompt,
+                negativePrompt: currentNegativePrompt,
+                parameterSummary: parameterSummary,
+              ),
             ),
           const SizedBox(height: 6),
           _HistorySection(
@@ -514,10 +599,19 @@ class ImageGeneratorResultCard extends StatelessWidget {
 }
 
 class _GeneratedImageTile extends StatelessWidget {
-  const _GeneratedImageTile({required this.item, required this.onCopy});
+  const _GeneratedImageTile({
+    required this.item,
+    required this.onCopy,
+    required this.prompt,
+    required this.negativePrompt,
+    required this.parameterSummary,
+  });
 
   final GeneratedImageResult item;
   final ValueChanged<String> onCopy;
+  final String prompt;
+  final String negativePrompt;
+  final String parameterSummary;
 
   @override
   Widget build(BuildContext context) {
@@ -563,6 +657,12 @@ class _GeneratedImageTile extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 8),
+          if (item.isDataUrl)
+            const Text(
+              '提示：data URL 内容较长，复制 Markdown/HTML 可能不适合粘贴到聊天窗口。',
+              style: TextStyle(color: AppTokens.textSecondary, fontSize: 12),
+            ),
+          const SizedBox(height: 8),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -571,6 +671,23 @@ class _GeneratedImageTile extends StatelessWidget {
                 onPressed: () => onCopy(item.image),
                 icon: const Icon(Icons.copy_rounded),
                 label: Text(item.isDataUrl ? '复制 data URL' : '复制图片 URL'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => onCopy('![](${item.image})'),
+                icon: const Icon(Icons.integration_instructions_rounded),
+                label: const Text('复制 Markdown'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => onCopy(
+                  '<img src="${item.image}" alt="AI generated image" />',
+                ),
+                icon: const Icon(Icons.code_rounded),
+                label: const Text('复制 HTML'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => onCopy(_buildShareText()),
+                icon: const Icon(Icons.description_outlined),
+                label: const Text('复制参数'),
               ),
               if (item.rawUrl != null)
                 OutlinedButton.icon(
@@ -583,6 +700,28 @@ class _GeneratedImageTile extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _buildShareText() {
+    final buffer = StringBuffer()
+      ..writeln('Prompt:')
+      ..writeln(prompt.isEmpty ? '（空）' : prompt)
+      ..writeln()
+      ..writeln('参数: $parameterSummary')
+      ..writeln('图片: ${item.image}');
+    if (negativePrompt.trim().isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('Negative prompt:')
+        ..writeln(negativePrompt.trim());
+    }
+    if (item.revisedPrompt != null && item.revisedPrompt!.trim().isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('修订提示词:')
+        ..writeln(item.revisedPrompt!.trim());
+    }
+    return buffer.toString().trim();
   }
 }
 

@@ -36,6 +36,7 @@ class ImageGeneratorDraft {
     required this.model,
     required this.prompt,
     required this.negativePrompt,
+    required this.referenceImageUrl,
     required this.size,
     required this.quality,
     required this.outputFormat,
@@ -48,6 +49,7 @@ class ImageGeneratorDraft {
       model: 'gpt-image-1',
       prompt: '一张用于工具箱 App 的 AI 生图入口海报，蓝紫渐变，玻璃拟态，科技感构图，移动端 UI 宣传图',
       negativePrompt: '低清晰度，文字错误，水印，畸形手指',
+      referenceImageUrl: '',
       size: '1024x1024',
       quality: 'auto',
       outputFormat: 'png',
@@ -65,6 +67,7 @@ class ImageGeneratorDraft {
         json['negativePrompt'],
         defaults.negativePrompt,
       ),
+      referenceImageUrl: _asString(json['referenceImageUrl']),
       size: _asString(json['size'], defaults.size),
       quality: _asString(json['quality'], defaults.quality),
       outputFormat: _asString(json['outputFormat'], defaults.outputFormat),
@@ -76,6 +79,7 @@ class ImageGeneratorDraft {
   final String model;
   final String prompt;
   final String negativePrompt;
+  final String referenceImageUrl;
   final String size;
   final String quality;
   final String outputFormat;
@@ -87,6 +91,7 @@ class ImageGeneratorDraft {
       'model': model,
       'prompt': prompt,
       'negativePrompt': negativePrompt,
+      'referenceImageUrl': referenceImageUrl,
       'size': size,
       'quality': quality,
       'outputFormat': outputFormat,

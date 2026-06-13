@@ -306,7 +306,7 @@ class MarketPluginTemplate {
     MarketPluginTemplate(
       id: 'market_image_generator',
       title: 'AI 生图工坊',
-      subtitle: 'Prompt 生成图片，支持 OpenAI 兼容接口',
+      subtitle: 'Prompt 模板、历史复用、OpenAI 兼容生图',
       areaCode: 'recommend',
       actionCode: 'openImageGenerator',
       payload: '',

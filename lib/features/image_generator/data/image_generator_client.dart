@@ -105,21 +105,37 @@ class ImageGeneratorClient {
   }
 
   static String _extractError(String text, int statusCode) {
+    var message = '';
     try {
       final decoded = jsonDecode(text);
       if (decoded is Map) {
         final error = decoded['error'];
         if (error is Map && error['message'] != null) {
-          return 'HTTP $statusCode：${error['message']}';
+          message = error['message'].toString();
+        } else if (error is String && error.trim().isNotEmpty) {
+          message = error.trim();
+        } else {
+          final fallback = decoded['message'] ?? decoded['detail'];
+          if (fallback != null) message = fallback.toString();
         }
-        if (error is String && error.trim().isNotEmpty) {
-          return 'HTTP $statusCode：$error';
-        }
-        final message = decoded['message'] ?? decoded['detail'];
-        if (message != null) return 'HTTP $statusCode：$message';
       }
     } catch (_) {}
-    return 'HTTP $statusCode：${_preview(text)}';
+
+    if (message.trim().isEmpty) {
+      message = _preview(text);
+    }
+
+    final hint = switch (statusCode) {
+      401 => 'API Key 无效或未授权，请检查 Key 是否完整。',
+      403 => '当前 Key 无权限、额度不足，或该模型未开通。',
+      404 => '接口路径或模型不兼容，请检查 Base URL 是否以 /v1 结尾。',
+      408 => '请求超时，建议降低数量/质量后重试。',
+      429 => '请求过于频繁或额度不足，请稍后再试。',
+      >= 500 => '服务端错误，可能是中转接口或模型服务暂时不可用。',
+      _ => '请检查 Base URL、模型、参数和中转接口兼容性。',
+    };
+
+    return 'HTTP $statusCode：$message\n$hint';
   }
 
   static String _preview(String text) {
