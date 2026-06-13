@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_drawer.dart';
 import '../design_system/app_tokens.dart';
+import '../design_system/widgets/app_bottom_sheet.dart';
 import '../globals.dart';
 import '../features/content/presentation/warehouse_tab.dart';
 import '../features/extensions/presentation/plugin_tab.dart';
@@ -80,39 +81,81 @@ class _MainAppShellState extends State<MainAppShell> {
     if (widget.novelBootstrap.configured) return;
     if (!mounted) return;
 
-    await showDialog<void>(
+    final message = widget.novelBootstrap.message.isNotEmpty
+        ? widget.novelBootstrap.message
+        : '当前还没有可用的规则书源，部分小说功能将不可用，请先导入并启用一个书源。';
+
+    final shouldOpenManager = await showAppModalBottomSheet<bool>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('小说书源未配置'),
-          content: Text(
-            widget.novelBootstrap.message.isNotEmpty
-                ? widget.novelBootstrap.message
-                : '当前还没有可用的规则书源，部分小说功能将不可用，请先导入并启用一个书源。',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('稍后再说'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(dialogContext);
-                if (!mounted) return;
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => BookSourceManagerPage(
-                      startupMessage: widget.novelBootstrap.message,
+      builder: (sheetContext) => AppBottomSheetFrame(
+        title: '小说书源未配置',
+        subtitle: '导入并启用一个书源后，小说搜索、详情和阅读功能才会完整可用。',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppTokens.warning.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+                border: Border.all(
+                  color: AppTokens.warning.withValues(alpha: 0.20),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.info_outline_rounded,
+                    color: AppTokens.warning,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      message,
+                      style: const TextStyle(
+                        color: AppTokens.textPrimary,
+                        height: 1.45,
+                      ),
                     ),
                   ),
-                );
-              },
-              child: const Text('去配置'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(sheetContext, false),
+                    child: const Text('稍后再说'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => Navigator.pop(sheetContext, true),
+                    icon: const Icon(Icons.tune_rounded, size: 18),
+                    label: const Text('去配置'),
+                  ),
+                ),
+              ],
             ),
           ],
-        );
-      },
+        ),
+      ),
+    );
+
+    if (shouldOpenManager != true || !mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BookSourceManagerPage(
+          startupMessage: widget.novelBootstrap.message,
+        ),
+      ),
     );
   }
 
