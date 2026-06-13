@@ -2,6 +2,9 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'package:box/design_system/app_tokens.dart';
+import 'package:box/design_system/widgets/app_bottom_sheet.dart';
+
 import '../controller/history_controller.dart';
 import '../controller/video_controller.dart';
 import '../models/history_item.dart';
@@ -173,70 +176,106 @@ class HistoryQuickView extends StatelessWidget {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  void _confirmClear(BuildContext context, HistoryController controller) {
-    showDialog<void>(
+  Future<bool> _showHistoryConfirmSheet(
+    BuildContext context, {
+    required String title,
+    required String message,
+    required String confirmLabel,
+  }) async {
+    final result = await showAppModalBottomSheet<bool>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text(
-            '清空历史',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          content: const Text('确定要清空所有播放历史吗？'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('取消', style: TextStyle(color: Colors.grey)),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(dialogContext);
-                await controller.clearHistory();
-              },
-              child: const Text(
-                '确定',
-                style: TextStyle(color: Colors.redAccent),
+      builder: (sheetContext) => AppBottomSheetFrame(
+        title: title,
+        subtitle: '这个操作会立即更新本机播放历史。',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppTokens.rose.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+                border: Border.all(
+                  color: AppTokens.rose.withValues(alpha: 0.18),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.warning_amber_rounded,
+                    color: AppTokens.rose,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      message,
+                      style: const TextStyle(
+                        color: AppTokens.textPrimary,
+                        height: 1.45,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(sheetContext, false),
+                    child: const Text('取消'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTokens.rose,
+                    ),
+                    onPressed: () => Navigator.pop(sheetContext, true),
+                    child: Text(confirmLabel),
+                  ),
+                ),
+              ],
+            ),
           ],
-        );
-      },
+        ),
+      ),
     );
+    return result == true;
   }
 
-  void _confirmDelete(
+  Future<void> _confirmClear(
+    BuildContext context,
+    HistoryController controller,
+  ) async {
+    final confirmed = await _showHistoryConfirmSheet(
+      context,
+      title: '清空历史',
+      message: '确定要清空所有播放历史吗？',
+      confirmLabel: '清空',
+    );
+    if (!confirmed) return;
+    await controller.clearHistory();
+  }
+
+  Future<void> _confirmDelete(
     BuildContext context,
     HistoryController controller,
     HistoryItem item,
-  ) {
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text(
-            '删除记录',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          content: Text('确定删除「${item.vodName}」的观看记录吗？'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('取消', style: TextStyle(color: Colors.grey)),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(dialogContext);
-                await controller.deleteHistory(item);
-              },
-              child: const Text(
-                '删除',
-                style: TextStyle(color: Colors.redAccent),
-              ),
-            ),
-          ],
-        );
-      },
+  ) async {
+    final confirmed = await _showHistoryConfirmSheet(
+      context,
+      title: '删除记录',
+      message: '确定删除「${item.vodName}」的观看记录吗？',
+      confirmLabel: '删除',
     );
+    if (!confirmed) return;
+    await controller.deleteHistory(item);
   }
 }
 
