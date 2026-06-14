@@ -474,7 +474,7 @@ POST /admin/image/provider/test
 Authorization: Bearer <admin...ken>
 ```
 
-接口会使用当前 effective provider 请求 `<baseUrl>/models`，不会返回明文 API Key。成功示例：
+成功或失败均返回 HTTP 200，通过 `ok` 判断健康状态。该接口只测试上游 `/models`，不会发起付费生图。
 
 ```json
 {
@@ -499,6 +499,32 @@ Authorization: Bearer <admin...ken>
   "modelCount": 0,
   "modelsPreview": [],
   "message": "未配置上游 API Key"
+}
+```
+
+查看最近使用记录：
+
+```http
+GET /admin/image/usage
+Authorization: Bearer <admin...ken>
+```
+
+返回最近 200 条生图上游请求记录，不包含 prompt、图片 URL 或 API Key：
+
+```json
+{
+  "usage": [
+    {
+      "createdAt": "2026-06-14T08:10:00.000",
+      "userId": "u_admin",
+      "username": "admin",
+      "model": "gpt-image-1",
+      "cost": 1,
+      "success": false,
+      "statusCode": 503,
+      "errorPreview": "上游 Provider 请求失败"
+    }
+  ]
 }
 ```
 

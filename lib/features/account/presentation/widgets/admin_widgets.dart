@@ -195,6 +195,198 @@ class _ProviderTestBanner extends StatelessWidget {
   }
 }
 
+class AdminUsageCard extends StatelessWidget {
+  const AdminUsageCard({
+    super.key,
+    required this.records,
+    required this.loading,
+  });
+
+  final List<BoxAdminUsageRecord> records;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+        border: Border.all(color: AppTokens.divider),
+        boxShadow: AppTokens.shadowSm(),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const CircleAvatar(
+                backgroundColor: Color(0xFFF0FDF4),
+                child: Icon(
+                  Icons.receipt_long_rounded,
+                  color: AppTokens.success,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '最近使用记录',
+                      style: TextStyle(
+                        color: AppTokens.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      records.isEmpty
+                          ? '最近 200 条平台生图请求'
+                          : '最近 ${records.length} 条',
+                      style: const TextStyle(
+                        color: AppTokens.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (loading && records.isEmpty)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(12),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (records.isEmpty)
+            const _UsageEmptyState()
+          else
+            ...records
+                .take(6)
+                .map(
+                  (record) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _UsageRecordTile(record: record),
+                  ),
+                ),
+        ],
+      ),
+    );
+  }
+}
+
+class _UsageEmptyState extends StatelessWidget {
+  const _UsageEmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTokens.background,
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+      ),
+      child: const Text(
+        '暂无使用记录。成功或失败的真实上游生图请求会显示在这里。',
+        style: TextStyle(color: AppTokens.textSecondary, height: 1.4),
+      ),
+    );
+  }
+}
+
+class _UsageRecordTile extends StatelessWidget {
+  const _UsageRecordTile({required this.record});
+
+  final BoxAdminUsageRecord record;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = record.success ? AppTokens.success : AppTokens.warning;
+    final statusText = record.statusCode == null
+        ? 'HTTP -'
+        : 'HTTP ${record.statusCode}';
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            record.success
+                ? Icons.check_circle_rounded
+                : Icons.error_outline_rounded,
+            color: color,
+            size: 22,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${record.username} · ${record.model.isEmpty ? '未知模型' : record.model}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTokens.textPrimary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${record.cost} 点 · ${record.success ? '成功' : '失败'} · $statusText',
+                  style: const TextStyle(
+                    color: AppTokens.textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  _formatUsageTime(record.createdAt),
+                  style: const TextStyle(
+                    color: AppTokens.textTertiary,
+                    fontSize: 12,
+                  ),
+                ),
+                if (!record.success && record.errorPreview.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    record.errorPreview,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppTokens.textSecondary,
+                      fontSize: 12,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _formatUsageTime(DateTime value) {
+  final local = value.toLocal();
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
+}
+
 class AdminUserQuotaCard extends StatelessWidget {
   const AdminUserQuotaCard({
     super.key,

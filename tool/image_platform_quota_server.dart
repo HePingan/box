@@ -42,6 +42,7 @@ Future<void> main(List<String> args) async {
   stdout.writeln('  POST /api/image/generate');
   stdout.writeln('Admin endpoints:');
   stdout.writeln('  GET  /admin/image/users');
+  stdout.writeln('  GET  /admin/image/usage');
   stdout.writeln('  GET  /admin/image/provider');
   stdout.writeln('  POST /admin/image/provider');
   stdout.writeln('  POST /admin/image/provider/test');
@@ -174,6 +175,11 @@ class PlatformQuotaServer {
     if (request.method == 'GET' && path == '/admin/image/users') {
       if (!await requireAdmin(request)) return;
       await jsonResponse(request.response, HttpStatus.ok, store.toAdminJson());
+      return;
+    }
+    if (request.method == 'GET' && path == '/admin/image/usage') {
+      if (!await requireAdmin(request)) return;
+      await usageLogs(request);
       return;
     }
     if (request.method == 'GET' && path == '/admin/image/provider') {
@@ -414,6 +420,17 @@ class PlatformQuotaServer {
     } catch (error) {
       return providerTestError(provider, 'Provider 连接失败：$error');
     }
+  }
+
+  Future<void> usageLogs(HttpRequest request) async {
+    final records = store.usage.reversed.take(200).map((item) {
+      final account = store.accounts[item.userId];
+      final json = item.toJson();
+      json['username'] = account?.username ?? item.userId;
+      json['errorPreview'] = compactPreview(item.errorPreview);
+      return json;
+    }).toList();
+    await jsonResponse(request.response, HttpStatus.ok, {'usage': records});
   }
 
   Future<void> getProvider(HttpRequest request) async {

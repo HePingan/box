@@ -54,6 +54,26 @@ class BoxAdminClient {
     return BoxAdminProviderConfig.fromJson(_decodeResponse(response));
   }
 
+  Future<List<BoxAdminUsageRecord>> fetchUsage({
+    required String serverUrl,
+    required String token,
+  }) async {
+    final response = await _httpClient.get(
+      _uri(serverUrl, '/admin/image/usage'),
+      headers: _headers(token),
+    );
+    final decoded = _decodeResponse(response);
+    final usage = decoded['usage'];
+    if (usage is! List) return const [];
+    return usage
+        .whereType<Map>()
+        .map(
+          (item) =>
+              BoxAdminUsageRecord.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .toList(growable: false);
+  }
+
   Future<List<BoxAdminUserQuota>> fetchUsers({
     required String serverUrl,
     required String token,

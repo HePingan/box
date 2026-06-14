@@ -24,6 +24,7 @@ class _AdminPageState extends State<AdminPage> {
   BoxAdminProviderConfig? _provider;
   BoxAdminProviderTestResult? _providerTestResult;
   List<BoxAdminUserQuota> _users = const [];
+  List<BoxAdminUsageRecord> _usage = const [];
   bool _loading = false;
   bool _testingProvider = false;
   String? _error;
@@ -45,6 +46,7 @@ class _AdminPageState extends State<AdminPage> {
         setState(() {
           _session = null;
           _users = const [];
+          _usage = const [];
         });
         return;
       }
@@ -52,6 +54,7 @@ class _AdminPageState extends State<AdminPage> {
         setState(() {
           _session = session;
           _users = const [];
+          _usage = const [];
         });
         return;
       }
@@ -63,11 +66,16 @@ class _AdminPageState extends State<AdminPage> {
         serverUrl: session.serverUrl,
         token: session.token,
       );
+      final usage = await _client.fetchUsage(
+        serverUrl: session.serverUrl,
+        token: session.token,
+      );
       setState(() {
         _session = session;
         _provider = provider;
         _providerTestResult = null;
         _users = users;
+        _usage = usage;
       });
     } catch (error) {
       setState(() => _error = _messageOf(error));
@@ -328,6 +336,8 @@ class _AdminPageState extends State<AdminPage> {
                     onConfigure: _openProviderSheet,
                     onTest: _testProvider,
                   ),
+                  const SizedBox(height: 12),
+                  AdminUsageCard(records: _usage, loading: _loading),
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
