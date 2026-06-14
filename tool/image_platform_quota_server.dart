@@ -44,6 +44,7 @@ Future<void> main(List<String> args) async {
   stdout.writeln('Admin endpoints:');
   stdout.writeln('  GET  /admin/image/users');
   stdout.writeln('  GET  /admin/image/usage');
+  stdout.writeln('  GET  /admin/image/usage/export.csv');
   stdout.writeln('  GET  /admin/image/usage/summary');
   stdout.writeln('  GET  /admin/image/provider');
   stdout.writeln('  POST /admin/image/provider');
@@ -188,6 +189,11 @@ class PlatformQuotaServer {
     if (request.method == 'GET' && path == '/admin/image/usage/summary') {
       if (!await requireAdmin(request)) return;
       await usageSummary(request);
+      return;
+    }
+    if (request.method == 'GET' && path == '/admin/image/usage/export.csv') {
+      if (!await requireAdmin(request)) return;
+      await usageCsvExport(request);
       return;
     }
     if (request.method == 'GET' && path == '/admin/image/usage') {
@@ -511,8 +517,9 @@ class PlatformQuotaServer {
     String? userId,
     bool? success,
     int limit = 200,
+    int maxLimit = 200,
   }) {
-    final effectiveLimit = limit.clamp(1, 200).toInt();
+    final effectiveLimit = limit.clamp(1, maxLimit).toInt();
     final result = <Map<String, dynamic>>[];
     for (final item in store.usage.reversed) {
       if (userId != null && item.userId != userId) continue;
@@ -525,6 +532,49 @@ class PlatformQuotaServer {
       if (result.length >= effectiveLimit) break;
     }
     return result;
+  }
+
+  Future<void> usageCsvExport(HttpRequest request) async {
+    final query = request.uri.queryParameters;
+    final csv = usageCsv(
+      userId: query['userId']?.trim().isEmpty ?? true
+          ? null
+          : query['userId']!.trim(),
+      success: parseBool(query['success']),
+      limit: asInt(query['limit'], 200),
+    );
+    await csvResponse(
+      request.response,
+      'box-image-usage-${dateKey(DateTime.now())}.csv',
+      csv,
+    );
+  }
+
+  String usageCsv({String? userId, bool? success, int limit = 200}) {
+    final rows = usageJson(
+      userId: userId,
+      success: success,
+      limit: limit,
+      maxLimit: 1000,
+    );
+    final buffer = StringBuffer(
+      'createdAt,userId,username,model,cost,success,statusCode,errorPreview\n',
+    );
+    for (final row in rows) {
+      buffer.writeln(
+        [
+          row['createdAt'],
+          row['userId'],
+          row['username'],
+          row['model'],
+          row['cost'],
+          row['success'],
+          row['statusCode'],
+          row['errorPreview'],
+        ].map(csvCell).join(','),
+      );
+    }
+    return buffer.toString();
   }
 
   Future<void> getProvider(HttpRequest request) async {
@@ -1420,6 +1470,32 @@ Map<String, dynamic> providerTestError(
   'modelsPreview': <String>[],
   'message': compactPreview(message),
 };
+
+Future<void> csvResponse(
+  HttpResponse response,
+  String filename,
+  String csv,
+) async {
+  response.statusCode = HttpStatus.ok;
+  response.headers.contentType = ContentType('text', 'csv', charset: 'utf-8');
+  response.headers.set(
+    'content-disposition',
+    'attachment; filename="$filename"',
+  );
+  response.write(csv);
+  await response.close();
+}
+
+String csvCell(Object? value) {
+  final text = value?.toString() ?? '';
+  final needsQuotes =
+      text.contains(',') ||
+      text.contains('"') ||
+      text.contains('\n') ||
+      text.contains('\r');
+  final escaped = text.replaceAll('"', '""');
+  return needsQuotes ? '"$escaped"' : escaped;
+}
 
 String dateKey(DateTime value) {
   final local = value.toLocal();

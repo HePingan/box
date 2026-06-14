@@ -583,6 +583,21 @@ Authorization: Bearer ***
 }
 ```
 
+导出使用记录 CSV：
+
+```http
+GET /admin/image/usage/export.csv?userId=u_admin&success=false&limit=200
+Authorization: Bearer ***
+```
+
+管理员只读，与使用记录列表筛选一致。`limit` 默认 200，最大 1000。CSV 不包含 prompt、图片 URL 或 API Key。
+
+CSV 字段：
+
+```csv
+createdAt,userId,username,model,cost,success,statusCode,errorPreview
+```
+
 规则：
 
 - `baseUrl` 必须是 `http` / `https` 地址。

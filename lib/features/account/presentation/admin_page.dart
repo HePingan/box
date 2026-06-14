@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../design_system/app_tokens.dart';
 import '../../../design_system/widgets/app_cards.dart';
@@ -29,6 +30,7 @@ class _AdminPageState extends State<AdminPage> {
   List<BoxAdminUsageRecord> _usage = const [];
   bool _loading = false;
   bool _testingProvider = false;
+  bool _exportingUsage = false;
   String? _usageUserId;
   bool? _usageSuccess;
   String? _error;
@@ -51,7 +53,6 @@ class _AdminPageState extends State<AdminPage> {
           _session = null;
           _users = const [];
           _usage = const [];
-          _usageSummary = null;
           _usageSummary = null;
         });
         return;
@@ -289,6 +290,27 @@ class _AdminPageState extends State<AdminPage> {
     await _reloadUsage();
   }
 
+  Future<void> _exportUsageCsv() async {
+    final session = _session;
+    if (session == null || !session.user.isAdmin || _exportingUsage) return;
+    setState(() => _exportingUsage = true);
+    try {
+      final csv = await _client.exportUsageCsv(
+        serverUrl: session.serverUrl,
+        token: session.token,
+        userId: _usageUserId,
+        success: _usageSuccess,
+        limit: 200,
+      );
+      await Clipboard.setData(ClipboardData(text: csv));
+      _showSnack('已复制 CSV，可粘贴到表格或文档');
+    } catch (error) {
+      _showSnack(_messageOf(error));
+    } finally {
+      if (mounted) setState(() => _exportingUsage = false);
+    }
+  }
+
   void _showSnack(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(
@@ -384,7 +406,9 @@ class _AdminPageState extends State<AdminPage> {
                     selectedUserId: _usageUserId,
                     selectedSuccess: _usageSuccess,
                     loading: _loading,
+                    exporting: _exportingUsage,
                     onFilterChanged: _setUsageFilters,
+                    onExportCsv: _exportUsageCsv,
                   ),
                   const SizedBox(height: 12),
                   SizedBox(

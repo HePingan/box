@@ -94,6 +94,44 @@ class BoxAdminClient {
         .toList(growable: false);
   }
 
+  Future<String> exportUsageCsv({
+    required String serverUrl,
+    required String token,
+    String? userId,
+    bool? success,
+    int limit = 200,
+  }) async {
+    final query = <String, String>{'limit': limit.toString()};
+    if (userId != null && userId.trim().isNotEmpty) {
+      query['userId'] = userId.trim();
+    }
+    if (success != null) query['success'] = success.toString();
+    final response = await _httpClient.get(
+      _uri(
+        serverUrl,
+        '/admin/image/usage/export.csv',
+      ).replace(queryParameters: query),
+      headers: _headers(token),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final text = utf8.decode(response.bodyBytes);
+      dynamic decoded;
+      try {
+        decoded = text.trim().isEmpty ? <String, dynamic>{} : jsonDecode(text);
+      } catch (_) {
+        decoded = null;
+      }
+      final preview = _preview(text);
+      final serverMessage = _extractError(decoded, preview);
+      throw BoxAdminException(
+        _friendlyError(response.statusCode, serverMessage),
+        statusCode: response.statusCode,
+        rawPreview: preview,
+      );
+    }
+    return utf8.decode(response.bodyBytes);
+  }
+
   Future<List<BoxAdminUserQuota>> fetchUsers({
     required String serverUrl,
     required String token,

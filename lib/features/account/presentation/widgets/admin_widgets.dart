@@ -423,7 +423,9 @@ class AdminUsageCard extends StatelessWidget {
     required this.selectedUserId,
     required this.selectedSuccess,
     required this.loading,
+    required this.exporting,
     required this.onFilterChanged,
+    required this.onExportCsv,
   });
 
   final List<BoxAdminUsageRecord> records;
@@ -431,7 +433,9 @@ class AdminUsageCard extends StatelessWidget {
   final String? selectedUserId;
   final bool? selectedSuccess;
   final bool loading;
+  final bool exporting;
   final Future<void> Function(String? userId, bool? success) onFilterChanged;
+  final Future<void> Function() onExportCsv;
 
   @override
   Widget build(BuildContext context) {
@@ -489,8 +493,10 @@ class AdminUsageCard extends StatelessWidget {
             users: users,
             selectedUserId: selectedUserId,
             selectedSuccess: selectedSuccess,
-            enabled: !loading,
+            enabled: !loading && !exporting,
+            exporting: exporting,
             onChanged: onFilterChanged,
+            onExportCsv: onExportCsv,
           ),
           const SizedBox(height: 12),
           if (loading && records.isEmpty)
@@ -523,14 +529,18 @@ class _UsageFilterBar extends StatelessWidget {
     required this.selectedUserId,
     required this.selectedSuccess,
     required this.enabled,
+    required this.exporting,
     required this.onChanged,
+    required this.onExportCsv,
   });
 
   final List<BoxAdminUserQuota> users;
   final String? selectedUserId;
   final bool? selectedSuccess;
   final bool enabled;
+  final bool exporting;
   final Future<void> Function(String? userId, bool? success) onChanged;
+  final Future<void> Function() onExportCsv;
 
   @override
   Widget build(BuildContext context) {
@@ -572,6 +582,17 @@ class _UsageFilterBar extends StatelessWidget {
             selectedUserId,
             value == null || value.isEmpty ? null : value == 'true',
           ),
+        ),
+        OutlinedButton.icon(
+          onPressed: enabled ? onExportCsv : null,
+          icon: exporting
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.copy_all_rounded),
+          label: Text(exporting ? '导出中' : '复制 CSV'),
         ),
       ],
     );
