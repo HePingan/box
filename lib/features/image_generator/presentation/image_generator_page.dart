@@ -533,6 +533,26 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     ).showSnackBar(const SnackBar(content: Text('已清空最近生成记录')));
   }
 
+  List<GeneratedImageResult> _proxiedImagesForPlatform(
+    List<GeneratedImageResult> images,
+  ) {
+    if (_accessMode != ImageGeneratorAccessMode.platformQuota) return images;
+    final base = _platformBaseUrlController.text.trim().replaceAll(
+      RegExp(r'/+$'),
+      '',
+    );
+    if (base.isEmpty) return images;
+    return images.map((image) {
+      if (image.isDataUrl) return image;
+      final encoded = Uri.encodeQueryComponent(image.rawUrl ?? image.image);
+      return GeneratedImageResult(
+        image: '$base/api/image/proxy?url=$encoded',
+        rawUrl: image.rawUrl ?? image.image,
+        revisedPrompt: image.revisedPrompt,
+      );
+    }).toList();
+  }
+
   Future<void> _generate() async {
     final prompt = _promptController.text.trim();
     final apiKey = _apiKeyController.text.trim();
@@ -583,6 +603,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
               platformToken: _platformToken,
             )
           : await _client.generate(params);
+      final displayImages = _proxiedImagesForPlatform(response.images);
       final history = await _store.addHistory(
         ImageGenerationHistoryItem(
           prompt: prompt,
@@ -596,12 +617,12 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
           quality: _quality,
           outputFormat: _outputFormat,
           createdAt: DateTime.now(),
-          images: response.images.map((e) => e.image).toList(),
+          images: displayImages.map((e) => e.image).toList(),
         ),
       );
       if (!mounted) return;
       setState(() {
-        _results = response.images;
+        _results = displayImages;
         _history = history;
         _lastDiagnostics = _buildDiagnostics(
           params: params,

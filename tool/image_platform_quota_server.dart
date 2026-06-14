@@ -43,6 +43,7 @@ Future<void> main(List<String> args) async {
   stdout.writeln('  GET  /api/image/models');
   stdout.writeln('  POST /api/image/generate');
   stdout.writeln('  GET  /api/image/usage');
+  stdout.writeln('  GET  /api/image/proxy?url=<image-url>');
   stdout.writeln('Admin endpoints:');
   stdout.writeln('  GET  /admin/image/users');
   stdout.writeln('  GET  /admin/image/usage');
@@ -188,6 +189,12 @@ class PlatformQuotaServer {
       await selfUsageLogs(request, account);
       return;
     }
+    if (request.method == 'GET' && path == '/api/image/proxy') {
+      final account = await requireUser(request);
+      if (account == null) return;
+      await proxyImage(request, account);
+      return;
+    }
     if (request.method == 'GET' && path == '/admin/image/users') {
       if (!await requireAdmin(request)) return;
       await jsonResponse(request.response, HttpStatus.ok, store.toAdminJson());
@@ -253,6 +260,80 @@ class PlatformQuotaServer {
       'service': 'box-image-platform',
       'message': 'Box Image Platform API running',
     });
+  }
+
+  Future<void> proxyImage(HttpRequest request, Account account) async {
+    final rawUrl = request.uri.queryParameters['url']?.trim() ?? '';
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null ||
+        !uri.hasScheme ||
+        (uri.scheme != 'https' && uri.scheme != 'http')) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '图片代理 URL 必须是 http/https 地址。'},
+      });
+      return;
+    }
+
+    final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 12);
+    try {
+      final upstreamRequest = await client
+          .getUrl(uri)
+          .timeout(const Duration(seconds: 12));
+      upstreamRequest.headers.set(
+        HttpHeaders.acceptHeader,
+        'image/*,*/*;q=0.8',
+      );
+      final upstreamResponse = await upstreamRequest.close().timeout(
+        const Duration(seconds: 30),
+      );
+      final contentType = upstreamResponse.headers.contentType;
+      final contentLength = upstreamResponse.contentLength;
+      const maxBytes = 8 * 1024 * 1024;
+
+      if (upstreamResponse.statusCode < 200 ||
+          upstreamResponse.statusCode >= 300) {
+        await jsonResponse(request.response, HttpStatus.badGateway, {
+          'error': {'message': '上游图片读取失败：HTTP ${upstreamResponse.statusCode}'},
+        });
+        return;
+      }
+      if (contentLength > maxBytes) {
+        await jsonResponse(request.response, HttpStatus.badRequest, {
+          'error': {'message': '图片过大，暂不支持代理超过 8MB 的图片。'},
+        });
+        return;
+      }
+      if (contentType == null || contentType.primaryType != 'image') {
+        await jsonResponse(request.response, HttpStatus.badRequest, {
+          'error': {'message': '目标地址不是图片内容。'},
+        });
+        return;
+      }
+
+      request.response.statusCode = HttpStatus.ok;
+      request.response.headers.contentType = contentType;
+      request.response.headers.set(
+        HttpHeaders.cacheControlHeader,
+        'public, max-age=3600',
+      );
+      request.response.headers.set('x-box-image-proxy', '1');
+      if (contentLength >= 0) request.response.contentLength = contentLength;
+
+      var received = 0;
+      await for (final chunk in upstreamResponse) {
+        received += chunk.length;
+        if (received > maxBytes) break;
+        request.response.add(chunk);
+      }
+      await request.response.close();
+    } catch (error) {
+      await jsonResponse(request.response, HttpStatus.badGateway, {
+        'error': {'message': '图片代理失败：${compactPreview(error.toString())}'},
+      });
+    } finally {
+      client.close(force: true);
+    }
   }
 
   Future<void> login(HttpRequest request) async {

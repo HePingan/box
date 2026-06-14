@@ -41,6 +41,7 @@ GET  /api/image/quota
 GET  /api/image/models
 POST /api/image/generate
 GET  /api/image/usage
+GET  /api/image/proxy?url=<image-url>
 ```
 
 除登录接口外，真实代理服务要求携带：
@@ -210,6 +211,22 @@ GET /api/image/models
 ```
 
 前端会去重、排序，并优先展示疑似生图模型。
+
+## GET /api/image/proxy
+
+平台代理图片预览接口，用于手机端无法直接访问上游图片 CDN 时，通过 Box 后端转发图片内容。
+
+```http
+GET /api/image/proxy?url=https%3A%2F%2Fimage.example.com%2Fresult.png
+Authorization: Bearer <box-s...ken>
+```
+
+限制：
+
+- 仅支持 `http` / `https` 图片地址。
+- 上游响应必须是 `image/*`。
+- 单张图片代理上限 8MB。
+- 该接口只用于预览图片，不记录 prompt，不返回 API Key。
 
 ## POST /api/image/generate
 
