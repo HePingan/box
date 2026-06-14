@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../design_system/app_tokens.dart';
 import '../../domain/admin_models.dart';
+import '../../domain/usage_models.dart';
 
 class AdminProviderCard extends StatelessWidget {
   const AdminProviderCard({
@@ -138,6 +139,20 @@ class AdminProviderCard extends StatelessWidget {
   }
 }
 
+String _formatDate(DateTime value) {
+  if (value.millisecondsSinceEpoch == 0) return '--';
+  final month = value.month.toString().padLeft(2, '0');
+  final day = value.day.toString().padLeft(2, '0');
+  return '${value.year}-$month-$day';
+}
+
+String _formatShortDate(DateTime value) {
+  if (value.millisecondsSinceEpoch == 0) return '--';
+  final month = value.month.toString().padLeft(2, '0');
+  final day = value.day.toString().padLeft(2, '0');
+  return '$month-$day';
+}
+
 class _ProviderTestBanner extends StatelessWidget {
   const _ProviderTestBanner({required this.result});
 
@@ -189,6 +204,211 @@ class _ProviderTestBanner extends StatelessWidget {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class AdminUsageSummaryCard extends StatelessWidget {
+  const AdminUsageSummaryCard({
+    super.key,
+    required this.summary,
+    required this.loading,
+  });
+
+  final BoxUsageSummary? summary;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final item = summary;
+    final today = item?.today;
+    final hasUsage = today != null && today.requests > 0;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+        border: Border.all(color: AppTokens.divider),
+        boxShadow: AppTokens.shadowSm(),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const CircleAvatar(
+                backgroundColor: Color(0xFFFFF7ED),
+                child: Icon(
+                  Icons.query_stats_rounded,
+                  color: AppTokens.warning,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '用量概览',
+                      style: TextStyle(
+                        color: AppTokens.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      today == null
+                          ? '读取今日和最近 7 天统计'
+                          : '今日 ${_formatDate(today.date)}',
+                      style: const TextStyle(
+                        color: AppTokens.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (loading && item == null)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(12),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (item == null || !hasUsage)
+            const Text(
+              '暂无用量统计。真实上游生图请求会出现在这里。',
+              style: TextStyle(color: AppTokens.textSecondary, height: 1.4),
+            )
+          else ...[
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                _MetricPill(
+                  label: '今日请求',
+                  value: today.requests.toString(),
+                  icon: Icons.send_rounded,
+                  color: AppTokens.primaryBlue,
+                ),
+                _MetricPill(
+                  label: '成功',
+                  value: today.success.toString(),
+                  icon: Icons.check_circle_rounded,
+                  color: AppTokens.success,
+                ),
+                _MetricPill(
+                  label: '失败',
+                  value: today.failed.toString(),
+                  icon: Icons.error_rounded,
+                  color: AppTokens.warning,
+                ),
+                _MetricPill(
+                  label: '消耗额度',
+                  value: today.cost.toString(),
+                  icon: Icons.toll_rounded,
+                  color: AppTokens.info,
+                ),
+                _MetricPill(
+                  label: '活跃用户',
+                  value: today.activeUsers.toString(),
+                  icon: Icons.groups_rounded,
+                  color: AppTokens.violet,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              '最近 7 天',
+              style: TextStyle(
+                color: AppTokens.textPrimary,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ...item.last7Days.map(
+              (day) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 54,
+                      child: Text(
+                        _formatShortDate(day.date),
+                        style: const TextStyle(
+                          color: AppTokens.textSecondary,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: LinearProgressIndicator(
+                        value: today.requests == 0
+                            ? 0
+                            : (day.requests / today.requests).clamp(0.0, 1.0),
+                        minHeight: 6,
+                        borderRadius: BorderRadius.circular(999),
+                        backgroundColor: AppTokens.divider,
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          AppTokens.primaryBlue,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${day.requests} 次 · ${day.cost} 点',
+                      style: const TextStyle(
+                        color: AppTokens.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (item.topUsersToday.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Text(
+                '今日 Top 用户',
+                style: TextStyle(
+                  color: AppTokens.textPrimary,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ...item.topUsersToday.map(
+                (user) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          user.username,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: AppTokens.textPrimary),
+                        ),
+                      ),
+                      Text(
+                        '${user.requests} 次 · ${user.cost} 点',
+                        style: const TextStyle(
+                          color: AppTokens.textSecondary,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
         ],
       ),
     );

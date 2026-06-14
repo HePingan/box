@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../domain/admin_models.dart';
+import '../domain/usage_models.dart';
 import 'account_client.dart';
 
 class BoxAdminClient {
@@ -52,6 +53,17 @@ class BoxAdminClient {
       }),
     );
     return BoxAdminProviderConfig.fromJson(_decodeResponse(response));
+  }
+
+  Future<BoxUsageSummary> fetchUsageSummary({
+    required String serverUrl,
+    required String token,
+  }) async {
+    final response = await _httpClient.get(
+      _uri(serverUrl, '/admin/image/usage/summary'),
+      headers: _headers(token),
+    );
+    return BoxUsageSummary.fromJson(_decodeResponse(response));
   }
 
   Future<List<BoxAdminUsageRecord>> fetchUsage({

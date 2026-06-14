@@ -541,6 +541,48 @@ Authorization: Bearer ***
 
 普通用户只能看到自己的记录，支持 `success` 和 `limit`，不支持查看其他用户。
 
+查看用量概览：
+
+```http
+GET /admin/image/usage/summary
+Authorization: Bearer ***
+```
+
+基于 usage 记录聚合，不包含 prompt、图片 URL 或 API Key。MVP 使用服务器本机日期统计，不处理复杂时区配置。
+
+```json
+{
+  "today": {
+    "date": "2026-06-14",
+    "requests": 2,
+    "success": 0,
+    "failed": 2,
+    "cost": 2,
+    "activeUsers": 2
+  },
+  "last7Days": [
+    {
+      "date": "2026-06-14",
+      "requests": 2,
+      "success": 0,
+      "failed": 2,
+      "cost": 2,
+      "activeUsers": 2
+    }
+  ],
+  "topUsersToday": [
+    {
+      "userId": "u_admin",
+      "username": "admin",
+      "requests": 1,
+      "success": 0,
+      "failed": 1,
+      "cost": 1
+    }
+  ]
+}
+```
+
 规则：
 
 - `baseUrl` 必须是 `http` / `https` 地址。

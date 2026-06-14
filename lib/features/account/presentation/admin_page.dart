@@ -7,6 +7,7 @@ import '../data/account_store.dart';
 import '../data/admin_client.dart';
 import '../domain/account_models.dart';
 import '../domain/admin_models.dart';
+import '../domain/usage_models.dart';
 import 'widgets/admin_widgets.dart';
 
 class AdminPage extends StatefulWidget {
@@ -23,6 +24,7 @@ class _AdminPageState extends State<AdminPage> {
   BoxAccountSession? _session;
   BoxAdminProviderConfig? _provider;
   BoxAdminProviderTestResult? _providerTestResult;
+  BoxUsageSummary? _usageSummary;
   List<BoxAdminUserQuota> _users = const [];
   List<BoxAdminUsageRecord> _usage = const [];
   bool _loading = false;
@@ -49,6 +51,8 @@ class _AdminPageState extends State<AdminPage> {
           _session = null;
           _users = const [];
           _usage = const [];
+          _usageSummary = null;
+          _usageSummary = null;
         });
         return;
       }
@@ -57,6 +61,7 @@ class _AdminPageState extends State<AdminPage> {
           _session = session;
           _users = const [];
           _usage = const [];
+          _usageSummary = null;
         });
         return;
       }
@@ -65,6 +70,10 @@ class _AdminPageState extends State<AdminPage> {
         token: session.token,
       );
       final users = await _client.fetchUsers(
+        serverUrl: session.serverUrl,
+        token: session.token,
+      );
+      final usageSummary = await _client.fetchUsageSummary(
         serverUrl: session.serverUrl,
         token: session.token,
       );
@@ -80,6 +89,7 @@ class _AdminPageState extends State<AdminPage> {
         _provider = provider;
         _providerTestResult = null;
         _users = users;
+        _usageSummary = usageSummary;
         _usage = usage;
       });
     } catch (error) {
@@ -361,6 +371,11 @@ class _AdminPageState extends State<AdminPage> {
                     testing: _testingProvider,
                     onConfigure: _openProviderSheet,
                     onTest: _testProvider,
+                  ),
+                  const SizedBox(height: 12),
+                  AdminUsageSummaryCard(
+                    summary: _usageSummary,
+                    loading: _loading,
                   ),
                   const SizedBox(height: 12),
                   AdminUsageCard(

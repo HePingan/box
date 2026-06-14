@@ -44,6 +44,7 @@ Future<void> main(List<String> args) async {
   stdout.writeln('Admin endpoints:');
   stdout.writeln('  GET  /admin/image/users');
   stdout.writeln('  GET  /admin/image/usage');
+  stdout.writeln('  GET  /admin/image/usage/summary');
   stdout.writeln('  GET  /admin/image/provider');
   stdout.writeln('  POST /admin/image/provider');
   stdout.writeln('  POST /admin/image/provider/test');
@@ -182,6 +183,11 @@ class PlatformQuotaServer {
     if (request.method == 'GET' && path == '/admin/image/users') {
       if (!await requireAdmin(request)) return;
       await jsonResponse(request.response, HttpStatus.ok, store.toAdminJson());
+      return;
+    }
+    if (request.method == 'GET' && path == '/admin/image/usage/summary') {
+      if (!await requireAdmin(request)) return;
+      await usageSummary(request);
       return;
     }
     if (request.method == 'GET' && path == '/admin/image/usage') {
@@ -427,6 +433,54 @@ class PlatformQuotaServer {
     } catch (error) {
       return providerTestError(provider, 'Provider 连接失败：$error');
     }
+  }
+
+  Future<void> usageSummary(HttpRequest request) async {
+    await jsonResponse(request.response, HttpStatus.ok, usageSummaryJson());
+  }
+
+  Map<String, dynamic> usageSummaryJson() {
+    final today = dateKey(DateTime.now());
+    final dayKeys = List.generate(
+      7,
+      (index) => dateKey(DateTime.now().subtract(Duration(days: 6 - index))),
+    );
+    final days = {for (final key in dayKeys) key: UsageDayAccumulator(key)};
+    final topUsers = <String, UsageUserAccumulator>{};
+
+    for (final item in store.usage) {
+      final key = dateKey(item.createdAt);
+      final day = days[key];
+      if (day != null) day.add(item);
+      if (key == today) {
+        final account = store.accounts[item.userId];
+        topUsers
+            .putIfAbsent(
+              item.userId,
+              () => UsageUserAccumulator(
+                userId: item.userId,
+                username: account?.username ?? item.userId,
+              ),
+            )
+            .add(item);
+      }
+    }
+
+    final sortedTopUsers = topUsers.values.toList()
+      ..sort((a, b) {
+        final cost = b.cost.compareTo(a.cost);
+        if (cost != 0) return cost;
+        return b.requests.compareTo(a.requests);
+      });
+
+    return {
+      'today': (days[today] ?? UsageDayAccumulator(today)).toJson(),
+      'last7Days': dayKeys.map((key) => days[key]!.toJson()).toList(),
+      'topUsersToday': sortedTopUsers
+          .take(5)
+          .map((item) => item.toJson())
+          .toList(),
+    };
   }
 
   Future<void> usageLogs(HttpRequest request) async {
@@ -1232,6 +1286,67 @@ class EffectiveProvider {
   final DateTime? updatedAt;
 }
 
+class UsageDayAccumulator {
+  UsageDayAccumulator(this.date);
+
+  final String date;
+  var requests = 0;
+  var success = 0;
+  var failed = 0;
+  var cost = 0;
+  final activeUserIds = <String>{};
+
+  void add(UsageRecord record) {
+    requests += 1;
+    if (record.success) {
+      success += 1;
+    } else {
+      failed += 1;
+    }
+    cost += record.cost;
+    activeUserIds.add(record.userId);
+  }
+
+  Map<String, dynamic> toJson() => {
+    'date': date,
+    'requests': requests,
+    'success': success,
+    'failed': failed,
+    'cost': cost,
+    'activeUsers': activeUserIds.length,
+  };
+}
+
+class UsageUserAccumulator {
+  UsageUserAccumulator({required this.userId, required this.username});
+
+  final String userId;
+  final String username;
+  var requests = 0;
+  var success = 0;
+  var failed = 0;
+  var cost = 0;
+
+  void add(UsageRecord record) {
+    requests += 1;
+    if (record.success) {
+      success += 1;
+    } else {
+      failed += 1;
+    }
+    cost += record.cost;
+  }
+
+  Map<String, dynamic> toJson() => {
+    'userId': userId,
+    'username': username,
+    'requests': requests,
+    'success': success,
+    'failed': failed,
+    'cost': cost,
+  };
+}
+
 class UpstreamResponse {
   const UpstreamResponse(this.statusCode, this.text);
 
@@ -1305,6 +1420,13 @@ Map<String, dynamic> providerTestError(
   'modelsPreview': <String>[],
   'message': compactPreview(message),
 };
+
+String dateKey(DateTime value) {
+  final local = value.toLocal();
+  final month = local.month.toString().padLeft(2, '0');
+  final day = local.day.toString().padLeft(2, '0');
+  return '${local.year}-$month-$day';
+}
 
 String compactPreview(String text, {int max = 320}) {
   final compact = text.replaceAll(RegExp(r'\s+'), ' ').trim();
