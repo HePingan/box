@@ -32,6 +32,8 @@ Future<void> main(List<String> args) async {
   stdout.writeln('Admin base URL: ${config.adminBaseUrl}');
   stdout.writeln('Admin API key configured: ${config.adminApiKey.isNotEmpty}');
   stdout.writeln('State path: ${config.statePath}');
+  stdout.writeln('Health endpoint:');
+  stdout.writeln('  GET  /');
   stdout.writeln('Auth endpoints:');
   stdout.writeln('  POST /api/auth/login');
   stdout.writeln('  GET  /api/auth/me');
@@ -145,6 +147,11 @@ class PlatformQuotaServer {
       return;
     }
 
+    if (request.method == 'GET' && path == '/') {
+      await health(request);
+      return;
+    }
+
     if (request.method == 'POST' && path == '/api/auth/login') {
       await login(request);
       return;
@@ -237,6 +244,14 @@ class PlatformQuotaServer {
     }
     await jsonResponse(request.response, HttpStatus.notFound, {
       'error': {'message': '接口不存在：$path'},
+    });
+  }
+
+  Future<void> health(HttpRequest request) async {
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'ok': true,
+      'service': 'box-image-platform',
+      'message': 'Box Image Platform API running',
     });
   }
 

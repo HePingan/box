@@ -33,12 +33,14 @@ https://your-domain.com
 前端会拼接以下接口：
 
 ```text
+GET  /
 POST /api/auth/login
 GET  /api/auth/me
 POST /api/auth/logout
 GET  /api/image/quota
 GET  /api/image/models
 POST /api/image/generate
+GET  /api/image/usage
 ```
 
 除登录接口外，真实代理服务要求携带：
@@ -58,6 +60,18 @@ Access-Control-Allow-Headers: Content-Type, Authorization
 ```
 
 真实生产环境建议将 `Access-Control-Allow-Origin` 收窄到你的 Web 域名。
+
+## GET /
+
+健康检查接口，方便直接在浏览器打开 Base URL 确认服务在线。
+
+```json
+{
+  "ok": true,
+  "service": "box-image-platform",
+  "message": "Box Image Platform API running"
+}
+```
 
 ## 鉴权建议
 
