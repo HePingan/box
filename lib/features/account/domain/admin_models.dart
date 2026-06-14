@@ -117,3 +117,51 @@ class BoxAdminProviderConfig {
     );
   }
 }
+
+class BoxAdminProviderTestResult {
+  const BoxAdminProviderTestResult({
+    required this.ok,
+    required this.statusCode,
+    required this.baseUrl,
+    required this.hasApiKey,
+    required this.modelCount,
+    required this.modelsPreview,
+    required this.message,
+  });
+
+  final bool ok;
+  final int? statusCode;
+  final String baseUrl;
+  final bool hasApiKey;
+  final int modelCount;
+  final List<String> modelsPreview;
+  final String message;
+
+  factory BoxAdminProviderTestResult.fromJson(Map<String, dynamic> json) {
+    final rawModels = json['modelsPreview'];
+    return BoxAdminProviderTestResult(
+      ok: json['ok'] == true,
+      statusCode: _asNullableInt(json['statusCode']),
+      baseUrl: json['baseUrl']?.toString() ?? '',
+      hasApiKey: json['hasApiKey'] == true,
+      modelCount: _asInt(json['modelCount']),
+      modelsPreview: rawModels is List
+          ? rawModels.map((item) => item.toString()).toList()
+          : const [],
+      message: json['message']?.toString() ?? '',
+    );
+  }
+}
+
+int _asInt(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.round();
+  return int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+int? _asNullableInt(Object? value) {
+  if (value == null) return null;
+  if (value is int) return value;
+  if (value is num) return value.round();
+  return int.tryParse(value.toString());
+}

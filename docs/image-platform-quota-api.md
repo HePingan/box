@@ -467,6 +467,41 @@ Authorization: Bearer <admin...ken>
 }
 ```
 
+测试上游 Provider 连接：
+
+```http
+POST /admin/image/provider/test
+Authorization: Bearer <admin...ken>
+```
+
+接口会使用当前 effective provider 请求 `<baseUrl>/models`，不会返回明文 API Key。成功示例：
+
+```json
+{
+  "ok": true,
+  "statusCode": 200,
+  "baseUrl": "https://api.openai.com/v1",
+  "hasApiKey": true,
+  "modelCount": 12,
+  "modelsPreview": ["gpt-image-1", "dall-e-3"],
+  "message": "Provider 连接正常"
+}
+```
+
+未配置 Key 示例：
+
+```json
+{
+  "ok": false,
+  "statusCode": null,
+  "baseUrl": "https://api.openai.com/v1",
+  "hasApiKey": false,
+  "modelCount": 0,
+  "modelsPreview": [],
+  "message": "未配置上游 API Key"
+}
+```
+
 规则：
 
 - `baseUrl` 必须是 `http` / `https` 地址。

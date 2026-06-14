@@ -22,8 +22,10 @@ class _AdminPageState extends State<AdminPage> {
 
   BoxAccountSession? _session;
   BoxAdminProviderConfig? _provider;
+  BoxAdminProviderTestResult? _providerTestResult;
   List<BoxAdminUserQuota> _users = const [];
   bool _loading = false;
+  bool _testingProvider = false;
   String? _error;
 
   @override
@@ -64,6 +66,7 @@ class _AdminPageState extends State<AdminPage> {
       setState(() {
         _session = session;
         _provider = provider;
+        _providerTestResult = null;
         _users = users;
       });
     } catch (error) {
@@ -95,6 +98,34 @@ class _AdminPageState extends State<AdminPage> {
     _showSnack('已更新 ${updated.username} 的额度');
   }
 
+  Future<void> _testProvider() async {
+    final session = _session;
+    if (session == null) return;
+    setState(() => _testingProvider = true);
+    try {
+      final result = await _client.testProvider(
+        serverUrl: session.serverUrl,
+        token: session.token,
+      );
+      setState(() => _providerTestResult = result);
+      _showSnack(result.ok ? 'Provider 连接正常' : result.message);
+    } catch (error) {
+      setState(
+        () => _providerTestResult = BoxAdminProviderTestResult(
+          ok: false,
+          statusCode: null,
+          baseUrl: _provider?.baseUrl ?? '',
+          hasApiKey: _provider?.hasApiKey ?? false,
+          modelCount: 0,
+          modelsPreview: const [],
+          message: _messageOf(error),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _testingProvider = false);
+    }
+  }
+
   Future<void> _updateProvider(
     String baseUrl,
     String apiKey,
@@ -111,7 +142,10 @@ class _AdminPageState extends State<AdminPage> {
       allowedModels: allowedModels,
       clearApiKey: clearApiKey,
     );
-    setState(() => _provider = updated);
+    setState(() {
+      _provider = updated;
+      _providerTestResult = null;
+    });
     _showSnack('已保存上游 Provider 配置');
   }
 
@@ -288,8 +322,11 @@ class _AdminPageState extends State<AdminPage> {
                 if (session?.user.isAdmin == true) ...[
                   AdminProviderCard(
                     provider: _provider,
+                    testResult: _providerTestResult,
                     loading: _loading,
+                    testing: _testingProvider,
                     onConfigure: _openProviderSheet,
+                    onTest: _testProvider,
                   ),
                   const SizedBox(height: 12),
                   SizedBox(

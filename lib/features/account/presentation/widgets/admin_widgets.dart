@@ -7,13 +7,19 @@ class AdminProviderCard extends StatelessWidget {
   const AdminProviderCard({
     super.key,
     required this.provider,
+    required this.testResult,
     required this.loading,
+    required this.testing,
     required this.onConfigure,
+    required this.onTest,
   });
 
   final BoxAdminProviderConfig? provider;
+  final BoxAdminProviderTestResult? testResult;
   final bool loading;
+  final bool testing;
   final VoidCallback onConfigure;
+  final VoidCallback onTest;
 
   @override
   Widget build(BuildContext context) {
@@ -96,13 +102,91 @@ class AdminProviderCard extends StatelessWidget {
               style: const TextStyle(color: AppTokens.textSecondary),
             ),
           ],
+          if (testResult != null) ...[
+            const SizedBox(height: 12),
+            _ProviderTestBanner(result: testResult!),
+          ],
           const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: loading || item == null ? null : onConfigure,
-              icon: const Icon(Icons.settings_rounded, size: 18),
-              label: const Text('配置上游'),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: loading || testing || item == null ? null : onTest,
+                  icon: testing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.network_check_rounded, size: 18),
+                  label: Text(testing ? '测试中' : '测试连接'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: loading || item == null ? null : onConfigure,
+                  icon: const Icon(Icons.settings_rounded, size: 18),
+                  label: const Text('配置上游'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProviderTestBanner extends StatelessWidget {
+  const _ProviderTestBanner({required this.result});
+
+  final BoxAdminProviderTestResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = result.ok ? AppTokens.success : AppTokens.warning;
+    final subtitle = result.ok
+        ? '${result.modelCount} 个模型${result.modelsPreview.isEmpty ? '' : ' · ${result.modelsPreview.take(3).join(', ')}'}'
+        : result.message;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        border: Border.all(color: color.withValues(alpha: 0.22)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            result.ok ? Icons.check_circle_rounded : Icons.warning_rounded,
+            color: color,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  result.ok ? 'Provider 连接正常' : 'Provider 连接异常',
+                  style: const TextStyle(
+                    color: AppTokens.textPrimary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTokens.textSecondary,
+                    height: 1.35,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

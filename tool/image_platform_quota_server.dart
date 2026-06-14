@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -43,6 +44,7 @@ Future<void> main(List<String> args) async {
   stdout.writeln('  GET  /admin/image/users');
   stdout.writeln('  GET  /admin/image/provider');
   stdout.writeln('  POST /admin/image/provider');
+  stdout.writeln('  POST /admin/image/provider/test');
   stdout.writeln('  POST /admin/image/users/<userId>/quota');
 
   await for (final request in server) {
@@ -184,6 +186,11 @@ class PlatformQuotaServer {
       await updateProvider(request);
       return;
     }
+    if (request.method == 'POST' && path == '/admin/image/provider/test') {
+      if (!await requireAdmin(request)) return;
+      await testProviderEndpoint(request);
+      return;
+    }
     if (request.method == 'POST' && path == '/admin/accounts') {
       if (!await requireAdmin(request)) return;
       await createAccount(request);
@@ -307,7 +314,19 @@ class PlatformQuotaServer {
       return;
     }
 
-    final upstream = await postUpstream(decoded);
+    final UpstreamResponse upstream;
+    try {
+      upstream = await postUpstream(decoded);
+    } catch (error) {
+      store.addUsage(
+        UsageRecord.failed(account.id, model, cost, 503, '$error'),
+      );
+      await store.save();
+      await jsonResponse(request.response, HttpStatus.serviceUnavailable, {
+        'error': {'message': '上游 Provider 请求失败：${compactPreview('$error')}'},
+      });
+      return;
+    }
     if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
       store.addUsage(
         UsageRecord.failed(
@@ -330,6 +349,71 @@ class PlatformQuotaServer {
     );
     await store.save();
     await jsonText(request.response, HttpStatus.ok, upstream.text);
+  }
+
+  Future<void> testProviderEndpoint(HttpRequest request) async {
+    await jsonResponse(request.response, HttpStatus.ok, await testProvider());
+  }
+
+  Future<Map<String, dynamic>> testProvider() async {
+    final provider = effectiveProvider();
+    if (provider.apiKey.trim().isEmpty) {
+      return {
+        'ok': false,
+        'statusCode': null,
+        'baseUrl': provider.baseUrl,
+        'hasApiKey': false,
+        'modelCount': 0,
+        'modelsPreview': <String>[],
+        'message': '未配置上游 API Key',
+      };
+    }
+    final baseUri = Uri.tryParse(provider.baseUrl);
+    if (baseUri == null ||
+        (baseUri.scheme != 'http' && baseUri.scheme != 'https')) {
+      return {
+        'ok': false,
+        'statusCode': null,
+        'baseUrl': provider.baseUrl,
+        'hasApiKey': true,
+        'modelCount': 0,
+        'modelsPreview': <String>[],
+        'message': 'Provider Base URL 配置无效',
+      };
+    }
+    try {
+      final upstream = await getUpstreamModels(provider);
+      if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
+        return {
+          'ok': false,
+          'statusCode': upstream.statusCode,
+          'baseUrl': provider.baseUrl,
+          'hasApiKey': true,
+          'modelCount': 0,
+          'modelsPreview': <String>[],
+          'message': '上游模型接口失败：${upstream.statusCode} ${upstream.preview}',
+        };
+      }
+      final decoded = jsonDecode(upstream.text);
+      final models = parseModels(decoded);
+      return {
+        'ok': true,
+        'statusCode': upstream.statusCode,
+        'baseUrl': provider.baseUrl,
+        'hasApiKey': true,
+        'modelCount': models.length,
+        'modelsPreview': models.take(12).toList(),
+        'message': 'Provider 连接正常',
+      };
+    } on TimeoutException catch (error) {
+      return providerTestError(provider, 'Provider 连接超时：$error');
+    } on SocketException catch (error) {
+      return providerTestError(provider, 'Provider 网络连接失败：$error');
+    } on FormatException catch (error) {
+      return providerTestError(provider, 'Provider 返回内容不是有效 JSON：$error');
+    } catch (error) {
+      return providerTestError(provider, 'Provider 连接失败：$error');
+    }
   }
 
   Future<void> getProvider(HttpRequest request) async {
@@ -1098,8 +1182,7 @@ class UpstreamResponse {
   final String text;
 
   String get preview {
-    final compact = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-    return compact.length <= 320 ? compact : '${compact.substring(0, 320)}...';
+    return compactPreview(text);
   }
 }
 
@@ -1151,6 +1234,24 @@ int calculateCost(Map<String, dynamic> body) {
     cost += 1;
   }
   return cost;
+}
+
+Map<String, dynamic> providerTestError(
+  EffectiveProvider provider,
+  String message,
+) => {
+  'ok': false,
+  'statusCode': null,
+  'baseUrl': provider.baseUrl,
+  'hasApiKey': provider.apiKey.trim().isNotEmpty,
+  'modelCount': 0,
+  'modelsPreview': <String>[],
+  'message': compactPreview(message),
+};
+
+String compactPreview(String text, {int max = 320}) {
+  final compact = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  return compact.length <= max ? compact : '${compact.substring(0, max)}...';
 }
 
 List<String> parseAllowedModels(dynamic value) {

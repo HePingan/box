@@ -11,6 +11,17 @@ class BoxAdminClient {
 
   final http.Client _httpClient;
 
+  Future<BoxAdminProviderTestResult> testProvider({
+    required String serverUrl,
+    required String token,
+  }) async {
+    final response = await _httpClient.post(
+      _uri(serverUrl, '/admin/image/provider/test'),
+      headers: _headers(token),
+    );
+    return BoxAdminProviderTestResult.fromJson(_decodeResponse(response));
+  }
+
   Future<BoxAdminProviderConfig> fetchProvider({
     required String serverUrl,
     required String token,
