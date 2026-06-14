@@ -7,6 +7,7 @@ import '../../../app/app_routes.dart';
 import '../data/account_client.dart';
 import '../data/account_store.dart';
 import '../domain/account_models.dart';
+import '../domain/usage_models.dart';
 import 'widgets/account_widgets.dart';
 
 class AccountPage extends StatefulWidget {
@@ -25,6 +26,7 @@ class _AccountPageState extends State<AccountPage> {
 
   BoxAccountSession? _session;
   bool _loading = false;
+  List<BoxUsageRecord> _usage = const [];
   String? _error;
 
   @override
@@ -64,8 +66,14 @@ class _AccountPageState extends State<AccountPage> {
         user: user,
       );
       await _store.saveSession(refreshed);
+      final usage = await _client.fetchMyUsage(
+        serverUrl: refreshed.serverUrl,
+        token: refreshed.token,
+        limit: 20,
+      );
       setState(() {
         _session = refreshed;
+        _usage = usage;
         _error = null;
       });
     } catch (error) {
@@ -92,7 +100,15 @@ class _AccountPageState extends State<AccountPage> {
       );
       await _store.saveSession(session);
       _passwordController.clear();
-      setState(() => _session = session);
+      final usage = await _client.fetchMyUsage(
+        serverUrl: session.serverUrl,
+        token: session.token,
+        limit: 20,
+      );
+      setState(() {
+        _session = session;
+        _usage = usage;
+      });
       _showSnack('登录成功：${session.user.username}');
     } catch (error) {
       setState(() => _error = _messageOf(error));
@@ -118,6 +134,7 @@ class _AccountPageState extends State<AccountPage> {
       if (mounted) {
         setState(() {
           _session = null;
+          _usage = const [];
           _loading = false;
           _error = null;
         });
@@ -206,6 +223,10 @@ class _AccountPageState extends State<AccountPage> {
                     onLogout: _logout,
                     onAdminTap: _openAdmin,
                   ),
+                if (session != null) ...[
+                  const SizedBox(height: 12),
+                  AccountUsageCard(records: _usage, loading: _loading),
+                ],
                 const SizedBox(height: 12),
                 const AccountNoticeCard(),
               ],

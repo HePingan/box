@@ -57,9 +57,17 @@ class BoxAdminClient {
   Future<List<BoxAdminUsageRecord>> fetchUsage({
     required String serverUrl,
     required String token,
+    String? userId,
+    bool? success,
+    int limit = 200,
   }) async {
+    final query = <String, String>{'limit': limit.toString()};
+    if (userId != null && userId.trim().isNotEmpty) {
+      query['userId'] = userId.trim();
+    }
+    if (success != null) query['success'] = success.toString();
     final response = await _httpClient.get(
-      _uri(serverUrl, '/admin/image/usage'),
+      _uri(serverUrl, '/admin/image/usage').replace(queryParameters: query),
       headers: _headers(token),
     );
     final decoded = _decodeResponse(response);

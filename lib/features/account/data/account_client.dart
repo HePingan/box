@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../domain/account_models.dart';
+import '../domain/usage_models.dart';
 
 class BoxAccountClient {
   BoxAccountClient({http.Client? httpClient})
@@ -43,6 +44,31 @@ class BoxAccountClient {
       headers: {'Authorization': 'Bearer $token'},
     );
     return BoxAccountUser.fromJson(_decodeResponse(response));
+  }
+
+  Future<List<BoxUsageRecord>> fetchMyUsage({
+    required String serverUrl,
+    required String token,
+    bool? success,
+    int limit = 20,
+  }) async {
+    final query = <String, String>{'limit': limit.toString()};
+    if (success != null) query['success'] = success.toString();
+    final uri = _uri(
+      normalizeServerUrl(serverUrl),
+      '/api/image/usage',
+    ).replace(queryParameters: query);
+    final response = await _httpClient.get(
+      uri,
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    final decoded = _decodeResponse(response);
+    final usage = decoded['usage'];
+    if (usage is! List) return const [];
+    return usage
+        .whereType<Map>()
+        .map((item) => BoxUsageRecord.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
   }
 
   Future<void> logout({

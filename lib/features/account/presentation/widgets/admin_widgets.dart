@@ -199,11 +199,19 @@ class AdminUsageCard extends StatelessWidget {
   const AdminUsageCard({
     super.key,
     required this.records,
+    required this.users,
+    required this.selectedUserId,
+    required this.selectedSuccess,
     required this.loading,
+    required this.onFilterChanged,
   });
 
   final List<BoxAdminUsageRecord> records;
+  final List<BoxAdminUserQuota> users;
+  final String? selectedUserId;
+  final bool? selectedSuccess;
   final bool loading;
+  final Future<void> Function(String? userId, bool? success) onFilterChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -257,6 +265,14 @@ class AdminUsageCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
+          _UsageFilterBar(
+            users: users,
+            selectedUserId: selectedUserId,
+            selectedSuccess: selectedSuccess,
+            enabled: !loading,
+            onChanged: onFilterChanged,
+          ),
+          const SizedBox(height: 12),
           if (loading && records.isEmpty)
             const Center(
               child: Padding(
@@ -277,6 +293,67 @@ class AdminUsageCard extends StatelessWidget {
                 ),
         ],
       ),
+    );
+  }
+}
+
+class _UsageFilterBar extends StatelessWidget {
+  const _UsageFilterBar({
+    required this.users,
+    required this.selectedUserId,
+    required this.selectedSuccess,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final List<BoxAdminUserQuota> users;
+  final String? selectedUserId;
+  final bool? selectedSuccess;
+  final bool enabled;
+  final Future<void> Function(String? userId, bool? success) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        DropdownMenu<String>(
+          enabled: enabled,
+          initialSelection: selectedUserId ?? '',
+          width: 180,
+          label: const Text('用户'),
+          dropdownMenuEntries: [
+            const DropdownMenuEntry(value: '', label: '全部用户'),
+            ...users.map(
+              (user) => DropdownMenuEntry(value: user.id, label: user.username),
+            ),
+          ],
+          onSelected: (value) => onChanged(
+            value == null || value.isEmpty ? null : value,
+            selectedSuccess,
+          ),
+        ),
+        DropdownMenu<String>(
+          enabled: enabled,
+          initialSelection: selectedSuccess == null
+              ? ''
+              : selectedSuccess == true
+              ? 'true'
+              : 'false',
+          width: 150,
+          label: const Text('状态'),
+          dropdownMenuEntries: const [
+            DropdownMenuEntry(value: '', label: '全部'),
+            DropdownMenuEntry(value: 'true', label: '成功'),
+            DropdownMenuEntry(value: 'false', label: '失败'),
+          ],
+          onSelected: (value) => onChanged(
+            selectedUserId,
+            value == null || value.isEmpty ? null : value == 'true',
+          ),
+        ),
+      ],
     );
   }
 }

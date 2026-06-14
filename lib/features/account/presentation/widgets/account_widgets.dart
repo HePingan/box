@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../design_system/app_tokens.dart';
 import '../../domain/account_models.dart';
+import '../../domain/usage_models.dart';
 
 class AccountStatusCard extends StatelessWidget {
   const AccountStatusCard({
@@ -198,6 +199,156 @@ class AccountLoginCard extends StatelessWidget {
                     )
                   : const Icon(Icons.login_rounded, size: 18),
               label: Text(loading ? '登录中' : '登录'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class AccountUsageCard extends StatelessWidget {
+  const AccountUsageCard({
+    super.key,
+    required this.records,
+    required this.loading,
+  });
+
+  final List<BoxUsageRecord> records;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    return _AccountCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.receipt_long_rounded,
+                color: AppTokens.primaryBlue,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  '我的最近生图记录',
+                  style: TextStyle(
+                    color: AppTokens.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              Text(
+                records.isEmpty ? '最近 20 条' : '${records.length} 条',
+                style: const TextStyle(
+                  color: AppTokens.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (loading && records.isEmpty)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(12),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (records.isEmpty)
+            const Text(
+              '暂无使用记录。使用平台额度生图后会显示成功或失败记录。',
+              style: TextStyle(color: AppTokens.textSecondary, height: 1.4),
+            )
+          else
+            ...records
+                .take(5)
+                .map(
+                  (record) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _AccountUsageTile(record: record),
+                  ),
+                ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AccountUsageTile extends StatelessWidget {
+  const _AccountUsageTile({required this.record});
+
+  final BoxUsageRecord record;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = record.success ? AppTokens.success : AppTokens.warning;
+    final statusText = record.statusCode == null
+        ? 'HTTP -'
+        : 'HTTP ${record.statusCode}';
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            record.success
+                ? Icons.check_circle_rounded
+                : Icons.error_outline_rounded,
+            color: color,
+            size: 22,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  record.model.isEmpty ? '未知模型' : record.model,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTokens.textPrimary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${record.cost} 点 · ${record.success ? '成功' : '失败'} · $statusText',
+                  style: const TextStyle(
+                    color: AppTokens.textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  _formatTime(record.createdAt),
+                  style: const TextStyle(
+                    color: AppTokens.textTertiary,
+                    fontSize: 12,
+                  ),
+                ),
+                if (!record.success && record.errorPreview.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    record.errorPreview,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppTokens.textSecondary,
+                      fontSize: 12,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         ],

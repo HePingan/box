@@ -505,11 +505,15 @@ Authorization: Bearer <admin...ken>
 查看最近使用记录：
 
 ```http
-GET /admin/image/usage
-Authorization: Bearer <admin...ken>
+GET /admin/image/usage?userId=u_admin&success=false&limit=20
+Authorization: Bearer ***
 ```
 
-返回最近 200 条生图上游请求记录，不包含 prompt、图片 URL 或 API Key：
+返回最近生图上游请求记录，不包含 prompt、图片 URL 或 API Key。管理员接口支持：
+
+- `userId`：按用户 ID 过滤，留空不过滤。
+- `success`：`true` / `false`，留空不过滤。
+- `limit`：默认 200，最大 200。
 
 ```json
 {
@@ -527,6 +531,15 @@ Authorization: Bearer <admin...ken>
   ]
 }
 ```
+
+用户查看自己的最近生图记录：
+
+```http
+GET /api/image/usage?success=false&limit=20
+Authorization: Bearer ***
+```
+
+普通用户只能看到自己的记录，支持 `success` 和 `limit`，不支持查看其他用户。
 
 规则：
 

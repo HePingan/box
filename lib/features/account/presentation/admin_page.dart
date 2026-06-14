@@ -27,6 +27,8 @@ class _AdminPageState extends State<AdminPage> {
   List<BoxAdminUsageRecord> _usage = const [];
   bool _loading = false;
   bool _testingProvider = false;
+  String? _usageUserId;
+  bool? _usageSuccess;
   String? _error;
 
   @override
@@ -69,6 +71,9 @@ class _AdminPageState extends State<AdminPage> {
       final usage = await _client.fetchUsage(
         serverUrl: session.serverUrl,
         token: session.token,
+        userId: _usageUserId,
+        success: _usageSuccess,
+        limit: 50,
       );
       setState(() {
         _session = session;
@@ -253,6 +258,27 @@ class _AdminPageState extends State<AdminPage> {
     );
   }
 
+  Future<void> _reloadUsage() async {
+    final session = _session;
+    if (session == null || !session.user.isAdmin) return;
+    final usage = await _client.fetchUsage(
+      serverUrl: session.serverUrl,
+      token: session.token,
+      userId: _usageUserId,
+      success: _usageSuccess,
+      limit: 50,
+    );
+    if (mounted) setState(() => _usage = usage);
+  }
+
+  Future<void> _setUsageFilters(String? userId, bool? success) async {
+    setState(() {
+      _usageUserId = userId;
+      _usageSuccess = success;
+    });
+    await _reloadUsage();
+  }
+
   void _showSnack(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(
@@ -337,7 +363,14 @@ class _AdminPageState extends State<AdminPage> {
                     onTest: _testProvider,
                   ),
                   const SizedBox(height: 12),
-                  AdminUsageCard(records: _usage, loading: _loading),
+                  AdminUsageCard(
+                    records: _usage,
+                    users: _users,
+                    selectedUserId: _usageUserId,
+                    selectedSuccess: _usageSuccess,
+                    loading: _loading,
+                    onFilterChanged: _setUsageFilters,
+                  ),
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,

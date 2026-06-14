@@ -40,6 +40,7 @@ Future<void> main(List<String> args) async {
   stdout.writeln('  GET  /api/image/quota');
   stdout.writeln('  GET  /api/image/models');
   stdout.writeln('  POST /api/image/generate');
+  stdout.writeln('  GET  /api/image/usage');
   stdout.writeln('Admin endpoints:');
   stdout.writeln('  GET  /admin/image/users');
   stdout.writeln('  GET  /admin/image/usage');
@@ -170,6 +171,12 @@ class PlatformQuotaServer {
       final account = await requireUser(request);
       if (account == null) return;
       await generate(request, account);
+      return;
+    }
+    if (request.method == 'GET' && path == '/api/image/usage') {
+      final account = await requireUser(request);
+      if (account == null) return;
+      await selfUsageLogs(request, account);
       return;
     }
     if (request.method == 'GET' && path == '/admin/image/users') {
@@ -423,14 +430,47 @@ class PlatformQuotaServer {
   }
 
   Future<void> usageLogs(HttpRequest request) async {
-    final records = store.usage.reversed.take(200).map((item) {
+    final query = request.uri.queryParameters;
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'usage': usageJson(
+        userId: query['userId']?.trim().isEmpty ?? true
+            ? null
+            : query['userId']!.trim(),
+        success: parseBool(query['success']),
+        limit: asInt(query['limit'], 200),
+      ),
+    });
+  }
+
+  Future<void> selfUsageLogs(HttpRequest request, Account account) async {
+    final query = request.uri.queryParameters;
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'usage': usageJson(
+        userId: account.id,
+        success: parseBool(query['success']),
+        limit: asInt(query['limit'], 20),
+      ),
+    });
+  }
+
+  List<Map<String, dynamic>> usageJson({
+    String? userId,
+    bool? success,
+    int limit = 200,
+  }) {
+    final effectiveLimit = limit.clamp(1, 200).toInt();
+    final result = <Map<String, dynamic>>[];
+    for (final item in store.usage.reversed) {
+      if (userId != null && item.userId != userId) continue;
+      if (success != null && item.success != success) continue;
       final account = store.accounts[item.userId];
       final json = item.toJson();
       json['username'] = account?.username ?? item.userId;
       json['errorPreview'] = compactPreview(item.errorPreview);
-      return json;
-    }).toList();
-    await jsonResponse(request.response, HttpStatus.ok, {'usage': records});
+      result.add(json);
+      if (result.length >= effectiveLimit) break;
+    }
+    return result;
   }
 
   Future<void> getProvider(HttpRequest request) async {
@@ -1328,6 +1368,13 @@ List<String> parseModels(dynamic decoded) {
           .toList()
         ..sort();
   return models;
+}
+
+bool? parseBool(String? value) {
+  final text = value?.trim().toLowerCase() ?? '';
+  if (text == 'true') return true;
+  if (text == 'false') return false;
+  return null;
 }
 
 int asInt(dynamic value, int fallback) {
