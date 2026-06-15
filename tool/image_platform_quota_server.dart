@@ -31,6 +31,9 @@ Future<void> main(List<String> args) async {
   stdout.writeln('  http://${config.host}:${config.port}');
   stdout.writeln('Admin base URL: ${config.adminBaseUrl}');
   stdout.writeln('Admin API key configured: ${config.adminApiKey.isNotEmpty}');
+  stdout.writeln(
+    'Registration enabled: ${config.registrationEnabled}, default quota: ${config.registerDefaultQuota}',
+  );
   stdout.writeln('State path: ${config.statePath}');
   stdout.writeln('Health endpoint:');
   stdout.writeln('  GET  /');
@@ -53,6 +56,10 @@ Future<void> main(List<String> args) async {
   stdout.writeln('  GET  /admin/image/provider');
   stdout.writeln('  POST /admin/image/provider');
   stdout.writeln('  POST /admin/image/provider/test');
+  stdout.writeln('  POST /admin/accounts');
+  stdout.writeln('  PATCH /admin/accounts/<userId>');
+  stdout.writeln('  POST /admin/accounts/<userId>/status');
+  stdout.writeln('  DELETE /admin/accounts/<userId>');
   stdout.writeln('  POST /admin/image/users/<userId>/quota');
 
   await for (final request in server) {
@@ -80,6 +87,8 @@ class ServerConfig {
     required this.bootstrapAdminPassword,
     required this.allowedModels,
     required this.defaultQuota,
+    required this.registrationEnabled,
+    required this.registerDefaultQuota,
     required this.statePath,
   });
 
@@ -114,6 +123,15 @@ class ServerConfig {
       bootstrapAdminPassword: env['BOX_ADMIN_PASSWORD'] ?? '',
       allowedModels: allowed,
       defaultQuota: int.tryParse(env['IMAGE_DEFAULT_QUOTA'] ?? '') ?? 20,
+      registrationEnabled: parseEnvBool(
+        env['IMAGE_REGISTRATION_ENABLED'],
+        fallback: true,
+      ),
+      registerDefaultQuota:
+          int.tryParse(
+            env['IMAGE_REGISTER_DEFAULT_QUOTA'] ?? '',
+          )?.clamp(0, 100000).toInt() ??
+          5,
       statePath: env['IMAGE_STATE_PATH'] ?? _defaultStatePath,
     );
   }
@@ -127,6 +145,8 @@ class ServerConfig {
   final String bootstrapAdminPassword;
   final List<String> allowedModels;
   final int defaultQuota;
+  final bool registrationEnabled;
+  final int registerDefaultQuota;
   final String statePath;
 }
 
@@ -240,10 +260,26 @@ class PlatformQuotaServer {
       await createAccount(request);
       return;
     }
+    final accountStatusMatch = RegExp(
+      r'^/admin/accounts/([^/]+)/status$',
+    ).firstMatch(path);
+    if (request.method == 'POST' && accountStatusMatch != null) {
+      if (!await requireAdmin(request)) return;
+      await updateAccountStatus(
+        request,
+        Uri.decodeComponent(accountStatusMatch.group(1)!),
+      );
+      return;
+    }
     final accountMatch = RegExp(r'^/admin/accounts/([^/]+)$').firstMatch(path);
     if (request.method == 'PATCH' && accountMatch != null) {
       if (!await requireAdmin(request)) return;
       await updateAccount(request, Uri.decodeComponent(accountMatch.group(1)!));
+      return;
+    }
+    if (request.method == 'DELETE' && accountMatch != null) {
+      if (!await requireAdmin(request)) return;
+      await deleteAccount(request, Uri.decodeComponent(accountMatch.group(1)!));
       return;
     }
     final quotaMatch = RegExp(
@@ -342,6 +378,12 @@ class PlatformQuotaServer {
   }
 
   Future<void> register(HttpRequest request) async {
+    if (!config.registrationEnabled) {
+      await jsonResponse(request.response, HttpStatus.forbidden, {
+        'error': {'message': '当前服务器已关闭开放注册，请联系管理员创建账号。'},
+      });
+      return;
+    }
     final body = await readJsonObject(request);
     if (body == null) return;
     final username = body['username']?.toString().trim() ?? '';
@@ -377,7 +419,9 @@ class PlatformQuotaServer {
       lastLoginAt: now,
     );
     store.accounts[account.id] = account;
-    store.quotas[account.id] = UserQuota.defaultFor(5);
+    store.quotas[account.id] = UserQuota.defaultFor(
+      config.registerDefaultQuota,
+    );
     final token = createSession(account);
     await store.save();
     await jsonResponse(request.response, HttpStatus.created, {
@@ -884,11 +928,89 @@ class PlatformQuotaServer {
 
     account.role = nextRole;
     account.status = nextStatus;
+    final quota = store.quota(userId);
+    quota.status = nextStatus;
+    quota.message = nextStatus == 'normal' ? '平台额度可用' : '账号已禁用';
     if (nextStatus != 'normal') {
       store.sessions.removeWhere((_, s) => s.userId == userId);
     }
     await store.save();
     await jsonResponse(request.response, HttpStatus.ok, account.toPublicJson());
+  }
+
+  Future<void> updateAccountStatus(HttpRequest request, String userId) async {
+    final decoded = await readJsonObject(request);
+    if (decoded == null) return;
+    final status = decoded['status']?.toString().trim() ?? '';
+    if (status != 'normal' && status != 'disabled') {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '状态只支持 normal 或 disabled'},
+      });
+      return;
+    }
+    await setAccountStatus(request, userId, status);
+  }
+
+  Future<void> setAccountStatus(
+    HttpRequest request,
+    String userId,
+    String status,
+  ) async {
+    final account = store.accounts[userId];
+    if (account == null) {
+      await jsonResponse(request.response, HttpStatus.notFound, {
+        'error': {'message': '用户不存在'},
+      });
+      return;
+    }
+    if (status != 'normal' && status != 'disabled') {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '状态只支持 normal 或 disabled'},
+      });
+      return;
+    }
+    if (status != 'normal' && store.isLastActiveAdmin(userId)) {
+      await jsonResponse(request.response, HttpStatus.conflict, {
+        'error': {'message': '不能禁用最后一个管理员。'},
+      });
+      return;
+    }
+    account.status = status;
+    final quota = store.quota(userId);
+    quota.status = status;
+    quota.message = status == 'normal' ? '平台额度可用' : '账号已禁用';
+    if (status != 'normal') {
+      store.sessions.removeWhere((_, s) => s.userId == userId);
+    }
+    await store.save();
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'user': account.toPublicJson(),
+      'quota': quota.toQuotaJson(),
+    });
+  }
+
+  Future<void> deleteAccount(HttpRequest request, String userId) async {
+    final account = store.accounts[userId];
+    if (account == null) {
+      await jsonResponse(request.response, HttpStatus.notFound, {
+        'error': {'message': '用户不存在'},
+      });
+      return;
+    }
+    if (account.role == AccountRole.admin) {
+      await jsonResponse(request.response, HttpStatus.conflict, {
+        'error': {'message': '管理员账号不能删除。请先降级或保留管理员账号。'},
+      });
+      return;
+    }
+    store.accounts.remove(userId);
+    store.quotas.remove(userId);
+    store.sessions.removeWhere((_, s) => s.userId == userId);
+    await store.save();
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'ok': true,
+      'deletedUserId': userId,
+    });
   }
 
   Future<void> setQuota(HttpRequest request, String userId) async {
@@ -928,6 +1050,8 @@ class PlatformQuotaServer {
     }
     final account = store.accounts[session.userId];
     if (account == null || account.status != 'normal') {
+      store.sessions.remove(token);
+      await store.save();
       await jsonResponse(request.response, HttpStatus.forbidden, {
         'error': {'message': '账号不可用。'},
       });
@@ -967,7 +1091,9 @@ class PlatformQuotaServer {
     if (session == null || session.expiresAt.isBefore(DateTime.now())) {
       return null;
     }
-    return store.accounts[session.userId];
+    final account = store.accounts[session.userId];
+    if (account == null || account.status != 'normal') return null;
+    return account;
   }
 
   Future<Map<String, dynamic>?> readJsonObject(HttpRequest request) async {
@@ -1749,6 +1875,18 @@ bool? parseBool(String? value) {
   return null;
 }
 
+bool parseEnvBool(String? value, {required bool fallback}) {
+  final text = value?.trim().toLowerCase() ?? '';
+  if (text.isEmpty) return fallback;
+  if (text == '1' || text == 'true' || text == 'yes' || text == 'on') {
+    return true;
+  }
+  if (text == '0' || text == 'false' || text == 'no' || text == 'off') {
+    return false;
+  }
+  return fallback;
+}
+
 int asInt(dynamic value, int fallback) {
   if (value is int) return value;
   if (value is num) return value.round();
@@ -1766,7 +1904,7 @@ void cors(HttpResponse response) {
   response.headers.set('Access-Control-Allow-Origin', '*');
   response.headers.set(
     'Access-Control-Allow-Methods',
-    'GET, POST, PATCH, OPTIONS',
+    'GET, POST, PATCH, DELETE, OPTIONS',
   );
   response.headers.set(
     'Access-Control-Allow-Headers',

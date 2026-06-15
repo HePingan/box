@@ -217,6 +217,32 @@ class BoxAdminClient {
     );
   }
 
+  Future<BoxAdminUserQuota> setAccountStatus({
+    required String serverUrl,
+    required String token,
+    required BoxAdminUserQuota user,
+    required String status,
+  }) async {
+    final response = await _httpClient.post(
+      _uri(serverUrl, '/admin/accounts/${Uri.encodeComponent(user.id)}/status'),
+      headers: _headers(token, json: true),
+      body: jsonEncode({'status': status}),
+    );
+    return _parseUserWithQuota(_decodeResponse(response));
+  }
+
+  Future<void> deleteAccount({
+    required String serverUrl,
+    required String token,
+    required BoxAdminUserQuota user,
+  }) async {
+    final response = await _httpClient.delete(
+      _uri(serverUrl, '/admin/accounts/${Uri.encodeComponent(user.id)}'),
+      headers: _headers(token),
+    );
+    _decodeResponse(response);
+  }
+
   static BoxAdminUserQuota _parseUserWithQuota(Map<String, dynamic> decoded) {
     final user = decoded['user'];
     final quota = decoded['quota'];

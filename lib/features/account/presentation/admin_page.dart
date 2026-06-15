@@ -222,6 +222,61 @@ class _AdminPageState extends State<AdminPage> {
     _showSnack('已更新 ${updated.username} 的账号设置');
   }
 
+  Future<void> _setAccountStatus(BoxAdminUserQuota user, String status) async {
+    final session = _session;
+    if (session == null) return;
+    final updated = await _client.setAccountStatus(
+      serverUrl: session.serverUrl,
+      token: session.token,
+      user: user,
+      status: status,
+    );
+    setState(() {
+      _users = _users
+          .map((item) => item.id == updated.id ? updated : item)
+          .toList(growable: false);
+    });
+    _showSnack(
+      status == 'normal'
+          ? '已恢复 ${updated.username}'
+          : '已禁用 ${updated.username}',
+    );
+  }
+
+  Future<void> _deleteAccount(BoxAdminUserQuota user) async {
+    final session = _session;
+    if (session == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('删除 ${user.username}？'),
+        content: const Text('删除后该用户账号、额度和登录状态会被移除；历史用量记录会保留用于审计。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _client.deleteAccount(
+      serverUrl: session.serverUrl,
+      token: session.token,
+      user: user,
+    );
+    setState(() {
+      _users = _users
+          .where((item) => item.id != user.id)
+          .toList(growable: false);
+    });
+    _showSnack('已删除 ${user.username}');
+  }
+
   void _openQuotaSheet(BoxAdminUserQuota user) {
     showModalBottomSheet<void>(
       context: context,
@@ -451,6 +506,13 @@ class _AdminPageState extends State<AdminPage> {
                         loading: _loading,
                         onEditQuota: () => _openQuotaSheet(user),
                         onEditAccount: () => _openAccountSheet(user),
+                        onToggleStatus: () => _setAccountStatus(
+                          user,
+                          user.status == 'disabled' ? 'normal' : 'disabled',
+                        ),
+                        onDelete: user.isAdmin
+                            ? null
+                            : () => _deleteAccount(user),
                       ),
                       const SizedBox(height: 12),
                     ],

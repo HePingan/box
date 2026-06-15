@@ -712,22 +712,31 @@ class AdminUserQuotaCard extends StatelessWidget {
     required this.loading,
     required this.onEditQuota,
     required this.onEditAccount,
+    required this.onToggleStatus,
+    required this.onDelete,
   });
 
   final BoxAdminUserQuota user;
   final bool loading;
   final VoidCallback onEditQuota;
   final VoidCallback onEditAccount;
+  final VoidCallback onToggleStatus;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
+    final disabled = user.status == 'disabled';
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: disabled ? const Color(0xFFF8FAFC) : Colors.white,
         borderRadius: BorderRadius.circular(AppTokens.radiusLg),
-        border: Border.all(color: AppTokens.divider),
+        border: Border.all(
+          color: disabled
+              ? AppTokens.warning.withValues(alpha: 0.35)
+              : AppTokens.divider,
+        ),
         boxShadow: AppTokens.shadowSm(),
       ),
       child: Column(
@@ -777,6 +786,7 @@ class AdminUserQuotaCard extends StatelessWidget {
                 ),
               ),
               _RoleBadge(isAdmin: user.isAdmin),
+              if (disabled) ...[const SizedBox(width: 8), const _StatusBadge()],
             ],
           ),
           const SizedBox(height: 14),
@@ -811,21 +821,34 @@ class AdminUserQuotaCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          Row(
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
             children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: loading ? null : onEditQuota,
-                  icon: const Icon(Icons.tune_rounded, size: 18),
-                  label: const Text('调整额度'),
-                ),
+              OutlinedButton.icon(
+                onPressed: loading ? null : onEditQuota,
+                icon: const Icon(Icons.tune_rounded, size: 18),
+                label: const Text('调整额度'),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: loading ? null : onEditAccount,
-                  icon: const Icon(Icons.manage_accounts_rounded, size: 18),
-                  label: const Text('账号设置'),
+              OutlinedButton.icon(
+                onPressed: loading ? null : onEditAccount,
+                icon: const Icon(Icons.manage_accounts_rounded, size: 18),
+                label: const Text('账号设置'),
+              ),
+              OutlinedButton.icon(
+                onPressed: loading ? null : onToggleStatus,
+                icon: Icon(
+                  disabled ? Icons.restart_alt_rounded : Icons.block_rounded,
+                  size: 18,
+                ),
+                label: Text(disabled ? '恢复' : '禁用'),
+              ),
+              OutlinedButton.icon(
+                onPressed: loading ? null : onDelete,
+                icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                label: const Text('删除'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTokens.danger,
                 ),
               ),
             ],
@@ -1492,6 +1515,29 @@ class _RoleBadge extends StatelessWidget {
         isAdmin ? '管理员' : '用户',
         style: TextStyle(
           color: isAdmin ? AppTokens.warning : AppTokens.primaryBlue,
+          fontSize: 12,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppTokens.warning.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: const Text(
+        '已禁用',
+        style: TextStyle(
+          color: AppTokens.warning,
           fontSize: 12,
           fontWeight: FontWeight.w900,
         ),

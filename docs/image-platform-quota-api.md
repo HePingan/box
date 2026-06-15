@@ -58,8 +58,8 @@ Flutter Web 调试需要后端允许 CORS：
 
 ```http
 Access-Control-Allow-Origin: *
-Access-Control-Allow-Methods: GET, POST, PATCH, OPTIONS
-Access-Control-Allow-Headers: Content-Type, Authorization
+Access-Control-Allow-Methods: GET, POST, PATCH, DELETE, OPTIONS
+Access-Control-Allow-Headers: Content-Type, Authorization, X-Admin-Token
 ```
 
 真实生产环境建议将 `Access-Control-Allow-Origin` 收窄到你的 Web 域名。
@@ -99,7 +99,8 @@ Content-Type: application/json
 - 用户名 3-20 位，只支持字母、数字、下划线。
 - 密码至少 6 位。
 - `admin`、`root`、`system` 等为保留用户名。
-- 注册账号默认为普通用户，初始平台图片额度为 5 点。
+- 注册账号默认为普通用户，初始平台图片额度由服务端 `IMAGE_REGISTER_DEFAULT_QUOTA` 控制，当前建议为 5 点。
+- 服务端可通过 `IMAGE_REGISTRATION_ENABLED=false` 临时关闭开放注册；关闭后管理员仍可在后台创建账号。
 - 注册成功后自动返回 session token，可直接登录使用。
 
 返回：
@@ -469,6 +470,17 @@ role     = admin
 
 如果没有携带 token，`/api/image/*` 会返回 `401`。
 
+### 注册与公网控制环境变量
+
+```text
+IMAGE_REGISTRATION_ENABLED=true
+IMAGE_REGISTER_DEFAULT_QUOTA=5
+```
+
+- `IMAGE_REGISTRATION_ENABLED=false` 会关闭 `POST /api/auth/register` 开放注册。
+- `IMAGE_REGISTER_DEFAULT_QUOTA` 控制自注册用户初始额度、每日额度和总额度。
+- 管理员后台创建用户不受注册开关影响。
+
 ### 状态文件
 
 服务会写入：
@@ -731,6 +743,42 @@ Authorization: Bearer <admin...ken>
 - `status` 只允许 `normal` / `disabled`。
 - 不允许降级或禁用最后一个正常管理员账号。
 - 禁用账号会清理该账号已有 session。
+
+快速禁用/恢复用户：
+
+```http
+POST /admin/accounts/u_xxx/status
+Content-Type: application/json
+Authorization: Bearer ***
+```
+
+```json
+{
+  "status": "disabled"
+}
+```
+
+返回：
+
+```json
+{
+  "user": { "id": "u_xxx", "username": "user001", "role": "user", "status": "disabled" },
+  "quota": { "remaining": 5, "dailyLimit": 5, "status": "disabled" }
+}
+```
+
+删除普通用户：
+
+```http
+DELETE /admin/accounts/u_xxx
+Authorization: Bearer ***
+```
+
+约束：
+
+- 管理员账号不能删除。
+- 删除会移除账号、额度和该用户所有 session。
+- 历史 usage 记录会保留；记录里仍保留 `userId` 用于审计。
 
 调整用户额度：
 
