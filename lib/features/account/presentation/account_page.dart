@@ -23,6 +23,9 @@ class _AccountPageState extends State<AccountPage> {
   final _serverController = TextEditingController();
   final _usernameController = TextEditingController(text: 'admin');
   final _passwordController = TextEditingController();
+  final _registerUsernameController = TextEditingController();
+  final _registerPasswordController = TextEditingController();
+  final _registerConfirmController = TextEditingController();
 
   BoxAccountSession? _session;
   bool _loading = false;
@@ -32,6 +35,7 @@ class _AccountPageState extends State<AccountPage> {
   @override
   void initState() {
     super.initState();
+    _serverController.text = BoxAccountDefaults.serverUrl;
     _loadSession();
   }
 
@@ -40,6 +44,9 @@ class _AccountPageState extends State<AccountPage> {
     _serverController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
+    _registerUsernameController.dispose();
+    _registerPasswordController.dispose();
+    _registerConfirmController.dispose();
     super.dispose();
   }
 
@@ -98,23 +105,64 @@ class _AccountPageState extends State<AccountPage> {
         username: _usernameController.text,
         password: _passwordController.text,
       );
-      await _store.saveSession(session);
-      _passwordController.clear();
-      final usage = await _client.fetchMyUsage(
-        serverUrl: session.serverUrl,
-        token: session.token,
-        limit: 20,
+      await _completeAuth(
+        session,
+        successMessage: '登录成功：${session.user.username}',
       );
-      setState(() {
-        _session = session;
-        _usage = usage;
-      });
-      _showSnack('登录成功：${session.user.username}');
     } catch (error) {
       setState(() => _error = _messageOf(error));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _register() async {
+    final password = _registerPasswordController.text;
+    final confirm = _registerConfirmController.text;
+    if (password != confirm) {
+      setState(() => _error = '两次输入的密码不一致。');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final session = await _client.register(
+        serverUrl: _serverController.text,
+        username: _registerUsernameController.text,
+        password: password,
+      );
+      _usernameController.text = session.user.username;
+      _registerPasswordController.clear();
+      _registerConfirmController.clear();
+      await _completeAuth(
+        session,
+        successMessage: '注册成功，已自动登录：${session.user.username}',
+      );
+    } catch (error) {
+      setState(() => _error = _messageOf(error));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _completeAuth(
+    BoxAccountSession session, {
+    required String successMessage,
+  }) async {
+    await _store.saveSession(session);
+    _passwordController.clear();
+    final usage = await _client.fetchMyUsage(
+      serverUrl: session.serverUrl,
+      token: session.token,
+      limit: 20,
+    );
+    setState(() {
+      _session = session;
+      _usage = usage;
+    });
+    _showSnack(successMessage);
   }
 
   Future<void> _logout() async {
@@ -145,6 +193,40 @@ class _AccountPageState extends State<AccountPage> {
 
   void _openAdmin() {
     Navigator.of(context).pushNamed(AppRoutes.accountAdmin);
+  }
+
+  Future<void> _openRegisterSheet() async {
+    _registerUsernameController.text = _usernameController.text == 'admin'
+        ? ''
+        : _usernameController.text;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) {
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            top: 16,
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 16,
+          ),
+          child: AccountRegisterSheet(
+            serverUrl: _serverController.text.trim().isEmpty
+                ? BoxAccountDefaults.serverUrl
+                : _serverController.text.trim(),
+            usernameController: _registerUsernameController,
+            passwordController: _registerPasswordController,
+            confirmController: _registerConfirmController,
+            loading: _loading,
+            onRegister: () async {
+              Navigator.of(sheetContext).pop();
+              await _register();
+            },
+          ),
+        );
+      },
+    );
   }
 
   void _showSnack(String message) {
@@ -214,6 +296,7 @@ class _AccountPageState extends State<AccountPage> {
                     passwordController: _passwordController,
                     loading: _loading,
                     onLogin: _login,
+                    onRegisterTap: _openRegisterSheet,
                   )
                 else
                   AccountStatusCard(

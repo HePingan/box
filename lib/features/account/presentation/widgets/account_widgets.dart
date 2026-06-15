@@ -130,6 +130,7 @@ class AccountLoginCard extends StatelessWidget {
     required this.passwordController,
     required this.loading,
     required this.onLogin,
+    required this.onRegisterTap,
   });
 
   final TextEditingController serverController;
@@ -137,6 +138,7 @@ class AccountLoginCard extends StatelessWidget {
   final TextEditingController passwordController;
   final bool loading;
   final VoidCallback onLogin;
+  final VoidCallback onRegisterTap;
 
   @override
   Widget build(BuildContext context) {
@@ -145,7 +147,7 @@ class AccountLoginCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            '登录 Box 后端',
+            '登录 Box 平台账号',
             style: TextStyle(
               color: AppTokens.textPrimary,
               fontSize: 18,
@@ -154,7 +156,7 @@ class AccountLoginCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           const Text(
-            '登录后可使用平台额度；管理员账号后续可进入统一管理后台。',
+            '默认连接官方服务器。登录后可使用平台图片额度；没有账号可直接注册，管理员账号可进入统一管理后台。',
             style: TextStyle(color: AppTokens.textSecondary, height: 1.45),
           ),
           const SizedBox(height: 16),
@@ -162,7 +164,7 @@ class AccountLoginCard extends StatelessWidget {
             controller: serverController,
             decoration: const InputDecoration(
               labelText: '服务器地址',
-              hintText: 'https://your-domain.com 或 http://127.0.0.1:8788',
+              hintText: 'http://47.109.97.1:8799',
               prefixIcon: Icon(Icons.dns_rounded),
             ),
             keyboardType: TextInputType.url,
@@ -199,6 +201,127 @@ class AccountLoginCard extends StatelessWidget {
                     )
                   : const Icon(Icons.login_rounded, size: 18),
               label: Text(loading ? '登录中' : '登录'),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: loading ? null : onRegisterTap,
+              icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
+              label: const Text('没有账号？立即注册'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class AccountRegisterSheet extends StatelessWidget {
+  const AccountRegisterSheet({
+    super.key,
+    required this.serverUrl,
+    required this.usernameController,
+    required this.passwordController,
+    required this.confirmController,
+    required this.loading,
+    required this.onRegister,
+  });
+
+  final String serverUrl;
+  final TextEditingController usernameController;
+  final TextEditingController passwordController;
+  final TextEditingController confirmController;
+  final bool loading;
+  final VoidCallback onRegister;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.person_add_alt_1_rounded,
+                color: AppTokens.primaryBlue,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  '注册 Box 账号',
+                  style: TextStyle(
+                    color: AppTokens.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '服务器：$serverUrl',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: AppTokens.textSecondary),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: usernameController,
+            decoration: const InputDecoration(
+              labelText: '用户名',
+              hintText: '3-20 位字母、数字或下划线',
+              prefixIcon: Icon(Icons.account_circle_rounded),
+            ),
+            textInputAction: TextInputAction.next,
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: passwordController,
+            decoration: const InputDecoration(
+              labelText: '密码',
+              hintText: '至少 6 位',
+              prefixIcon: Icon(Icons.lock_rounded),
+            ),
+            obscureText: true,
+            textInputAction: TextInputAction.next,
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: confirmController,
+            decoration: const InputDecoration(
+              labelText: '确认密码',
+              prefixIcon: Icon(Icons.lock_reset_rounded),
+            ),
+            obscureText: true,
+            onSubmitted: (_) => loading ? null : onRegister(),
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            '注册成功后会自动登录，并获得 5 点平台图片额度。管理员可在后台调整额度或禁用账号。',
+            style: TextStyle(color: AppTokens.textSecondary, height: 1.45),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: loading ? null : onRegister,
+              icon: loading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.person_add_alt_1_rounded, size: 18),
+              label: Text(loading ? '注册中' : '注册并登录'),
             ),
           ),
         ],

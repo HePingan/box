@@ -26,6 +26,7 @@ Flutter Web / APK
 前端平台服务地址示例：
 
 ```text
+http://47.109.97.1:8799
 http://127.0.0.1:8787
 https://your-domain.com
 ```
@@ -34,6 +35,7 @@ https://your-domain.com
 
 ```text
 GET  /
+POST /api/auth/register
 POST /api/auth/login
 GET  /api/auth/me
 POST /api/auth/logout
@@ -76,7 +78,50 @@ Access-Control-Allow-Headers: Content-Type, Authorization
 
 ## 鉴权建议
 
-真实代理服务内置 Box 账号登录接口。Flutter 端应先登录，再用返回的 session token 访问平台额度和管理员接口。
+真实代理服务内置 Box 账号注册/登录接口。Flutter 端默认连接 `http://47.109.97.1:8799`，也可在高级场景改成自有服务器地址。注册或登录后，再用返回的 session token 访问平台额度和管理员接口。
+
+### POST /api/auth/register
+
+```http
+POST /api/auth/register
+Content-Type: application/json
+```
+
+```json
+{
+  "username": "user001",
+  "password": "your-password"
+}
+```
+
+规则：
+
+- 用户名 3-20 位，只支持字母、数字、下划线。
+- 密码至少 6 位。
+- `admin`、`root`、`system` 等为保留用户名。
+- 注册账号默认为普通用户，初始平台图片额度为 5 点。
+- 注册成功后自动返回 session token，可直接登录使用。
+
+返回：
+
+```json
+{
+  "token": "box_session_xxx",
+  "user": {
+    "id": "u_xxx",
+    "username": "user001",
+    "role": "user",
+    "status": "normal"
+  },
+  "quota": {
+    "remaining": 5,
+    "dailyLimit": 5,
+    "usedToday": 0,
+    "totalLimit": 5,
+    "status": "normal"
+  }
+}
+```
 
 ### POST /api/auth/login
 

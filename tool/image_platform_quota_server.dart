@@ -35,6 +35,7 @@ Future<void> main(List<String> args) async {
   stdout.writeln('Health endpoint:');
   stdout.writeln('  GET  /');
   stdout.writeln('Auth endpoints:');
+  stdout.writeln('  POST /api/auth/register');
   stdout.writeln('  POST /api/auth/login');
   stdout.writeln('  GET  /api/auth/me');
   stdout.writeln('  POST /api/auth/logout');
@@ -153,6 +154,10 @@ class PlatformQuotaServer {
       return;
     }
 
+    if (request.method == 'POST' && path == '/api/auth/register') {
+      await register(request);
+      return;
+    }
     if (request.method == 'POST' && path == '/api/auth/login') {
       await login(request);
       return;
@@ -336,6 +341,52 @@ class PlatformQuotaServer {
     }
   }
 
+  Future<void> register(HttpRequest request) async {
+    final body = await readJsonObject(request);
+    if (body == null) return;
+    final username = body['username']?.toString().trim() ?? '';
+    final password = body['password']?.toString() ?? '';
+    final usernameError = validateRegisterUsername(username);
+    if (usernameError != null) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': usernameError},
+      });
+      return;
+    }
+    if (password.length < 6) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '密码至少需要 6 位。'},
+      });
+      return;
+    }
+    if (store.accountByUsername(username) != null) {
+      await jsonResponse(request.response, HttpStatus.conflict, {
+        'error': {'message': '用户名已存在，请换一个。'},
+      });
+      return;
+    }
+
+    final now = DateTime.now();
+    final account = Account(
+      id: store.nextAccountId(),
+      username: username,
+      passwordHash: hashPassword(password),
+      role: AccountRole.user,
+      status: 'normal',
+      createdAt: now,
+      lastLoginAt: now,
+    );
+    store.accounts[account.id] = account;
+    store.quotas[account.id] = UserQuota.defaultFor(5);
+    final token = createSession(account);
+    await store.save();
+    await jsonResponse(request.response, HttpStatus.created, {
+      'token': token,
+      'user': account.toPublicJson(),
+      'quota': store.quota(account.id).toQuotaJson(),
+    });
+  }
+
   Future<void> login(HttpRequest request) async {
     final body = await readJsonObject(request);
     if (body == null) return;
@@ -351,6 +402,15 @@ class PlatformQuotaServer {
       return;
     }
     account.lastLoginAt = DateTime.now();
+    final token = createSession(account);
+    await store.save();
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'token': token,
+      'user': account.toPublicJson(),
+    });
+  }
+
+  String createSession(Account account) {
     final token = newToken('box_session');
     store.sessions[token] = AuthSession(
       token: token,
@@ -358,11 +418,7 @@ class PlatformQuotaServer {
       createdAt: DateTime.now(),
       expiresAt: DateTime.now().add(const Duration(days: 30)),
     );
-    await store.save();
-    await jsonResponse(request.response, HttpStatus.ok, {
-      'token': token,
-      'user': account.toPublicJson(),
-    });
+    return token;
   }
 
   Future<void> me(HttpRequest request) async {
@@ -1502,6 +1558,28 @@ class UpstreamResponse {
   String get preview {
     return compactPreview(text);
   }
+}
+
+String? validateRegisterUsername(String username) {
+  if (username.length < 3 || username.length > 20) {
+    return '用户名需要 3-20 位。';
+  }
+  if (!RegExp(r'^[A-Za-z0-9_]+$').hasMatch(username)) {
+    return '用户名只支持字母、数字和下划线。';
+  }
+  const reserved = {
+    'admin',
+    'administrator',
+    'root',
+    'system',
+    'support',
+    'box',
+    'null',
+  };
+  if (reserved.contains(username.toLowerCase())) {
+    return '该用户名为系统保留名称，请换一个。';
+  }
+  return null;
 }
 
 AccountRole? parseRole(String value) {

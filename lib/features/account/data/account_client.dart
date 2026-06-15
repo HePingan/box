@@ -11,6 +11,30 @@ class BoxAccountClient {
 
   final http.Client _httpClient;
 
+  Future<BoxAccountSession> register({
+    required String serverUrl,
+    required String username,
+    required String password,
+  }) async {
+    final normalizedServer = normalizeServerUrl(serverUrl);
+    final response = await _httpClient.post(
+      _uri(normalizedServer, '/api/auth/register'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({'username': username.trim(), 'password': password}),
+    );
+    final decoded = _decodeResponse(response);
+    final token = decoded['token']?.toString() ?? '';
+    final userJson = decoded['user'];
+    if (token.isEmpty || userJson is! Map<String, dynamic>) {
+      throw const BoxAccountException('注册接口返回格式不完整。');
+    }
+    return BoxAccountSession(
+      serverUrl: normalizedServer,
+      token: token,
+      user: BoxAccountUser.fromJson(userJson),
+    );
+  }
+
   Future<BoxAccountSession> login({
     required String serverUrl,
     required String username,

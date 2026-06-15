@@ -30,7 +30,8 @@ class BoxAccountStore {
 
   Future<String> loadServerUrl() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_serverUrlKey) ?? '';
+    final saved = prefs.getString(_serverUrlKey) ?? '';
+    return saved.trim().isEmpty ? BoxAccountDefaults.serverUrl : saved;
   }
 
   Future<void> saveSession(BoxAccountSession session) async {
