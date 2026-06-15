@@ -191,6 +191,15 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
+  Future<void> _resetServerUrl() async {
+    _serverController.text = BoxAccountDefaults.serverUrl;
+    await _store.saveServerUrl(BoxAccountDefaults.serverUrl);
+    if (mounted) {
+      setState(() => _error = null);
+      _showSnack('已恢复默认服务器：${BoxAccountDefaults.serverUrl}');
+    }
+  }
+
   void _openAdmin() {
     Navigator.of(context).pushNamed(AppRoutes.accountAdmin);
   }
@@ -297,6 +306,7 @@ class _AccountPageState extends State<AccountPage> {
                     loading: _loading,
                     onLogin: _login,
                     onRegisterTap: _openRegisterSheet,
+                    onResetServerUrl: _resetServerUrl,
                   )
                 else
                   AccountStatusCard(

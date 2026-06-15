@@ -132,6 +132,7 @@ class AccountLoginCard extends StatelessWidget {
     required this.loading,
     required this.onLogin,
     required this.onRegisterTap,
+    required this.onResetServerUrl,
   });
 
   final TextEditingController serverController;
@@ -140,6 +141,7 @@ class AccountLoginCard extends StatelessWidget {
   final bool loading;
   final VoidCallback onLogin;
   final VoidCallback onRegisterTap;
+  final VoidCallback onResetServerUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -179,7 +181,15 @@ class AccountLoginCard extends StatelessWidget {
             ),
             keyboardType: TextInputType.url,
           ),
-          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: loading ? null : onResetServerUrl,
+              icon: const Icon(Icons.restore_rounded, size: 16),
+              label: const Text('恢复默认 HTTPS 域名'),
+            ),
+          ),
+          const SizedBox(height: 8),
           TextField(
             controller: usernameController,
             decoration: const InputDecoration(

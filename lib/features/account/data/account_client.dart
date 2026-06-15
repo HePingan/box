@@ -106,7 +106,8 @@ class BoxAccountClient {
   }
 
   static String normalizeServerUrl(String serverUrl) {
-    final trimmed = serverUrl.trim();
+    final normalizedDefault = BoxAccountDefaults.normalizeServerUrl(serverUrl);
+    final trimmed = normalizedDefault.trim();
     if (trimmed.isEmpty) {
       throw const BoxAccountException('请先填写服务器地址。');
     }

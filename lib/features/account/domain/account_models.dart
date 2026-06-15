@@ -2,6 +2,16 @@ class BoxAccountDefaults {
   const BoxAccountDefaults._();
 
   static const serverUrl = 'https://background.hpa888.top';
+  static const legacyServerUrls = <String>{
+    'http://47.109.97.1:8799',
+    'http://47.109.97.1',
+  };
+
+  static String normalizeServerUrl(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return serverUrl;
+    return legacyServerUrls.contains(trimmed) ? serverUrl : trimmed;
+  }
 }
 
 class BoxAccountUser {

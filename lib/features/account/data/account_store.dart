@@ -11,7 +11,12 @@ class BoxAccountStore {
 
   Future<BoxAccountSession?> loadSession() async {
     final prefs = await SharedPreferences.getInstance();
-    final serverUrl = prefs.getString(_serverUrlKey) ?? '';
+    final savedServerUrl = prefs.getString(_serverUrlKey) ?? '';
+    final serverUrl = BoxAccountDefaults.normalizeServerUrl(savedServerUrl);
+    if (savedServerUrl.trim().isNotEmpty &&
+        savedServerUrl.trim() != serverUrl) {
+      await prefs.setString(_serverUrlKey, serverUrl);
+    }
     final token = prefs.getString(_tokenKey) ?? '';
     final userText = prefs.getString(_userJsonKey) ?? '';
     if (serverUrl.isEmpty || token.isEmpty || userText.isEmpty) return null;
@@ -31,12 +36,27 @@ class BoxAccountStore {
   Future<String> loadServerUrl() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(_serverUrlKey) ?? '';
-    return saved.trim().isEmpty ? BoxAccountDefaults.serverUrl : saved;
+    final normalized = BoxAccountDefaults.normalizeServerUrl(saved);
+    if (saved.trim().isNotEmpty && saved.trim() != normalized) {
+      await prefs.setString(_serverUrlKey, normalized);
+    }
+    return normalized;
+  }
+
+  Future<void> saveServerUrl(String serverUrl) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _serverUrlKey,
+      BoxAccountDefaults.normalizeServerUrl(serverUrl),
+    );
   }
 
   Future<void> saveSession(BoxAccountSession session) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_serverUrlKey, session.serverUrl);
+    await prefs.setString(
+      _serverUrlKey,
+      BoxAccountDefaults.normalizeServerUrl(session.serverUrl),
+    );
     await prefs.setString(_tokenKey, session.token);
     await prefs.setString(_userJsonKey, jsonEncode(session.user.toJson()));
   }
