@@ -26,6 +26,7 @@ Flutter Web / APK
 前端平台服务地址示例：
 
 ```text
+https://background.hpa888.top
 http://47.109.97.1:8799
 http://127.0.0.1:8787
 https://your-domain.com
@@ -78,7 +79,7 @@ Access-Control-Allow-Headers: Content-Type, Authorization, X-Admin-Token
 
 ## 鉴权建议
 
-真实代理服务内置 Box 账号注册/登录接口。Flutter 端默认连接 `http://47.109.97.1:8799`，也可在高级场景改成自有服务器地址。注册或登录后，再用返回的 session token 访问平台额度和管理员接口。
+真实代理服务内置 Box 账号注册/登录接口。Flutter 端默认连接 `https://background.hpa888.top`，也可在高级场景改成自有服务器地址。注册或登录后，再用返回的 session token 访问平台额度和管理员接口。
 
 ### POST /api/auth/register
 

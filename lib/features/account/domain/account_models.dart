@@ -1,7 +1,7 @@
 class BoxAccountDefaults {
   const BoxAccountDefaults._();
 
-  static const serverUrl = 'http://47.109.97.1:8799';
+  static const serverUrl = 'https://background.hpa888.top';
 }
 
 class BoxAccountUser {
