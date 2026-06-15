@@ -108,9 +108,94 @@ void main() {
       isNot(contains('Unhandled request error')),
     );
   });
+
+  test('slow image generation does not block health requests', () async {
+    final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final upstreamDone = upstream.listen((request) async {
+      if (request.uri.path == '/v1/images/generations') {
+        await Future<void>.delayed(const Duration(seconds: 3));
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({
+            'data': [
+              {'url': 'https://example.com/generated.png'},
+            ],
+          }),
+        );
+        await request.response.close();
+      } else {
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      }
+    });
+
+    final fixture = await _startServer(
+      extraEnvironment: {
+        'IMAGE_ADMIN_BASE_URL': 'http://127.0.0.1:${upstream.port}/v1',
+        'IMAGE_ADMIN_API_KEY': 'test-key',
+        'IMAGE_ALLOWED_MODELS': 'gpt-image-2',
+      },
+    );
+    final client = HttpClient();
+    try {
+      final loginRequest = await client.postUrl(
+        Uri.parse('http://127.0.0.1:${fixture.port}/api/auth/login'),
+      );
+      loginRequest.headers.contentType = ContentType.json;
+      loginRequest.write(
+        jsonEncode({'username': 'admin', 'password': 'test-admin-password'}),
+      );
+      final loginResponse = await loginRequest.close();
+      final loginBody = await loginResponse.transform(utf8.decoder).join();
+      final token =
+          (jsonDecode(loginBody) as Map<String, dynamic>)['token'] as String;
+
+      final generateRequest = await client.postUrl(
+        Uri.parse('http://127.0.0.1:${fixture.port}/api/image/generate'),
+      );
+      generateRequest.headers.contentType = ContentType.json;
+      generateRequest.headers.set(
+        HttpHeaders.authorizationHeader,
+        'Bearer $token',
+      );
+      generateRequest.write(
+        jsonEncode({
+          'model': 'gpt-image-2',
+          'prompt': 'slow lettuce',
+          'size': '1024x1024',
+          'quality': 'auto',
+          'n': 1,
+        }),
+      );
+      final generateFuture = generateRequest.close();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      final healthRequest = await client.getUrl(
+        Uri.parse('http://127.0.0.1:${fixture.port}/'),
+      );
+      final healthResponse = await healthRequest.close().timeout(
+        const Duration(seconds: 1),
+      );
+      await healthResponse.drain<void>();
+      expect(healthResponse.statusCode, HttpStatus.ok);
+
+      final generateResponse = await generateFuture.timeout(
+        const Duration(seconds: 5),
+      );
+      await generateResponse.drain<void>();
+      expect(generateResponse.statusCode, HttpStatus.ok);
+    } finally {
+      client.close(force: true);
+      await fixture.dispose();
+      await upstream.close(force: true);
+      await upstreamDone.cancel();
+    }
+  });
 }
 
-Future<_ServerFixture> _startServer() async {
+Future<_ServerFixture> _startServer({
+  Map<String, String> extraEnvironment = const {},
+}) async {
   final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
   final port = socket.port;
   await socket.close();
@@ -132,6 +217,7 @@ Future<_ServerFixture> _startServer() async {
     environment: {
       'IMAGE_STATE_PATH': stateFile.path,
       'BOX_ADMIN_PASSWORD': 'test-admin-password',
+      ...extraEnvironment,
     },
     includeParentEnvironment: true,
   );

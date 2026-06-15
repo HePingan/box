@@ -62,17 +62,21 @@ Future<void> main(List<String> args) async {
   stdout.writeln('  DELETE /admin/accounts/<userId>');
   stdout.writeln('  POST /admin/image/users/<userId>/quota');
 
+  final app = PlatformQuotaServer(config, store);
   await for (final request in server) {
-    final app = PlatformQuotaServer(config, store);
-    try {
-      await app.handle(request);
-    } catch (error, stackTrace) {
-      stderr.writeln('Unhandled request error: $error');
-      stderr.writeln(stackTrace);
-      await jsonResponse(request.response, HttpStatus.internalServerError, {
-        'error': {'message': '平台服务异常：$error'},
-      });
-    }
+    unawaited(
+      Future<void>(() async {
+        try {
+          await app.handle(request);
+        } catch (error, stackTrace) {
+          stderr.writeln('Unhandled request error: $error');
+          stderr.writeln(stackTrace);
+          await jsonResponse(request.response, HttpStatus.internalServerError, {
+            'error': {'message': '平台服务异常：$error'},
+          });
+        }
+      }),
+    );
   }
 }
 

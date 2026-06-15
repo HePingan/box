@@ -36,11 +36,13 @@ class _AccountPageState extends State<AccountPage> {
   void initState() {
     super.initState();
     _serverController.text = BoxAccountDefaults.serverUrl;
+    _serverController.addListener(_handleServerInputChanged);
     _loadSession();
   }
 
   @override
   void dispose() {
+    _serverController.removeListener(_handleServerInputChanged);
     _serverController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
@@ -48,6 +50,12 @@ class _AccountPageState extends State<AccountPage> {
     _registerPasswordController.dispose();
     _registerConfirmController.dispose();
     super.dispose();
+  }
+
+  void _handleServerInputChanged() {
+    if (!mounted || _error != '请先填写服务器地址。') return;
+    if (_serverController.text.trim().isEmpty) return;
+    setState(() => _error = null);
   }
 
   Future<void> _loadSession() async {
