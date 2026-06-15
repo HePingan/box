@@ -73,6 +73,7 @@ class AccountStatusCard extends StatelessWidget {
             spacing: 10,
             runSpacing: 10,
             children: [
+              _InfoChip(label: '版本', value: 'HTTPS 域名版'),
               _InfoChip(label: '账号 ID', value: user.id),
               _InfoChip(label: '状态', value: user.status),
               if (user.lastLoginAt != null)
@@ -156,7 +157,16 @@ class AccountLoginCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           const Text(
-            '默认连接官方服务器。登录后可使用平台图片额度；没有账号可直接注册，管理员账号可进入统一管理后台。',
+            'HTTPS 域名版 · background.hpa888.top',
+            style: TextStyle(
+              color: AppTokens.primaryBlue,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            '默认连接 HTTPS 官方服务器。注册、管理后台和图片代理预览已启用；没有账号可直接注册。',
             style: TextStyle(color: AppTokens.textSecondary, height: 1.45),
           ),
           const SizedBox(height: 16),
@@ -164,7 +174,7 @@ class AccountLoginCard extends StatelessWidget {
             controller: serverController,
             decoration: const InputDecoration(
               labelText: '服务器地址',
-              hintText: 'http://47.109.97.1:8799',
+              hintText: 'https://background.hpa888.top',
               prefixIcon: Icon(Icons.dns_rounded),
             ),
             keyboardType: TextInputType.url,
