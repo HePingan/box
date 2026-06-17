@@ -1201,10 +1201,15 @@ class ImageGeneratorResultCard extends StatelessWidget {
 }
 
 class _SmartImageLoader extends StatelessWidget {
-  const _SmartImageLoader({required this.url, required this.isDataUrl});
+  const _SmartImageLoader({
+    required this.url,
+    required this.isDataUrl,
+    this.fallbackUrl,
+  });
 
   final String url;
   final bool isDataUrl;
+  final String? fallbackUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -1217,10 +1222,86 @@ class _SmartImageLoader extends StatelessWidget {
         errorBuilder: (_, __, ___) => _buildFallback(context),
       );
     }
+
+    return _NetworkImageWithFallback(primaryUrl: url, fallbackUrl: fallbackUrl);
+  }
+
+  Widget _buildFallback(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      height: 260,
+      color: const Color(0xFFEFF3F9),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.broken_image_outlined,
+            size: 36,
+            color: AppTokens.textSecondary,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '图片加载失败，可能是跨域限制',
+            style: TextStyle(color: AppTokens.textSecondary, fontSize: 13),
+          ),
+          const SizedBox(height: 4),
+          OutlinedButton.icon(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: url));
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('图片链接已复制到剪贴板')));
+            },
+            icon: const Icon(Icons.copy_rounded, size: 16),
+            label: const Text('复制链接'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NetworkImageWithFallback extends StatefulWidget {
+  const _NetworkImageWithFallback({
+    required this.primaryUrl,
+    required this.fallbackUrl,
+  });
+
+  final String primaryUrl;
+  final String? fallbackUrl;
+
+  @override
+  State<_NetworkImageWithFallback> createState() =>
+      _NetworkImageWithFallbackState();
+}
+
+class _NetworkImageWithFallbackState extends State<_NetworkImageWithFallback> {
+  late String _currentUrl;
+  bool _triedFallback = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentUrl = widget.primaryUrl;
+  }
+
+  void _tryFallback() {
+    if (!_triedFallback &&
+        widget.fallbackUrl != null &&
+        widget.fallbackUrl!.isNotEmpty) {
+      setState(() {
+        _currentUrl = widget.fallbackUrl!;
+        _triedFallback = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         return Image.network(
-          url,
+          _currentUrl,
           width: double.infinity,
           height: 260,
           fit: BoxFit.cover,
@@ -1240,7 +1321,20 @@ class _SmartImageLoader extends StatelessWidget {
               ),
             );
           },
-          errorBuilder: (_, __, ___) => _buildFallback(context),
+          errorBuilder: (_, __, ___) {
+            if (!_triedFallback && widget.fallbackUrl != null) {
+              WidgetsBinding.instance.addPostFrameCallback(
+                (_) => _tryFallback(),
+              );
+              return Container(
+                width: double.infinity,
+                height: 260,
+                color: const Color(0xFFEFF3F9),
+                child: const Center(child: CircularProgressIndicator()),
+              );
+            }
+            return _buildFallback(context);
+          },
         );
       },
     );
@@ -1267,7 +1361,7 @@ class _SmartImageLoader extends StatelessWidget {
           const SizedBox(height: 4),
           OutlinedButton.icon(
             onPressed: () {
-              Clipboard.setData(ClipboardData(text: url));
+              Clipboard.setData(ClipboardData(text: widget.primaryUrl));
               ScaffoldMessenger.of(
                 context,
               ).showSnackBar(const SnackBar(content: Text('图片链接已复制到剪贴板')));
@@ -1314,6 +1408,7 @@ class _GeneratedImageTile extends StatelessWidget {
             child: _SmartImageLoader(
               url: item.image,
               isDataUrl: item.isDataUrl,
+              fallbackUrl: item.rawUrl,
             ),
           ),
           const SizedBox(height: 10),
