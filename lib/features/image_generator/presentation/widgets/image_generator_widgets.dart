@@ -1301,7 +1301,7 @@ class _WebImageWithFallback extends StatefulWidget {
 
 class _WebImageWithFallbackState extends State<_WebImageWithFallback> {
   late String _currentUrl;
-  bool _error = false;
+  bool _triedFallback = false;
 
   @override
   void initState() {
@@ -1309,11 +1309,21 @@ class _WebImageWithFallbackState extends State<_WebImageWithFallback> {
     _currentUrl = widget.url;
   }
 
+  void _onError() {
+    if (!_triedFallback &&
+        widget.fallbackUrl != null &&
+        widget.fallbackUrl!.isNotEmpty) {
+      setState(() {
+        _currentUrl = widget.fallbackUrl!;
+        _triedFallback = true;
+      });
+    } else {
+      setState(() {});
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_error) {
-      return _buildFallback(context, _currentUrl);
-    }
     return Container(
       width: double.infinity,
       height: 260,
@@ -1324,7 +1334,19 @@ class _WebImageWithFallbackState extends State<_WebImageWithFallback> {
           width: double.infinity,
           height: 260,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _buildFallback(context, _currentUrl),
+          errorBuilder: (_, __, ___) {
+            if (!_triedFallback) {
+              // First error: try fallback URL
+              WidgetsBinding.instance.addPostFrameCallback((_) => _onError());
+              return Container(
+                width: double.infinity,
+                height: 260,
+                color: const Color(0xFFEFF3F9),
+                child: const Center(child: CircularProgressIndicator()),
+              );
+            }
+            return _buildFallback(context, _currentUrl);
+          },
         ),
       ),
     );
