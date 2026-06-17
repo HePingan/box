@@ -544,10 +544,11 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     if (base.isEmpty) return images;
     return images.map((image) {
       if (image.isDataUrl) return image;
-      final encoded = Uri.encodeQueryComponent(image.rawUrl ?? image.image);
+      final raw = _normalizeImageUrl(image.rawUrl ?? image.image);
+      final encoded = Uri.encodeQueryComponent(raw);
       return GeneratedImageResult(
         image: '$base/api/image/proxy?url=$encoded',
-        rawUrl: _normalizeImageUrl(image.rawUrl ?? image.image),
+        rawUrl: raw,
         revisedPrompt: image.revisedPrompt,
       );
     }).toList();
