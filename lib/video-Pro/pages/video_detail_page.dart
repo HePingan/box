@@ -9,6 +9,7 @@ import '../widgets/video_play_container.dart';
 import 'detail/detail_info_card.dart';
 import 'detail/detail_models.dart';
 import 'detail/detail_play_parser.dart';
+import '../../design_system/app_tokens.dart';
 
 class VideoDetailPage extends StatelessWidget {
   final VideoSource source;
@@ -267,7 +268,7 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
         border: Border.all(color: const Color(0xFFE7ECF5)),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF111827).withValues(alpha: 0.06),
+            color: AppTokens.inkDark.withValues(alpha: 0.06),
             blurRadius: 18,
             offset: const Offset(0, 10),
           ),
@@ -291,7 +292,7 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                 ),
                 child: const Icon(
                   Icons.play_arrow_rounded,
-                  color: Color(0xFF111827),
+                  color: AppTokens.inkDark,
                   size: 24,
                 ),
               ),
@@ -305,7 +306,7 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Color(0xFF111827),
+                        color: AppTokens.inkDark,
                         fontSize: 15,
                         fontWeight: FontWeight.w900,
                       ),
@@ -504,7 +505,7 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                   ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFFFE08A).withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(999),
+                    borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                     border: Border.all(
                       color: const Color(0xFFFFE08A).withValues(alpha: 0.24),
                     ),
@@ -628,7 +629,7 @@ class _PlaybackChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      borderRadius: BorderRadius.circular(999),
+      borderRadius: BorderRadius.circular(AppTokens.radiusPill),
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
@@ -643,7 +644,7 @@ class _PlaybackChip extends StatelessWidget {
                 )
               : null,
           color: selected ? null : const Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.circular(999),
+          borderRadius: BorderRadius.circular(AppTokens.radiusPill),
           border: Border.all(
             color: selected ? Colors.transparent : const Color(0xFFE7ECF5),
           ),
@@ -654,7 +655,7 @@ class _PlaybackChip extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,
           style: TextStyle(
-            color: selected ? const Color(0xFF111827) : const Color(0xFF475569),
+            color: selected ? AppTokens.inkDark : const Color(0xFF475569),
             fontSize: 13,
             fontWeight: FontWeight.w900,
           ),

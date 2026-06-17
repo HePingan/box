@@ -4,6 +4,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../models/video_source.dart';
 import '../../models/vod_item.dart';
 
+import '../../../design_system/app_tokens.dart';
+
 class DetailInfoCard extends StatelessWidget {
   const DetailInfoCard({
     super.key,
@@ -115,7 +117,7 @@ class DetailInfoCard extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                color: Color(0xFF111827),
+                color: AppTokens.inkDark,
                 fontSize: 15,
                 fontWeight: FontWeight.w900,
               ),
@@ -163,7 +165,7 @@ class DetailInfoCard extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                color: Color(0xFF111827),
+                color: AppTokens.inkDark,
                 fontSize: 12.5,
                 fontWeight: FontWeight.w900,
               ),
@@ -189,7 +191,7 @@ class DetailInfoCard extends StatelessWidget {
         Text(
           text,
           style: const TextStyle(
-            color: Color(0xFF111827),
+            color: AppTokens.inkDark,
             fontSize: 15,
             fontWeight: FontWeight.w900,
           ),
@@ -218,7 +220,7 @@ class DetailInfoCard extends StatelessWidget {
         border: Border.all(color: const Color(0xFFE7ECF5)),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF111827).withValues(alpha: 0.06),
+            color: AppTokens.inkDark.withValues(alpha: 0.06),
             blurRadius: 18,
             offset: const Offset(0, 10),
           ),
@@ -258,7 +260,7 @@ class DetailInfoCard extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: Color(0xFF111827),
+                        color: AppTokens.inkDark,
                         fontSize: 19,
                         height: 1.14,
                         fontWeight: FontWeight.w900,

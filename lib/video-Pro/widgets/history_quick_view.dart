@@ -2,7 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'package:box/design_system/app_tokens.dart';
+import '../../design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_bottom_sheet.dart';
 
 import '../controller/history_controller.dart';
@@ -32,7 +32,7 @@ class HistoryQuickView extends StatelessWidget {
         return RepaintBoundary(
           child: Card(
             elevation: 0,
-            color: const Color(0xFF111827),
+            color: AppTokens.inkDark,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(26),
               side: const BorderSide(color: Color(0xFF273449)),

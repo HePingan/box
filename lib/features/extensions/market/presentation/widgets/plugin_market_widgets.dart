@@ -23,7 +23,7 @@ class MarketPill extends StatelessWidget {
         decoration: BoxDecoration(
           gradient: selected ? AppTokens.blueGradient : null,
           color: selected ? null : Colors.white,
-          borderRadius: BorderRadius.circular(999),
+          borderRadius: BorderRadius.circular(AppTokens.radiusPill),
           border: Border.all(
             color: selected ? Colors.transparent : AppTokens.divider,
           ),
@@ -57,7 +57,7 @@ class MarketStatusBadge extends StatelessWidget {
         color: installed
             ? AppTokens.emerald.withValues(alpha: 0.12)
             : AppTokens.primaryBlue.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
       ),
       child: Text(
         installed ? '已安装' : '可安装',
@@ -140,7 +140,7 @@ class MarketTagChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: const Color(0xFFF2F4F7),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
       ),
       child: Text(
         text,

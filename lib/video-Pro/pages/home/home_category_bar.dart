@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../controller/video_controller.dart';
 import 'home_utils.dart';
+import '../../../design_system/app_tokens.dart';
 
 class HomeCategoryBar extends StatelessWidget {
   const HomeCategoryBar({super.key, required this.controller});
@@ -22,12 +23,12 @@ class HomeCategoryBar extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 10),
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF111827),
+        color: AppTokens.inkDark,
         borderRadius: BorderRadius.circular(26),
         border: Border.all(color: const Color(0xFF273449)),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF111827).withValues(alpha: 0.14),
+            color: AppTokens.inkDark.withValues(alpha: 0.14),
             blurRadius: 18,
             offset: const Offset(0, 10),
           ),
@@ -65,7 +66,7 @@ class HomeCategoryBar extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(999),
+                  borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                 ),
                 child: const Text(
                   '胶囊导航',
@@ -107,7 +108,7 @@ class HomeCategoryBar extends StatelessWidget {
                 return Padding(
                   padding: const EdgeInsets.only(right: 9),
                   child: InkWell(
-                    borderRadius: BorderRadius.circular(999),
+                    borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                     onTap: () => controller.setCategory(typeId),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 220),
@@ -124,7 +125,9 @@ class HomeCategoryBar extends StatelessWidget {
                         color: isSelected
                             ? null
                             : Colors.white.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(999),
+                        borderRadius: BorderRadius.circular(
+                          AppTokens.radiusPill,
+                        ),
                         border: Border.all(
                           color: isSelected
                               ? Colors.transparent
@@ -149,7 +152,7 @@ class HomeCategoryBar extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: isSelected
-                                ? const Color(0xFF111827)
+                                ? AppTokens.inkDark
                                 : Colors.white.withValues(alpha: 0.82),
                             fontWeight: FontWeight.w900,
                             fontSize: 13,

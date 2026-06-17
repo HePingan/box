@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../controllers/novel_detail_controller.dart';
 import '../core/models.dart';
 import 'reader_page.dart';
+import '../../design_system/app_tokens.dart';
 
 class NovelDetailPage extends StatefulWidget {
   const NovelDetailPage({super.key, required this.entryBook});
@@ -106,9 +107,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: cur
-                          ? const Color(0xFF6D28D9)
-                          : const Color(0xFF111827),
+                      color: cur ? const Color(0xFF6D28D9) : AppTokens.inkDark,
                       fontWeight: cur ? FontWeight.w900 : FontWeight.w700,
                     ),
                   ),
@@ -335,7 +334,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(999),
+                borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                 border: Border.all(color: const Color(0xFFEDE9FE)),
               ),
               child: Row(

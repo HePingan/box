@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'detail_models.dart';
 
+import '../../../design_system/app_tokens.dart';
+
 class DetailEpisodeSection extends StatefulWidget {
   const DetailEpisodeSection({
     super.key,
@@ -88,7 +90,7 @@ class _DetailEpisodeSectionState extends State<DetailEpisodeSection> {
             border: Border.all(color: const Color(0xFFE7ECF5)),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFF111827).withValues(alpha: 0.06),
+                color: AppTokens.inkDark.withValues(alpha: 0.06),
                 blurRadius: 18,
                 offset: const Offset(0, 10),
               ),
@@ -123,7 +125,7 @@ class _DetailEpisodeSectionState extends State<DetailEpisodeSection> {
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w900,
-                          color: Color(0xFF111827),
+                          color: AppTokens.inkDark,
                         ),
                       ),
                     ],
@@ -201,7 +203,7 @@ class _DetailEpisodeSectionState extends State<DetailEpisodeSection> {
                         style: TextStyle(
                           fontSize: 12,
                           color: isSelected
-                              ? const Color(0xFF111827)
+                              ? AppTokens.inkDark
                               : const Color(0xFF475569),
                           fontWeight: FontWeight.w900,
                         ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'detail_models.dart';
+import '../../../design_system/app_tokens.dart';
 
 class DetailLineSelector extends StatelessWidget {
   const DetailLineSelector({
@@ -26,7 +27,7 @@ class DetailLineSelector extends StatelessWidget {
         border: Border.all(color: const Color(0xFFE7ECF5)),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF111827).withValues(alpha: 0.06),
+            color: AppTokens.inkDark.withValues(alpha: 0.06),
             blurRadius: 18,
             offset: const Offset(0, 10),
           ),
@@ -56,7 +57,7 @@ class DetailLineSelector extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w900,
-                  color: Color(0xFF111827),
+                  color: AppTokens.inkDark,
                 ),
               ),
               const Spacer(),
@@ -64,7 +65,7 @@ class DetailLineSelector extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                 decoration: BoxDecoration(
                   color: const Color(0xFFFFF7D6),
-                  borderRadius: BorderRadius.circular(999),
+                  borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                 ),
                 child: const Text(
                   '智能优选',
@@ -89,7 +90,7 @@ class DetailLineSelector extends StatelessWidget {
                 return Padding(
                   padding: const EdgeInsets.only(right: 9, bottom: 8),
                   child: InkWell(
-                    borderRadius: BorderRadius.circular(999),
+                    borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                     onTap: () => onSelected(index),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 220),
@@ -107,7 +108,9 @@ class DetailLineSelector extends StatelessWidget {
                               )
                             : null,
                         color: selected ? null : const Color(0xFFF8FAFC),
-                        borderRadius: BorderRadius.circular(999),
+                        borderRadius: BorderRadius.circular(
+                          AppTokens.radiusPill,
+                        ),
                         border: Border.all(
                           color: selected
                               ? Colors.transparent
@@ -119,7 +122,7 @@ class DetailLineSelector extends StatelessWidget {
                         style: TextStyle(
                           fontSize: 13,
                           color: selected
-                              ? const Color(0xFF111827)
+                              ? AppTokens.inkDark
                               : const Color(0xFF475569),
                           fontWeight: FontWeight.w900,
                         ),

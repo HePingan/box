@@ -34,6 +34,13 @@ class _ToolPageState extends State<ToolPage>
     _displayCategories = List.from(_allCategories);
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    super.dispose();
+  }
+
   void _runFilter(String enteredKeyword) {
     if (enteredKeyword.isEmpty) {
       setState(() => _displayCategories = _allCategories);

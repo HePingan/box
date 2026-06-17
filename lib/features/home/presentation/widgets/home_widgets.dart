@@ -79,7 +79,7 @@ class HomeMiniPill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
         color: AppTokens.primaryBlue.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
         border: Border.all(
           color: AppTokens.primaryBlue.withValues(alpha: 0.16),
         ),
@@ -117,7 +117,7 @@ class HomeQuickDockCard extends StatelessWidget {
           border: Border.all(color: const Color(0xFFE7ECF5)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.045),
+              color: AppTokens.ink.withValues(alpha: 0.045),
               blurRadius: 18,
               offset: const Offset(0, 10),
             ),
@@ -217,7 +217,7 @@ class HomeFeatureCard extends StatelessWidget {
                   ),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.20),
-                    borderRadius: BorderRadius.circular(999),
+                    borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                     border: Border.all(
                       color: Colors.white.withValues(alpha: 0.24),
                     ),

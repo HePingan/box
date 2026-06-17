@@ -166,7 +166,7 @@ class ToolStatusBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
         border: Border.all(color: color.withValues(alpha: 0.18)),
       ),
       child: Text(
@@ -273,7 +273,7 @@ class _ExpandableCategoryCardState extends State<ExpandableCategoryCard> {
         border: Border.all(color: const Color(0xFFE7ECF5)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.045),
+            color: AppTokens.ink.withValues(alpha: 0.045),
             blurRadius: 18,
             offset: const Offset(0, 10),
           ),
@@ -420,7 +420,9 @@ class _ExpandableCategoryCardState extends State<ExpandableCategoryCard> {
                                             ? const Color(0xFF059669)
                                             : widget.category.iconBgColor)
                                         .withValues(alpha: 0.10),
-                                borderRadius: BorderRadius.circular(999),
+                                borderRadius: BorderRadius.circular(
+                                  AppTokens.radiusPill,
+                                ),
                                 border: Border.all(
                                   color:
                                       (available

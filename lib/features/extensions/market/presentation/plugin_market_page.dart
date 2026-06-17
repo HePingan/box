@@ -413,7 +413,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
         decoration: BoxDecoration(
           gradient: selected ? AppTokens.violetGradient : null,
           color: selected ? null : Colors.white,
-          borderRadius: BorderRadius.circular(999),
+          borderRadius: BorderRadius.circular(AppTokens.radiusPill),
           border: Border.all(
             color: selected ? Colors.transparent : AppTokens.divider,
           ),

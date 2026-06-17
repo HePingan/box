@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/vod_item.dart';
 import 'home_empty_state.dart';
+import '../../../design_system/app_tokens.dart';
 
 typedef HomeVideoCoverLoader = String? Function(VodItem video);
 
@@ -152,12 +153,12 @@ class HomeVideoCard extends StatelessWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF111827),
+          color: AppTokens.inkDark,
           borderRadius: BorderRadius.circular(26),
           border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
           boxShadow: [
             BoxShadow(
-              color: const Color(0xFF111827).withValues(alpha: 0.18),
+              color: AppTokens.inkDark.withValues(alpha: 0.18),
               blurRadius: 22,
               offset: const Offset(0, 12),
             ),
@@ -243,7 +244,9 @@ class HomeVideoCard extends StatelessWidget {
                           color: const Color(
                             0xFFFFE08A,
                           ).withValues(alpha: 0.92),
-                          borderRadius: BorderRadius.circular(999),
+                          borderRadius: BorderRadius.circular(
+                            AppTokens.radiusPill,
+                          ),
                           border: Border.all(
                             color: Colors.white.withValues(alpha: 0.20),
                           ),
@@ -253,7 +256,7 @@ class HomeVideoCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            color: Color(0xFF111827),
+                            color: AppTokens.inkDark,
                             fontSize: 10,
                             fontWeight: FontWeight.w800,
                           ),
@@ -326,7 +329,7 @@ class _VideoCoverPlaceholder extends StatelessWidget {
     return DecoratedBox(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFF111827), Color(0xFF1D4ED8), Color(0xFF22D3EE)],
+          colors: [AppTokens.inkDark, Color(0xFF1D4ED8), Color(0xFF22D3EE)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),

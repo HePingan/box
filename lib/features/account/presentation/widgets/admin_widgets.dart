@@ -354,7 +354,9 @@ class AdminUsageSummaryCard extends StatelessWidget {
                             ? 0
                             : (day.requests / today.requests).clamp(0.0, 1.0),
                         minHeight: 6,
-                        borderRadius: BorderRadius.circular(999),
+                        borderRadius: BorderRadius.circular(
+                          AppTokens.radiusPill,
+                        ),
                         backgroundColor: AppTokens.divider,
                         valueColor: const AlwaysStoppedAnimation<Color>(
                           AppTokens.primaryBlue,
@@ -1509,7 +1511,7 @@ class _RoleBadge extends StatelessWidget {
         color: (isAdmin ? AppTokens.warning : AppTokens.primaryBlue).withValues(
           alpha: 0.12,
         ),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
       ),
       child: Text(
         isAdmin ? '管理员' : '用户',
@@ -1532,7 +1534,7 @@ class _StatusBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: AppTokens.warning.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
       ),
       child: const Text(
         '已禁用',

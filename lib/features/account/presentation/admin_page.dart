@@ -41,6 +41,12 @@ class _AdminPageState extends State<AdminPage> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _client.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;

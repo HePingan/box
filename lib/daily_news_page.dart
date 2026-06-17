@@ -25,6 +25,12 @@ class _DailyNewsPageState extends State<DailyNewsPage> {
   }
 
   @override
+  void dispose() {
+    _controller.clearCache();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,

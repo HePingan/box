@@ -361,7 +361,7 @@ class ContentOverviewCard extends StatelessWidget {
                     ),
                     decoration: BoxDecoration(
                       color: AppTokens.emerald.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(999),
+                      borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                     ),
                     child: Text(
                       snapshot.connectionState == ConnectionState.done

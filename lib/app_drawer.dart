@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'app/app_routes.dart';
 
+import 'design_system/app_tokens.dart';
+
 class AppDrawer extends StatelessWidget {
   const AppDrawer({super.key});
 
@@ -111,7 +113,7 @@ class AppDrawer extends StatelessWidget {
         borderRadius: BorderRadius.circular(15),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
+            color: AppTokens.ink.withValues(alpha: 0.03),
             blurRadius: 12,
             offset: const Offset(0, 5),
           ),

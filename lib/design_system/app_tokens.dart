@@ -17,6 +17,7 @@ class AppTokens {
   static const Color amber = Color(0xFFF59E0B);
   static const Color orange = Color(0xFFFF7A45);
   static const Color ink = Color(0xFF0F172A);
+  static const Color inkDark = Color(0xFF111827);
 
   // Surfaces and text.
   static const Color background = Color(0xFFF4F7FB);

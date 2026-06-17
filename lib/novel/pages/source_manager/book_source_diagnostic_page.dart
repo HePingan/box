@@ -6,6 +6,8 @@ import '../../core/novel_source_capability_detector.dart';
 import '../../core/novel_source_factory.dart';
 import 'book_source_model.dart';
 
+import '../../../design_system/app_tokens.dart';
+
 class BookSourceDiagnosticPage extends StatefulWidget {
   const BookSourceDiagnosticPage({
     super.key,
@@ -476,7 +478,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
+            color: AppTokens.ink.withValues(alpha: 0.03),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
@@ -523,7 +525,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
+            color: AppTokens.ink.withValues(alpha: 0.03),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
@@ -634,7 +636,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
+            color: AppTokens.ink.withValues(alpha: 0.03),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
@@ -783,7 +785,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
+            color: AppTokens.ink.withValues(alpha: 0.03),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
@@ -846,7 +848,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
+            color: AppTokens.ink.withValues(alpha: 0.03),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),

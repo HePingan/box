@@ -562,7 +562,7 @@ class _RoleBadge extends StatelessWidget {
         color: (isAdmin ? AppTokens.warning : AppTokens.primaryBlue).withValues(
           alpha: 0.12,
         ),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
       ),
       child: Text(
         isAdmin ? '管理员' : '普通用户',

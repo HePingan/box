@@ -180,4 +180,8 @@ class BoxAccountClient {
     final compact = text.replaceAll(RegExp(r'\s+'), ' ').trim();
     return compact.length <= 360 ? compact : '${compact.substring(0, 360)}...';
   }
+
+  void dispose() {
+    _httpClient.close();
+  }
 }

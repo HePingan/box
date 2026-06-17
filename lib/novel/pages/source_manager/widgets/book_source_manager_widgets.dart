@@ -5,6 +5,8 @@ import '../../../core/novel_source_capability_detector.dart';
 import '../book_source_manager.dart';
 import '../book_source_model.dart';
 
+import '../../../../design_system/app_tokens.dart';
+
 Color bookSourceReportColor(NovelSourceCapabilityReport report) {
   if (report.isUsableForRead) return Colors.green;
   if (report.isPartiallySupported) return Colors.orange;
@@ -165,7 +167,7 @@ class BookSourceCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
+            color: AppTokens.ink.withValues(alpha: 0.03),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),

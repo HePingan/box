@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../../design_system/app_tokens.dart';
+import '../../design_system/app_tokens.dart';
 import '../../../design_system/widgets/app_cards.dart';
 import '../../../design_system/widgets/app_page_scaffold.dart';
 import '../controllers/novel_detail_controller.dart';
@@ -522,7 +522,7 @@ class _NovelListPageState extends State<NovelListPage> {
                         fontSize: 16,
                         height: 1.16,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF111827),
+                        color: AppTokens.inkDark,
                       ),
                     ),
                     const SizedBox(height: 7),

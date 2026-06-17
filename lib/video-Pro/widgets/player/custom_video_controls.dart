@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:chewie/chewie.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import '../../../design_system/app_tokens.dart';
 
 class CustomVideoControls extends StatefulWidget {
   final String title;
@@ -379,7 +380,7 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
                   ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFFFE08A).withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(999),
+                    borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                   ),
                   child: const Text(
                     '手势播放器',
@@ -529,7 +530,7 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
             height: emphasized ? 44 : 38,
             child: Icon(
               icon,
-              color: emphasized ? const Color(0xFF111827) : Colors.white,
+              color: emphasized ? AppTokens.inkDark : Colors.white,
               size: emphasized ? 30 : 22,
             ),
           ),
@@ -543,7 +544,7 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
       ),
       child: Text(
         text,

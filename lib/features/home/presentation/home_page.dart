@@ -135,7 +135,7 @@ class _HomePageState extends State<HomePage>
         border: Border.all(color: const Color(0xFFE9EEF7)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.045),
+            color: AppTokens.ink.withValues(alpha: 0.045),
             blurRadius: 22,
             offset: const Offset(0, 10),
           ),
@@ -515,7 +515,7 @@ class _HomeHeroMetric extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
         color: const Color(0xFFF6F8FD),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
         border: Border.all(color: const Color(0xFFE7ECF5)),
       ),
       child: Row(

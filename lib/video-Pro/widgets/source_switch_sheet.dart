@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/video_source.dart';
 import '../services/source_visibility_repository.dart';
+import '../../design_system/app_tokens.dart';
 
 class SourceSwitchSheet extends StatefulWidget {
   final List<VideoSource> sources;
@@ -49,7 +50,7 @@ class _SourceSwitchSheetState extends State<SourceSwitchSheet> {
               height: 4,
               decoration: BoxDecoration(
                 color: Colors.black26,
-                borderRadius: BorderRadius.circular(999),
+                borderRadius: BorderRadius.circular(AppTokens.radiusPill),
               ),
             ),
             const SizedBox(height: 12),
