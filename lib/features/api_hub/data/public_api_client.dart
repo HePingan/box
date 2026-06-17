@@ -17,6 +17,8 @@ class PublicApiClient {
 
   final http.Client _client;
 
+  void dispose() => _client.close();
+
   Future<List<PublicBookResult>> searchOpenLibrary(String query) async {
     final keyword = query.trim();
     if (keyword.isEmpty) return const [];
@@ -419,7 +421,7 @@ class PublicApiClient {
 
   String _hex(String value, {required String fallback}) {
     final cleaned = value.replaceAll('#', '').trim().toLowerCase();
-    if (RegExp(r'^[0-9a-f]{3}([0-9a-f]{3})?\$').hasMatch(cleaned)) {
+    if (RegExp(r'^[0-9a-f]{3}([0-9a-f]{3})?$').hasMatch(cleaned)) {
       return cleaned;
     }
     return fallback;

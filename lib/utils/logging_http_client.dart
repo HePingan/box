@@ -107,13 +107,10 @@ class LoggingHttpClient extends http.BaseClient {
     try {
       final streamed = await _inner.send(request);
 
-      final bytes = await streamed.stream.fold<List<int>>(<int>[], (
-        prev,
-        chunk,
-      ) {
-        prev.addAll(chunk);
-        return prev;
-      });
+      final bytes = <int>[];
+      await for (final chunk in streamed.stream) {
+        bytes.addAll(chunk);
+      }
 
       final body = utf8.decode(bytes, allowMalformed: true);
 

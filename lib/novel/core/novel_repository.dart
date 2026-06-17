@@ -135,6 +135,9 @@ class NovelRepository {
     required int chapterIndex,
     bool forceRefresh = false,
   }) async {
+    if (chapterIndex < 0 || chapterIndex >= detail.chapters.length) {
+      throw Exception('章节索引越界: $chapterIndex (共 ${detail.chapters.length} 章)');
+    }
     final chapter = detail.chapters[chapterIndex];
     final key = NovelCacheKeys.chapter(chapter.url);
 

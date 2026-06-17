@@ -256,8 +256,11 @@ class BoxAdminClient {
     return BoxAdminUserQuota.fromFlatJson(decoded);
   }
 
-  static Uri _uri(String serverUrl, String path) =>
-      Uri.parse('${BoxAccountClient.normalizeServerUrl(serverUrl)}$path');
+  static Uri _uri(String serverUrl, String path) {
+    final normalized = BoxAccountClient.normalizeServerUrl(serverUrl);
+    final cleanPath = path.startsWith('/') ? path : '/$path';
+    return Uri.parse(normalized).resolve(cleanPath);
+  }
 
   static Map<String, String> _headers(String token, {bool json = false}) => {
     if (json) 'Content-Type': 'application/json',

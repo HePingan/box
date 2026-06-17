@@ -79,7 +79,7 @@ class RuleNovelSource implements NovelSource {
       return 'https:$raw';
     }
 
-    return 'http://$raw';
+    return 'https://$raw';
   }
 
   static Map<String, dynamic> _asMap(dynamic value) {

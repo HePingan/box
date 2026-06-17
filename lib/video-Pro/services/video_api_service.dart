@@ -279,6 +279,7 @@ class VideoApiService {
 
     final map = Map<String, dynamic>.from(decoded);
 
+    // Try standard list keys first using shared _toMapList
     for (final key in const [
       'sources',
       'list',
@@ -286,12 +287,13 @@ class VideoApiService {
       'items',
       'rows',
       'result',
-      'class',
     ]) {
-      final value = map[key];
-      final list = _toMapList(value);
+      final list = _toMapList(map[key]);
       if (list.isNotEmpty) return list;
     }
+
+    // 'class' / 'categories' are category-oriented, skip for source items
+    // Fall through to apiSite handling
 
     final apiSite = map['api_site'] ?? map['apiSite'];
     if (apiSite is Map) {

@@ -13,6 +13,18 @@ class UpdateService {
   static const String _cacheKey = 'update_manifest_cache_v1';
   static const String _cacheTimeKey = 'update_manifest_cache_time_v1';
 
+  /// Validate that the update check URL is a well-formed HTTPS URL.
+  /// Returns null if the URL is invalid or not HTTPS, preventing
+  /// potential SSRF / insecure redirect attacks.
+  static String? _validateUpdateUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return null;
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) return null;
+    if (uri.scheme != 'https') return null;
+    return trimmed;
+  }
+
   final Dio _dio = Dio(
     BaseOptions(
       connectTimeout: const Duration(seconds: 8),
@@ -31,9 +43,13 @@ class UpdateService {
     String? deviceId,
     String? userId,
   }) async {
+    final validatedUrl = _validateUpdateUrl(checkUrl);
+    if (validatedUrl == null) {
+      return await loadCachedManifest();
+    }
     try {
       final res = await _dio.get(
-        checkUrl,
+        validatedUrl,
         queryParameters: {
           'app_id': appId,
           'platform': platform,

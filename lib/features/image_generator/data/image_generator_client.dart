@@ -14,37 +14,14 @@ class ImageGeneratorClient {
     required String baseUrl,
     required String apiKey,
   }) async {
-    final base = baseUrl.trim().isEmpty
-        ? 'https://api.openai.com/v1'
-        : baseUrl.trim();
-    final endpoint = Uri.parse('${base.replaceAll(RegExp(r'/+$'), '')}/models');
-    final client = _httpClient ?? http.Client();
-    final closeClient = _httpClient == null;
-
-    try {
-      final response = await client
-          .get(endpoint, headers: {'Authorization': 'Bearer ${apiKey.trim()}'})
-          .timeout(const Duration(seconds: 30));
-      final text = utf8.decode(response.bodyBytes);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw ImageGeneratorException(
-          _extractError(text, response.statusCode),
-          statusCode: response.statusCode,
-          rawPreview: _preview(text),
-        );
-      }
-      final decoded = jsonDecode(text);
-      if (decoded is! Map<String, dynamic>) {
-        throw const ImageGeneratorException('模型接口返回格式不是 JSON 对象');
-      }
-      return _parseModelList(decoded, text);
-    } on ImageGeneratorException {
-      rethrow;
-    } catch (e) {
-      throw ImageGeneratorException('获取模型列表失败：$e');
-    } finally {
-      if (closeClient) client.close();
+    final base = baseUrl.trim();
+    if (base.isEmpty) {
+      throw const ImageGeneratorException('Base URL 不能为空，请配置图片生成服务的接口地址。');
     }
+    final endpoint = Uri.parse('${base.replaceAll(RegExp(r'/+$'), '')}/models');
+    return _fetchModelList(endpoint, {
+      'Authorization': 'Bearer ${apiKey.trim()}',
+    });
   }
 
   Future<ImagePlatformQuota> fetchPlatformQuota({
@@ -54,32 +31,24 @@ class ImageGeneratorClient {
     final endpoint = Uri.parse(
       '${platformBaseUrl.trim().replaceAll(RegExp(r'/+$'), '')}/api/image/quota',
     );
-    final client = _httpClient ?? http.Client();
-    final closeClient = _httpClient == null;
-    try {
-      final response = await client
-          .get(endpoint, headers: _platformHeaders(platformToken))
-          .timeout(const Duration(seconds: 20));
-      final text = utf8.decode(response.bodyBytes);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw ImageGeneratorException(
-          _extractError(text, response.statusCode),
-          statusCode: response.statusCode,
-          rawPreview: _preview(text),
-        );
-      }
-      final decoded = jsonDecode(text);
-      if (decoded is! Map<String, dynamic>) {
-        throw const ImageGeneratorException('额度接口返回格式不是 JSON 对象');
-      }
-      return ImagePlatformQuota.fromJson(decoded);
-    } on ImageGeneratorException {
-      rethrow;
-    } catch (e) {
-      throw ImageGeneratorException('获取平台额度失败：$e');
-    } finally {
-      if (closeClient) client.close();
+    final response = await _request(
+      endpoint,
+      headers: _platformHeaders(platformToken),
+      timeout: const Duration(seconds: 20),
+    );
+    final text = utf8.decode(response.bodyBytes);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ImageGeneratorException(
+        _extractError(text, response.statusCode),
+        statusCode: response.statusCode,
+        rawPreview: _preview(text),
+      );
     }
+    final decoded = jsonDecode(text);
+    if (decoded is! Map<String, dynamic>) {
+      throw const ImageGeneratorException('额度接口返回格式不是 JSON 对象');
+    }
+    return ImagePlatformQuota.fromJson(decoded);
   }
 
   Future<List<String>> fetchPlatformModels({
@@ -89,32 +58,24 @@ class ImageGeneratorClient {
     final endpoint = Uri.parse(
       '${platformBaseUrl.trim().replaceAll(RegExp(r'/+$'), '')}/api/image/models',
     );
-    final client = _httpClient ?? http.Client();
-    final closeClient = _httpClient == null;
-    try {
-      final response = await client
-          .get(endpoint, headers: _platformHeaders(platformToken))
-          .timeout(const Duration(seconds: 20));
-      final text = utf8.decode(response.bodyBytes);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw ImageGeneratorException(
-          _extractError(text, response.statusCode),
-          statusCode: response.statusCode,
-          rawPreview: _preview(text),
-        );
-      }
-      final decoded = jsonDecode(text);
-      if (decoded is! Map<String, dynamic>) {
-        throw const ImageGeneratorException('平台模型接口返回格式不是 JSON 对象');
-      }
-      return _parseModelList(decoded, text);
-    } on ImageGeneratorException {
-      rethrow;
-    } catch (e) {
-      throw ImageGeneratorException('获取平台模型失败：$e');
-    } finally {
-      if (closeClient) client.close();
+    final response = await _request(
+      endpoint,
+      headers: _platformHeaders(platformToken),
+      timeout: const Duration(seconds: 20),
+    );
+    final text = utf8.decode(response.bodyBytes);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ImageGeneratorException(
+        _extractError(text, response.statusCode),
+        statusCode: response.statusCode,
+        rawPreview: _preview(text),
+      );
     }
+    final decoded = jsonDecode(text);
+    if (decoded is! Map<String, dynamic>) {
+      throw const ImageGeneratorException('平台模型接口返回格式不是 JSON 对象');
+    }
+    return _parseModelList(decoded, text);
   }
 
   Future<ImageGenerationResponse> generateWithPlatformQuota({
@@ -125,79 +86,122 @@ class ImageGeneratorClient {
     final endpoint = Uri.parse(
       '${platformBaseUrl.trim().replaceAll(RegExp(r'/+$'), '')}/api/image/generate',
     );
+    final response = await _request(
+      endpoint,
+      method: 'POST',
+      headers: _platformHeaders(platformToken, json: true),
+      body: jsonEncode(params.toRequestBody()),
+      timeout: const Duration(seconds: 90),
+    );
+    final text = utf8.decode(response.bodyBytes);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ImageGeneratorException(
+        _extractError(text, response.statusCode),
+        statusCode: response.statusCode,
+        rawPreview: _preview(text),
+      );
+    }
+    return _parseGenerationResponse(text, params.outputFormat);
+  }
+
+  Future<ImageGenerationResponse> generate(ImageGenerationParams params) async {
+    final endpoint = Uri.parse(params.endpoint);
+    final body = params.toRequestBody();
+
+    final response = await _request(
+      endpoint,
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ${params.apiKey.trim()}',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode(body),
+      timeout: const Duration(seconds: 90),
+    );
+
+    final text = utf8.decode(response.bodyBytes);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ImageGeneratorException(
+        _extractError(text, response.statusCode),
+        statusCode: response.statusCode,
+        rawPreview: _preview(text),
+      );
+    }
+
+    return _parseGenerationResponse(text, params.outputFormat);
+  }
+
+  /// Shared HTTP request helper that manages client lifecycle.
+  Future<http.Response> _request(
+    Uri endpoint, {
+    String method = 'GET',
+    Map<String, String>? headers,
+    String? body,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
     final client = _httpClient ?? http.Client();
     final closeClient = _httpClient == null;
     try {
-      final response = await client
-          .post(
-            endpoint,
-            headers: _platformHeaders(platformToken, json: true),
-            body: jsonEncode(params.toRequestBody()),
-          )
-          .timeout(const Duration(seconds: 90));
-      final text = utf8.decode(response.bodyBytes);
+      http.BaseRequest request;
+      if (method == 'POST') {
+        request = http.Request(method, endpoint)
+          ..headers.addAll(headers ?? {})
+          ..body = body ?? '';
+      } else {
+        request = http.Request('GET', endpoint);
+        request.headers.addAll(headers ?? {});
+      }
+
+      final streamed = await request.send().timeout(timeout);
+      final response = await http.Response.fromStream(streamed);
+
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw ImageGeneratorException(
-          _extractError(text, response.statusCode),
+          _extractError(utf8.decode(response.bodyBytes), response.statusCode),
           statusCode: response.statusCode,
-          rawPreview: _preview(text),
+          rawPreview: _preview(utf8.decode(response.bodyBytes)),
         );
       }
-      return _parseGenerationResponse(text, params.outputFormat);
+      return response;
     } on ImageGeneratorException {
       rethrow;
     } catch (e) {
-      throw ImageGeneratorException('平台额度生图失败：$e');
+      throw ImageGeneratorException('请求失败：$e');
     } finally {
       if (closeClient) client.close();
     }
   }
 
-  Future<ImageGenerationResponse> generate(ImageGenerationParams params) async {
-    final endpoint = Uri.parse(params.endpoint);
-    final client = _httpClient ?? http.Client();
-    final closeClient = _httpClient == null;
-
-    try {
-      final body = params.toRequestBody();
-
-      final response = await client
-          .post(
-            endpoint,
-            headers: {
-              'Authorization': 'Bearer ${params.apiKey.trim()}',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode(body),
-          )
-          .timeout(const Duration(seconds: 90));
-
-      final text = utf8.decode(response.bodyBytes);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw ImageGeneratorException(
-          _extractError(text, response.statusCode),
-          statusCode: response.statusCode,
-          rawPreview: _preview(text),
-        );
-      }
-
-      return _parseGenerationResponse(text, params.outputFormat);
-    } on ImageGeneratorException {
-      rethrow;
-    } catch (e) {
-      throw ImageGeneratorException('生图请求失败：$e');
-    } finally {
-      if (closeClient) client.close();
+  Future<List<String>> _fetchModelList(
+    Uri endpoint,
+    Map<String, String> headers,
+  ) async {
+    final response = await _request(
+      endpoint,
+      headers: headers,
+      timeout: const Duration(seconds: 30),
+    );
+    final text = utf8.decode(response.bodyBytes);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ImageGeneratorException(
+        _extractError(text, response.statusCode),
+        statusCode: response.statusCode,
+        rawPreview: _preview(text),
+      );
     }
+    final decoded = jsonDecode(text);
+    if (decoded is! Map<String, dynamic>) {
+      throw const ImageGeneratorException('模型接口返回格式不是 JSON 对象');
+    }
+    return _parseModelList(decoded, text);
   }
 
   static Map<String, String> _platformHeaders(
     String? token, {
     bool json = false,
   }) {
-    final headers = <String, String>{
-      if (json) 'Content-Type': 'application/json',
-    };
+    final headers = <String, String>{};
+    if (json) headers['Content-Type'] = 'application/json';
     final trimmed = token?.trim() ?? '';
     if (trimmed.isNotEmpty) headers['Authorization'] = 'Bearer $trimmed';
     return headers;

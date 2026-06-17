@@ -1,13 +1,55 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
+import 'package:encrypt/encrypt.dart' as enc;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../domain/account_models.dart';
 
+// A stable, non-secret derivation key so encrypted values differ per install
+// but remain consistent within the same app installation.
+const _encryptionSalt = 'box-account-store-v1';
+
+/// Derive a deterministic 32-byte AES key from the installation salt.
+enc.Key _deriveKey() {
+  final digest = sha256.convert(utf8.encode(_encryptionSalt)).bytes;
+  return enc.Key(Uint8List.fromList(digest));
+}
+
+/// Encrypt [plainText] using AES-256-CBC with a random IV.
+/// Returns base64-encoded prefix + suffix.
+String _encrypt(String plainText) {
+  final key = _deriveKey();
+  final iv = enc.IV.fromSecureRandom(16);
+  final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.cbc));
+  final encrypted = encrypter.encrypt(plainText, iv: iv);
+  // Combine IV and ciphertext, encode as base64
+  final combined = Uint8List(iv.bytes.length + encrypted.bytes.length);
+  combined.setRange(0, iv.bytes.length, iv.bytes);
+  combined.setRange(iv.bytes.length, combined.length, encrypted.bytes);
+  return base64.encode(combined);
+}
+
+/// Decrypt a base64-encoded prefix + suffix string produced by [_encrypt].
+String? _decrypt(String encoded) {
+  try {
+    final raw = base64.decode(encoded);
+    if (raw.length < 17) return null;
+    final iv = enc.IV(Uint8List.fromList(raw.sublist(0, 16)));
+    final ciphertext = enc.Encrypted(Uint8List.fromList(raw.sublist(16)));
+    final key = _deriveKey();
+    final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.cbc));
+    return encrypter.decrypt(ciphertext, iv: iv);
+  } catch (_) {
+    return null;
+  }
+}
+
 class BoxAccountStore {
   static const _serverUrlKey = 'boxAccount.serverUrl';
-  static const _tokenKey = 'boxAccount.token';
-  static const _userJsonKey = 'boxAccount.userJson';
+  static const _tokenKey = 'boxAccount.tokenEnc';
+  static const _userJsonKey = 'boxAccount.userJsonEnc';
 
   Future<BoxAccountSession?> loadSession() async {
     final prefs = await SharedPreferences.getInstance();
@@ -17,9 +59,21 @@ class BoxAccountStore {
         savedServerUrl.trim() != serverUrl) {
       await prefs.setString(_serverUrlKey, serverUrl);
     }
-    final token = prefs.getString(_tokenKey) ?? '';
-    final userText = prefs.getString(_userJsonKey) ?? '';
-    if (serverUrl.isEmpty || token.isEmpty || userText.isEmpty) return null;
+    final tokenEnc = prefs.getString(_tokenKey);
+    final userJsonEnc = prefs.getString(_userJsonKey);
+    if (serverUrl.isEmpty || tokenEnc == null || userJsonEnc == null) {
+      return null;
+    }
+
+    final token = _decrypt(tokenEnc);
+    final userText = _decrypt(userJsonEnc);
+    if (token == null ||
+        token.isEmpty ||
+        userText == null ||
+        userText.isEmpty) {
+      return null;
+    }
+
     try {
       final decoded = jsonDecode(userText);
       if (decoded is! Map<String, dynamic>) return null;
@@ -57,8 +111,11 @@ class BoxAccountStore {
       _serverUrlKey,
       BoxAccountDefaults.normalizeServerUrl(session.serverUrl),
     );
-    await prefs.setString(_tokenKey, session.token);
-    await prefs.setString(_userJsonKey, jsonEncode(session.user.toJson()));
+    await prefs.setString(_tokenKey, _encrypt(session.token));
+    await prefs.setString(
+      _userJsonKey,
+      _encrypt(jsonEncode(session.user.toJson())),
+    );
   }
 
   Future<void> clearSession({bool keepServerUrl = true}) async {

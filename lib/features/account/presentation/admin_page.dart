@@ -48,56 +48,50 @@ class _AdminPageState extends State<AdminPage> {
     });
     try {
       final session = await _store.loadSession();
-      if (session == null) {
-        setState(() {
-          _session = null;
-          _users = const [];
-          _usage = const [];
-          _usageSummary = null;
-        });
+      if (session == null || !session.user.isAdmin) {
+        _setEmptyState(session);
         return;
       }
-      if (!session.user.isAdmin) {
-        setState(() {
-          _session = session;
-          _users = const [];
-          _usage = const [];
-          _usageSummary = null;
-        });
-        return;
-      }
-      final provider = await _client.fetchProvider(
-        serverUrl: session.serverUrl,
-        token: session.token,
-      );
-      final users = await _client.fetchUsers(
-        serverUrl: session.serverUrl,
-        token: session.token,
-      );
-      final usageSummary = await _client.fetchUsageSummary(
-        serverUrl: session.serverUrl,
-        token: session.token,
-      );
-      final usage = await _client.fetchUsage(
-        serverUrl: session.serverUrl,
-        token: session.token,
-        userId: _usageUserId,
-        success: _usageSuccess,
-        limit: 50,
-      );
+      final results = await Future.wait([
+        _client.fetchProvider(
+          serverUrl: session.serverUrl,
+          token: session.token,
+        ),
+        _client.fetchUsers(serverUrl: session.serverUrl, token: session.token),
+        _client.fetchUsageSummary(
+          serverUrl: session.serverUrl,
+          token: session.token,
+        ),
+        _client.fetchUsage(
+          serverUrl: session.serverUrl,
+          token: session.token,
+          userId: _usageUserId,
+          success: _usageSuccess,
+          limit: 50,
+        ),
+      ]);
       setState(() {
         _session = session;
-        _provider = provider;
+        _provider = results[0] as BoxAdminProviderConfig;
         _providerTestResult = null;
-        _users = users;
-        _usageSummary = usageSummary;
-        _usage = usage;
+        _users = results[1] as List<BoxAdminUserQuota>;
+        _usageSummary = results[2] as BoxUsageSummary;
+        _usage = results[3] as List<BoxAdminUsageRecord>;
       });
     } catch (error) {
       setState(() => _error = _messageOf(error));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _setEmptyState(BoxAccountSession? session) {
+    setState(() {
+      _session = session;
+      _users = const [];
+      _usage = const [];
+      _usageSummary = null;
+    });
   }
 
   Future<void> _updateQuota(
@@ -378,6 +372,10 @@ class _AdminPageState extends State<AdminPage> {
     return error.toString();
   }
 
+  Widget _emptyCard(IconData icon, String message) {
+    return AdminEmptyCard(icon: icon, message: message);
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = _session;
@@ -484,20 +482,11 @@ class _AdminPageState extends State<AdminPage> {
                     ),
                   )
                 else if (session == null)
-                  const AdminEmptyCard(
-                    icon: Icons.login_rounded,
-                    message: '请先回到账号中心，登录 Box 管理员账号。',
-                  )
+                  _emptyCard(Icons.login_rounded, '请先回到账号中心，登录 Box 管理员账号。')
                 else if (!session.user.isAdmin)
-                  const AdminEmptyCard(
-                    icon: Icons.lock_outline_rounded,
-                    message: '当前账号不是管理员，无法查看用户额度。',
-                  )
+                  _emptyCard(Icons.lock_outline_rounded, '当前账号不是管理员，无法查看用户额度。')
                 else if (_users.isEmpty)
-                  const AdminEmptyCard(
-                    icon: Icons.inbox_rounded,
-                    message: '暂无用户数据。',
-                  )
+                  _emptyCard(Icons.inbox_rounded, '暂无用户数据。')
                 else
                   ..._users.expand(
                     (user) => [

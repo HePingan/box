@@ -7,10 +7,12 @@ class BoxAccountDefaults {
     'http://47.109.97.1',
   };
 
+  /// Legacy HTTP URLs are automatically upgraded to the canonical HTTPS endpoint.
   static String normalizeServerUrl(String value) {
     final trimmed = value.trim();
     if (trimmed.isEmpty) return serverUrl;
-    return legacyServerUrls.contains(trimmed) ? serverUrl : trimmed;
+    if (legacyServerUrls.contains(trimmed)) return serverUrl;
+    return trimmed;
   }
 }
 
