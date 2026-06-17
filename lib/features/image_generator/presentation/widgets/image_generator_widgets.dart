@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -1219,14 +1220,19 @@ class _SmartImageLoader extends StatelessWidget {
         width: double.infinity,
         height: 260,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _buildFallback(context),
+        errorBuilder: (_, __, ___) => _buildFallback(context, url),
       );
+    }
+
+    // On web, use native <img> to avoid CORS issues
+    if (kIsWeb) {
+      return _WebImageWithFallback(url: url, fallbackUrl: fallbackUrl);
     }
 
     return _NetworkImageWithFallback(primaryUrl: url, fallbackUrl: fallbackUrl);
   }
 
-  Widget _buildFallback(BuildContext context) {
+  Widget _buildFallback(BuildContext context, String imgUrl) {
     return Container(
       width: double.infinity,
       height: 260,
@@ -1247,7 +1253,85 @@ class _SmartImageLoader extends StatelessWidget {
           const SizedBox(height: 4),
           OutlinedButton.icon(
             onPressed: () {
-              Clipboard.setData(ClipboardData(text: url));
+              Clipboard.setData(ClipboardData(text: imgUrl));
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('图片链接已复制到剪贴板')));
+            },
+            icon: const Icon(Icons.copy_rounded, size: 16),
+            label: const Text('复制链接'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Web-specific image loader that avoids CORS restrictions by relying
+/// on the browser's native <img> tag (which doesn't require CORS headers).
+class _WebImageWithFallback extends StatefulWidget {
+  const _WebImageWithFallback({required this.url, required this.fallbackUrl});
+
+  final String url;
+  final String? fallbackUrl;
+
+  @override
+  State<_WebImageWithFallback> createState() => _WebImageWithFallbackState();
+}
+
+class _WebImageWithFallbackState extends State<_WebImageWithFallback> {
+  late String _currentUrl;
+  bool _error = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentUrl = widget.url;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error) {
+      return _buildFallback(context, _currentUrl);
+    }
+    return Container(
+      width: double.infinity,
+      height: 260,
+      color: const Color(0xFFEFF3F9),
+      child: ClipRRect(
+        child: Image.network(
+          _currentUrl,
+          width: double.infinity,
+          height: 260,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildFallback(context, _currentUrl),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFallback(BuildContext context, String imgUrl) {
+    return Container(
+      width: double.infinity,
+      height: 260,
+      color: const Color(0xFFEFF3F9),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.broken_image_outlined,
+            size: 36,
+            color: AppTokens.textSecondary,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '图片加载失败，可能是跨域限制',
+            style: TextStyle(color: AppTokens.textSecondary, fontSize: 13),
+          ),
+          const SizedBox(height: 4),
+          OutlinedButton.icon(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: imgUrl));
               ScaffoldMessenger.of(
                 context,
               ).showSnackBar(const SnackBar(content: Text('图片链接已复制到剪贴板')));
