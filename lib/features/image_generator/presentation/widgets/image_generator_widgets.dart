@@ -1214,22 +1214,42 @@ class _SmartImageLoader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Normalize URL: OSS providers require lowercase bucket names
+    String normalizedUrl = url;
+    String? normalizedFallback = fallbackUrl;
+    try {
+      final uri = Uri.parse(url);
+      normalizedUrl = uri.replace(host: uri.host.toLowerCase()).toString();
+      if (normalizedFallback != null) {
+        final fallbackUri = Uri.parse(normalizedFallback);
+        normalizedFallback = fallbackUri
+            .replace(host: fallbackUri.host.toLowerCase())
+            .toString();
+      }
+    } catch (_) {}
+
     if (isDataUrl) {
       return Image.memory(
         base64Decode(url.split(',').last),
         width: double.infinity,
         height: 260,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _buildFallback(context, url),
+        errorBuilder: (_, __, ___) => _buildFallback(context, normalizedUrl),
       );
     }
 
     // On web, use native <img> to avoid CORS issues
     if (kIsWeb) {
-      return _WebImageWithFallback(url: url, fallbackUrl: fallbackUrl);
+      return _WebImageWithFallback(
+        url: normalizedUrl,
+        fallbackUrl: normalizedFallback,
+      );
     }
 
-    return _NetworkImageWithFallback(primaryUrl: url, fallbackUrl: fallbackUrl);
+    return _NetworkImageWithFallback(
+      primaryUrl: normalizedUrl,
+      fallbackUrl: normalizedFallback,
+    );
   }
 
   Widget _buildFallback(BuildContext context, String imgUrl) {

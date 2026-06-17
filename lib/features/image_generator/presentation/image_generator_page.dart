@@ -547,10 +547,23 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       final encoded = Uri.encodeQueryComponent(image.rawUrl ?? image.image);
       return GeneratedImageResult(
         image: '$base/api/image/proxy?url=$encoded',
-        rawUrl: image.rawUrl ?? image.image,
+        rawUrl: _normalizeImageUrl(image.rawUrl ?? image.image),
         revisedPrompt: image.revisedPrompt,
       );
     }).toList();
+  }
+
+  /// Normalize image URLs for OSS/CDN compatibility.
+  /// Some OSS providers (like Aliyun) require lowercase bucket names.
+  static String _normalizeImageUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      // Lowercase the host (domain + bucket)
+      final normalized = uri.replace(host: uri.host.toLowerCase());
+      return normalized.toString();
+    } catch (_) {
+      return url;
+    }
   }
 
   Future<void> _generate() async {
