@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -1180,6 +1182,87 @@ class ImageGeneratorResultCard extends StatelessWidget {
   }
 }
 
+class _SmartImageLoader extends StatelessWidget {
+  const _SmartImageLoader({required this.url, required this.isDataUrl});
+
+  final String url;
+  final bool isDataUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isDataUrl) {
+      return Image.memory(
+        base64Decode(url.split(',').last),
+        width: double.infinity,
+        height: 260,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _buildFallback(context),
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Image.network(
+          url,
+          width: double.infinity,
+          height: 260,
+          fit: BoxFit.cover,
+          loadingBuilder: (_, child, progress) {
+            if (progress == null) return child;
+            return Container(
+              width: double.infinity,
+              height: 260,
+              color: const Color(0xFFEFF3F9),
+              child: Center(
+                child: CircularProgressIndicator(
+                  value: progress.expectedTotalBytes != null
+                      ? progress.cumulativeBytesLoaded /
+                            progress.expectedTotalBytes!
+                      : null,
+                ),
+              ),
+            );
+          },
+          errorBuilder: (_, __, ___) => _buildFallback(context),
+        );
+      },
+    );
+  }
+
+  Widget _buildFallback(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      height: 260,
+      color: const Color(0xFFEFF3F9),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.broken_image_outlined,
+            size: 36,
+            color: AppTokens.textSecondary,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '图片加载失败，可能是跨域限制',
+            style: TextStyle(color: AppTokens.textSecondary, fontSize: 13),
+          ),
+          const SizedBox(height: 4),
+          OutlinedButton.icon(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: url));
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('图片链接已复制到剪贴板')));
+            },
+            icon: const Icon(Icons.copy_rounded, size: 16),
+            label: const Text('复制链接'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _GeneratedImageTile extends StatelessWidget {
   const _GeneratedImageTile({
     required this.item,
@@ -1210,17 +1293,9 @@ class _GeneratedImageTile extends StatelessWidget {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(14),
-            child: Image.network(
-              item.image,
-              width: double.infinity,
-              height: 260,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => Container(
-                height: 180,
-                alignment: Alignment.center,
-                color: const Color(0xFFEFF3F9),
-                child: const Text('图片预览失败，可复制链接检查'),
-              ),
+            child: _SmartImageLoader(
+              url: item.image,
+              isDataUrl: item.isDataUrl,
             ),
           ),
           const SizedBox(height: 10),
@@ -1392,7 +1467,8 @@ class _HistoryTile extends StatelessWidget {
                     width: 58,
                     height: 58,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => Container(
+                    headers: {'Origin': ''},
+                    errorBuilder: (_, __, ___) => Container(
                       width: 58,
                       height: 58,
                       color: const Color(0xFFEFF3F9),
