@@ -1114,6 +1114,24 @@ class ImageGeneratorResultCard extends StatelessWidget {
               ),
             ],
           ),
+          if (loading) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTokens.warning.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: AppTokens.warning.withValues(alpha: 0.3),
+                ),
+              ),
+              child: const Text(
+                '⏳ 图片生成通常需要 1-5 分钟，请耐心等待。超时时间已调整为 5 分钟。',
+                style: TextStyle(color: AppTokens.textPrimary, fontSize: 12),
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Container(
             width: double.infinity,

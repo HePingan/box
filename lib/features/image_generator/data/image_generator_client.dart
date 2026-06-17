@@ -91,7 +91,7 @@ class ImageGeneratorClient {
       method: 'POST',
       headers: _platformHeaders(platformToken, json: true),
       body: jsonEncode(params.toRequestBody()),
-      timeout: const Duration(seconds: 90),
+      timeout: const Duration(seconds: 300),
     );
     final text = utf8.decode(response.bodyBytes);
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -116,7 +116,7 @@ class ImageGeneratorClient {
         'Content-Type': 'application/json',
       },
       body: jsonEncode(body),
-      timeout: const Duration(seconds: 90),
+      timeout: const Duration(seconds: 300),
     );
 
     final text = utf8.decode(response.bodyBytes);
