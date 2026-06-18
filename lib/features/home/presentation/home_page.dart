@@ -4,14 +4,13 @@ import 'package:flutter/material.dart';
 
 import 'package:box/daily_news_page.dart';
 import 'package:box/design_system/app_tokens.dart';
-import 'package:box/design_system/widgets/app_cards.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
-import 'package:box/features/api_hub/presentation/api_hub_page.dart';
 import 'package:box/globals.dart';
 import 'package:box/novel/pages/novel_list_page.dart';
+import 'package:box/plugin_manager.dart';
 import 'package:box/video_module.dart';
+import 'package:box/features/image_generator/presentation/image_generator_page.dart';
 
-import '../application/home_models.dart';
 import 'widgets/home_widgets.dart';
 
 class HomePage extends StatefulWidget {
@@ -37,20 +36,37 @@ class _HomePageState extends State<HomePage>
     super.initState();
     _initDate();
     _fetchDailyNews();
+    // 确保插件主机初始化，这样插件卡片才能拿到数据
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      HomePluginHost.instance.bootstrap();
+    });
   }
 
   void _initDate() {
     final now = DateTime.now();
+    final hour = now.hour;
+    String greeting;
+    if (hour < 6) {
+      greeting = '夜深了，注意休息';
+    } else if (hour < 12) {
+      greeting = '早上好，新的一天';
+    } else if (hour < 14) {
+      greeting = '中午好，吃午饭了吗';
+    } else if (hour < 18) {
+      greeting = '下午好，继续加油';
+    } else {
+      greeting = '晚上好，欢迎回来';
+    }
     final month = now.month.toString().padLeft(2, '0');
     final day = now.day.toString().padLeft(2, '0');
-    _todayDateStr = '$month月$day日';
+    _todayDateStr = '$month月$day日 · $greeting';
   }
 
   Future<void> _fetchDailyNews() async {
     setState(() => _isLoadingNews = true);
 
     try {
-      await Future.delayed(const Duration(milliseconds: 700));
+      await Future.delayed(const Duration(milliseconds: 500));
       final random = Random().nextInt(100);
       _newsList = [
         '漂白鸡爪掀行业震荡 多品牌回应',
@@ -75,11 +91,11 @@ class _HomePageState extends State<HomePage>
       child: CustomScrollView(
         physics: const BouncingScrollPhysics(),
         slivers: [
-          SliverToBoxAdapter(child: _buildHeroHeader()),
-          SliverToBoxAdapter(child: _buildDailyNewsCard()),
+          SliverToBoxAdapter(child: _buildGreetingBar()),
+          SliverToBoxAdapter(child: _buildQuickActions()),
+          SliverToBoxAdapter(child: _buildPluginSection()),
           SliverToBoxAdapter(child: _buildContinueRail()),
-          SliverToBoxAdapter(child: _buildTodayApiCard()),
-          SliverToBoxAdapter(child: _buildCommonEntryStrip()),
+          SliverToBoxAdapter(child: _buildDailyNewsCard()),
           const SliverToBoxAdapter(
             child: SizedBox(height: AppTokens.pageBottomPadding + 24),
           ),
@@ -88,137 +104,176 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  Widget _buildHeroHeader() {
-    return AppLightHeroCard(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      eyebrow: '晚上好，欢迎回来',
-      title: '今日工作台',
-      subtitle: '继续阅读、追剧和管理资源',
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      badge: '4-TAB HUB',
-      accentGradient: AppTokens.violetGradient,
-      leading: _HomeSoftIconButton(
-        icon: Icons.menu_rounded,
-        onTap: () => appScaffoldKey.currentState?.openDrawer(),
-      ),
-      metrics: const [
-        Expanded(
-          child: _HomeHeroMetric(value: '12', label: '书架'),
-        ),
-        SizedBox(width: 8),
-        Expanded(
-          child: _HomeHeroMetric(value: '8', label: '插件'),
-        ),
-        SizedBox(width: 8),
-        Expanded(
-          child: _HomeHeroMetric(value: '2', label: '今日'),
-        ),
-      ],
-    );
-  }
-
-  void _switchToTab(int index, String label) {
-    if (widget.onSwitchTab != null) {
-      widget.onSwitchTab!(index);
-      return;
-    }
-    _showSnack(context, '请在底部进入「$label」');
-  }
-
-  Widget _buildDailyNewsCard() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-      padding: const EdgeInsets.fromLTRB(13, 11, 13, 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.96),
-        borderRadius: BorderRadius.circular(26),
-        border: Border.all(color: const Color(0xFFE9EEF7)),
-        boxShadow: [
-          BoxShadow(
-            color: AppTokens.ink.withValues(alpha: 0.045),
-            blurRadius: 22,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  // ── 顶部问候栏 ─────────────────────────────
+  Widget _buildGreetingBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFFF8A3D), Color(0xFFFFC857)],
-                  ),
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                child: const Icon(
-                  Icons.newspaper_rounded,
-                  color: Colors.white,
-                  size: 18,
-                ),
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      '今天看什么',
-                      style: TextStyle(
-                        color: AppTokens.textPrimary,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    Text(
-                      'Daily News · $_todayDateStr',
-                      style: const TextStyle(
-                        color: AppTokens.textSecondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                tooltip: '刷新',
-                visualDensity: VisualDensity.compact,
-                onPressed: _fetchDailyNews,
-                icon: const Icon(Icons.refresh_rounded),
-              ),
-              TextButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => DailyNewsPage()),
-                  );
-                },
-                child: const Text('查看'),
-              ),
-            ],
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              gradient: AppTokens.violetGradient,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(
+              Icons.home_rounded,
+              color: Colors.white,
+              size: 22,
+            ),
           ),
-          const SizedBox(height: 7),
-          if (_isLoadingNews)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.symmetric(vertical: 10),
-                child: CircularProgressIndicator(strokeWidth: 2.4),
-              ),
-            )
-          else
-            ..._newsList
-                .take(3)
-                .map((newsText) => HomeNewsLine(text: newsText)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _todayDateStr,
+                  style: const TextStyle(
+                    color: AppTokens.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Geek工具箱 · 今日工作台',
+                  style: TextStyle(
+                    color: AppTokens.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: '菜单',
+            icon: const Icon(
+              Icons.menu_rounded,
+              color: AppTokens.textSecondary,
+            ),
+            onPressed: () => appScaffoldKey.currentState?.openDrawer(),
+          ),
         ],
       ),
     );
   }
 
+  // ── 快捷入口 2×2 网格 ─────────────────────
+  Widget _buildQuickActions() {
+    final actions = [
+      _QuickAction(
+        title: '工具',
+        subtitle: '效率',
+        icon: Icons.handyman_rounded,
+        gradient: const LinearGradient(
+          colors: [Color(0xFF2563EB), Color(0xFF06B6D4)],
+        ),
+        onTap: () => _switchToTab(1, '工具'),
+      ),
+      _QuickAction(
+        title: '内容',
+        subtitle: '书影',
+        icon: Icons.collections_bookmark_rounded,
+        gradient: const LinearGradient(
+          colors: [Color(0xFF10B981), Color(0xFF06B6D4)],
+        ),
+        onTap: () => _switchToTab(2, '内容'),
+      ),
+      _QuickAction(
+        title: 'AI 生图',
+        subtitle: '多模型生成',
+        icon: Icons.auto_awesome_rounded,
+        gradient: const LinearGradient(
+          colors: [Color(0xFF7C3AED), Color(0xFFEC4899)],
+        ),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ImageGeneratorPage()),
+          );
+        },
+      ),
+      _QuickAction(
+        title: '扩展',
+        subtitle: '插件市场',
+        icon: Icons.tune_rounded,
+        gradient: const LinearGradient(
+          colors: [Color(0xFF8B5CF6), Color(0xFF6366F1)],
+        ),
+        onTap: () => _switchToTab(3, '扩展'),
+      ),
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: GridView.count(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        crossAxisCount: 2,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: 1.6,
+        children: actions.map((a) => _QuickActionCard(action: a)).toList(),
+      ),
+    );
+  }
+
+  // ── 插件横向滚动卡片 ─────────────────────
+  Widget _buildPluginSection() {
+    return ValueListenableBuilder<List<HomePlugin>>(
+      valueListenable: HomePluginHost.instance.listenable,
+      builder: (context, plugins, child) {
+        final customPlugins = plugins
+            .where(
+              (p) =>
+                  !p.builtIn && p.area == HomePluginArea.recommend && p.enabled,
+            )
+            .toList();
+
+        if (customPlugins.isEmpty) {
+          return const SliverToBoxAdapter(child: SizedBox.shrink());
+        }
+
+        return SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          sliver: SliverToBoxAdapter(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '已安装插件',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: AppTokens.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 110,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    physics: const BouncingScrollPhysics(),
+                    itemCount: customPlugins.length,
+                    separatorBuilder: (_, sep) => const SizedBox(width: 10),
+                    itemBuilder: (context, index) {
+                      final plugin = customPlugins[index];
+                      return _PluginCard(plugin: plugin);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ── 继续上次 ───────────────────────────────
   Widget _buildContinueRail() {
     final items = <HomeContinueItem>[
       HomeContinueItem(
@@ -247,307 +302,313 @@ class _HomePageState extends State<HomePage>
           );
         },
       ),
-      HomeContinueItem(
-        eyebrow: '最近管理',
-        title: '扩展资源',
-        subtitle: '插件、书源、片源与备份',
-        icon: Icons.extension_rounded,
-        color: const Color(0xFF8B5CF6),
-        onTap: () => _switchToTab(3, '扩展'),
-      ),
     ];
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 0, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.only(right: 16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '继续使用',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
-                      color: AppTokens.textPrimary,
+    if (items.isEmpty) {
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    }
+
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 0, 12),
+      sliver: SliverToBoxAdapter(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '继续使用',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        color: AppTokens.textPrimary,
+                      ),
                     ),
                   ),
-                ),
-                HomeMiniPill(label: '继续上次'),
-              ],
+                  HomeMiniPill(label: '继续上次'),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 88,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.only(right: 16),
-              itemCount: items.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 12),
-              itemBuilder: (context, index) =>
-                  HomeContinueCard(item: items[index]),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 88,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.only(right: 16),
+                itemCount: items.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
+                itemBuilder: (context, index) =>
+                    HomeContinueCard(item: items[index]),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildTodayApiCard() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-      padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Colors.white, Color(0xFFF7FBFF)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(26),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
-        boxShadow: AppTokens.shadowSm(color: AppTokens.primaryBlue),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: AppTokens.primaryBlue.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                child: const Icon(
-                  Icons.api_rounded,
-                  color: AppTokens.primaryBlue,
-                  size: 18,
-                ),
+  // ── 每日新闻 ───────────────────────────────
+  Widget _buildDailyNewsCard() {
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      sliver: SliverToBoxAdapter(
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(13, 11, 13, 10),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.96),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFFE9EEF7)),
+            boxShadow: [
+              BoxShadow(
+                color: AppTokens.ink.withValues(alpha: 0.04),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
               ),
-              const SizedBox(width: 9),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '今日可用能力',
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFF8A3D), Color(0xFFFFC857)],
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.newspaper_rounded,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      '今日热闻',
                       style: TextStyle(
                         color: AppTokens.textPrimary,
-                        fontSize: 17,
+                        fontSize: 15,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                    SizedBox(height: 2),
+                  ),
+                  IconButton(
+                    tooltip: '刷新',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _fetchDailyNews,
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => DailyNewsPage()),
+                      );
+                    },
+                    child: const Text('更多'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              if (_isLoadingNews)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else
+                ..._newsList.take(3).map((t) => HomeNewsLine(text: t)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _switchToTab(int index, String label) {
+    if (widget.onSwitchTab != null) {
+      widget.onSwitchTab!(index);
+      return;
+    }
+    showSnack(context, '请在底部进入「$label』');
+  }
+}
+
+// ── 快捷入口卡片 ──────────────────────────────
+class _QuickAction {
+  const _QuickAction({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.gradient,
+    required this.onTap,
+  });
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Gradient gradient;
+  final VoidCallback onTap;
+}
+
+class _QuickActionCard extends StatelessWidget {
+  const _QuickActionCard({required this.action});
+  final _QuickAction action;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: action.onTap,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            gradient: action.gradient,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: action.gradient.colors.first.withValues(alpha: 0.25),
+                blurRadius: 14,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.20),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(action.icon, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
                     Text(
-                      '公开 API 作为工作台能力，不做主 Tab 堆叠',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      action.title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      action.subtitle,
                       style: TextStyle(
-                        color: AppTokens.textSecondary,
-                        fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.78),
+                        fontSize: 11,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
                 ),
               ),
-              TextButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const ApiHubPage()),
-                  );
-                },
-                child: const Text('打开'),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Colors.white,
+                size: 20,
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          const Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              AppStatusPill(
-                label: 'Open-Meteo 天气',
-                icon: Icons.wb_cloudy_rounded,
-                color: AppTokens.primaryBlue,
-              ),
-              AppStatusPill(
-                label: 'API目录 国内可用',
-                icon: Icons.travel_explore_rounded,
-                color: AppTokens.orange,
-              ),
-              AppStatusPill(
-                label: '词典 / 测试数据',
-                icon: Icons.dataset_rounded,
-                color: AppTokens.emerald,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCommonEntryStrip() {
-    final actions = <HomeQuickAction>[
-      HomeQuickAction(
-        title: '工具',
-        subtitle: '效率',
-        icon: Icons.handyman_rounded,
-        color: const Color(0xFF2563EB),
-        onTap: () => _switchToTab(1, '工具'),
-      ),
-      HomeQuickAction(
-        title: '内容',
-        subtitle: '书影',
-        icon: Icons.collections_bookmark_rounded,
-        color: const Color(0xFF10B981),
-        onTap: () => _switchToTab(2, '内容'),
-      ),
-      HomeQuickAction(
-        title: '扩展',
-        subtitle: '插件',
-        icon: Icons.tune_rounded,
-        color: const Color(0xFF8B5CF6),
-        onTap: () => _switchToTab(3, '扩展'),
-      ),
-    ];
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-      padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(26),
-        border: Border.all(color: const Color(0xFFE9EEF7)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '常用入口',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    color: AppTokens.textPrimary,
-                  ),
-                ),
-              ),
-              HomeMiniPill(label: '轻量保留'),
-            ],
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            '保留高频跳转，但不再把四个主 Tab 做成 2×2 面板。',
-            style: TextStyle(
-              color: AppTokens.textSecondary,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 9),
-          Row(
-            children: [
-              for (var i = 0; i < actions.length; i++) ...[
-                Expanded(
-                  child: AppCompactActionCard(
-                    title: actions[i].title,
-                    subtitle: actions[i].subtitle,
-                    icon: actions[i].icon,
-                    color: actions[i].color,
-                    onTap: actions[i].onTap,
-                  ),
-                ),
-                if (i != actions.length - 1) const SizedBox(width: 9),
-              ],
-            ],
-          ),
-        ],
+        ),
       ),
     );
   }
 }
 
-class _HomeSoftIconButton extends StatelessWidget {
-  const _HomeSoftIconButton({required this.icon, required this.onTap});
-
-  final IconData icon;
-  final VoidCallback onTap;
+// ── 已安装插件卡片 ────────────────────────────
+class _PluginCard extends StatelessWidget {
+  const _PluginCard({required this.plugin});
+  final HomePlugin plugin;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(16),
-      onTap: onTap,
+      onTap: () => plugin.onTap(context),
       child: Container(
-        width: 38,
-        height: 38,
+        width: 140,
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: const Color(0xFFF2F6FF),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFE0E8F6)),
-        ),
-        child: Icon(icon, color: AppTokens.primaryBlue, size: 21),
-      ),
-    );
-  }
-}
-
-class _HomeHeroMetric extends StatelessWidget {
-  const _HomeHeroMetric({required this.value, required this.label});
-
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF6F8FD),
-        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            value,
-            style: const TextStyle(
-              color: AppTokens.textPrimary,
-              fontSize: 13,
-              fontWeight: FontWeight.w900,
-            ),
+          gradient: LinearGradient(
+            colors: [plugin.color, plugin.color.withValues(alpha: 0.65)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(
-              label,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: plugin.color.withValues(alpha: 0.20),
+              blurRadius: 12,
+              offset: const Offset(0, 5),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.20),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: Icon(plugin.icon, color: Colors.white, size: 18),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              plugin.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                color: AppTokens.textSecondary,
-                fontSize: 10.5,
-                fontWeight: FontWeight.w700,
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 2),
+            Text(
+              plugin.subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.78),
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
+Future<void> showSnack(BuildContext context, String text) async {
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+}
+
+// ── 继续上次 ──────────────────────────────────
 class HomeContinueItem {
   const HomeContinueItem({
     required this.eyebrow,
@@ -618,25 +679,24 @@ class HomeContinueCard extends StatelessWidget {
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(height: 1),
+                  const SizedBox(height: 2),
                   Text(
                     item.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: AppTokens.textPrimary,
-                      fontSize: 15,
+                      fontSize: 14,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(height: 1),
                   Text(
                     item.subtitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: AppTokens.textSecondary,
-                      fontSize: 10.5,
+                      fontSize: 11,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -648,8 +708,4 @@ class HomeContinueCard extends StatelessWidget {
       ),
     );
   }
-}
-
-Future<void> _showSnack(BuildContext context, String text) async {
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 }

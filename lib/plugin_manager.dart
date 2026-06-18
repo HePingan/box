@@ -771,6 +771,22 @@ class HomePluginHost {
         },
       ),
       HomePlugin(
+        id: 'builtin_image_generator',
+        title: 'AI 生图',
+        subtitle: '多模型、多方式 AI 图像生成',
+        icon: Icons.auto_awesome_rounded,
+        color: const Color(0xFF7C3AED),
+        area: HomePluginArea.recommend,
+        builtIn: true,
+        sort: 5,
+        onTap: (context) async {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ImageGeneratorPage()),
+          );
+        },
+      ),
+      HomePlugin(
         id: 'builtin_plugin_help',
         title: '插件接入说明',
         subtitle: '查看注册方式与示例',
