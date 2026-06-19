@@ -603,6 +603,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     }
 
     await _saveDraftNow();
+    if (!mounted) return;
     final params = _currentParams();
     setState(() {
       _loading = true;

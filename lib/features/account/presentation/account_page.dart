@@ -62,7 +62,9 @@ class _AccountPageState extends State<AccountPage> {
     setState(() => _loading = true);
     try {
       final saved = await _store.loadSession();
+      if (!mounted) return;
       final savedServer = saved?.serverUrl ?? await _store.loadServerUrl();
+      if (!mounted) return;
       _serverController.text = savedServer;
       if (saved == null) {
         setState(() {
@@ -75,24 +77,29 @@ class _AccountPageState extends State<AccountPage> {
         serverUrl: saved.serverUrl,
         token: saved.token,
       );
+      if (!mounted) return;
       final refreshed = BoxAccountSession(
         serverUrl: saved.serverUrl,
         token: saved.token,
         user: user,
       );
       await _store.saveSession(refreshed);
+      if (!mounted) return;
       final usage = await _client.fetchMyUsage(
         serverUrl: refreshed.serverUrl,
         token: refreshed.token,
         limit: 20,
       );
+      if (!mounted) return;
       setState(() {
         _session = refreshed;
         _usage = usage;
         _error = null;
       });
     } catch (error) {
+      if (!mounted) return;
       await _store.clearSession();
+      if (!mounted) return;
       setState(() {
         _session = null;
         _error = _messageOf(error);
