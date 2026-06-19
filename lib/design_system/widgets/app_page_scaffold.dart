@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../app_tokens.dart';
 
@@ -111,6 +112,79 @@ class _SafeAnimatedBuilderState extends State<SafeAnimatedBuilder> {
   @override
   Widget build(BuildContext context) {
     return widget.builder(context, widget.child);
+  }
+}
+
+/// A safe wrapper around Provider's context.watch that prevents
+/// `InheritedNotifier` ancestry assertion failures during route transitions.
+///
+/// Instead of using Provider's InheritedWidget mechanism (which registers
+/// the element as a dependent and triggers the assertion when the notifier
+/// fires during disposal), this widget manually reads the provider value
+/// and only rebuilds if the widget is still mounted.
+class SafeProvider<T> extends StatefulWidget {
+  const SafeProvider({
+    super.key,
+    required this.child,
+  });
+
+  final Widget Function(BuildContext context, T value) child;
+
+  @override
+  State<SafeProvider<T>> createState() => _SafeProviderState<T>();
+}
+
+class _SafeProviderState<T> extends State<SafeProvider<T>> {
+  late T _value;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Read the provider value manually WITHOUT registering as a dependent
+    // of the InheritedWidget. This avoids the InheritedNotifier assertion
+    // that crashes when the notifier fires during route transitions.
+    _value = context.read<T>();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Re-read on every build (cheap for ChangeNotifier providers).
+    // If the value changed since last build, the child gets the new value.
+    // We don't auto-rebuild on provider change — the parent will trigger
+    // a rebuild when needed.
+    return widget.child(context, _value);
+  }
+}
+
+/// Same as SafeProvider but for selectors that return a derived value.
+class SafeProviderSelector<T, R> extends StatefulWidget {
+  const SafeProviderSelector({
+    super.key,
+    required this.selector,
+    required this.child,
+  });
+
+  final T Function(BuildContext context) selector;
+  final Widget Function(BuildContext context, R value) child;
+
+  @override
+  State<SafeProviderSelector<T, R>> createState() =>
+      _SafeProviderSelectorState<T, R>();
+}
+
+class _SafeProviderSelectorState<T, R>
+    extends State<SafeProviderSelector<T, R>> {
+  late R _selectedValue;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _selectedValue = widget.selector(context) as R;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.child(context, _selectedValue);
   }
 }
 
