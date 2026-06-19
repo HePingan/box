@@ -1234,7 +1234,7 @@ class _SmartImageLoader extends StatelessWidget {
         width: double.infinity,
         height: 260,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _buildFallback(context, normalizedUrl),
+        errorBuilder: (_, _, _) => _buildFallback(context, normalizedUrl),
       );
     }
 
@@ -1334,7 +1334,7 @@ class _WebImageWithFallbackState extends State<_WebImageWithFallback> {
           width: double.infinity,
           height: 260,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) {
+          errorBuilder: (_, _, _) {
             if (!_triedFallback) {
               // First error: try fallback URL
               WidgetsBinding.instance.addPostFrameCallback((_) => _onError());
@@ -1447,7 +1447,7 @@ class _NetworkImageWithFallbackState extends State<_NetworkImageWithFallback> {
               ),
             );
           },
-          errorBuilder: (_, __, ___) {
+          errorBuilder: (_, _, _) {
             if (!_triedFallback && widget.fallbackUrl != null) {
               WidgetsBinding.instance.addPostFrameCallback(
                 (_) => _tryFallback(),
@@ -1707,7 +1707,7 @@ class _HistoryTile extends StatelessWidget {
                     height: 58,
                     fit: BoxFit.cover,
                     headers: {'Origin': ''},
-                    errorBuilder: (_, __, ___) => Container(
+                    errorBuilder: (_, _, _) => Container(
                       width: 58,
                       height: 58,
                       color: const Color(0xFFEFF3F9),
