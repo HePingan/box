@@ -1068,6 +1068,7 @@ class ImageGeneratorResultCard extends StatelessWidget {
     required this.history,
     required this.onGenerate,
     required this.onCopy,
+    required this.onDownload,
     required this.onRestoreHistory,
     required this.onClearHistory,
     required this.parameterSummary,
@@ -1081,6 +1082,7 @@ class ImageGeneratorResultCard extends StatelessWidget {
   final List<ImageGenerationHistoryItem> history;
   final VoidCallback onGenerate;
   final ValueChanged<String> onCopy;
+  final ValueChanged<String> onDownload;
   final ValueChanged<ImageGenerationHistoryItem> onRestoreHistory;
   final VoidCallback onClearHistory;
   final String parameterSummary;
@@ -1183,6 +1185,7 @@ class ImageGeneratorResultCard extends StatelessWidget {
               (item) => _GeneratedImageTile(
                 item: item,
                 onCopy: onCopy,
+                onDownload: onDownload,
                 prompt: currentPrompt,
                 negativePrompt: currentNegativePrompt,
                 parameterSummary: parameterSummary,
@@ -1518,6 +1521,7 @@ class _GeneratedImageTile extends StatelessWidget {
   const _GeneratedImageTile({
     required this.item,
     required this.onCopy,
+    required this.onDownload,
     required this.prompt,
     required this.negativePrompt,
     required this.parameterSummary,
@@ -1525,6 +1529,7 @@ class _GeneratedImageTile extends StatelessWidget {
 
   final GeneratedImageResult item;
   final ValueChanged<String> onCopy;
+  final ValueChanged<String> onDownload;
   final String prompt;
   final String negativePrompt;
   final String parameterSummary;
@@ -1595,6 +1600,11 @@ class _GeneratedImageTile extends StatelessWidget {
                 onPressed: () => onCopy(_buildShareText()),
                 icon: const Icon(Icons.description_outlined),
                 label: const Text('复制参数'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => onDownload(item.image),
+                icon: const Icon(Icons.download_rounded),
+                label: const Text('保存图片'),
               ),
               if (item.rawUrl != null)
                 OutlinedButton.icon(

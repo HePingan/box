@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:html' as html;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -491,12 +493,29 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     ).showSnackBar(const SnackBar(content: Text('已按本地规则优化 Prompt')));
   }
 
-  Future<void> _copyText(String text) async {
+  void _copyText(String text) async {
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('已复制到剪贴板')));
+  }
+
+  void _downloadImage(String imageUrl) async {
+    if (!kIsWeb) return;
+    try {
+      // Use anchor element to trigger download
+      html.AnchorElement(href: imageUrl)
+        ..setAttribute('download', '')
+        ..click();
+    } catch (e) {
+      // Fallback: copy URL to clipboard
+      await Clipboard.setData(ClipboardData(text: imageUrl));
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('下载失败，图片链接已复制到剪贴板')));
+    }
   }
 
   void _setParam(VoidCallback update) {
@@ -778,6 +797,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             history: _history,
             onGenerate: _generate,
             onCopy: _copyText,
+            onDownload: _downloadImage,
             onRestoreHistory: _restoreHistory,
             onClearHistory: _clearHistory,
             parameterSummary:
