@@ -1702,6 +1702,15 @@ class _HistoryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final firstImage = item.images.isEmpty ? null : item.images.first;
+    // Normalize URL: OSS providers require lowercase bucket names
+    String? normalizedImage = firstImage;
+    try {
+      if (normalizedImage != null) {
+        final uri = Uri.parse(normalizedImage);
+        normalizedImage = uri.replace(host: uri.host.toLowerCase()).toString();
+      }
+    } catch (_) {}
+
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(10),
@@ -1722,19 +1731,7 @@ class _HistoryTile extends StatelessWidget {
                     color: const Color(0xFFEFF3F9),
                     child: const Icon(Icons.image_not_supported_outlined),
                   )
-                : Image.network(
-                    firstImage,
-                    width: 58,
-                    height: 58,
-                    fit: BoxFit.cover,
-                    headers: {'Origin': ''},
-                    errorBuilder: (_, _, _) => Container(
-                      width: 58,
-                      height: 58,
-                      color: const Color(0xFFEFF3F9),
-                      child: const Icon(Icons.broken_image_outlined),
-                    ),
-                  ),
+                : _buildThumbnail(normalizedImage!),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -1792,6 +1789,43 @@ class _HistoryTile extends StatelessWidget {
   String _formatTime(DateTime value) {
     String two(int v) => v.toString().padLeft(2, '0');
     return '${two(value.month)}-${two(value.day)} ${two(value.hour)}:${two(value.minute)}';
+  }
+
+  Widget _buildThumbnail(String url) {
+    return Image.network(
+      url,
+      width: 58,
+      height: 58,
+      fit: BoxFit.cover,
+      headers: {'Origin': ''},
+      errorBuilder: (_, _, _) {
+        // Try lowercased host as fallback (OSS bucket name case sensitivity)
+        try {
+          final uri = Uri.parse(url);
+          final lowered = uri.replace(host: uri.host.toLowerCase()).toString();
+          if (lowered != url) {
+            return Image.network(
+              lowered,
+              width: 58,
+              height: 58,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => Container(
+                width: 58,
+                height: 58,
+                color: const Color(0xFFEFF3F9),
+                child: const Icon(Icons.broken_image_outlined, size: 24),
+              ),
+            );
+          }
+        } catch (_) {}
+        return Container(
+          width: 58,
+          height: 58,
+          color: const Color(0xFFEFF3F9),
+          child: const Icon(Icons.broken_image_outlined, size: 24),
+        );
+      },
+    );
   }
 }
 
