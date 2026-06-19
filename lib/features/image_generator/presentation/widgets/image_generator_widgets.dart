@@ -1238,11 +1238,15 @@ class _SmartImageLoader extends StatelessWidget {
       );
     }
 
-    // On web, use native <img> to avoid CORS issues
+    // On web, try the raw (CORS-enabled) URL first, then fall back to proxy.
+    // The proxy may return a 200 with placeholder/error HTML instead of
+    // triggering the image errorBuilder, so we prefer the direct OSS URL.
     if (kIsWeb) {
       return _WebImageWithFallback(
-        url: normalizedUrl,
-        fallbackUrl: normalizedFallback,
+        // Primary: raw OSS URL (has CORS headers, loads directly in browser)
+        // Fallback: proxy URL (may be needed for authenticated access)
+        url: normalizedFallback ?? normalizedUrl,
+        fallbackUrl: normalizedUrl,
       );
     }
 
