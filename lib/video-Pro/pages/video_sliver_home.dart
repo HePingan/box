@@ -476,9 +476,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
 
     final hasHistory =
         widget.showHistory &&
-        context.select<HistoryController, bool>(
-          (history) => history.historyList.isNotEmpty,
-        );
+        context.read<HistoryController>().historyList.isNotEmpty;
 
     return AppPageScaffold(
       safeTop: false,

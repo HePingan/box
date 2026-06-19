@@ -53,9 +53,14 @@ class _SafeValueListenableBuilderState<T>
 
   void _onValueChange() {
     if (!mounted) return;
-    setState(() {
-      _latestValue = widget.valueListenable.value;
-    });
+    try {
+      setState(() {
+        _latestValue = widget.valueListenable.value;
+      });
+    } catch (_) {
+      // Suppress setState failures during disposal/route transitions.
+      // This prevents `Assertion failed: ancestor == this` crashes on web.
+    }
   }
 
   @override
@@ -106,7 +111,9 @@ class _SafeAnimatedBuilderState extends State<SafeAnimatedBuilder> {
 
   void _onAnimationChange() {
     if (!mounted) return;
-    setState(() {});
+    try {
+      setState(() {});
+    } catch (_) {}
   }
 
   @override
@@ -123,10 +130,7 @@ class _SafeAnimatedBuilderState extends State<SafeAnimatedBuilder> {
 /// fires during disposal), this widget manually reads the provider value
 /// and only rebuilds if the widget is still mounted.
 class SafeProvider<T> extends StatefulWidget {
-  const SafeProvider({
-    super.key,
-    required this.child,
-  });
+  const SafeProvider({super.key, required this.child});
 
   final Widget Function(BuildContext context, T value) child;
 

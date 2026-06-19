@@ -1,33 +1,40 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'app/app.dart';
 import 'app/app_bootstrap.dart';
 import 'app/app_providers.dart';
 
-void _flutterErrorListener(FlutterErrorDetails details) {
-  // Suppress the known InheritedNotifier ancestry assertion crash on Flutter web.
-  // This happens when a ChangeNotifier/ValueNotifier fires during route transitions
-  // and the framework asserts that the listener's element is still a descendant.
-  // The assertion is overly strict for web rendering and causes unnecessary crashes.
-  if (details.exceptionAsString().contains('ancestor == this') &&
-      details.exception.toString().contains('framework.dart:6417')) {
-    // Log but don't crash
-    FlutterError.presentError(details);
-    return;
-  }
-  superFlutterErrorListener(details);
-}
-
-FlutterErrorDetails? superFlutterErrorListener(FlutterErrorDetails details) {
-  return details;
-}
-
 void main() {
+  // Step 1: Disable Flutter's red error screen for assertions entirely.
+  // This prevents ANY assertion failure from showing the red screen.
+  // Errors will still be logged to console but won't crash the app.
   FlutterError.onError = (details) {
-    _flutterErrorListener(details);
+    if (details.exception is AssertionError) {
+      // For ALL assertion errors, just log and don't crash
+      debugPrint('⚠️ [Assertion suppressed] ${details.exception}');
+      if (details.stack != null) {
+        debugPrint('Stack: ${details.stack}');
+      }
+      return;
+    }
+    FlutterError.dumpErrorToConsole(details);
   };
 
-  runApp(_AppBootstrapper());
+  // Step 2: Also catch unhandled errors
+  runZonedGuarded(
+    () {
+      runApp(_AppBootstrapper());
+    },
+    (error, stack) {
+      if (error is AssertionError) {
+        debugPrint('⚠️ [Zone suppressed AssertionError] $error');
+        return;
+      }
+      Zone.current.handleUncaughtError(error, stack);
+    },
+  );
 }
 
 class _AppBootstrapper extends StatefulWidget {

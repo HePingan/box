@@ -234,39 +234,37 @@ class _HomePageState extends State<HomePage>
             .toList();
 
         if (customPlugins.isEmpty) {
-          return const SliverToBoxAdapter(child: SizedBox.shrink());
+          return const SizedBox.shrink();
         }
 
-        return SliverPadding(
+        return Container(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          sliver: SliverToBoxAdapter(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '已安装插件',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                    color: AppTokens.textPrimary,
-                  ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '已安装插件',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  color: AppTokens.textPrimary,
                 ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  height: 110,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    physics: const BouncingScrollPhysics(),
-                    itemCount: customPlugins.length,
-                    separatorBuilder: (_, sep) => const SizedBox(width: 10),
-                    itemBuilder: (context, index) {
-                      final plugin = customPlugins[index];
-                      return _PluginCard(plugin: plugin);
-                    },
-                  ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 110,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  physics: const BouncingScrollPhysics(),
+                  itemCount: customPlugins.length,
+                  separatorBuilder: (_, sep) => const SizedBox(width: 10),
+                  itemBuilder: (context, index) {
+                    final plugin = customPlugins[index];
+                    return _PluginCard(plugin: plugin);
+                  },
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
@@ -305,131 +303,127 @@ class _HomePageState extends State<HomePage>
     ];
 
     if (items.isEmpty) {
-      return const SliverToBoxAdapter(child: SizedBox.shrink());
+      return const SizedBox.shrink();
     }
 
-    return SliverPadding(
+    return Container(
       padding: const EdgeInsets.fromLTRB(16, 0, 0, 12),
-      sliver: SliverToBoxAdapter(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      '继续使用',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w900,
-                        color: AppTokens.textPrimary,
-                      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    '继续使用',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                      color: AppTokens.textPrimary,
                     ),
                   ),
-                  HomeMiniPill(label: '继续上次'),
-                ],
-              ),
+                ),
+                HomeMiniPill(label: '继续上次'),
+              ],
             ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 88,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.only(right: 16),
-                itemCount: items.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 12),
-                itemBuilder: (context, index) =>
-                    HomeContinueCard(item: items[index]),
-              ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 88,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.only(right: 16),
+              itemCount: items.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
+              itemBuilder: (context, index) =>
+                  HomeContinueCard(item: items[index]),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
   // ── 每日新闻 ───────────────────────────────
   Widget _buildDailyNewsCard() {
-    return SliverPadding(
+    return Container(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      sliver: SliverToBoxAdapter(
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(13, 11, 13, 10),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.96),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFFE9EEF7)),
-            boxShadow: [
-              BoxShadow(
-                color: AppTokens.ink.withValues(alpha: 0.04),
-                blurRadius: 16,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFFFF8A3D), Color(0xFFFFC857)],
-                      ),
-                      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(13, 11, 13, 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFE9EEF7)),
+          boxShadow: [
+            BoxShadow(
+              color: AppTokens.ink.withValues(alpha: 0.04),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFF8A3D), Color(0xFFFFC857)],
                     ),
-                    child: const Icon(
-                      Icons.newspaper_rounded,
-                      color: Colors.white,
-                      size: 16,
-                    ),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      '今日热闻',
-                      style: TextStyle(
-                        color: AppTokens.textPrimary,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w900,
-                      ),
+                  child: const Icon(
+                    Icons.newspaper_rounded,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    '今日热闻',
+                    style: TextStyle(
+                      color: AppTokens.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  IconButton(
-                    tooltip: '刷新',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: _fetchDailyNews,
-                    icon: const Icon(Icons.refresh_rounded, size: 18),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => DailyNewsPage()),
-                      );
-                    },
-                    child: const Text('更多'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              if (_isLoadingNews)
-                const Center(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 8),
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                )
-              else
-                ..._newsList.take(3).map((t) => HomeNewsLine(text: t)),
-            ],
-          ),
+                ),
+                IconButton(
+                  tooltip: '刷新',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _fetchDailyNews,
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => DailyNewsPage()),
+                    );
+                  },
+                  child: const Text('更多'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            if (_isLoadingNews)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            else
+              ..._newsList.take(3).map((t) => HomeNewsLine(text: t)),
+          ],
         ),
       ),
     );

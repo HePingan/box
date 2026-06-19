@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../app_drawer.dart';
 import '../design_system/app_tokens.dart';
@@ -9,7 +10,9 @@ import '../features/extensions/presentation/plugin_tab.dart';
 import '../features/home/presentation/home_page.dart';
 import '../features/tools/presentation/tool_page.dart';
 import '../novel/pages/source_manager/book_source_bootstrap.dart';
+import '../novel/pages/source_manager/book_source_manager.dart';
 import '../novel/pages/source_manager/book_source_manager_page.dart';
+import '../video_module.dart';
 
 class MainAppShell extends StatefulWidget {
   const MainAppShell({super.key, required this.novelBootstrap});
@@ -55,6 +58,19 @@ class _MainAppShellState extends State<MainAppShell> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _maybePromptNovelSourceConfig();
+    });
+
+    // Defer provider initialization until after the widget tree is fully built.
+    // This avoids InheritedNotifier ancestry assertion failures that occur when
+    // ChangeNotifier.notifyListeners fires before InheritedWidget dependents are
+    // fully registered in the element tree.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      context.read<BookSourceManager>().load();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      context.read<HistoryController>().loadHistory();
     });
   }
 

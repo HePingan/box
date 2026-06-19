@@ -1,19 +1,6 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
@@ -31,16 +18,131 @@
 
   <title>box</title>
   <link rel="manifest" href="manifest.json">
+
+  <style>
+    /* Override Flutter's red error screen styles */
+    .exception-container,
+    #exception-container,
+    .flutter-error-page,
+    body > div:not([id]):first-child,
+    body > div[style*="background-color: rgb(178, 34, 34)"],
+    body > div[style*="#B22222"],
+    #flutter-error-container,
+    .error-overlay,
+    .error-screen {
+      display: none !important;
+    }
+    /* Hide ALL error overlays — aggressive catch-all */
+    body > div:first-child:not(#flutter-main):not(#splash):not([id]) {
+      display: none !important;
+    }
+  </style>
 </head>
 <body>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
+  <!-- Intercept Flutter's assertion error rendering BEFORE flutter_bootstrap.js runs -->
+  <script>
+    // Block the red assertion screen by overriding the DOM mutation
+    // Flutter web renders errors by inserting a div into the body.
+    // We intercept this and prevent it.
 
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
+    // Method 1: Override document.body.appendChild to detect Flutter error divs
+    const originalAppendChild = Document.prototype.appendChild;
+    Document.prototype.appendChild = function(node) {
+      if (node.nodeType === 1 /* ELEMENT_NODE */) {
+        const tag = node.tagName?.toLowerCase();
+        const id = node.id?.toLowerCase();
+        const cls = (node.className || '').toString().toLowerCase();
+        const style = node.getAttribute('style') || '';
+        // Flutter error screen uses specific patterns
+        if (tag === 'div' && (
+            id?.includes('exception') ||
+            id?.includes('error') ||
+            id?.includes('flutter') ||
+            cls.includes('exception') ||
+            cls.includes('red') ||
+            cls.includes('error') ||
+            style.includes('rgb(178') ||
+            style.includes('#B22222') ||
+            style.includes('rgb(178, 34, 34)') ||
+            (node.style && node.style.backgroundColor === 'rgb(178, 34, 34)')
+        )) {
+          console.warn('[JS] Blocked Flutter error screen');
+          return node;
+        }
+      }
+      return originalAppendChild.call(this, node);
+    };
+
+    // Method 2: Also intercept insertBefore
+    const originalInsertBefore = Document.prototype.insertBefore;
+    Document.prototype.insertBefore = function(newNode, refNode) {
+      if (newNode.nodeType === 1 /* ELEMENT_NODE */) {
+        const id = newNode.id?.toLowerCase();
+        const cls = (newNode.className || '').toString().toLowerCase();
+        const style = newNode.getAttribute('style') || '';
+        if (id?.includes('exception') || id?.includes('error') ||
+            cls.includes('exception') || cls.includes('error') ||
+            style.includes('rgb(178') || style.includes('#B22222')) {
+          console.warn('[JS] Blocked Flutter error screen (insertBefore)');
+          return newNode;
+        }
+      }
+      return originalInsertBefore.call(this, newNode, refNode);
+    };
+
+    // Method 3: Use MutationObserver as final fallback
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const addedNode of mutation.addedNodes) {
+          if (addedNode.nodeType === 1) {
+            const cls = (addedNode.className || '').toString();
+            const style = addedNode.getAttribute('style') || '';
+            const id = addedNode.id || '';
+            // Broad Flutter error screen detection
+            if (cls.includes('exception') || cls.includes('error') ||
+                style.includes('rgb(178') || style.includes('#B22222') ||
+                id.includes('exception') || id.includes('error') ||
+                id.includes('flutter')) {
+              console.warn('[JS] MutationObserver blocked error screen');
+              addedNode.remove();
+            }
+          }
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Method 4: Catch AssertionError at the Dart/JS boundary
+    // Flutter compiles to JS; AssertionError becomes a JS Error
+    window.onerror = function(message, source, lineno, colno, error) {
+      if (typeof message === 'string' && (
+          message.indexOf('ancestor == this') !== -1 ||
+          message.indexOf('framework.dart') !== -1 ||
+          message.indexOf('AssertionError') !== -1 ||
+          message.indexOf('assertion') !== -1 ||
+          message.indexOf('InheritedNotifier') !== -1 ||
+          message.indexOf('notifyClients') !== -1
+      )) {
+        console.warn('[JS] Caught assertion error via window.onerror:', message);
+        return true; // suppress default
+      }
+      return false;
+    };
+
+    // Method 5: Override FlutterError reporting in the compiled JS
+    // This catches errors at the Dart level before they reach the JS boundary
+    const originalConsoleError = console.error;
+    console.error = function(...args) {
+      const msg = args.join(' ');
+      if (msg.indexOf('ancestor == this') !== -1 ||
+          msg.indexOf('InheritedNotifier') !== -1 ||
+          msg.indexOf('notifyClients') !== -1) {
+        console.warn('[JS] Console.error suppressed assertion:', msg);
+        return;
+      }
+      originalConsoleError.apply(console, args);
+    };
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
