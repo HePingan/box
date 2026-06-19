@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+
+import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import 'reader_controller.dart';
 
 class ReaderDirectorySheet extends StatefulWidget {
@@ -160,7 +162,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
             child: SizedBox(
               width: 44, // 👉 大大增加感应宽度防脱手！右侧留出空白方便捏合
               height: areaHeight,
-              child: ValueListenableBuilder<double>(
+              child: SafeValueListenableBuilder<double>(
                 valueListenable: _scrollRatioNotifier,
                 builder: (context, ratio, child) {
                   // 👉 使用 GPU 硬件级的位移加速，彻底干掉因 setState 带来的卡顿

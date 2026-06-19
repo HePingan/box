@@ -696,7 +696,7 @@ class _PluginTabState extends State<PluginTab>
     super.build(context);
 
     return AppPageScaffold(
-      child: ValueListenableBuilder<List<HomePlugin>>(
+      child: SafeValueListenableBuilder<List<HomePlugin>>(
         valueListenable: _pluginHost.listenable,
         builder: (context, plugins, _) {
           final grouped = <HomePluginArea, List<HomePlugin>>{

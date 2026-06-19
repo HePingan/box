@@ -223,7 +223,7 @@ class _HomePageState extends State<HomePage>
 
   // ── 插件横向滚动卡片 ─────────────────────
   Widget _buildPluginSection() {
-    return ValueListenableBuilder<List<HomePlugin>>(
+    return SafeValueListenableBuilder<List<HomePlugin>>(
       valueListenable: HomePluginHost.instance.listenable,
       builder: (context, plugins, child) {
         final customPlugins = plugins

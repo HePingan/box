@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../design_system/widgets/app_page_scaffold.dart';
 import '../utils/app_logger.dart';
 
 class DebugLogPage extends StatelessWidget {
@@ -46,7 +47,7 @@ class DebugLogPage extends StatelessWidget {
         ],
       ),
       body: SafeArea(
-        child: ValueListenableBuilder<List<String>>(
+        child: SafeValueListenableBuilder<List<String>>(
           valueListenable: AppLogger.instance.lines,
           builder: (context, lines, _) {
             if (lines.isEmpty) {
