@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/models.dart';
+import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import 'reader_controller.dart';
 
 class ReaderSettingsSheet extends StatelessWidget {
@@ -50,7 +51,7 @@ class ReaderSettingsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
+    return SafeAnimatedBuilder(
       animation: controller,
       builder: (context, _) {
         final settings = controller.settings;

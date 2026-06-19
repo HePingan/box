@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../design_system/widgets/app_page_scaffold.dart';
 import '../controller/history_controller.dart';
 import '../controller/video_controller.dart';
 import '../models/video_source.dart';
@@ -11,7 +12,6 @@ import '../video_module.dart';
 import '../widgets/history_quick_view.dart';
 import '../../design_system/app_tokens.dart';
 import '../../design_system/widgets/app_cards.dart';
-import '../../design_system/widgets/app_page_scaffold.dart';
 import 'aggregate_search_page.dart';
 import 'home/home_category_bar.dart';
 import 'home/home_source_sheet.dart';
@@ -294,7 +294,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
   }
 
   Widget _buildHeaderSection(VideoController controller, double screenWidth) {
-    return AnimatedBuilder(
+    return SafeAnimatedBuilder(
       animation: controller,
       builder: (context, _) {
         final source = controller.currentSource;
@@ -356,7 +356,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
   }
 
   Widget _buildCategorySection(VideoController controller) {
-    return AnimatedBuilder(
+    return SafeAnimatedBuilder(
       animation: controller,
       builder: (context, _) {
         return Padding(
@@ -368,7 +368,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
   }
 
   Widget _buildVideoHeaderSection(VideoController controller) {
-    return AnimatedBuilder(
+    return SafeAnimatedBuilder(
       animation: controller,
       builder: (context, _) {
         final source = controller.currentSource;
@@ -422,7 +422,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
     VideoController controller,
     double screenWidth,
   ) {
-    return AnimatedBuilder(
+    return SafeAnimatedBuilder(
       animation: controller,
       builder: (context, _) {
         final source = controller.currentSource;
@@ -518,7 +518,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
                 ),
                 _buildVideoGridSection(videoController, screenWidth),
                 SliverToBoxAdapter(
-                  child: AnimatedBuilder(
+                  child: SafeAnimatedBuilder(
                     animation: videoController,
                     builder: (context, _) =>
                         _buildBottomLoader(videoController),

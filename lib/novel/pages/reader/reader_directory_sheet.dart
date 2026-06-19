@@ -212,7 +212,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
   Widget build(BuildContext context) {
     final controller = widget.controller;
 
-    return AnimatedBuilder(
+    return SafeAnimatedBuilder(
       animation: controller,
       builder: (context, _) {
         final total = controller.totalChapters;

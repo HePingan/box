@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/models.dart';
+import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import 'reader/reader_bottom_bar.dart';
 import 'reader/reader_controller.dart';
 import 'reader/reader_continuous_view.dart';
@@ -501,7 +502,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
+    return SafeAnimatedBuilder(
       animation: _controller,
       builder: (context, _) {
         return Scaffold(

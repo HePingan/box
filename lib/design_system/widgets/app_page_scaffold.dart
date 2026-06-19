@@ -3,10 +3,9 @@ import 'package:flutter/material.dart';
 
 import '../app_tokens.dart';
 
-/// A ValueListenableBuilder that safely disconnects its listener
-/// when the widget is disposed, preventing the
-/// `Assertion failed: ancestor == this` crash that can occur on
-/// Flutter web when the notifier fires during route transitions.
+/// A safe ValueListenableBuilder that manually manages listener lifecycle
+/// to prevent `Assertion failed: ancestor == this` crashes on Flutter web
+/// when the notifier fires during route transitions or widget disposal.
 class SafeValueListenableBuilder<T> extends StatefulWidget {
   const SafeValueListenableBuilder({
     super.key,
@@ -61,6 +60,57 @@ class _SafeValueListenableBuilderState<T>
   @override
   Widget build(BuildContext context) {
     return widget.builder(context, _latestValue, widget.child);
+  }
+}
+
+/// A safe AnimatedBuilder that manually manages Listenable listener lifecycle
+/// to prevent `Assertion failed: ancestor == this` crashes.
+class SafeAnimatedBuilder extends StatefulWidget {
+  const SafeAnimatedBuilder({
+    super.key,
+    required this.animation,
+    required this.builder,
+    this.child,
+  });
+
+  final Listenable animation;
+  final Widget Function(BuildContext context, Widget? child) builder;
+  final Widget? child;
+
+  @override
+  State<SafeAnimatedBuilder> createState() => _SafeAnimatedBuilderState();
+}
+
+class _SafeAnimatedBuilderState extends State<SafeAnimatedBuilder> {
+  @override
+  void initState() {
+    super.initState();
+    widget.animation.addListener(_onAnimationChange);
+  }
+
+  @override
+  void didUpdateWidget(SafeAnimatedBuilder oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.animation != widget.animation) {
+      oldWidget.animation.removeListener(_onAnimationChange);
+      widget.animation.addListener(_onAnimationChange);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.animation.removeListener(_onAnimationChange);
+    super.dispose();
+  }
+
+  void _onAnimationChange() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.builder(context, widget.child);
   }
 }
 
