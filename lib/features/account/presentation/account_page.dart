@@ -315,6 +315,7 @@ class _AccountPageState extends State<AccountPage> {
                 ],
                 if (session == null)
                   AccountLoginCard(
+                    key: const ValueKey('login_card'),
                     serverController: _serverController,
                     usernameController: _usernameController,
                     passwordController: _passwordController,
@@ -325,6 +326,7 @@ class _AccountPageState extends State<AccountPage> {
                   )
                 else
                   AccountStatusCard(
+                    key: const ValueKey('status_card'),
                     session: session,
                     loading: _loading,
                     onRefresh: _loadSession,
