@@ -1229,11 +1229,13 @@ class _SmartImageLoader extends StatelessWidget {
     } catch (_) {}
 
     if (isDataUrl) {
-      return Image.memory(
-        base64Decode(url.split(',').last),
-        width: double.infinity,
-        height: 260,
-        fit: BoxFit.cover,
+      return _buildImage(
+        child: Image.memory(
+          base64Decode(url.split(',').last),
+          width: double.infinity,
+          height: 260,
+          fit: BoxFit.contain,
+        ),
         errorBuilder: (_, _, _) => _buildFallback(context, normalizedUrl),
       );
     }
@@ -1253,6 +1255,19 @@ class _SmartImageLoader extends StatelessWidget {
     return _NetworkImageWithFallback(
       primaryUrl: normalizedUrl,
       fallbackUrl: normalizedFallback,
+    );
+  }
+
+  Widget _buildImage({
+    required Widget child,
+    required Widget Function(BuildContext, dynamic, dynamic) errorBuilder,
+  }) {
+    return Container(
+      width: double.infinity,
+      height: 260,
+      color: const Color(0xFFEFF3F9),
+      padding: const EdgeInsets.all(8),
+      child: ClipRRect(borderRadius: BorderRadius.circular(14), child: child),
     );
   }
 
@@ -1332,20 +1347,20 @@ class _WebImageWithFallbackState extends State<_WebImageWithFallback> {
       width: double.infinity,
       height: 260,
       color: const Color(0xFFEFF3F9),
+      padding: const EdgeInsets.all(8),
       child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
         child: Image.network(
           _currentUrl,
           width: double.infinity,
           height: 260,
-          fit: BoxFit.cover,
+          fit: BoxFit.contain,
           errorBuilder: (_, _, _) {
             if (!_triedFallback) {
               // First error: try fallback URL
               WidgetsBinding.instance.addPostFrameCallback((_) => _onError());
               return Container(
-                width: double.infinity,
-                height: 260,
-                color: const Color(0xFFEFF3F9),
+                color: Colors.transparent,
                 child: const Center(child: CircularProgressIndicator()),
               );
             }
@@ -1428,27 +1443,23 @@ class _NetworkImageWithFallbackState extends State<_NetworkImageWithFallback> {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return Image.network(
+    return Container(
+      width: double.infinity,
+      height: 260,
+      color: const Color(0xFFEFF3F9),
+      padding: const EdgeInsets.all(8),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Image.network(
           _currentUrl,
           width: double.infinity,
           height: 260,
-          fit: BoxFit.cover,
+          fit: BoxFit.contain,
           loadingBuilder: (_, child, progress) {
             if (progress == null) return child;
             return Container(
-              width: double.infinity,
-              height: 260,
-              color: const Color(0xFFEFF3F9),
-              child: Center(
-                child: CircularProgressIndicator(
-                  value: progress.expectedTotalBytes != null
-                      ? progress.cumulativeBytesLoaded /
-                            progress.expectedTotalBytes!
-                      : null,
-                ),
-              ),
+              color: Colors.transparent,
+              child: const Center(child: CircularProgressIndicator()),
             );
           },
           errorBuilder: (_, _, _) {
@@ -1457,16 +1468,14 @@ class _NetworkImageWithFallbackState extends State<_NetworkImageWithFallback> {
                 (_) => _tryFallback(),
               );
               return Container(
-                width: double.infinity,
-                height: 260,
-                color: const Color(0xFFEFF3F9),
+                color: Colors.transparent,
                 child: const Center(child: CircularProgressIndicator()),
               );
             }
             return _buildFallback(context);
           },
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -1533,13 +1542,11 @@ class _GeneratedImageTile extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: _SmartImageLoader(
-              url: item.image,
-              isDataUrl: item.isDataUrl,
-              fallbackUrl: item.rawUrl,
-            ),
+          // _SmartImageLoader now handles its own clipping & padding
+          _SmartImageLoader(
+            url: item.image,
+            isDataUrl: item.isDataUrl,
+            fallbackUrl: item.rawUrl,
           ),
           const SizedBox(height: 10),
           SelectableText(
