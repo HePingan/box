@@ -22,12 +22,8 @@ class AppProviders extends StatelessWidget {
         Provider<BookSourceManager>(
           create: (_) => BookSourceManager(bootstrap.prefs),
         ),
-        Provider<VideoController>(
-          create: (_) => VideoController(),
-        ),
-        Provider<HistoryController>(
-          create: (_) => HistoryController(),
-        ),
+        Provider<VideoController>(create: (_) => VideoController()),
+        Provider<HistoryController>(create: (_) => HistoryController()),
       ],
       child: child,
     );

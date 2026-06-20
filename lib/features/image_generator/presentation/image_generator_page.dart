@@ -467,16 +467,6 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     } catch (_) {}
   }
 
-  Future<void> _resetDraft() async {
-    _draftDebounce?.cancel();
-    await _store.resetDraft();
-    if (!mounted) return;
-    setState(() => _applyDraft(ImageGeneratorDraft.defaults(), notify: false));
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('已恢复默认生图参数，API Key 未保存')));
-  }
-
   void _appendStyle(String style) {
     setState(() {
       _selectedStyles.add(style);
@@ -486,20 +476,6 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     _promptController.selection = TextSelection.fromPosition(
       TextPosition(offset: _promptController.text.length),
     );
-    _scheduleSaveDraft();
-  }
-
-  void _removeStyle(String style) {
-    setState(() {
-      _selectedStyles.remove(style);
-    });
-    // Also remove from prompt text
-    final prompt = _promptController.text;
-    final newPrompt = prompt
-        .replaceAll('，$style', '')
-        .replaceAll('$style，', '')
-        .replaceAll(style, '');
-    _promptController.text = newPrompt.trim();
     _scheduleSaveDraft();
   }
 
@@ -1181,9 +1157,11 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
                     // ── Reference image (collapsible, default collapsed) ──
                     ReferenceSection(
                       controller: _referenceImageController,
-                      onReferenceChanged: (hasRef) =>
-                          _setParam(() => _referenceImageField =
-                              hasRef ? ImageReferencePayloadField.image : ImageReferencePayloadField.none),
+                      onReferenceChanged: (hasRef) => _setParam(
+                        () => _referenceImageField = hasRef
+                            ? ImageReferencePayloadField.image
+                            : ImageReferencePayloadField.none,
+                      ),
                       onClear: () => _setParam(() {
                         _referenceImageController.clear();
                         _referenceImageField = ImageReferencePayloadField.none;

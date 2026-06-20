@@ -20,6 +20,7 @@ enum ImagePickerSource { camera, gallery, file }
 
 class SurfaceCard extends StatelessWidget {
   const SurfaceCard({
+    super.key,
     required this.child,
     this.padding = const EdgeInsets.all(16),
   });
@@ -46,6 +47,7 @@ class SurfaceCard extends StatelessWidget {
 /// Collapsible section header with chevron indicator.
 class SectionHeader extends StatelessWidget {
   const SectionHeader({
+    super.key,
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -129,6 +131,7 @@ class SectionHeader extends StatelessWidget {
 /// A collapsible section that toggles content visibility.
 class CollapsibleSection extends StatefulWidget {
   const CollapsibleSection({
+    super.key,
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -204,7 +207,7 @@ class CollapsibleSectionState extends State<CollapsibleSection>
         ),
         SizeTransition(
           sizeFactor: _animation,
-          axisAlignment: -1,
+          alignment: Alignment.topCenter,
           child: Padding(
             padding: widget.contentPadding,
             child: Column(children: widget.children),
@@ -2150,6 +2153,7 @@ class _ChoiceGroup<T> extends StatelessWidget {
 /// Compact params row: 4 dropdowns in a wrap, fits mobile screen.
 class ParamsRow extends StatelessWidget {
   const ParamsRow({
+    super.key,
     required this.size,
     required this.quality,
     required this.outputFormat,
@@ -2197,7 +2201,7 @@ class ParamsRow extends StatelessWidget {
           label: '数量',
           value: count,
           values: const [1, 2, 3, 4],
-          onChanged: (v) => onCountChanged(v as int),
+          onChanged: (v) => onCountChanged(v),
         ),
       ],
     );
@@ -2206,6 +2210,7 @@ class ParamsRow extends StatelessWidget {
 
 class CompactDropdown<T> extends StatelessWidget {
   const CompactDropdown({
+    super.key,
     required this.label,
     required this.value,
     required this.values,
@@ -2221,7 +2226,7 @@ class CompactDropdown<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     return Expanded(
       child: DropdownButtonFormField<T>(
-        value: value,
+        initialValue: value,
         decoration: InputDecoration(
           labelText: label,
           labelStyle: const TextStyle(fontSize: 11),
@@ -2364,7 +2369,7 @@ class ReferenceSectionState extends State<ReferenceSection> {
       final mimeType = source == ImagePickerSource.camera
           ? 'jpeg'
           : (filePath != null
-                ? (imagePath ?? filePath!)
+                ? (imagePath ?? filePath)
                       .split('.')
                       .last
                       .toLowerCase()
@@ -2476,7 +2481,7 @@ class ReferenceSectionState extends State<ReferenceSection> {
                 width: double.infinity,
                 height: 140,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
+                errorBuilder: (_, _, _) => Container(
                   height: 80,
                   alignment: Alignment.center,
                   color: const Color(0xFFEFF3F9),
@@ -2499,6 +2504,7 @@ class ReferenceSectionState extends State<ReferenceSection> {
 /// Compact generated image tile.
 class GeneratedImageTileCompact extends StatelessWidget {
   const GeneratedImageTileCompact({
+    super.key,
     required this.item,
     required this.onCopy,
     required this.onDownload,
@@ -2580,6 +2586,7 @@ class GeneratedImageTileCompact extends StatelessWidget {
 /// Compact history section.
 class HistorySectionCompact extends StatelessWidget {
   const HistorySectionCompact({
+    super.key,
     required this.history,
     required this.onRestore,
     required this.onCopy,
@@ -2632,6 +2639,7 @@ class HistorySectionCompact extends StatelessWidget {
 
 class HistoryTileCompact extends StatelessWidget {
   const HistoryTileCompact({
+    super.key,
     required this.item,
     required this.onRestore,
     required this.onCopy,
@@ -2768,9 +2776,9 @@ class HistoryTileCompact extends StatelessWidget {
             onPressed: () {
               Clipboard.setData(ClipboardData(text: url));
               Navigator.pop(dialogCtx);
-              ScaffoldMessenger.of(ctx).showSnackBar(
-                const SnackBar(content: Text('已复制链接')),
-              );
+              ScaffoldMessenger.of(
+                ctx,
+              ).showSnackBar(const SnackBar(content: Text('已复制链接')));
             },
             child: const Text('复制'),
           ),
@@ -2818,7 +2826,7 @@ class CompactThumbnailImageState extends State<CompactThumbnailImage> {
             width: 60,
             height: 60,
             fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => _buildPlaceholder(),
+            errorBuilder: (_, _, _) => _buildPlaceholder(),
           ),
         );
       } catch (_) {
@@ -2834,9 +2842,11 @@ class CompactThumbnailImageState extends State<CompactThumbnailImage> {
         height: 60,
         fit: BoxFit.cover,
         headers: {'Origin': ''},
-        errorBuilder: (_, __, ___) {
+        errorBuilder: (_, _, _) {
           // Auto-retry with raw URL on first failure
-          if (!_triedFallback && widget.rawUrl != null && widget.rawUrl!.isNotEmpty) {
+          if (!_triedFallback &&
+              widget.rawUrl != null &&
+              widget.rawUrl!.isNotEmpty) {
             setState(() {
               _currentUrl = widget.rawUrl!;
               _triedFallback = true;
@@ -2870,6 +2880,7 @@ class CompactThumbnailImageState extends State<CompactThumbnailImage> {
 /// Compact request preview card (collapsed by default).
 class ImageGeneratorRequestPreviewCardCompact extends StatelessWidget {
   const ImageGeneratorRequestPreviewCardCompact({
+    super.key,
     required this.endpoint,
     required this.requestJson,
     required this.preflightItems,
@@ -2907,6 +2918,7 @@ class ImageGeneratorRequestPreviewCardCompact extends StatelessWidget {
 /// Compact diagnostics card (collapsed by default).
 class ImageGeneratorDiagnosticsCardCompact extends StatelessWidget {
   const ImageGeneratorDiagnosticsCardCompact({
+    super.key,
     required this.diagnostics,
     required this.onCopyDiagnostics,
     required this.onCopyRequestJson,
@@ -2977,6 +2989,7 @@ class ImageGeneratorDiagnosticsCardCompact extends StatelessWidget {
 /// Merged request preview + diagnostics card.
 class RequestDetailsCardCompact extends StatelessWidget {
   const RequestDetailsCardCompact({
+    super.key,
     required this.endpoint,
     required this.requestJson,
     required this.preflightItems,
@@ -3070,6 +3083,7 @@ class RequestDetailsCardCompact extends StatelessWidget {
 /// Compact platform quota card.
 class ImageGeneratorPlatformQuotaCardCompact extends StatelessWidget {
   const ImageGeneratorPlatformQuotaCardCompact({
+    super.key,
     required this.quota,
     required this.error,
     required this.accountLabel,
@@ -3152,6 +3166,7 @@ class ImageGeneratorPlatformQuotaCardCompact extends StatelessWidget {
 /// Generic expandable info card for request preview / diagnostics.
 class ExpandableInfoCard extends StatefulWidget {
   const ExpandableInfoCard({
+    super.key,
     required this.icon,
     required this.title,
     required this.children,
@@ -3237,7 +3252,7 @@ class ExpandableInfoCardState extends State<ExpandableInfoCard>
         ),
         SizeTransition(
           sizeFactor: _animation,
-          axisAlignment: -1,
+          alignment: Alignment.topCenter,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: widget.children,
@@ -3250,6 +3265,7 @@ class ExpandableInfoCardState extends State<ExpandableInfoCard>
 
 class CodeBlock extends StatelessWidget {
   const CodeBlock({
+    super.key,
     required this.label,
     required this.content,
     this.maxLines = 3,
@@ -3295,7 +3311,7 @@ class CodeBlock extends StatelessWidget {
 }
 
 class PreflightRowCompact extends StatelessWidget {
-  const PreflightRowCompact(this.item);
+  const PreflightRowCompact(this.item, {super.key});
   final ImageGeneratorPreflightItem item;
 
   @override
