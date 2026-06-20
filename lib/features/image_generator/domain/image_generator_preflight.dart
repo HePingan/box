@@ -95,8 +95,8 @@ List<ImageGeneratorPreflightItem> buildImageGeneratorPreflight(
   if (params.referenceImageField.shouldSend && referenceUrl.isEmpty) {
     items.add(
       const ImageGeneratorPreflightItem(
-        message: '已选择参考图字段，但参考图 URL 为空',
-        level: ImageGeneratorPreflightLevel.error,
+        message: '参考图 URL 为空，生成时自动切为“不发送”',
+        level: ImageGeneratorPreflightLevel.warning,
       ),
     );
   } else if (!params.referenceImageField.shouldSend &&

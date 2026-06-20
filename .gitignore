@@ -68,3 +68,7 @@ node_modules/
 
 # Local debugging artifacts
 errors.txt
+
+# Git bundle / transfer temp files
+*.bundle
+*.tar

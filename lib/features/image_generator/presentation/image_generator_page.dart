@@ -653,8 +653,12 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     }
     final referenceUrl = _referenceImageController.text.trim();
     if (_referenceImageField.shouldSend && referenceUrl.isEmpty) {
-      setState(() => _error = '请先填写参考图 URL，或把参考图字段改为“不发送”。');
-      return;
+      setState(() => _referenceImageField = ImageReferencePayloadField.none);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('参考图 URL 为空，已自动将字段切为“不发送”。')),
+        );
+      }
     }
     if (!_referenceImageField.shouldSend && referenceUrl.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
