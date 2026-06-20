@@ -53,7 +53,8 @@ dependencies:
   chewie: ^1.13.0
   cached_network_image: ^3.4.1
   pointer_interceptor: ^0.10.1+2
-
+  image_picker: ^1.1.2
+  file_picker: ^8.1.7
 
 
 dev_dependencies:

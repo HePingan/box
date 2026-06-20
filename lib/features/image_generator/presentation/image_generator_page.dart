@@ -1,20 +1,28 @@
 import 'dart:async';
-import 'dart:html' as html;
+import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:dio/dio.dart';
 
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import 'package:box/features/account/data/account_store.dart';
 import 'package:box/features/account/domain/account_models.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
 
 import '../data/image_generator_client.dart';
 import '../data/image_generator_store.dart';
+import '../domain/image_download.dart';
 import '../domain/image_generator_models.dart';
 import '../domain/image_generator_preflight.dart';
 import '../domain/image_generator_presets.dart';
 import 'widgets/image_generator_widgets.dart';
+
+import 'package:box/design_system/app_tokens.dart';
+import 'package:box/design_system/widgets/app_cards.dart' hide AppEmptyState;
+import 'package:box/design_system/widgets/app_empty_state.dart';
 
 class ImageGeneratorPage extends StatefulWidget {
   const ImageGeneratorPage({super.key});
@@ -58,6 +66,18 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   List<String> _availableModels = const [];
   List<GeneratedImageResult> _results = const [];
   List<ImageGenerationHistoryItem> _history = const [];
+  final Set<String> _selectedStyles = {};
+
+  static const _styleLabels = [
+    '写实摄影',
+    '二次元插画',
+    '赛博朋克',
+    '国风插画',
+    '产品海报',
+    'App 图标',
+    '电商主图',
+    '社媒封面',
+  ];
 
   @override
   void initState() {
@@ -152,6 +172,15 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     _quality = draft.quality;
     _outputFormat = draft.outputFormat;
     _count = draft.count;
+    // Rebuild _selectedStyles from prompt text
+    setState(() {
+      _selectedStyles.clear();
+      for (final label in _styleLabels) {
+        if (draft.prompt.contains(label)) {
+          _selectedStyles.add(label);
+        }
+      }
+    });
     if (notify) _scheduleSaveDraft();
   }
 
@@ -449,11 +478,29 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   }
 
   void _appendStyle(String style) {
+    setState(() {
+      _selectedStyles.add(style);
+    });
     final current = _promptController.text.trim();
     _promptController.text = current.isEmpty ? style : '$current，$style';
     _promptController.selection = TextSelection.fromPosition(
       TextPosition(offset: _promptController.text.length),
     );
+    _scheduleSaveDraft();
+  }
+
+  void _removeStyle(String style) {
+    setState(() {
+      _selectedStyles.remove(style);
+    });
+    // Also remove from prompt text
+    final prompt = _promptController.text;
+    final newPrompt = prompt
+        .replaceAll('，$style', '')
+        .replaceAll('$style，', '')
+        .replaceAll(style, '');
+    _promptController.text = newPrompt.trim();
+    _scheduleSaveDraft();
   }
 
   void _applyQuickProfile(ImageApiQuickProfile profile) {
@@ -502,14 +549,36 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   }
 
   void _downloadImage(String imageUrl) async {
-    if (!kIsWeb) return;
+    if (kIsWeb) {
+      // On web, use anchor element to trigger browser download
+      try {
+        downloadImage(imageUrl);
+      } catch (e) {
+        await Clipboard.setData(ClipboardData(text: imageUrl));
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('下载失败，图片链接已复制到剪贴板')));
+      }
+      return;
+    }
+
+    // On mobile: download image to temp dir, then open with system (saves to gallery)
     try {
-      // Use anchor element to trigger download
-      html.AnchorElement(href: imageUrl)
-        ..setAttribute('download', '')
-        ..click();
+      final client = Dio();
+      final dir = await getTemporaryDirectory();
+      final file = File(
+        '${dir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
+      );
+      await client.download(imageUrl, file.path);
+      if (file.existsSync()) {
+        await OpenFilex.open(file.path);
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('图片已保存，可在相册中查看')));
+      }
     } catch (e) {
-      // Fallback: copy URL to clipboard
       await Clipboard.setData(ClipboardData(text: imageUrl));
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -699,111 +768,589 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
 
   @override
   Widget build(BuildContext context) {
+    final parameterSummary =
+        '${_modelController.text.trim().isEmpty ? 'gpt-image-1' : _modelController.text.trim()} · $_size · $_quality · $_outputFormat · $_count 张${_referenceImageField.shouldSend ? ' · 参考图:${_referenceImageField.wireName}' : ''}';
+
     return AppPageScaffold(
       safeBottom: true,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      child: Stack(
         children: [
-          ImageGeneratorHeader(onBack: () => Navigator.maybePop(context)),
-          const SizedBox(height: 14),
-          ImageGeneratorConfigCard(
-            baseUrlController: _baseUrlController,
-            apiKeyController: _apiKeyController,
-            modelController: _modelController,
-            platformBaseUrlController: _platformBaseUrlController,
-            accessMode: _accessMode,
-            quickProfiles: imageApiQuickProfiles,
-            availableModels: _visibleModels,
-            totalModelCount: _availableModels.length,
-            showingAllModels: _showAllModels,
-            loadingModels: _loadingModels,
-            modelListError: _modelListError,
-            onApplyQuickProfile: _applyQuickProfile,
-            onResetDraft: _resetDraft,
-            onFetchModels: _fetchModels,
-            onApplyModel: _applyModel,
-            onAccessModeChanged: _setAccessMode,
-            onToggleShowAllModels: _availableModels.isEmpty
-                ? null
-                : () => setState(() => _showAllModels = !_showAllModels),
-            platformAccountLabel: _platformAccountLabel,
-            onReloadAccount: _loadAccountSession,
+          ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+            children: [
+              // ── Header ──
+              ImageGeneratorHeader(onBack: () => Navigator.maybePop(context)),
+              const SizedBox(height: 14),
+
+              // ══════════════════════════════════════════
+              // BLOCK 1: Configuration
+              // ══════════════════════════════════════════
+              SurfaceCard(
+                child: Column(
+                  children: [
+                    // ── Top row: always-visible config ──
+                    CollapsibleSection(
+                      icon: Icons.tune_rounded,
+                      title: '配置',
+                      subtitle: _accessMode == ImageGeneratorAccessMode.ownKey
+                          ? '自带 Key 直连接口'
+                          : '平台额度通过后端代理',
+                      initialExpanded: true,
+                      children: [
+                        const SizedBox(height: 8),
+                        // Access mode toggle
+                        SegmentedButton<ImageGeneratorAccessMode>(
+                          segments: ImageGeneratorAccessMode.values
+                              .map(
+                                (
+                                  mode,
+                                ) => ButtonSegment<ImageGeneratorAccessMode>(
+                                  value: mode,
+                                  label: Text(mode.label),
+                                  icon: Icon(
+                                    mode == ImageGeneratorAccessMode.ownKey
+                                        ? Icons.key_rounded
+                                        : Icons.admin_panel_settings_rounded,
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                          selected: {_accessMode},
+                          onSelectionChanged: (values) =>
+                              _setAccessMode(values.first),
+                        ),
+                        const SizedBox(height: 12),
+                        // Model
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _modelController,
+                                decoration: InputDecoration(
+                                  labelText: '模型',
+                                  hintText: 'gpt-image-1',
+                                  filled: true,
+                                  border: const OutlineInputBorder(),
+                                  suffixIcon: IconButton(
+                                    icon: const Icon(
+                                      Icons.copy_rounded,
+                                      size: 18,
+                                    ),
+                                    onPressed: () {
+                                      final text = _modelController.text.trim();
+                                      if (text.isNotEmpty) {
+                                        Clipboard.setData(
+                                          ClipboardData(text: text),
+                                        );
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: FilledButton.tonalIcon(
+                                onPressed: _loadingModels ? null : _fetchModels,
+                                icon: _loadingModels
+                                    ? const SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(
+                                        Icons.cloud_sync_rounded,
+                                        size: 16,
+                                      ),
+                                label: Text(
+                                  _loadingModels
+                                      ? '获取中'
+                                      : _accessMode ==
+                                            ImageGeneratorAccessMode
+                                                .platformQuota
+                                      ? '获取平台模型'
+                                      : '获取模型列表',
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (_modelListError != null) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            _modelListError!,
+                            style: const TextStyle(
+                              color: Colors.red,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                        // Model chips
+                        if (_visibleModels.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            _showAllModels ? '全部模型（点击填入）' : '推荐生图模型',
+                            style: const TextStyle(
+                              color: AppTokens.textSecondary,
+                              fontSize: 11,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              ..._visibleModels.map(
+                                (model) => ActionChip(
+                                  avatar: const Icon(
+                                    Icons.smart_toy_outlined,
+                                    size: 14,
+                                  ),
+                                  label: Text(model),
+                                  tooltip: model,
+                                  onPressed: () => _applyModel(model),
+                                ),
+                              ),
+                              if (_availableModels.length > 12)
+                                TextButton(
+                                  onPressed: _availableModels.isEmpty
+                                      ? null
+                                      : () => setState(
+                                          () =>
+                                              _showAllModels = !_showAllModels,
+                                        ),
+                                  child: Text(
+                                    _showAllModels
+                                        ? '收起全部'
+                                        : '查看全部 ${_availableModels.length} 个',
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                        // Platform quota card
+                        if (_accessMode ==
+                            ImageGeneratorAccessMode.platformQuota) ...[
+                          const SizedBox(height: 12),
+                          ImageGeneratorPlatformQuotaCardCompact(
+                            quota: _platformQuota,
+                            error: _platformError,
+                            accountLabel: _platformAccountLabel,
+                            onRefresh: _refreshPlatformQuota,
+                          ),
+                        ],
+                      ],
+                    ),
+
+                    // ── Advanced settings: collapsed by default ──
+                    const SizedBox(height: 8),
+                    CollapsibleSection(
+                      icon: Icons.settings_ethernet_rounded,
+                      title: '高级设置',
+                      subtitle: _accessMode == ImageGeneratorAccessMode.ownKey
+                          ? 'BaseUrl · ApiKey · 快捷配置'
+                          : '平台服务地址 · 账号同步',
+                      initialExpanded: false,
+                      children: [
+                        if (_accessMode == ImageGeneratorAccessMode.ownKey) ...[
+                          const SizedBox(height: 8),
+                          // Quick profiles
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: imageApiQuickProfiles
+                                .map(
+                                  (profile) => ActionChip(
+                                    avatar: const Icon(
+                                      Icons.flash_on_rounded,
+                                      size: 14,
+                                    ),
+                                    label: Text(profile.title),
+                                    tooltip: profile.description,
+                                    onPressed: () =>
+                                        _applyQuickProfile(profile),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: _baseUrlController,
+                            decoration: const InputDecoration(
+                              labelText: 'Base URL',
+                              hintText: 'https://api.openai.com/v1',
+                              filled: true,
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _apiKeyController,
+                            obscureText: true,
+                            decoration: const InputDecoration(
+                              labelText: 'API Key',
+                              hintText: 'sk-…（仅本次使用，不保存）',
+                              filled: true,
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ] else ...[
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _platformBaseUrlController,
+                            decoration: const InputDecoration(
+                              labelText: '平台服务地址',
+                              hintText: 'https://your-domain.com',
+                              filled: true,
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: AppStatusPill(
+                                  label: _platformAccountLabel == null
+                                      ? '未登录 Box 账号'
+                                      : '当前账号：$_platformAccountLabel',
+                                  icon: _platformAccountLabel == null
+                                      ? Icons.account_circle_outlined
+                                      : Icons.verified_user_rounded,
+                                  color: _platformAccountLabel == null
+                                      ? AppTokens.warning
+                                      : AppTokens.success,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton.icon(
+                                onPressed: _loadAccountSession,
+                                icon: const Icon(
+                                  Icons.refresh_rounded,
+                                  size: 16,
+                                ),
+                                label: const Text('同步'),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          const Text(
+                            '平台额度模式不会在前端使用管理员 API Key',
+                            style: TextStyle(
+                              color: AppTokens.textSecondary,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              // ══════════════════════════════════════════
+              // BLOCK 2: Creation
+              // ══════════════════════════════════════════
+              const SizedBox(height: 12),
+              SurfaceCard(
+                child: CollapsibleSection(
+                  icon: Icons.auto_awesome_rounded,
+                  title: '创作',
+                  subtitle: '提示词 · 风格',
+                  initialExpanded: true,
+                  children: [
+                    const SizedBox(height: 4),
+                    // ── Prompt presets (horizontal scroll, compact) ──
+                    SizedBox(
+                      height: 28,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: imagePromptPresets
+                              .map(
+                                (preset) => Padding(
+                                  padding: const EdgeInsets.only(right: 3),
+                                  child: ActionChip(
+                                    label: Text(
+                                      preset.title,
+                                      style: const TextStyle(fontSize: 10),
+                                    ),
+                                    labelStyle: const TextStyle(fontSize: 10),
+                                    avatar: const Icon(
+                                      Icons.auto_awesome_rounded,
+                                      size: 10,
+                                    ),
+                                    onPressed: () => _applyPromptPreset(preset),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 1,
+                                    ),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    // ── Style quick-add buttons ──
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: _styleLabels
+                          .map(
+                            (label) => OutlinedButton(
+                              onPressed: () => _appendStyle(label),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                backgroundColor: _selectedStyles.contains(label)
+                                    ? AppTokens.primaryBlue.withValues(
+                                        alpha: 0.12,
+                                      )
+                                    : null,
+                                side: _selectedStyles.contains(label)
+                                    ? BorderSide(
+                                        color: AppTokens.primaryBlue,
+                                        width: 1.5,
+                                      )
+                                    : null,
+                              ),
+                              child: Text(
+                                label,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: _selectedStyles.contains(label)
+                                      ? FontWeight.w700
+                                      : FontWeight.normal,
+                                  color: _selectedStyles.contains(label)
+                                      ? AppTokens.primaryBlue
+                                      : null,
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                    const SizedBox(height: 4),
+                    // ── Prompt textarea ──
+                    TextField(
+                      controller: _promptController,
+                      maxLines: 4,
+                      decoration: InputDecoration(
+                        labelText: 'Prompt',
+                        alignLabelWithHint: true,
+                        hintText: '描述主体、风格、镜头、光线、构图和用途…',
+                        filled: true,
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          icon: const Icon(
+                            Icons.auto_fix_high_rounded,
+                            size: 20,
+                          ),
+                          onPressed: _optimizePrompt,
+                          tooltip: 'AI 优化提示词',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    // ── Negative prompt (single line, compact) ──
+                    TextField(
+                      controller: _negativeController,
+                      maxLines: 1,
+                      decoration: const InputDecoration(
+                        labelText: 'Negative prompt（可选）',
+                        hintText: '低清晰度、畸形手指、水印…',
+                        filled: true,
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    // ── Reference image (collapsible, default collapsed) ──
+                    ReferenceSection(
+                      controller: _referenceImageController,
+                      onReferenceChanged: (hasRef) =>
+                          _setParam(() => _referenceImageField =
+                              hasRef ? ImageReferencePayloadField.image : ImageReferencePayloadField.none),
+                      onClear: () => _setParam(() {
+                        _referenceImageController.clear();
+                        _referenceImageField = ImageReferencePayloadField.none;
+                      }),
+                    ),
+                  ],
+                ),
+              ),
+
+              // ══════════════════════════════════════════
+              // BLOCK 3: Results
+              // ══════════════════════════════════════════
+              const SizedBox(height: 12),
+              SurfaceCard(
+                child: CollapsibleSection(
+                  icon: Icons.image_rounded,
+                  title: '结果',
+                  subtitle: '生成结果 · 历史记录 · 诊断',
+                  initialExpanded: true,
+                  children: [
+                    const SizedBox(height: 4),
+                    // Parameter summary
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppTokens.primaryBlue.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: AppTokens.primaryBlue.withValues(alpha: 0.18),
+                        ),
+                      ),
+                      child: Text(
+                        '当前参数：$parameterSummary',
+                        style: const TextStyle(
+                          color: AppTokens.primaryBlue,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: Colors.red.withValues(alpha: 0.25),
+                          ),
+                        ),
+                        child: Text(
+                          _error!,
+                          style: const TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (_loading) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppTokens.warning.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: AppTokens.warning.withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: const Text(
+                          '⏳ 生成中，通常 1-5 分钟',
+                          style: TextStyle(
+                            color: AppTokens.textPrimary,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    // Results
+                    if (_results.isEmpty)
+                      const AppEmptyState(
+                        title: '暂无图片',
+                        message: '填入配置和提示词后点击"开始生成"',
+                        icon: Icons.image_search_rounded,
+                      )
+                    else
+                      ..._results.map(
+                        (item) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: GeneratedImageTileCompact(
+                            item: item,
+                            onCopy: _copyText,
+                            onDownload: _downloadImage,
+                            prompt: _promptController.text.trim(),
+                            negativePrompt: _negativeController.text.trim(),
+                            parameterSummary: parameterSummary,
+                          ),
+                        ),
+                      ),
+                    // History
+                    const SizedBox(height: 8),
+                    HistorySectionCompact(
+                      history: _history,
+                      onRestore: _restoreHistory,
+                      onCopy: _copyText,
+                      onClear: _clearHistory,
+                    ),
+                    // ── Merged request preview + diagnostics ──
+                    const SizedBox(height: 8),
+                    RequestDetailsCardCompact(
+                      endpoint: _activeEndpoint,
+                      requestJson: _currentParams().prettyRequestJson,
+                      preflightItems: _preflightItems(),
+                      diagnostics: _lastDiagnostics,
+                      onCopyRequestJson: () =>
+                          _copyText(_currentParams().prettyRequestJson),
+                      onCopyDiagnostics: _lastDiagnostics == null
+                          ? null
+                          : () => _copyText(_lastDiagnostics!.toCopyText()),
+                      onCopyDiagRequestJson: _lastDiagnostics == null
+                          ? null
+                          : () => _copyText(_lastDiagnostics!.requestJson),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          if (_accessMode == ImageGeneratorAccessMode.platformQuota) ...[
-            const SizedBox(height: 12),
-            ImageGeneratorPlatformQuotaCard(
-              quota: _platformQuota,
-              error: _platformError,
-              platformBaseUrl: _platformBaseUrlController.text.trim(),
-              accountLabel: _platformAccountLabel,
-              onRefresh: _refreshPlatformQuota,
+
+          // ── Floating generate button ──
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16,
+            child: SafeArea(
+              child: FilledButton.icon(
+                onPressed: _loading ? null : _generate,
+                icon: _loading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.auto_fix_high_rounded),
+                label: Text(_loading ? '生成中…' : '开始生成'),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  textStyle: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
             ),
-          ],
-          const SizedBox(height: 12),
-          ImageGeneratorPromptCard(
-            promptController: _promptController,
-            negativeController: _negativeController,
-            presets: imagePromptPresets,
-            onAppendStyle: _appendStyle,
-            onApplyPreset: _applyPromptPreset,
-            onOptimizePrompt: _optimizePrompt,
-          ),
-          const SizedBox(height: 12),
-          ImageGeneratorParamsCard(
-            size: _size,
-            quality: _quality,
-            outputFormat: _outputFormat,
-            count: _count,
-            onSizeChanged: (value) => _setParam(() => _size = value),
-            onQualityChanged: (value) => _setParam(() => _quality = value),
-            onOutputFormatChanged: (value) =>
-                _setParam(() => _outputFormat = value),
-            onCountChanged: (value) => _setParam(() => _count = value),
-          ),
-          const SizedBox(height: 12),
-          ImageGeneratorReferenceCard(
-            controller: _referenceImageController,
-            payloadField: _referenceImageField,
-            onPayloadFieldChanged: (value) =>
-                _setParam(() => _referenceImageField = value),
-            onClear: () => _setParam(() {
-              _referenceImageController.clear();
-              _referenceImageField = ImageReferencePayloadField.none;
-            }),
-          ),
-          const SizedBox(height: 12),
-          ImageGeneratorRequestPreviewCard(
-            endpoint: _activeEndpoint,
-            requestJson: _currentParams().prettyRequestJson,
-            preflightItems: _preflightItems(),
-            onCopyRequestJson: () =>
-                _copyText(_currentParams().prettyRequestJson),
-          ),
-          const SizedBox(height: 12),
-          ImageGeneratorDiagnosticsCard(
-            diagnostics: _lastDiagnostics,
-            onCopyDiagnostics: _lastDiagnostics == null
-                ? null
-                : () => _copyText(_lastDiagnostics!.toCopyText()),
-            onCopyRequestJson: _lastDiagnostics == null
-                ? null
-                : () => _copyText(_lastDiagnostics!.requestJson),
-          ),
-          const SizedBox(height: 12),
-          ImageGeneratorResultCard(
-            loading: _loading,
-            error: _error,
-            results: _results,
-            history: _history,
-            onGenerate: _generate,
-            onCopy: _copyText,
-            onDownload: _downloadImage,
-            onRestoreHistory: _restoreHistory,
-            onClearHistory: _clearHistory,
-            parameterSummary:
-                '${_modelController.text.trim().isEmpty ? 'gpt-image-1' : _modelController.text.trim()} · $_size · $_quality · $_outputFormat · $_count 张${_referenceImageField.shouldSend ? ' · 参考图:${_referenceImageField.wireName}' : ''}',
-            currentPrompt: _promptController.text.trim(),
-            currentNegativePrompt: _negativeController.text.trim(),
           ),
         ],
       ),

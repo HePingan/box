@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
@@ -11,16 +15,23 @@ import '../../domain/image_generator_models.dart';
 import '../../domain/image_generator_preflight.dart';
 import '../../domain/image_generator_presets.dart';
 
-class _SurfaceCard extends StatelessWidget {
-  const _SurfaceCard({required this.child});
+/// Source for picking a reference image.
+enum ImagePickerSource { camera, gallery, file }
+
+class SurfaceCard extends StatelessWidget {
+  const SurfaceCard({
+    required this.child,
+    this.padding = const EdgeInsets.all(16),
+  });
 
   final Widget child;
+  final EdgeInsetsGeometry padding;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: padding,
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.92),
         borderRadius: BorderRadius.circular(AppTokens.radiusXl),
@@ -28,6 +39,178 @@ class _SurfaceCard extends StatelessWidget {
         boxShadow: AppTokens.shadowMd(),
       ),
       child: child,
+    );
+  }
+}
+
+/// Collapsible section header with chevron indicator.
+class SectionHeader extends StatelessWidget {
+  const SectionHeader({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.expanded = true,
+    this.trailing,
+    this.onToggle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool expanded;
+  final Widget? trailing;
+  final VoidCallback? onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onToggle,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 14,
+              backgroundColor: AppTokens.primaryBlue.withValues(alpha: 0.12),
+              child: Icon(icon, color: AppTokens.primaryBlue, size: 16),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: AppTokens.textPrimary,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 15,
+                        ),
+                      ),
+                      if (trailing != null) ...[
+                        const SizedBox(width: 8),
+                        trailing!,
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: AppTokens.textSecondary,
+                      fontSize: 12,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            AnimatedRotation(
+              turns: expanded ? 0 : -0.25,
+              duration: const Duration(milliseconds: 200),
+              child: const Icon(
+                Icons.expand_more_rounded,
+                size: 20,
+                color: AppTokens.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A collapsible section that toggles content visibility.
+class CollapsibleSection extends StatefulWidget {
+  const CollapsibleSection({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.children,
+    this.initialExpanded = true,
+    this.trailing,
+    this.onToggle,
+    this.headerPadding = const EdgeInsets.fromLTRB(0, 0, 0, 0),
+    this.contentPadding = const EdgeInsets.only(top: 4),
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final List<Widget> children;
+  final bool initialExpanded;
+  final Widget? trailing;
+  final VoidCallback? onToggle;
+  final EdgeInsetsGeometry headerPadding;
+  final EdgeInsetsGeometry contentPadding;
+
+  @override
+  State<CollapsibleSection> createState() => CollapsibleSectionState();
+}
+
+class CollapsibleSectionState extends State<CollapsibleSection>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late Animation<double> _animation;
+  bool _expanded = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.initialExpanded;
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+    _animation = CurvedAnimation(parent: _controller, curve: Curves.easeInOut);
+    if (_expanded) _controller.value = 1;
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _toggle() {
+    setState(() {
+      _expanded = !_expanded;
+      if (_expanded) {
+        _controller.forward();
+      } else {
+        _controller.reverse();
+      }
+    });
+    widget.onToggle?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        SectionHeader(
+          icon: widget.icon,
+          title: widget.title,
+          subtitle: widget.subtitle,
+          expanded: _expanded,
+          trailing: widget.trailing,
+          onToggle: _toggle,
+        ),
+        SizeTransition(
+          sizeFactor: _animation,
+          axisAlignment: -1,
+          child: Padding(
+            padding: widget.contentPadding,
+            child: Column(children: widget.children),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -122,7 +305,7 @@ class ImageGeneratorConfigCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _SurfaceCard(
+    return SurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -339,7 +522,7 @@ class ImageGeneratorPlatformQuotaCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final item = quota;
-    return _SurfaceCard(
+    return SurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -447,7 +630,7 @@ class ImageGeneratorPromptCard extends StatelessWidget {
       '社交媒体封面，强视觉中心，大胆配色',
     ];
 
-    return _SurfaceCard(
+    return SurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -618,7 +801,7 @@ class ImageGeneratorParamsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _SurfaceCard(
+    return SurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -682,7 +865,7 @@ class ImageGeneratorReferenceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final value = controller.text.trim();
     final hasUrl = value.isNotEmpty;
-    return _SurfaceCard(
+    return SurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -783,7 +966,7 @@ class ImageGeneratorRequestPreviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _SurfaceCard(
+    return SurfaceCard(
       child: ExpansionTile(
         tilePadding: EdgeInsets.zero,
         childrenPadding: EdgeInsets.zero,
@@ -951,7 +1134,7 @@ class ImageGeneratorDiagnosticsCard extends StatelessWidget {
         : item.success
         ? Icons.check_circle_rounded
         : Icons.error_rounded;
-    return _SurfaceCard(
+    return SurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1091,7 +1274,7 @@ class ImageGeneratorResultCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _SurfaceCard(
+    return SurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1792,32 +1975,81 @@ class _HistoryTile extends StatelessWidget {
   }
 
   Widget _buildThumbnail(String url) {
+    // On web, try to extract the raw URL from proxy URLs and load it directly.
+    // Proxy URLs may fail due to CORS or auth (401) when accessed from a different origin.
+    String? rawUrl;
+    try {
+      final uri = Uri.parse(url);
+      if (uri.path.contains('/api/image/proxy')) {
+        final extracted = uri.queryParameters['url'];
+        if (extracted != null && extracted.isNotEmpty) {
+          rawUrl = Uri.decodeComponent(extracted);
+        }
+      }
+    } catch (_) {}
+
+    // Normalize: OSS bucket names are case-sensitive and must be lowercase
+    String? normalizedRaw;
+    if (rawUrl != null) {
+      try {
+        final uri = Uri.parse(rawUrl);
+        normalizedRaw = uri.replace(host: uri.host.toLowerCase()).toString();
+      } catch (_) {}
+    }
+
+    return _ThumbnailImage(primaryUrl: url, rawUrl: normalizedRaw);
+  }
+}
+
+/// A thumbnail image widget that tries the proxy URL first, then falls back
+/// to the raw OSS URL (which loads directly in the browser without CORS issues).
+class _ThumbnailImage extends StatefulWidget {
+  const _ThumbnailImage({required this.primaryUrl, required this.rawUrl});
+
+  final String primaryUrl;
+  final String? rawUrl;
+
+  @override
+  State<_ThumbnailImage> createState() => _ThumbnailImageState();
+}
+
+class _ThumbnailImageState extends State<_ThumbnailImage> {
+  late String _currentUrl;
+  bool _triedRaw = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentUrl = widget.primaryUrl;
+  }
+
+  void _switchToRaw() {
+    if (!_triedRaw && widget.rawUrl != null && widget.rawUrl!.isNotEmpty) {
+      setState(() {
+        _currentUrl = widget.rawUrl!;
+        _triedRaw = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Image.network(
-      url,
+      _currentUrl,
       width: 58,
       height: 58,
       fit: BoxFit.cover,
       headers: {'Origin': ''},
       errorBuilder: (_, _, _) {
-        // Try lowercased host as fallback (OSS bucket name case sensitivity)
-        try {
-          final uri = Uri.parse(url);
-          final lowered = uri.replace(host: uri.host.toLowerCase()).toString();
-          if (lowered != url) {
-            return Image.network(
-              lowered,
-              width: 58,
-              height: 58,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => Container(
-                width: 58,
-                height: 58,
-                color: const Color(0xFFEFF3F9),
-                child: const Icon(Icons.broken_image_outlined, size: 24),
-              ),
-            );
-          }
-        } catch (_) {}
+        if (!_triedRaw) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => _switchToRaw());
+          return Container(
+            width: 58,
+            height: 58,
+            color: const Color(0xFFEFF3F9),
+            child: const Icon(Icons.broken_image_outlined, size: 24),
+          );
+        }
         return Container(
           width: 58,
           height: 58,
@@ -1906,6 +2138,1192 @@ class _ChoiceGroup<T> extends StatelessWidget {
         onChanged: (item) {
           if (item != null) onChanged(item);
         },
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Compact components for the three-block collapsible layout
+// ═══════════════════════════════════════════════════════════
+
+/// Compact params row: 4 dropdowns in a wrap, fits mobile screen.
+class ParamsRow extends StatelessWidget {
+  const ParamsRow({
+    required this.size,
+    required this.quality,
+    required this.outputFormat,
+    required this.count,
+    required this.onSizeChanged,
+    required this.onQualityChanged,
+    required this.onOutputFormatChanged,
+    required this.onCountChanged,
+  });
+
+  final String size;
+  final String quality;
+  final String outputFormat;
+  final int count;
+  final ValueChanged<String> onSizeChanged;
+  final ValueChanged<String> onQualityChanged;
+  final ValueChanged<String> onOutputFormatChanged;
+  final ValueChanged<int> onCountChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        CompactDropdown<String>(
+          label: '尺寸',
+          value: size,
+          values: const ['1024x1024', '1024x1536', '1536x1024'],
+          onChanged: onSizeChanged,
+        ),
+        CompactDropdown<String>(
+          label: '质量',
+          value: quality,
+          values: const ['auto', 'low', 'medium', 'high'],
+          onChanged: onQualityChanged,
+        ),
+        CompactDropdown<String>(
+          label: '格式',
+          value: outputFormat,
+          values: const ['png', 'jpeg', 'webp'],
+          onChanged: onOutputFormatChanged,
+        ),
+        CompactDropdown<int>(
+          label: '数量',
+          value: count,
+          values: const [1, 2, 3, 4],
+          onChanged: (v) => onCountChanged(v as int),
+        ),
+      ],
+    );
+  }
+}
+
+class CompactDropdown<T> extends StatelessWidget {
+  const CompactDropdown({
+    required this.label,
+    required this.value,
+    required this.values,
+    required this.onChanged,
+  });
+
+  final String label;
+  final T value;
+  final List<T> values;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: DropdownButtonFormField<T>(
+        value: value,
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(fontSize: 11),
+          filled: true,
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 8,
+          ),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+        items: values
+            .map(
+              (item) => DropdownMenuItem(
+                value: item,
+                child: Text('$item', style: const TextStyle(fontSize: 12)),
+              ),
+            )
+            .toList(),
+        onChanged: (item) {
+          if (item != null) onChanged(item);
+        },
+      ),
+    );
+  }
+}
+
+/// Compact reference image section.
+class ReferenceSection extends StatefulWidget {
+  const ReferenceSection({
+    super.key,
+    required this.controller,
+    required this.onReferenceChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final ValueChanged<bool> onReferenceChanged;
+  final VoidCallback onClear;
+
+  @override
+  State<ReferenceSection> createState() => ReferenceSectionState();
+}
+
+class ReferenceSectionState extends State<ReferenceSection> {
+  bool _expanded = false;
+  bool _uploading = false;
+
+  String get _value => widget.controller.text.trim();
+  bool get _hasUrl => _value.isNotEmpty;
+
+  /// Pick image from gallery (image_picker) or file picker (file_picker).
+  Future<void> _pickImage() async {
+    if (_uploading) return;
+    setState(() => _uploading = true);
+
+    try {
+      // Show action sheet for source selection
+      final source = await showDialog<ImagePickerSource>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('选择图片来源'),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+          actionsPadding: const EdgeInsets.only(bottom: 8, right: 12),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, ImagePickerSource.camera),
+              child: const Row(
+                children: [
+                  Icon(Icons.camera_alt_rounded, size: 18),
+                  SizedBox(width: 8),
+                  Text('拍照'),
+                ],
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, ImagePickerSource.gallery),
+              child: const Row(
+                children: [
+                  Icon(Icons.photo_library_rounded, size: 18),
+                  SizedBox(width: 8),
+                  Text('相册'),
+                ],
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, ImagePickerSource.file),
+              child: const Row(
+                children: [
+                  Icon(Icons.insert_drive_file_rounded, size: 18),
+                  SizedBox(width: 8),
+                  Text('文件'),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+
+      if (source == null) return;
+
+      String? imagePath;
+      String? filePath;
+
+      if (source == ImagePickerSource.camera ||
+          source == ImagePickerSource.gallery) {
+        // Use image_picker
+        final picked = await ImagePicker().pickImage(
+          source: source == ImagePickerSource.camera
+              ? ImageSource.camera
+              : ImageSource.gallery,
+          maxWidth: 1024,
+          maxHeight: 1024,
+          imageQuality: 85,
+        );
+        imagePath = picked?.path;
+      } else {
+        // Use file_picker
+        final result = await FilePicker.platform.pickFiles(
+          type: FileType.image,
+          allowMultiple: false,
+        );
+        filePath = result?.files.single.path;
+      }
+
+      if (imagePath == null && filePath == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('未选择图片')));
+        }
+        return;
+      }
+
+      final bytes = await File(imagePath ?? filePath!).readAsBytes();
+      final base64 = base64Encode(bytes);
+      final mimeType = source == ImagePickerSource.camera
+          ? 'jpeg'
+          : (filePath != null
+                ? (imagePath ?? filePath!)
+                      .split('.')
+                      .last
+                      .toLowerCase()
+                      .replaceAll('jpg', 'jpeg')
+                : 'jpeg');
+      final dataUri = 'data:image/$mimeType;base64,$base64';
+
+      if (mounted) {
+        widget.controller.text = dataUri;
+        // Auto-enable sending when a reference image is loaded
+        widget.onReferenceChanged(true);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('参考图已加载（本地预览，不上传到服务器）')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('读取图片失败: $e')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _uploading = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.photo_filter_rounded,
+                size: 16,
+                color: AppTokens.textSecondary,
+              ),
+              const SizedBox(width: 6),
+              const Text(
+                '参考图 / 图生图',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+              ),
+              const Spacer(),
+              Text(
+                _expanded ? '收起' : '更多',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppTokens.primaryBlue,
+                ),
+              ),
+              const SizedBox(width: 4),
+              AnimatedRotation(
+                turns: _expanded ? 0.5 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: const Icon(Icons.expand_more_rounded, size: 16),
+              ),
+            ],
+          ),
+        ),
+        if (_expanded) ...[
+          const SizedBox(height: 8),
+          TextField(
+            controller: widget.controller,
+            decoration: InputDecoration(
+              labelText: '参考图 URL',
+              hintText: 'https://.../reference.png 或 base64',
+              filled: true,
+              suffixIcon: _hasUrl
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.upload_file_rounded, size: 18),
+                          onPressed: _pickImage,
+                          tooltip: '从本地选择',
+                        ),
+                        if (_uploading)
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        else
+                          IconButton(
+                            icon: const Icon(Icons.clear_rounded, size: 18),
+                            onPressed: widget.onClear,
+                          ),
+                      ],
+                    )
+                  : IconButton(
+                      icon: const Icon(Icons.upload_file_rounded, size: 18),
+                      onPressed: _pickImage,
+                      tooltip: '从本地选择',
+                    ),
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (_hasUrl)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.network(
+                _value,
+                width: double.infinity,
+                height: 140,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  height: 80,
+                  alignment: Alignment.center,
+                  color: const Color(0xFFEFF3F9),
+                  child: const Text(
+                    '预览失败',
+                    style: TextStyle(
+                      color: AppTokens.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Compact generated image tile.
+class GeneratedImageTileCompact extends StatelessWidget {
+  const GeneratedImageTileCompact({
+    required this.item,
+    required this.onCopy,
+    required this.onDownload,
+    required this.prompt,
+    required this.negativePrompt,
+    required this.parameterSummary,
+  });
+
+  final GeneratedImageResult item;
+  final ValueChanged<String> onCopy;
+  final ValueChanged<String> onDownload;
+  final String prompt;
+  final String negativePrompt;
+  final String parameterSummary;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE7ECF5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Thumbnail
+          _SmartImageLoader(
+            url: item.image,
+            isDataUrl: item.isDataUrl,
+            fallbackUrl: item.rawUrl,
+          ),
+          if (item.revisedPrompt != null && item.revisedPrompt!.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              '修订: ${item.revisedPrompt}',
+              style: const TextStyle(
+                color: AppTokens.textSecondary,
+                fontSize: 11,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          const SizedBox(height: 8),
+          // Action buttons - compact row
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => onDownload(item.image),
+                icon: const Icon(Icons.download_rounded, size: 16),
+                label: const Text('保存', style: TextStyle(fontSize: 12)),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => onCopy(item.image),
+                icon: const Icon(Icons.copy_rounded, size: 16),
+                label: Text(
+                  item.isDataUrl ? '复制URL' : '复制',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+              if (item.rawUrl != null)
+                OutlinedButton.icon(
+                  onPressed: () => onCopy(item.rawUrl!),
+                  icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                  label: const Text('原始', style: TextStyle(fontSize: 12)),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Compact history section.
+class HistorySectionCompact extends StatelessWidget {
+  const HistorySectionCompact({
+    required this.history,
+    required this.onRestore,
+    required this.onCopy,
+    required this.onClear,
+  });
+
+  final List<ImageGenerationHistoryItem> history;
+  final ValueChanged<ImageGenerationHistoryItem> onRestore;
+  final ValueChanged<String> onCopy;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    if (history.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.history_rounded,
+              size: 16,
+              color: AppTokens.textSecondary,
+            ),
+            const SizedBox(width: 6),
+            const Text(
+              '最近生成',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+            ),
+            const Spacer(),
+            TextButton(
+              onPressed: onClear,
+              child: const Text('清空', style: TextStyle(fontSize: 11)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        ...history.map(
+          (item) => HistoryTileCompact(
+            item: item,
+            onRestore: () => onRestore(item),
+            onCopy: onCopy,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class HistoryTileCompact extends StatelessWidget {
+  const HistoryTileCompact({
+    required this.item,
+    required this.onRestore,
+    required this.onCopy,
+  });
+
+  final ImageGenerationHistoryItem item;
+  final VoidCallback onRestore;
+  final ValueChanged<String> onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final firstImage = item.images.isEmpty ? null : item.images.first;
+    String? normalizedImage;
+    try {
+      if (firstImage != null) {
+        final uri = Uri.parse(firstImage);
+        normalizedImage = uri.replace(host: uri.host.toLowerCase()).toString();
+      }
+    } catch (_) {}
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE7ECF5)),
+      ),
+      child: Row(
+        children: [
+          // Thumbnail
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: firstImage == null
+                ? Container(
+                    width: 60,
+                    height: 60,
+                    color: const Color(0xFFEFF3F9),
+                    child: const Icon(
+                      Icons.image_not_supported_outlined,
+                      size: 24,
+                    ),
+                  )
+                : _buildThumbnail(normalizedImage!, context),
+          ),
+          const SizedBox(width: 8),
+          // Info
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.prompt,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${_formatTime(item.createdAt)} · ${item.model} · ${item.images.length} 张',
+                  style: const TextStyle(
+                    color: AppTokens.textSecondary,
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Actions
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.replay_rounded, size: 18),
+                onPressed: onRestore,
+                tooltip: '复用',
+              ),
+              IconButton(
+                icon: const Icon(Icons.copy_rounded, size: 16),
+                onPressed: () => onCopy(item.prompt),
+                tooltip: '复制',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatTime(DateTime value) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(value.month)}-${two(value.day)} ${two(value.hour)}:${two(value.minute)}';
+  }
+
+  Widget _buildThumbnail(String url, BuildContext ctx) {
+    String? rawUrl;
+    try {
+      final uri = Uri.parse(url);
+      if (uri.path.contains('/api/image/proxy')) {
+        final extracted = uri.queryParameters['url'];
+        if (extracted != null && extracted.isNotEmpty) {
+          rawUrl = Uri.decodeComponent(extracted);
+        }
+      }
+    } catch (_) {}
+    String? normalizedRaw;
+    if (rawUrl != null) {
+      try {
+        final uri = Uri.parse(rawUrl);
+        normalizedRaw = uri.replace(host: uri.host.toLowerCase()).toString();
+      } catch (_) {}
+    }
+    return GestureDetector(
+      onTap: () => _showImageUrlDialog(url, ctx),
+      child: CompactThumbnailImage(primaryUrl: url, rawUrl: normalizedRaw),
+    );
+  }
+
+  void _showImageUrlDialog(String url, BuildContext ctx) {
+    showDialog(
+      context: ctx,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('图片链接'),
+        content: SelectableText(url, style: const TextStyle(fontSize: 11)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('关闭'),
+          ),
+          OutlinedButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: url));
+              Navigator.pop(dialogCtx);
+              ScaffoldMessenger.of(ctx).showSnackBar(
+                const SnackBar(content: Text('已复制链接')),
+              );
+            },
+            child: const Text('复制'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class CompactThumbnailImage extends StatefulWidget {
+  const CompactThumbnailImage({
+    super.key,
+    required this.primaryUrl,
+    required this.rawUrl,
+  });
+  final String primaryUrl;
+  final String? rawUrl;
+
+  @override
+  State<CompactThumbnailImage> createState() => CompactThumbnailImageState();
+}
+
+class CompactThumbnailImageState extends State<CompactThumbnailImage> {
+  late String _currentUrl;
+  bool _triedFallback = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentUrl = widget.primaryUrl;
+  }
+
+  bool get _isDataUrl => _currentUrl.startsWith('data:image/');
+
+  @override
+  Widget build(BuildContext context) {
+    // Handle data URIs directly (no retry needed)
+    if (_isDataUrl) {
+      try {
+        final base64Data = _currentUrl.split(',').last;
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: Image.memory(
+            base64Decode(base64Data),
+            width: 60,
+            height: 60,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _buildPlaceholder(),
+          ),
+        );
+      } catch (_) {
+        return _buildPlaceholder();
+      }
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: Image.network(
+        _currentUrl,
+        width: 60,
+        height: 60,
+        fit: BoxFit.cover,
+        headers: {'Origin': ''},
+        errorBuilder: (_, __, ___) {
+          // Auto-retry with raw URL on first failure
+          if (!_triedFallback && widget.rawUrl != null && widget.rawUrl!.isNotEmpty) {
+            setState(() {
+              _currentUrl = widget.rawUrl!;
+              _triedFallback = true;
+            });
+            // Return a temporary placeholder while the new image loads
+            return _buildPlaceholder();
+          }
+          return _buildPlaceholder();
+        },
+      ),
+    );
+  }
+
+  Widget _buildPlaceholder() {
+    return Container(
+      width: 60,
+      height: 60,
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF3F9),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: const Icon(
+        Icons.image_outlined,
+        size: 24,
+        color: AppTokens.textSecondary,
+      ),
+    );
+  }
+}
+
+/// Compact request preview card (collapsed by default).
+class ImageGeneratorRequestPreviewCardCompact extends StatelessWidget {
+  const ImageGeneratorRequestPreviewCardCompact({
+    required this.endpoint,
+    required this.requestJson,
+    required this.preflightItems,
+    required this.onCopyRequestJson,
+  });
+
+  final String endpoint;
+  final String requestJson;
+  final List<ImageGeneratorPreflightItem> preflightItems;
+  final VoidCallback onCopyRequestJson;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExpandableInfoCard(
+      icon: Icons.fact_check_outlined,
+      title: '请求预览',
+      initialExpanded: false,
+      children: [
+        CodeBlock(label: 'Endpoint', content: endpoint),
+        const SizedBox(height: 6),
+        CodeBlock(label: 'JSON Body', content: requestJson, maxLines: 8),
+        const SizedBox(height: 6),
+        ...preflightItems.map(PreflightRowCompact.new),
+        const SizedBox(height: 6),
+        OutlinedButton.icon(
+          onPressed: onCopyRequestJson,
+          icon: const Icon(Icons.copy_all_rounded, size: 16),
+          label: const Text('复制请求 JSON'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Compact diagnostics card (collapsed by default).
+class ImageGeneratorDiagnosticsCardCompact extends StatelessWidget {
+  const ImageGeneratorDiagnosticsCardCompact({
+    required this.diagnostics,
+    required this.onCopyDiagnostics,
+    required this.onCopyRequestJson,
+  });
+
+  final ImageGeneratorRequestDiagnostics? diagnostics;
+  final VoidCallback? onCopyDiagnostics;
+  final VoidCallback? onCopyRequestJson;
+
+  @override
+  Widget build(BuildContext context) {
+    final item = diagnostics;
+    final color = item == null
+        ? AppTokens.textSecondary
+        : item.success
+        ? AppTokens.success
+        : Colors.red;
+    final icon = item == null
+        ? Icons.history_toggle_off_rounded
+        : item.success
+        ? Icons.check_circle_rounded
+        : Icons.error_rounded;
+
+    return ExpandableInfoCard(
+      icon: icon,
+      title: item == null ? '诊断' : '诊断 · ${item.statusLabel}',
+      initialExpanded: false,
+      leadingColor: color,
+      children: item == null
+          ? [
+              const Text(
+                '暂无请求记录。诊断卡记录最近一次真实生成结果。',
+                style: TextStyle(color: AppTokens.textSecondary, fontSize: 11),
+              ),
+            ]
+          : [
+              CodeBlock(label: 'Endpoint', content: item.endpoint),
+              const SizedBox(height: 6),
+              if (!item.success && item.message.isNotEmpty)
+                CodeBlock(label: '错误', content: item.message, maxLines: 4),
+              if (item.rawPreview.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                CodeBlock(label: '响应摘要', content: item.rawPreview, maxLines: 4),
+              ],
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                children: [
+                  if (onCopyDiagnostics != null)
+                    OutlinedButton.icon(
+                      onPressed: onCopyDiagnostics,
+                      icon: const Icon(Icons.assignment_rounded, size: 16),
+                      label: const Text('诊断信息'),
+                    ),
+                  if (onCopyRequestJson != null)
+                    OutlinedButton.icon(
+                      onPressed: onCopyRequestJson,
+                      icon: const Icon(Icons.copy_all_rounded, size: 16),
+                      label: const Text('请求 JSON'),
+                    ),
+                ],
+              ),
+            ],
+    );
+  }
+}
+
+/// Merged request preview + diagnostics card.
+class RequestDetailsCardCompact extends StatelessWidget {
+  const RequestDetailsCardCompact({
+    required this.endpoint,
+    required this.requestJson,
+    required this.preflightItems,
+    required this.diagnostics,
+    required this.onCopyRequestJson,
+    required this.onCopyDiagnostics,
+    this.onCopyDiagRequestJson,
+  });
+
+  final String endpoint;
+  final String requestJson;
+  final List<ImageGeneratorPreflightItem> preflightItems;
+  final ImageGeneratorRequestDiagnostics? diagnostics;
+  final VoidCallback onCopyRequestJson;
+  final VoidCallback? onCopyDiagnostics;
+  final VoidCallback? onCopyDiagRequestJson;
+
+  @override
+  Widget build(BuildContext context) {
+    final diagSuccess = diagnostics?.success;
+    final diagColor = diagnostics == null
+        ? AppTokens.textSecondary
+        : diagSuccess == true
+        ? AppTokens.success
+        : Colors.red;
+    final diagIcon = diagnostics == null
+        ? Icons.history_toggle_off_rounded
+        : diagSuccess == true
+        ? Icons.check_circle_rounded
+        : Icons.error_rounded;
+
+    return ExpandableInfoCard(
+      icon: diagIcon,
+      title: diagnostics == null
+          ? '请求详情'
+          : '请求详情 · ${diagnostics!.statusLabel}',
+      leadingColor: diagColor,
+      initialExpanded: false,
+      children: [
+        // Preflight checks
+        ...preflightItems.map(PreflightRowCompact.new),
+        if (preflightItems.isNotEmpty) const SizedBox(height: 6),
+        // Code blocks
+        CodeBlock(label: 'Endpoint', content: endpoint),
+        const SizedBox(height: 4),
+        CodeBlock(label: 'JSON Body', content: requestJson, maxLines: 6),
+        if (diagnostics != null) ...[
+          const SizedBox(height: 6),
+          CodeBlock(label: 'Endpoint', content: diagnostics!.endpoint),
+          const SizedBox(height: 4),
+          if (!diagnostics!.success && diagnostics!.message.isNotEmpty)
+            CodeBlock(label: '错误', content: diagnostics!.message, maxLines: 4),
+          if (diagnostics!.rawPreview.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            CodeBlock(
+              label: '响应摘要',
+              content: diagnostics!.rawPreview,
+              maxLines: 4,
+            ),
+          ],
+        ],
+        const SizedBox(height: 6),
+        // Copy buttons
+        Wrap(
+          spacing: 6,
+          children: [
+            OutlinedButton.icon(
+              onPressed: onCopyRequestJson,
+              icon: const Icon(Icons.copy_all_rounded, size: 16),
+              label: const Text('复制请求 JSON'),
+            ),
+            if (onCopyDiagnostics != null)
+              OutlinedButton.icon(
+                onPressed: onCopyDiagnostics,
+                icon: const Icon(Icons.assignment_rounded, size: 16),
+                label: const Text('诊断信息'),
+              ),
+            if (onCopyDiagRequestJson != null)
+              OutlinedButton.icon(
+                onPressed: onCopyDiagRequestJson,
+                icon: const Icon(Icons.copy_all_rounded, size: 16),
+                label: const Text('诊断 JSON'),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Compact platform quota card.
+class ImageGeneratorPlatformQuotaCardCompact extends StatelessWidget {
+  const ImageGeneratorPlatformQuotaCardCompact({
+    required this.quota,
+    required this.error,
+    required this.accountLabel,
+    required this.onRefresh,
+  });
+
+  final ImagePlatformQuota? quota;
+  final String? error;
+  final String? accountLabel;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.account_balance_wallet_rounded,
+              size: 16,
+              color: AppTokens.textSecondary,
+            ),
+            const SizedBox(width: 6),
+            const Text(
+              '平台额度',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+            ),
+            const Spacer(),
+            OutlinedButton.icon(
+              onPressed: onRefresh,
+              icon: const Icon(Icons.refresh_rounded, size: 14),
+              label: const Text('刷新', style: TextStyle(fontSize: 11)),
+            ),
+          ],
+        ),
+        if (error != null && error!.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            error!,
+            style: const TextStyle(
+              color: Colors.red,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            AppStatusPill(
+              label: accountLabel == null ? '未登录' : accountLabel!,
+              icon: accountLabel == null
+                  ? Icons.account_circle_outlined
+                  : Icons.verified_user_rounded,
+              color: accountLabel == null
+                  ? AppTokens.warning
+                  : AppTokens.success,
+            ),
+            AppStatusPill(
+              label: quota == null ? '额度：?' : '剩: ${quota!.remaining}',
+              icon: Icons.bolt_rounded,
+              color: quota == null || quota!.hasQuota
+                  ? AppTokens.success
+                  : Colors.red,
+            ),
+            AppStatusPill(
+              label: quota == null ? '今日：?' : '今日: ${quota!.usedToday}',
+              icon: Icons.today_rounded,
+              color: AppTokens.primaryBlue,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Generic expandable info card for request preview / diagnostics.
+class ExpandableInfoCard extends StatefulWidget {
+  const ExpandableInfoCard({
+    required this.icon,
+    required this.title,
+    required this.children,
+    this.initialExpanded = false,
+    this.leadingColor,
+  });
+
+  final IconData icon;
+  final String title;
+  final List<Widget> children;
+  final bool initialExpanded;
+  final Color? leadingColor;
+
+  @override
+  State<ExpandableInfoCard> createState() => ExpandableInfoCardState();
+}
+
+class ExpandableInfoCardState extends State<ExpandableInfoCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late Animation<double> _animation;
+  bool _expanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.initialExpanded;
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+    _animation = CurvedAnimation(parent: _controller, curve: Curves.easeInOut);
+    if (_expanded) _controller.value = 1;
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _toggle() {
+    setState(() {
+      _expanded = !_expanded;
+      _expanded ? _controller.forward() : _controller.reverse();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: _toggle,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Icon(
+                  widget.icon,
+                  size: 16,
+                  color: widget.leadingColor ?? AppTokens.textSecondary,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  widget.title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+                const Spacer(),
+                AnimatedRotation(
+                  turns: _expanded ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 200),
+                  child: const Icon(Icons.expand_more_rounded, size: 16),
+                ),
+              ],
+            ),
+          ),
+        ),
+        SizeTransition(
+          sizeFactor: _animation,
+          axisAlignment: -1,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: widget.children,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class CodeBlock extends StatelessWidget {
+  const CodeBlock({
+    required this.label,
+    required this.content,
+    this.maxLines = 3,
+  });
+  final String label;
+  final String content;
+  final int maxLines;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: AppTokens.textSecondary,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F172A),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: SelectableText(
+            content,
+            maxLines: maxLines,
+            style: const TextStyle(
+              color: Color(0xFFE2E8F0),
+              fontFamily: 'monospace',
+              fontSize: 11,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class PreflightRowCompact extends StatelessWidget {
+  const PreflightRowCompact(this.item);
+  final ImageGeneratorPreflightItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = switch (item.level) {
+      ImageGeneratorPreflightLevel.ok => Icons.check_circle_rounded,
+      ImageGeneratorPreflightLevel.warning => Icons.warning_amber_rounded,
+      ImageGeneratorPreflightLevel.error => Icons.error_rounded,
+    };
+    final color = switch (item.level) {
+      ImageGeneratorPreflightLevel.ok => AppTokens.success,
+      ImageGeneratorPreflightLevel.warning => AppTokens.warning,
+      ImageGeneratorPreflightLevel.error => Colors.red,
+    };
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 14),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              item.message,
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
       ),
     );
   }
