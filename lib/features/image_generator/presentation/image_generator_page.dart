@@ -42,8 +42,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   final TextEditingController _modelController = TextEditingController();
   final TextEditingController _promptController = TextEditingController();
   final TextEditingController _negativeController = TextEditingController();
-  final TextEditingController _referenceImageController =
-      TextEditingController();
+  List<String> _referenceImageUrls = [];
 
   Timer? _draftDebounce;
   String _size = '1024x1024';
@@ -91,7 +90,6 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       _modelController,
       _promptController,
       _negativeController,
-      _referenceImageController,
     ]) {
       controller.addListener(_scheduleSaveDraft);
     }
@@ -107,7 +105,6 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     _modelController.dispose();
     _promptController.dispose();
     _negativeController.dispose();
-    _referenceImageController.dispose();
     super.dispose();
   }
 
@@ -166,7 +163,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     _modelController.text = draft.model;
     _promptController.text = draft.prompt;
     _negativeController.text = draft.negativePrompt;
-    _referenceImageController.text = draft.referenceImageUrl;
+    _referenceImageUrls = List<String>.from(draft.referenceImageUrls);
     _referenceImageField = draft.referenceImageField;
     _size = draft.size;
     _quality = draft.quality;
@@ -192,7 +189,10 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       model: _modelController.text.trim(),
       prompt: _promptController.text.trim(),
       negativePrompt: _negativeController.text.trim(),
-      referenceImageUrl: _referenceImageController.text.trim(),
+      referenceImageUrls: _referenceImageUrls
+          .map((u) => u.trim())
+          .where((u) => u.isNotEmpty)
+          .toList(),
       referenceImageField: _referenceImageField,
       size: _size,
       quality: _quality,
@@ -208,7 +208,10 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       model: _modelController.text.trim(),
       prompt: _promptController.text.trim(),
       negativePrompt: _negativeController.text.trim(),
-      referenceImageUrl: _referenceImageController.text.trim(),
+      referenceImageUrls: _referenceImageUrls
+          .map((u) => u.trim())
+          .where((u) => u.isNotEmpty)
+          .toList(),
       referenceImageField: _referenceImageField,
       size: _size,
       quality: _quality,
@@ -539,28 +542,111 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       return;
     }
 
-    // On mobile: download image to temp dir, then open with system (saves to gallery)
+    // On mobile: download image to persistent storage, then try to open / share
     try {
       final client = Dio();
-      final dir = await getTemporaryDirectory();
-      final file = File(
-        '${dir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
+      // 使用持久目录（非临时目录），用户可找到文件
+      final docDir = await getApplicationDocumentsDirectory();
+      final saveDir = Directory('${docDir.path}/box_downloads');
+      if (!saveDir.existsSync()) {
+        saveDir.createSync(recursive: true);
+      }
+
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final file = File('${saveDir.path}/ai_image_$timestamp.png');
+
+      await client.download(
+        imageUrl,
+        file.path,
+        options: Options(
+          responseType: ResponseType.bytes,
+          followRedirects: true,
+          receiveTimeout: const Duration(seconds: 60),
+        ),
       );
-      await client.download(imageUrl, file.path);
-      if (file.existsSync()) {
-        await OpenFilex.open(file.path);
-        if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('图片已保存，可在相册中查看')));
+
+      if (!mounted) return;
+
+      if (file.existsSync() && file.lengthSync() > 0) {
+        // 尝试用系统打开（用户可自行保存到相册）
+        final result = await OpenFilex.open(file.path);
+        if (result.type == ResultType.done) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('图片已保存到：${file.path}'),
+              action: SnackBarAction(
+                label: '分享',
+                onPressed: () => _shareImage(file.path),
+              ),
+            ),
+          );
+        } else {
+          // 如果无法直接打开，至少告知文件位置
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('图片已下载到：${file.path}'),
+              duration: const Duration(seconds: 5),
+              action: SnackBarAction(
+                label: '复制路径',
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: file.path));
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(const SnackBar(content: Text('路径已复制')));
+                },
+              ),
+            ),
+          );
+        }
+      } else {
+        throw Exception('文件下载不完整或为空');
       }
     } catch (e) {
+      debugPrint('下载图片失败: $e');
+      // 尝试临时目录作为应急方案
+      try {
+        final client = Dio();
+        final tmpDir = await getTemporaryDirectory();
+        final tmpFile = File(
+          '${tmpDir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
+        );
+        await client.download(
+          imageUrl,
+          tmpFile.path,
+          options: Options(
+            responseType: ResponseType.bytes,
+            followRedirects: true,
+            receiveTimeout: const Duration(seconds: 60),
+          ),
+        );
+        if (tmpFile.existsSync()) {
+          await OpenFilex.open(tmpFile.path);
+          if (!mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('图片已下载，请从文件管理器查看')));
+          return;
+        }
+      } catch (_) {
+        // 都失败了，复制链接
+      }
+
+      // 最终兜底：复制链接
       await Clipboard.setData(ClipboardData(text: imageUrl));
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('下载失败，图片链接已复制到剪贴板')));
     }
+  }
+
+  /// 使用平台分享发送图片
+  void _shareImage(String filePath) async {
+    // 简单通过 OpenFilex 分享 — 依赖系统分享菜单
+    await OpenFilex.open(filePath, type: 'image/png');
   }
 
   void _setParam(VoidCallback update) {
@@ -573,7 +659,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       _promptController.text = item.prompt;
       _negativeController.text = item.negativePrompt;
       _modelController.text = item.model;
-      _referenceImageController.text = item.referenceImageUrl;
+      _referenceImageUrls = List<String>.from(item.referenceImageUrls);
       _referenceImageField = item.referenceImageField;
       _size = item.size;
       _quality = item.quality;
@@ -651,8 +737,11 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
         !_ensurePlatformSession()) {
       return;
     }
-    final referenceUrl = _referenceImageController.text.trim();
-    if (_referenceImageField.shouldSend && referenceUrl.isEmpty) {
+    final nonEmptyUrls = _referenceImageUrls
+        .map((u) => u.trim())
+        .where((u) => u.isNotEmpty)
+        .toList();
+    if (_referenceImageField.shouldSend && nonEmptyUrls.isEmpty) {
       setState(() => _referenceImageField = ImageReferencePayloadField.none);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -660,7 +749,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
         );
       }
     }
-    if (!_referenceImageField.shouldSend && referenceUrl.isNotEmpty) {
+    if (!_referenceImageField.shouldSend && nonEmptyUrls.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -691,7 +780,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
         ImageGenerationHistoryItem(
           prompt: prompt,
           negativePrompt: _negativeController.text.trim(),
-          referenceImageUrl: referenceUrl,
+          referenceImageUrls: nonEmptyUrls,
           referenceImageField: _referenceImageField,
           model: _modelController.text.trim().isEmpty
               ? 'gpt-image-1'
@@ -748,8 +837,15 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
 
   @override
   Widget build(BuildContext context) {
+    final refUrls = _referenceImageUrls
+        .map((u) => u.trim())
+        .where((u) => u.isNotEmpty)
+        .toList();
+    final refSummary = _referenceImageField.shouldSend && refUrls.isNotEmpty
+        ? ' · ${refUrls.length}张参考图:${_referenceImageField.wireName}'
+        : '';
     final parameterSummary =
-        '${_modelController.text.trim().isEmpty ? 'gpt-image-1' : _modelController.text.trim()} · $_size · $_quality · $_outputFormat · $_count 张${_referenceImageField.shouldSend ? ' · 参考图:${_referenceImageField.wireName}' : ''}';
+        '${_modelController.text.trim().isEmpty ? 'gpt-image-1' : _modelController.text.trim()} · $_size · $_quality · $_outputFormat · $_count 张$refSummary';
 
     return AppPageScaffold(
       safeBottom: true,
@@ -1097,7 +1193,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
                                       )
                                     : null,
                                 side: _selectedStyles.contains(label)
-                                    ? BorderSide(
+                                    ? const BorderSide(
                                         color: AppTokens.primaryBlue,
                                         width: 1.5,
                                       )
@@ -1160,16 +1256,12 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
                     const SizedBox(height: 6),
                     // ── Reference image (collapsible, default collapsed) ──
                     ReferenceSection(
-                      controller: _referenceImageController,
-                      onReferenceChanged: (hasRef) => _setParam(
-                        () => _referenceImageField = hasRef
-                            ? ImageReferencePayloadField.image
-                            : ImageReferencePayloadField.none,
-                      ),
-                      onClear: () => _setParam(() {
-                        _referenceImageController.clear();
-                        _referenceImageField = ImageReferencePayloadField.none;
-                      }),
+                      urls: _referenceImageUrls,
+                      payloadField: _referenceImageField,
+                      onUrlsChanged: (urls) =>
+                          _setParam(() => _referenceImageUrls = urls),
+                      onPayloadFieldChanged: (field) =>
+                          _setParam(() => _referenceImageField = field),
                     ),
                   ],
                 ),

@@ -575,7 +575,7 @@ class _NovelListPageState extends State<NovelListPage> {
         onTap: _openSourceManager,
       ),
       actions: [
-        AppStatusPill(
+        const AppStatusPill(
           label: '书源管理',
           icon: Icons.tune_rounded,
           color: AppTokens.violet,

@@ -292,7 +292,7 @@ class MarketPluginTemplate {
   }
 
   static final List<MarketPluginTemplate> defaults = [
-    MarketPluginTemplate(
+    const MarketPluginTemplate(
       id: 'market_daily_digest',
       title: '今日热闻',
       subtitle: '一键进入日报详情页',
@@ -300,10 +300,10 @@ class MarketPluginTemplate {
       actionCode: 'openDailyNews',
       payload: '',
       icon: Icons.newspaper_outlined,
-      color: const Color(0xFF6A5AE0),
+      color: Color(0xFF6A5AE0),
       sort: 10,
     ),
-    MarketPluginTemplate(
+    const MarketPluginTemplate(
       id: 'market_image_generator',
       title: 'AI 生图工坊',
       subtitle: 'Prompt 模板、历史复用、OpenAI 兼容生图',
@@ -311,10 +311,10 @@ class MarketPluginTemplate {
       actionCode: 'openImageGenerator',
       payload: '',
       icon: Icons.auto_awesome_outlined,
-      color: const Color(0xFF8B5CF6),
+      color: Color(0xFF8B5CF6),
       sort: 12,
     ),
-    MarketPluginTemplate(
+    const MarketPluginTemplate(
       id: 'market_quick_note',
       title: '快速便签',
       subtitle: '首页快捷记录灵感',
@@ -322,10 +322,10 @@ class MarketPluginTemplate {
       actionCode: 'toast',
       payload: '快速便签：后续可接入本地记事模块',
       icon: Icons.edit_note_outlined,
-      color: const Color(0xFF7F56D9),
+      color: Color(0xFF7F56D9),
       sort: 20,
     ),
-    MarketPluginTemplate(
+    const MarketPluginTemplate(
       id: 'market_music_focus',
       title: '专注白噪音',
       subtitle: '工作学习沉浸模式',
@@ -333,10 +333,10 @@ class MarketPluginTemplate {
       actionCode: 'toast',
       payload: '白噪音插件开发中...',
       icon: Icons.graphic_eq,
-      color: const Color(0xFFEC4899),
+      color: Color(0xFFEC4899),
       sort: 10,
     ),
-    MarketPluginTemplate(
+    const MarketPluginTemplate(
       id: 'market_music_sleep',
       title: '睡眠电台',
       subtitle: '夜间轻音乐播放入口',
@@ -344,10 +344,10 @@ class MarketPluginTemplate {
       actionCode: 'toast',
       payload: '睡眠电台插件开发中...',
       icon: Icons.nightlight_round,
-      color: const Color(0xFFDB2777),
+      color: Color(0xFFDB2777),
       sort: 20,
     ),
-    MarketPluginTemplate(
+    const MarketPluginTemplate(
       id: 'market_video_archive_search',
       title: '影视快速检索',
       subtitle: '直达公共影视搜索页',
@@ -355,10 +355,10 @@ class MarketPluginTemplate {
       actionCode: 'openVideoList',
       payload: '',
       icon: Icons.video_collection_outlined,
-      color: const Color(0xFF4F46E5),
+      color: Color(0xFF4F46E5),
       sort: 10,
     ),
-    MarketPluginTemplate(
+    const MarketPluginTemplate(
       id: 'market_video_watch_later',
       title: '稍后再看',
       subtitle: '收藏稍后观看片单',
@@ -366,10 +366,10 @@ class MarketPluginTemplate {
       actionCode: 'toast',
       payload: '稍后再看功能开发中...',
       icon: Icons.watch_later_outlined,
-      color: const Color(0xFF4338CA),
+      color: Color(0xFF4338CA),
       sort: 20,
     ),
-    MarketPluginTemplate(
+    const MarketPluginTemplate(
       id: 'market_comic_wallpaper',
       title: '动漫壁纸',
       subtitle: '二次元壁纸入口',
@@ -377,10 +377,10 @@ class MarketPluginTemplate {
       actionCode: 'toast',
       payload: '动漫壁纸插件开发中...',
       icon: Icons.wallpaper_outlined,
-      color: const Color(0xFF0D9488),
+      color: Color(0xFF0D9488),
       sort: 10,
     ),
-    MarketPluginTemplate(
+    const MarketPluginTemplate(
       id: 'market_comic_week_rank',
       title: '本周漫画榜',
       subtitle: '热门漫画推荐',
@@ -388,10 +388,10 @@ class MarketPluginTemplate {
       actionCode: 'toast',
       payload: '本周漫画榜插件开发中...',
       icon: Icons.auto_stories_outlined,
-      color: const Color(0xFF0F766E),
+      color: Color(0xFF0F766E),
       sort: 20,
     ),
-    MarketPluginTemplate(
+    const MarketPluginTemplate(
       id: 'market_novel_pick',
       title: '今日推荐书单',
       subtitle: '直达小说列表页',
@@ -399,10 +399,10 @@ class MarketPluginTemplate {
       actionCode: 'openNovelList',
       payload: '',
       icon: Icons.menu_book_outlined,
-      color: const Color(0xFFF59E0B),
+      color: Color(0xFFF59E0B),
       sort: 10,
     ),
-    MarketPluginTemplate(
+    const MarketPluginTemplate(
       id: 'market_novel_checkin',
       title: '阅读打卡',
       subtitle: '保持每日阅读习惯',
@@ -410,7 +410,7 @@ class MarketPluginTemplate {
       actionCode: 'toast',
       payload: '阅读打卡功能开发中...',
       icon: Icons.task_alt_outlined,
-      color: const Color(0xFFD97706),
+      color: Color(0xFFD97706),
       sort: 20,
     ),
   ];

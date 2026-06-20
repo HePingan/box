@@ -45,11 +45,11 @@ class _DetailEpisodeSectionState extends State<DetailEpisodeSection> {
           borderRadius: BorderRadius.circular(24),
           border: Border.all(color: const Color(0xFFE7ECF5)),
         ),
-        child: Text(
+        child: const Text(
           '当前线路暂无可播放集数',
           textAlign: TextAlign.center,
           style: TextStyle(
-            color: const Color(0xFF64748B),
+            color: Color(0xFF64748B),
             fontWeight: FontWeight.w700,
           ),
         ),

@@ -119,9 +119,9 @@ class HistoryQuickView extends StatelessWidget {
               minimumSize: const Size(0, 30),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: Text(
+            child: const Text(
               '清空',
-              style: const TextStyle(
+              style: TextStyle(
                 color: Color(0xFFFFE08A),
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
@@ -407,10 +407,10 @@ class _HistoryCard extends StatelessWidget {
             const SizedBox(height: 2),
             Row(
               children: [
-                Icon(
+                const Icon(
                   Icons.video_library_rounded,
                   size: 10,
-                  color: const Color(0xFFFFE08A),
+                  color: Color(0xFFFFE08A),
                 ),
                 const SizedBox(width: 4),
                 Expanded(

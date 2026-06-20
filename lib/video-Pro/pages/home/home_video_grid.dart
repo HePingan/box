@@ -68,9 +68,9 @@ class HomeVideoSliverGrid extends StatelessWidget {
     const crossAxisCount = 2;
     final childAspectRatio = effectiveWidth >= 520 ? 0.60 : 0.57;
 
-    final horizontalPadding = 24.0;
-    final crossAxisSpacing = 12.0;
-    final mainAxisSpacing = 14.0;
+    const horizontalPadding = 24.0;
+    const crossAxisSpacing = 12.0;
+    const mainAxisSpacing = 14.0;
 
     final itemWidth =
         (effectiveWidth -

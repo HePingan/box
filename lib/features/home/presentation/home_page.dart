@@ -137,7 +137,7 @@ class _HomePageState extends State<HomePage>
                   ),
                 ),
                 const SizedBox(height: 2),
-                Text(
+                const Text(
                   'Geek工具箱 · 今日工作台',
                   style: TextStyle(
                     color: AppTokens.textSecondary,
@@ -283,7 +283,7 @@ class _HomePageState extends State<HomePage>
         onTap: () {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => NovelListPageWithProvider()),
+            MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
           );
         },
       ),
@@ -296,7 +296,7 @@ class _HomePageState extends State<HomePage>
         onTap: () {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => VideoListPage()),
+            MaterialPageRoute(builder: (_) => const VideoListPage()),
           );
         },
       ),
@@ -311,11 +311,11 @@ class _HomePageState extends State<HomePage>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
+          const Padding(
+            padding: EdgeInsets.only(right: 16),
             child: Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: Text(
                     '继续使用',
                     style: TextStyle(
@@ -406,7 +406,7 @@ class _HomePageState extends State<HomePage>
                   onPressed: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => DailyNewsPage()),
+                      MaterialPageRoute(builder: (_) => const DailyNewsPage()),
                     );
                   },
                   child: const Text('更多'),

@@ -652,19 +652,19 @@ class HomePluginHost {
           case HomePluginActionType.openDailyNews:
             await Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => DailyNewsPage()),
+              MaterialPageRoute(builder: (_) => const DailyNewsPage()),
             );
             return;
           case HomePluginActionType.openNovelList:
             await Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => NovelListPageWithProvider()),
+              MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
             );
             return;
           case HomePluginActionType.openVideoList:
             await Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => VideoListPage()),
+              MaterialPageRoute(builder: (_) => const VideoListPage()),
             );
             return;
           case HomePluginActionType.openImageGenerator:
@@ -708,7 +708,7 @@ class HomePluginHost {
         onTap: (context) async {
           await Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => DailyNewsPage()),
+            MaterialPageRoute(builder: (_) => const DailyNewsPage()),
           );
         },
       ),
@@ -737,7 +737,7 @@ class HomePluginHost {
         onTap: (context) async {
           await Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => VideoListPage()),
+            MaterialPageRoute(builder: (_) => const VideoListPage()),
           );
         },
       ),
@@ -766,7 +766,7 @@ class HomePluginHost {
         onTap: (context) async {
           await Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => NovelListPageWithProvider()),
+            MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
           );
         },
       ),

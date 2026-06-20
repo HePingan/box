@@ -471,7 +471,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
   }
 
   Widget _buildQuickWorkbench() {
-    final quickIds = const [
+    const quickIds = [
       'weather',
       'currency',
       'ip',
@@ -937,7 +937,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
   }
 
   Widget _buildDirectoryPanel() {
-    final categories = const [
+    const categories = [
       '全部',
       'Weather',
       'Development',

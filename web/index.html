@@ -1,148 +1,215 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
 
-  <!-- iOS meta tags & icons -->
+  <!-- SEO -->
+  <meta name="description" content="Geek工具箱 — 全能的极客工具集，集成 AI 生图工坊、插件扩展、内容管理、远程运维等能力">
+  <meta name="keywords" content="Geek工具箱,AI生图,工具箱,极客工具,Flutter应用">
+  <meta name="author" content="HePingan">
+  <meta name="robots" content="index, follow">
+
+  <!-- Open Graph / 社交媒体分享 -->
+  <meta property="og:title" content="Geek工具箱 Pro">
+  <meta property="og:description" content="全能的极客工具集 — AI 生图工坊、插件扩展、内容管理、远程运维">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://github.com/HePingan/box">
+  <meta property="og:image" content="icons/Icon-512.png">
+
+  <!-- iOS / Safari -->
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="box">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Geek工具箱">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- 主题色 -->
+  <meta name="theme-color" content="#1a1a2e">
+  <meta name="msapplication-TileColor" content="#1a1a2e">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>box</title>
+  <title>Geek工具箱 Pro</title>
   <link rel="manifest" href="manifest.json">
 
+  <!-- 预加载关键资源 -->
+  <link rel="preconnect" href="https://storage.flutter-io.cn" crossorigin>
+
   <style>
-    /* Override Flutter's red error screen styles */
-    .exception-container,
-    #exception-container,
-    .flutter-error-page,
-    body > div:not([id]):first-child,
-    body > div[style*="background-color: rgb(178, 34, 34)"],
-    body > div[style*="#B22222"],
-    #flutter-error-container,
-    .error-overlay,
-    .error-screen {
-      display: none !important;
+    /* === 全局重置 === */
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #f5f5f5;
     }
-    /* Hide ALL error overlays — aggressive catch-all */
-    body > div:first-child:not(#flutter-main):not(#splash):not([id]) {
-      display: none !important;
+
+    /* === 加载 splash 动画 === */
+    #splash {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      z-index: 9999;
+      transition: opacity 0.5s ease-out;
+    }
+    #splash.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .splash-logo {
+      width: 80px;
+      height: 80px;
+      border-radius: 20px;
+      background: linear-gradient(135deg, #4fc3f7, #2196f3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 40px;
+      font-weight: bold;
+      color: white;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      box-shadow: 0 8px 32px rgba(33, 150, 243, 0.3);
+      margin-bottom: 24px;
+    }
+
+    .splash-title {
+      color: white;
+      font-size: 22px;
+      font-weight: 600;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      letter-spacing: 1px;
+      margin-bottom: 32px;
+    }
+
+    .splash-spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid rgba(255,255,255,0.15);
+      border-top-color: #4fc3f7;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* === 自定义滚动条 === */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(0,0,0,0.15);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(0,0,0,0.25);
+    }
+
+    /* === Flutter canvas 全屏 === */
+    flutter-view, flt-scene, canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* 选中颜色 */
+    ::selection {
+      background: rgba(33, 150, 243, 0.25);
     }
   </style>
 </head>
 <body>
-  <!-- Intercept Flutter's assertion error rendering BEFORE flutter_bootstrap.js runs -->
+  <!-- 加载 Splash 屏 -->
+  <div id="splash">
+    <div class="splash-logo">G</div>
+    <div class="splash-title">Geek工具箱</div>
+    <div class="splash-spinner"></div>
+  </div>
+
+  <!-- Flutter 启动脚本（不含 async，保证加载顺序） -->
+  <script src="flutter_bootstrap.js"></script>
+
   <script>
-    // Block the red assertion screen by overriding the DOM mutation
-    // Flutter web renders errors by inserting a div into the body.
-    // We intercept this and prevent it.
+    // === 隐藏 splash（Flutter app 就绪后触发） ===
+    // Flutter web 加载完毕后会触发 DOMContentLoaded 或者我们可以检测 canvas 出现
+    const splash = document.getElementById('splash');
+    function hideSplash() {
+      if (!splash || splash.classList.contains('hidden')) return;
+      splash.classList.add('hidden');
+      setTimeout(() => { splash.style.display = 'none'; }, 500);
+    }
 
-    // Method 1: Override document.body.appendChild to detect Flutter error divs
-    const originalAppendChild = Document.prototype.appendChild;
-    Document.prototype.appendChild = function(node) {
-      if (node.nodeType === 1 /* ELEMENT_NODE */) {
-        const tag = node.tagName?.toLowerCase();
-        const id = node.id?.toLowerCase();
-        const cls = (node.className || '').toString().toLowerCase();
-        const style = node.getAttribute('style') || '';
-        // Flutter error screen uses specific patterns
-        if (tag === 'div' && (
-            id?.includes('exception') ||
-            id?.includes('error') ||
-            id?.includes('flutter') ||
-            cls.includes('exception') ||
-            cls.includes('red') ||
-            cls.includes('error') ||
-            style.includes('rgb(178') ||
-            style.includes('#B22222') ||
-            style.includes('rgb(178, 34, 34)') ||
-            (node.style && node.style.backgroundColor === 'rgb(178, 34, 34)')
-        )) {
-          console.warn('[JS] Blocked Flutter error screen');
-          return node;
-        }
+    // 1. 检测 canvas 出现（CanvasKit 模式）
+    const observer = new MutationObserver(() => {
+      if (document.querySelector('canvas[aria-hidden]')) {
+        hideSplash();
       }
-      return originalAppendChild.call(this, node);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // 2. 检测 DOM 渲染模式
+    document.addEventListener('flutter-first-frame', hideSplash);
+
+    // 3. 兜底：6 秒后强制隐藏
+    setTimeout(hideSplash, 6000);
+
+    // === 精简版错误拦截（仅在 Flutter 层面拦截） ===
+    // 覆盖 dart:html / AssertionError 相关的控制台错误
+    const origConsoleError = console.error;
+    console.error = function(...args) {
+      const msg = args.join(' ');
+      if (msg.includes('ancestor == this') ||
+          msg.includes('InheritedNotifier') ||
+          msg.includes('notifyClients') ||
+          msg.includes('AssertionError')) {
+        return; // silent suppress
+      }
+      origConsoleError.apply(console, args);
     };
 
-    // Method 2: Also intercept insertBefore
-    const originalInsertBefore = Document.prototype.insertBefore;
-    Document.prototype.insertBefore = function(newNode, refNode) {
-      if (newNode.nodeType === 1 /* ELEMENT_NODE */) {
-        const id = newNode.id?.toLowerCase();
-        const cls = (newNode.className || '').toString().toLowerCase();
-        const style = newNode.getAttribute('style') || '';
-        if (id?.includes('exception') || id?.includes('error') ||
-            cls.includes('exception') || cls.includes('error') ||
-            style.includes('rgb(178') || style.includes('#B22222')) {
-          console.warn('[JS] Blocked Flutter error screen (insertBefore)');
-          return newNode;
-        }
-      }
-      return originalInsertBefore.call(this, newNode, refNode);
-    };
-
-    // Method 3: Use MutationObserver as final fallback
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        for (const addedNode of mutation.addedNodes) {
-          if (addedNode.nodeType === 1) {
-            const cls = (addedNode.className || '').toString();
-            const style = addedNode.getAttribute('style') || '';
-            const id = addedNode.id || '';
-            // Broad Flutter error screen detection
-            if (cls.includes('exception') || cls.includes('error') ||
-                style.includes('rgb(178') || style.includes('#B22222') ||
-                id.includes('exception') || id.includes('error') ||
-                id.includes('flutter')) {
-              console.warn('[JS] MutationObserver blocked error screen');
-              addedNode.remove();
+    // 拦截页面上 Flutter 错误 div 渲染
+    const errorObserver = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        for (const node of m.addedNodes) {
+          if (node.nodeType === 1) {
+            const c = (node.className || '') + (node.id || '');
+            if (c.includes('exception') || c.includes('error-screen') || c.includes('flutter-error')) {
+              console.warn('[Web] Suppressed Flutter error overlay');
+              node.remove();
             }
           }
         }
       }
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    errorObserver.observe(document.body, { childList: true, subtree: true });
 
-    // Method 4: Catch AssertionError at the Dart/JS boundary
-    // Flutter compiles to JS; AssertionError becomes a JS Error
-    window.onerror = function(message, source, lineno, colno, error) {
-      if (typeof message === 'string' && (
-          message.indexOf('ancestor == this') !== -1 ||
-          message.indexOf('framework.dart') !== -1 ||
-          message.indexOf('AssertionError') !== -1 ||
-          message.indexOf('assertion') !== -1 ||
-          message.indexOf('InheritedNotifier') !== -1 ||
-          message.indexOf('notifyClients') !== -1
-      )) {
-        console.warn('[JS] Caught assertion error via window.onerror:', message);
-        return true; // suppress default
+    // === 抑制浏览器右键菜单（避免在 Canvas 上显示默认菜单） ===
+    document.addEventListener('contextmenu', (e) => {
+      // 仅在 Flutter canvas 区域内阻止
+      const target = e.target;
+      if (target && (target.tagName === 'CANVAS' || target.closest('flt-scene, flutter-view'))) {
+        e.preventDefault();
       }
-      return false;
-    };
+    });
 
-    // Method 5: Override FlutterError reporting in the compiled JS
-    // This catches errors at the Dart level before they reach the JS boundary
-    const originalConsoleError = console.error;
-    console.error = function(...args) {
-      const msg = args.join(' ');
-      if (msg.indexOf('ancestor == this') !== -1 ||
-          msg.indexOf('InheritedNotifier') !== -1 ||
-          msg.indexOf('notifyClients') !== -1) {
-        console.warn('[JS] Console.error suppressed assertion:', msg);
-        return;
-      }
-      originalConsoleError.apply(console, args);
-    };
+    // === 允许 drop/paste 事件经过（Flutter Web 原生支持） ===
+    document.addEventListener('dragover', (e) => e.preventDefault());
+    document.addEventListener('drop', (e) => e.preventDefault());
   </script>
-  <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

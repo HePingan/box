@@ -1260,7 +1260,7 @@ class StateStore {
       await save();
       return;
     }
-    final adminId = 'u_admin';
+    const adminId = 'u_admin';
     accounts[adminId] = Account(
       id: adminId,
       username: config.bootstrapAdminUsername,

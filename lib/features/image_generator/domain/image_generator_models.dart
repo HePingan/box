@@ -28,7 +28,7 @@ class ImageGenerationParams {
     required this.quality,
     required this.outputFormat,
     this.negativePrompt = '',
-    this.referenceImageUrl = '',
+    this.referenceImageUrls = const [],
     this.referenceImageField = ImageReferencePayloadField.none,
     this.count = 1,
   });
@@ -41,7 +41,7 @@ class ImageGenerationParams {
   final String size;
   final String quality;
   final String outputFormat;
-  final String referenceImageUrl;
+  final List<String> referenceImageUrls;
   final ImageReferencePayloadField referenceImageField;
   final int count;
 
@@ -62,9 +62,16 @@ class ImageGenerationParams {
     if (outputFormat.trim().isNotEmpty) {
       body['output_format'] = outputFormat.trim();
     }
-    final referenceUrl = referenceImageUrl.trim();
-    if (referenceImageField.shouldSend && referenceUrl.isNotEmpty) {
-      body[referenceImageField.wireName] = referenceUrl;
+    final urls = referenceImageUrls
+        .map((u) => u.trim())
+        .where((u) => u.isNotEmpty)
+        .toList();
+    if (referenceImageField.shouldSend && urls.isNotEmpty) {
+      if (urls.length == 1) {
+        body[referenceImageField.wireName] = urls.first;
+      } else {
+        body[referenceImageField.wireName] = urls;
+      }
     }
     return body;
   }
@@ -116,7 +123,7 @@ class ImageGeneratorDraft {
     required this.model,
     required this.prompt,
     required this.negativePrompt,
-    required this.referenceImageUrl,
+    required this.referenceImageUrls,
     required this.referenceImageField,
     required this.size,
     required this.quality,
@@ -132,7 +139,7 @@ class ImageGeneratorDraft {
       model: 'gpt-image-1',
       prompt: '一张用于工具箱 App 的 AI 生图入口海报，蓝紫渐变，玻璃拟态，科技感构图，移动端 UI 宣传图',
       negativePrompt: '低清晰度，文字错误，水印，畸形手指',
-      referenceImageUrl: '',
+      referenceImageUrls: [],
       referenceImageField: ImageReferencePayloadField.none,
       size: '1024x1024',
       quality: 'auto',
@@ -143,6 +150,15 @@ class ImageGeneratorDraft {
 
   factory ImageGeneratorDraft.fromJson(Map<String, dynamic> json) {
     final defaults = ImageGeneratorDraft.defaults();
+    // 兼容旧版 single-string referenceImageUrl
+    final rawUrls = json['referenceImageUrls'];
+    final List<String> urls;
+    if (rawUrls is List) {
+      urls = rawUrls.cast<String>();
+    } else {
+      final oldUrl = _asString(json['referenceImageUrl']);
+      urls = oldUrl.isNotEmpty ? [oldUrl] : [];
+    }
     return ImageGeneratorDraft(
       baseUrl: _asString(json['baseUrl'], defaults.baseUrl),
       platformBaseUrl: _asString(
@@ -158,7 +174,7 @@ class ImageGeneratorDraft {
         json['negativePrompt'],
         defaults.negativePrompt,
       ),
-      referenceImageUrl: _asString(json['referenceImageUrl']),
+      referenceImageUrls: urls,
       referenceImageField: ImageReferencePayloadField.fromWireName(
         _asString(json['referenceImageField']),
       ),
@@ -175,7 +191,7 @@ class ImageGeneratorDraft {
   final String model;
   final String prompt;
   final String negativePrompt;
-  final String referenceImageUrl;
+  final List<String> referenceImageUrls;
   final ImageReferencePayloadField referenceImageField;
   final String size;
   final String quality;
@@ -190,7 +206,10 @@ class ImageGeneratorDraft {
       'model': model,
       'prompt': prompt,
       'negativePrompt': negativePrompt,
-      'referenceImageUrl': referenceImageUrl,
+      'referenceImageUrls': referenceImageUrls,
+      'referenceImageUrl': referenceImageUrls.isNotEmpty
+          ? referenceImageUrls.first
+          : '',
       'referenceImageField': referenceImageField.wireName,
       'size': size,
       'quality': quality,
@@ -333,7 +352,7 @@ class ImageGenerationHistoryItem {
   const ImageGenerationHistoryItem({
     required this.prompt,
     required this.negativePrompt,
-    required this.referenceImageUrl,
+    required this.referenceImageUrls,
     required this.referenceImageField,
     required this.model,
     required this.size,
@@ -345,10 +364,19 @@ class ImageGenerationHistoryItem {
 
   factory ImageGenerationHistoryItem.fromJson(Map<String, dynamic> json) {
     final imageList = json['images'];
+    // 兼容旧版 single-string referenceImageUrl
+    final rawUrls = json['referenceImageUrls'];
+    final List<String> urls;
+    if (rawUrls is List) {
+      urls = rawUrls.cast<String>();
+    } else {
+      final oldUrl = _asString(json['referenceImageUrl']);
+      urls = oldUrl.isNotEmpty ? [oldUrl] : [];
+    }
     return ImageGenerationHistoryItem(
       prompt: _asString(json['prompt']),
       negativePrompt: _asString(json['negativePrompt']),
-      referenceImageUrl: _asString(json['referenceImageUrl']),
+      referenceImageUrls: urls,
       referenceImageField: ImageReferencePayloadField.fromWireName(
         _asString(json['referenceImageField']),
       ),
@@ -369,7 +397,7 @@ class ImageGenerationHistoryItem {
 
   final String prompt;
   final String negativePrompt;
-  final String referenceImageUrl;
+  final List<String> referenceImageUrls;
   final ImageReferencePayloadField referenceImageField;
   final String model;
   final String size;
@@ -384,7 +412,10 @@ class ImageGenerationHistoryItem {
     return {
       'prompt': prompt,
       'negativePrompt': negativePrompt,
-      'referenceImageUrl': referenceImageUrl,
+      'referenceImageUrls': referenceImageUrls,
+      'referenceImageUrl': referenceImageUrls.isNotEmpty
+          ? referenceImageUrls.first
+          : '',
       'referenceImageField': referenceImageField.wireName,
       'model': model,
       'size': size,

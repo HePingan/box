@@ -38,11 +38,11 @@ class HomeQuickAccessGrid extends StatelessWidget {
     }
 
     final List<_QuickAccessItem> items = [
-      _QuickAccessItem(
+      const _QuickAccessItem(
         title: '全部影片',
         icon: Icons.auto_awesome,
         typeId: null,
-        colors: const [Color(0xFF90A4AE), Color(0xFF607D8B)],
+        colors: [Color(0xFF90A4AE), Color(0xFF607D8B)],
       ),
       _QuickAccessItem(
         title: '电影找片',
@@ -84,7 +84,7 @@ class HomeQuickAccessGrid extends StatelessWidget {
             : screenWidth;
 
         final horizontalPadding = availableWidth < 600 ? 12.0 : 16.0;
-        final spacing = 10.0;
+        const spacing = 10.0;
         final columns = availableWidth >= 960
             ? 6
             : availableWidth >= 720

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../app_drawer.dart';
@@ -14,6 +15,9 @@ import '../novel/pages/source_manager/book_source_manager.dart';
 import '../novel/pages/source_manager/book_source_manager_page.dart';
 import '../video_module.dart';
 
+/// 桌面端断点 — ≥800px 切换 NavigationRail
+const double _desktopBreakpoint = 800;
+
 class MainAppShell extends StatefulWidget {
   const MainAppShell({super.key, required this.novelBootstrap});
 
@@ -28,28 +32,42 @@ class _MainAppShellState extends State<MainAppShell> {
   late final PageController _pageController;
   bool _novelBootstrapPromptShown = false;
 
-  late final List<Map<String, dynamic>> _tabs = [
-    {
-      'title': '首页',
-      'icon': Icons.home_rounded,
-      'widget': HomePage(onSwitchTab: _onItemTapped),
-    },
-    {
-      'title': '工具',
-      'icon': Icons.grid_view_rounded,
-      'widget': const ToolPage(),
-    },
-    {
-      'title': '内容',
-      'icon': Icons.collections_bookmark_rounded,
-      'widget': const WarehouseTab(),
-    },
-    {
-      'title': '扩展',
-      'icon': Icons.extension_rounded,
-      'widget': const PluginTab(),
-    },
+  late final List<_TabItem> _tabs = [
+    _TabItem(
+      title: '首页',
+      icon: Icons.home_rounded,
+      widget: HomePage(onSwitchTab: _onItemTapped),
+    ),
+    _TabItem(
+      title: '工具',
+      icon: Icons.grid_view_rounded,
+      widget: const ToolPage(),
+    ),
+    _TabItem(
+      title: '内容',
+      icon: Icons.collections_bookmark_rounded,
+      widget: const WarehouseTab(),
+    ),
+    _TabItem(
+      title: '扩展',
+      icon: Icons.extension_rounded,
+      widget: const PluginTab(),
+    ),
   ];
+
+  /// 快捷键绑定
+  Map<ShortcutActivator, VoidCallback> get _shortcuts {
+    return {
+      const SingleActivator(LogicalKeyboardKey.digit1, control: true):
+          () => _onItemTapped(0),
+      const SingleActivator(LogicalKeyboardKey.digit2, control: true):
+          () => _onItemTapped(1),
+      const SingleActivator(LogicalKeyboardKey.digit3, control: true):
+          () => _onItemTapped(2),
+      const SingleActivator(LogicalKeyboardKey.digit4, control: true):
+          () => _onItemTapped(3),
+    };
+  }
 
   @override
   void initState() {
@@ -60,10 +78,6 @@ class _MainAppShellState extends State<MainAppShell> {
       _maybePromptNovelSourceConfig();
     });
 
-    // Defer provider initialization until after the widget tree is fully built.
-    // This avoids InheritedNotifier ancestry assertion failures that occur when
-    // ChangeNotifier.notifyListeners fires before InheritedWidget dependents are
-    // fully registered in the element tree.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       context.read<BookSourceManager>().load();
@@ -177,6 +191,57 @@ class _MainAppShellState extends State<MainAppShell> {
 
   @override
   Widget build(BuildContext context) {
+    return CallbackShortcuts(
+      bindings: _shortcuts,
+      child: Focus(
+        autofocus: true,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isDesktop = constraints.maxWidth >= _desktopBreakpoint;
+            if (isDesktop) {
+              return _buildDesktopLayout();
+            }
+            return _buildMobileLayout();
+          },
+        ),
+      ),
+    );
+  }
+
+  /// 桌面端：NavigationRail + 内容区
+  Widget _buildDesktopLayout() {
+    return Scaffold(
+      key: appScaffoldKey,
+      drawer: const AppDrawer(),
+      drawerScrimColor: Colors.black.withValues(alpha: 0.30),
+      body: Row(
+        children: [
+          _AppNavigationRail(
+            tabs: _tabs,
+            currentIndex: _currentIndex,
+            onTap: _onItemTapped,
+            onOpenDrawer: () => appScaffoldKey.currentState?.openDrawer(),
+          ),
+          const VerticalDivider(width: 1, thickness: 1, color: Color(0xFFE2E8F0)),
+          Expanded(
+            child: PageView(
+              controller: _pageController,
+              physics: const NeverScrollableScrollPhysics(),
+              onPageChanged: (index) {
+                if (_currentIndex != index) {
+                  setState(() => _currentIndex = index);
+                }
+              },
+              children: _tabs.map((tab) => tab.widget).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 移动端：PageView + 底部标签栏（保留原有 UI）
+  Widget _buildMobileLayout() {
     return Scaffold(
       key: appScaffoldKey,
       drawer: const AppDrawer(),
@@ -189,7 +254,7 @@ class _MainAppShellState extends State<MainAppShell> {
             setState(() => _currentIndex = index);
           }
         },
-        children: _tabs.map((tab) => tab['widget'] as Widget).toList(),
+        children: _tabs.map((tab) => tab.widget).toList(),
       ),
       bottomNavigationBar: SafeArea(
         top: false,
@@ -214,8 +279,8 @@ class _MainAppShellState extends State<MainAppShell> {
               final selected = _currentIndex == index;
               return Expanded(
                 child: _ShellNavItem(
-                  title: tab['title'] as String,
-                  icon: tab['icon'] as IconData,
+                  title: tab.title,
+                  icon: tab.icon,
                   selected: selected,
                   onTap: () => _onItemTapped(index),
                 ),
@@ -228,18 +293,110 @@ class _MainAppShellState extends State<MainAppShell> {
   }
 }
 
+/// 选项卡数据模型
+class _TabItem {
+  final String title;
+  final IconData icon;
+  final Widget widget;
+
+  const _TabItem({
+    required this.title,
+    required this.icon,
+    required this.widget,
+  });
+}
+
+/// 桌面端 NavigationRail
+class _AppNavigationRail extends StatelessWidget {
+  final List<_TabItem> tabs;
+  final int currentIndex;
+  final ValueChanged<int> onTap;
+  final VoidCallback onOpenDrawer;
+
+  const _AppNavigationRail({
+    required this.tabs,
+    required this.currentIndex,
+    required this.onTap,
+    required this.onOpenDrawer,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return NavigationRail(
+      labelType: NavigationRailLabelType.all,
+      extended: false,
+      leading: Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Column(
+          children: [
+            // 菜单按钮
+            IconButton(
+              icon: const Icon(Icons.menu_rounded),
+              tooltip: '打开菜单',
+              onPressed: onOpenDrawer,
+            ),
+            const SizedBox(height: 8),
+            // Logo
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF2563EB), Color(0xFF06B6D4)],
+                ),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Center(
+                child: Text(
+                  'G',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      selectedIndex: currentIndex,
+      onDestinationSelected: onTap,
+      backgroundColor: Colors.transparent,
+      indicatorColor: colorScheme.primary.withValues(alpha: 0.12),
+      destinations: tabs.map((tab) {
+        return NavigationRailDestination(
+          icon: Icon(tab.icon, size: 22),
+          selectedIcon: Icon(tab.icon, size: 22, color: colorScheme.primary),
+          label: Text(tab.title, style: const TextStyle(fontSize: 12)),
+        );
+      }).toList(),
+      trailing: Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: IconButton(
+          icon: const Icon(Icons.settings_outlined),
+          tooltip: '设置',
+          onPressed: () => Navigator.pushNamed(context, '/account'),
+        ),
+      ),
+    );
+  }
+}
+
+/// 移动端底部导航项
 class _ShellNavItem extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
   const _ShellNavItem({
     required this.title,
     required this.icon,
     required this.selected,
     required this.onTap,
   });
-
-  final String title;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {

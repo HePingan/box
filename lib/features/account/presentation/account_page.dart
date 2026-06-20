@@ -271,11 +271,11 @@ class _AccountPageState extends State<AccountPage> {
     return AppPageScaffold(
       child: CustomScrollView(
         slivers: [
-          SliverAppBar(
+          const SliverAppBar(
             pinned: true,
             backgroundColor: AppTokens.background,
             surfaceTintColor: Colors.transparent,
-            title: const Text('账号中心'),
+            title: Text('账号中心'),
           ),
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),

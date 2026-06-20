@@ -340,14 +340,14 @@ class _ExpandableCategoryCardState extends State<ExpandableCategoryCard> {
                               color: widget.category.iconBgColor,
                             ),
                             if (widget.category.tools.any(_isAvailableTool))
-                              ToolStatusBadge(
+                              const ToolStatusBadge(
                                 label: '含可用工具',
-                                color: const Color(0xFF059669),
+                                color: Color(0xFF059669),
                               )
                             else
-                              ToolStatusBadge(
+                              const ToolStatusBadge(
                                 label: '开发中',
-                                color: const Color(0xFF64748B),
+                                color: Color(0xFF64748B),
                               ),
                           ],
                         ),

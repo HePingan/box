@@ -126,7 +126,7 @@ class _ToolPageState extends State<ToolPage>
         icon: Icons.menu_rounded,
         onTap: () => appScaffoldKey.currentState?.openDrawer(),
       ),
-      actions: [
+      actions: const [
         AppStatusPill(
           label: '搜索 / 热门 / 分类首屏直达',
           icon: Icons.search_rounded,
@@ -352,11 +352,11 @@ class _ToolPageState extends State<ToolPage>
             onTap: () => _openApiHub('holidays'),
           ),
           const SizedBox(width: 12),
-          ToolHighlightCard(
+          const ToolHighlightCard(
             title: '开发工具',
             subtitle: 'JSON / Base64 / 时间戳',
             icon: Icons.code_rounded,
-            gradient: const [Color(0xFF7C3AED), Color(0xFFC084FC)],
+            gradient: [Color(0xFF7C3AED), Color(0xFFC084FC)],
           ),
         ],
       ),
@@ -371,13 +371,13 @@ class _ToolPageState extends State<ToolPage>
         children: [
           Text(
             searching ? '搜索结果' : '工具分类矩阵',
-            style: TextStyle(
+            style: const TextStyle(
               color: AppTokens.textPrimary,
               fontSize: 22,
               fontWeight: FontWeight.w900,
             ),
           ),
-          Spacer(),
+          const Spacer(),
           Text(
             searching
                 ? '${_displayCategories.length} 个分类匹配'

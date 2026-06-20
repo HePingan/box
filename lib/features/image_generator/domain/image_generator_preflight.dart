@@ -20,7 +20,10 @@ List<ImageGeneratorPreflightItem> buildImageGeneratorPreflight(
   final apiKey = params.apiKey.trim();
   final prompt = params.prompt.trim();
   final model = params.model.trim();
-  final referenceUrl = params.referenceImageUrl.trim();
+  final urls = params.referenceImageUrls
+      .map((u) => u.trim())
+      .where((u) => u.isNotEmpty)
+      .toList();
 
   final baseUri = Uri.tryParse(
     baseUrl.isEmpty ? params.normalizedBaseUrl : baseUrl,
@@ -92,36 +95,39 @@ List<ImageGeneratorPreflightItem> buildImageGeneratorPreflight(
     );
   }
 
-  if (params.referenceImageField.shouldSend && referenceUrl.isEmpty) {
+  if (params.referenceImageField.shouldSend && urls.isEmpty) {
     items.add(
       const ImageGeneratorPreflightItem(
-        message: '参考图 URL 为空，生成时自动切为“不发送”',
+        message: '参考图 URL 为空，生成时自动切为"不发送"',
         level: ImageGeneratorPreflightLevel.warning,
       ),
     );
-  } else if (!params.referenceImageField.shouldSend &&
-      referenceUrl.isNotEmpty) {
+  } else if (!params.referenceImageField.shouldSend && urls.isNotEmpty) {
     items.add(
       const ImageGeneratorPreflightItem(
         message: '参考图 URL 只会保存/预览，不会发送给接口',
         level: ImageGeneratorPreflightLevel.warning,
       ),
     );
-  } else if (params.referenceImageField.shouldSend) {
-    final refUri = Uri.tryParse(referenceUrl);
-    if (refUri == null ||
-        !refUri.hasScheme ||
-        (refUri.scheme != 'http' && refUri.scheme != 'https')) {
+  } else if (params.referenceImageField.shouldSend && urls.isNotEmpty) {
+    final invalid = urls.where((url) {
+      final uri = Uri.tryParse(url);
+      return uri == null ||
+          !uri.hasScheme ||
+          (uri.scheme != 'http' && uri.scheme != 'https');
+    }).toList();
+    if (invalid.isNotEmpty) {
       items.add(
-        const ImageGeneratorPreflightItem(
-          message: '参考图 URL 不是有效 http/https 地址',
+        ImageGeneratorPreflightItem(
+          message: '${invalid.length} 张参考图 URL 不是有效 http/https 地址',
           level: ImageGeneratorPreflightLevel.error,
         ),
       );
     } else {
       items.add(
         ImageGeneratorPreflightItem(
-          message: '参考图会通过 ${params.referenceImageField.wireName} 字段发送',
+          message:
+              '${urls.length} 张参考图会通过 ${params.referenceImageField.wireName} 字段发送',
           level: ImageGeneratorPreflightLevel.ok,
         ),
       );

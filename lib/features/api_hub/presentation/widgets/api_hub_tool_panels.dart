@@ -30,7 +30,7 @@ class ApiHubCurrencyPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final codes = const ['USD', 'CNY', 'EUR', 'JPY', 'HKD', 'GBP'];
+    const codes = ['USD', 'CNY', 'EUR', 'JPY', 'HKD', 'GBP'];
     return ApiHubPanel(
       title: 'Frankfurter 汇率换算',
       subtitle: '免费外汇接口，适合工具页汇率能力',

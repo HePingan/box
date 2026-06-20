@@ -73,7 +73,7 @@ class AccountStatusCard extends StatelessWidget {
             spacing: 10,
             runSpacing: 10,
             children: [
-              _InfoChip(label: '版本', value: 'HTTPS 域名版'),
+              const _InfoChip(label: '版本', value: 'HTTPS 域名版'),
               _InfoChip(label: '账号 ID', value: user.id),
               _InfoChip(label: '状态', value: user.status),
               if (user.lastLoginAt != null)
