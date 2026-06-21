@@ -212,7 +212,7 @@ class _MainAppShellState extends State<MainAppShell> {
   Widget _buildDesktopLayout() {
     return Scaffold(
       key: appScaffoldKey,
-      drawer: const AppDrawer(),
+      drawer: AppDrawer(onSwitchTab: _onItemTapped),
       drawerScrimColor: Colors.black.withValues(alpha: 0.30),
       body: Row(
         children: [
@@ -222,7 +222,6 @@ class _MainAppShellState extends State<MainAppShell> {
             onTap: _onItemTapped,
             onOpenDrawer: () => appScaffoldKey.currentState?.openDrawer(),
           ),
-          const VerticalDivider(width: 1, thickness: 1, color: Color(0xFFE2E8F0)),
           Expanded(
             child: PageView(
               controller: _pageController,
@@ -244,7 +243,7 @@ class _MainAppShellState extends State<MainAppShell> {
   Widget _buildMobileLayout() {
     return Scaffold(
       key: appScaffoldKey,
-      drawer: const AppDrawer(),
+      drawer: AppDrawer(onSwitchTab: _onItemTapped),
       drawerScrimColor: Colors.black.withValues(alpha: 0.30),
       body: PageView(
         controller: _pageController,
@@ -306,7 +305,7 @@ class _TabItem {
   });
 }
 
-/// 桌面端 NavigationRail
+/// 桌面端 NavigationRail — 风格与移动端底部导航完全一致
 class _AppNavigationRail extends StatelessWidget {
   final List<_TabItem> tabs;
   final int currentIndex;
@@ -322,62 +321,154 @@ class _AppNavigationRail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return NavigationRail(
-      labelType: NavigationRailLabelType.all,
-      extended: false,
-      leading: Padding(
-        padding: const EdgeInsets.only(top: 8),
-        child: Column(
-          children: [
-            // 菜单按钮
-            IconButton(
-              icon: const Icon(Icons.menu_rounded),
+    return Container(
+      width: 68,
+      margin: const EdgeInsets.fromLTRB(10, 10, 0, 10),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0F172A).withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(2, 0),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // 菜单按钮
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: IconButton(
+              icon: const Icon(Icons.menu_rounded, size: 20),
               tooltip: '打开菜单',
               onPressed: onOpenDrawer,
             ),
-            const SizedBox(height: 8),
-            // Logo
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF2563EB), Color(0xFF06B6D4)],
-                ),
-                borderRadius: BorderRadius.circular(10),
+          ),
+          const SizedBox(height: 2),
+          // Logo
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF2563EB), Color(0xFF06B6D4)],
               ),
-              child: const Center(
-                child: Text(
-                  'G',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 18,
-                  ),
+              borderRadius: BorderRadius.circular(AppTokens.radiusPill),
+            ),
+            child: const Center(
+              child: Text(
+                'G',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 12),
+          // 导航项
+          ...List.generate(tabs.length, (index) {
+            final tab = tabs[index];
+            return _DesktopNavItem(
+              title: tab.title,
+              icon: tab.icon,
+              selected: currentIndex == index,
+              onTap: () => onTap(index),
+            );
+          }),
+          const Spacer(),
+          // 设置按钮
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: IconButton(
+              icon: const Icon(Icons.settings_outlined, size: 20),
+              tooltip: '设置',
+              onPressed: () => Navigator.pushNamed(context, '/account'),
+            ),
+          ),
+        ],
       ),
-      selectedIndex: currentIndex,
-      onDestinationSelected: onTap,
-      backgroundColor: Colors.transparent,
-      indicatorColor: colorScheme.primary.withValues(alpha: 0.12),
-      destinations: tabs.map((tab) {
-        return NavigationRailDestination(
-          icon: Icon(tab.icon, size: 22),
-          selectedIcon: Icon(tab.icon, size: 22, color: colorScheme.primary),
-          label: Text(tab.title, style: const TextStyle(fontSize: 12)),
-        );
-      }).toList(),
-      trailing: Padding(
-        padding: const EdgeInsets.only(bottom: 16),
-        child: IconButton(
-          icon: const Icon(Icons.settings_outlined),
-          tooltip: '设置',
-          onPressed: () => Navigator.pushNamed(context, '/account'),
+    );
+  }
+}
+
+/// 桌面侧边栏导航项 — 与移动端 [_ShellNavItem] 样式完全一致
+class _DesktopNavItem extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _DesktopNavItem({
+    required this.title,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(AppTokens.radiusPill),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                width: selected ? 36 : 32,
+                height: selected ? 36 : 32,
+                decoration: BoxDecoration(
+                  gradient: selected
+                      ? const LinearGradient(
+                          colors: [Color(0xFF2563EB), Color(0xFF06B6D4)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        )
+                      : null,
+                  color: selected ? null : const Color(0xFFF1F5F9),
+                  borderRadius:
+                      BorderRadius.circular(AppTokens.radiusPill),
+                ),
+                child: Icon(
+                  icon,
+                  size: selected ? 18 : 16,
+                  color: selected
+                      ? Colors.white
+                      : const Color(0xFF64748B),
+                ),
+              ),
+              const SizedBox(height: 1),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: selected
+                      ? const Color(0xFF2563EB)
+                      : const Color(0xFF64748B),
+                  fontSize: 9.5,
+                  fontWeight:
+                      selected ? FontWeight.w900 : FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 
@@ -285,6 +285,7 @@ class GeneratedImageTileCompact extends StatelessWidget {
     required this.negativePrompt,
     required this.parameterSummary,
     this.captureKey,
+    this.isNew = false,
   });
 
   final GeneratedImageResult item;
@@ -294,6 +295,7 @@ class GeneratedImageTileCompact extends StatelessWidget {
   final String negativePrompt;
   final String parameterSummary;
   final GlobalKey? captureKey;
+  final bool isNew;
 
   @override
   Widget build(BuildContext context) {
@@ -302,21 +304,80 @@ class GeneratedImageTileCompact extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(
+          color: isNew
+              ? AppTokens.primaryBlue.withValues(alpha: 0.4)
+              : const Color(0xFFE7ECF5),
+          width: isNew ? 1.5 : 1,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Thumbnail
-          RepaintBoundary(
-            key: captureKey,
-            child: SmartImageLoader(
-              url: item.image,
-              isDataUrl: item.isDataUrl,
-              fallbackUrl: item.rawUrl,
+          // Thumbnail — tap opens lightbox
+          GestureDetector(
+            onTap: () => _openLightbox(context),
+            child: Stack(
+              children: [
+                RepaintBoundary(
+                  key: captureKey,
+                  child: SmartImageLoader(
+                    url: item.image,
+                    isDataUrl: item.isDataUrl,
+                    fallbackUrl: item.rawUrl,
+                  ),
+                ),
+                // 新标记
+                if (isNew)
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        gradient: AppTokens.blueGradient,
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppTokens.primaryBlue.withValues(alpha: 0.4),
+                            blurRadius: 6,
+                          ),
+                        ],
+                      ),
+                      child: const Text(
+                        'NEW',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                // 预览按钮（hover/触摸时可见）
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Center(
+                      child: Icon(
+                        Icons.fullscreen_rounded,
+                        size: 28,
+                        color: Colors.white54,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          if (item.revisedPrompt != null && item.revisedPrompt!.isNotEmpty) ...[
+          if (item.revisedPrompt != null &&
+              item.revisedPrompt!.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(
               '修订: ${item.revisedPrompt}',
@@ -334,28 +395,90 @@ class GeneratedImageTileCompact extends StatelessWidget {
             spacing: 6,
             runSpacing: 6,
             children: [
-              OutlinedButton.icon(
-                onPressed: () => onDownload(item.image),
-                icon: const Icon(Icons.download_rounded, size: 16),
-                label: const Text('保存', style: TextStyle(fontSize: 12)),
+              _ActionChip(
+                icon: Icons.download_rounded,
+                label: '保存',
+                onTap: () => onDownload(item.rawUrl ?? item.image),
               ),
-              OutlinedButton.icon(
-                onPressed: () => onCopy(item.image),
-                icon: const Icon(Icons.copy_rounded, size: 16),
-                label: Text(
-                  item.isDataUrl ? '复制URL' : '复制',
-                  style: const TextStyle(fontSize: 12),
-                ),
+              _ActionChip(
+                icon: Icons.copy_rounded,
+                label: item.isDataUrl ? '复制URL' : '复制',
+                onTap: () => onCopy(item.image),
               ),
               if (item.rawUrl != null)
-                OutlinedButton.icon(
-                  onPressed: () => onCopy(item.rawUrl!),
-                  icon: const Icon(Icons.open_in_new_rounded, size: 16),
-                  label: const Text('原始', style: TextStyle(fontSize: 12)),
+                _ActionChip(
+                  icon: Icons.open_in_new_rounded,
+                  label: '原始',
+                  onTap: () => onCopy(item.rawUrl!),
                 ),
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  void _openLightbox(BuildContext context) {
+    // Put the raw OSS URL first (works in browser), proxy URL as fallback
+    final urls = <String>[];
+    if (item.rawUrl != null && item.rawUrl!.isNotEmpty) {
+      urls.add(item.rawUrl!);
+    }
+    if (item.image != item.rawUrl) {
+      urls.add(item.image);
+    }
+    showImageLightbox(
+      context,
+      urls: urls,
+      onDownload: onDownload,
+      onCopy: onCopy,
+    );
+  }
+}
+
+/// 紧凑型操作按钮 — 与卡片风格一致
+class _ActionChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _ActionChip({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      elevation: 0,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: AppTokens.textSecondary),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppTokens.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -397,9 +520,10 @@ class HistorySectionCompact extends StatelessWidget {
               style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
             ),
             const Spacer(),
-            TextButton(
+            TextButton.icon(
               onPressed: onClear,
-              child: const Text('清空', style: TextStyle(fontSize: 11)),
+              icon: const Icon(Icons.delete_sweep_outlined, size: 16),
+              label: const Text('清空', style: TextStyle(fontSize: 11)),
             ),
           ],
         ),
@@ -431,136 +555,248 @@ class HistoryTileCompact extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final firstImage = item.images.isEmpty ? null : item.images.first;
-    String? normalizedImage;
-    try {
-      if (firstImage != null) {
-        final uri = Uri.parse(firstImage);
-        normalizedImage = uri.replace(host: uri.host.toLowerCase()).toString();
-      }
-    } catch (_) {}
-
     return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.all(8),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE7ECF5)),
       ),
-      child: Row(
-        children: [
-          // Thumbnail
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: firstImage == null
-                ? Container(
-                    width: 60,
-                    height: 60,
-                    color: const Color(0xFFEFF3F9),
-                    child: const Icon(
-                      Icons.image_not_supported_outlined,
-                      size: 24,
-                    ),
-                  )
-                : _buildThumbnail(normalizedImage!, context),
-          ),
-          const SizedBox(width: 8),
-          // Info
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item.prompt,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${_formatTime(item.createdAt)} · ${item.model} · ${item.images.length} 张',
-                  style: const TextStyle(
-                    color: AppTokens.textSecondary,
-                    fontSize: 10,
-                  ),
-                ),
-              ],
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onRestore,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 多图缩略图
+            _HistoryThumbnails(
+              images: item.images,
+              onCopy: onCopy,
             ),
-          ),
-          // Actions
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.replay_rounded, size: 18),
-                onPressed: onRestore,
-                tooltip: '复用',
+            const SizedBox(width: 10),
+            // 信息
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.prompt,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  // 参数徽章
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    children: [
+                      if (item.model.isNotEmpty)
+                        _HistoryBadge(label: item.model),
+                      _HistoryBadge(label: item.size),
+                      if (item.quality != 'standard')
+                        _HistoryBadge(label: item.quality),
+                      _HistoryBadge(
+                        label: _formatTimeCompact(item.createdAt),
+                        icon: Icons.access_time_rounded,
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              IconButton(
-                icon: const Icon(Icons.copy_rounded, size: 16),
-                onPressed: () => onCopy(item.prompt),
-                tooltip: '复制',
+            ),
+            // 恢复按钮
+            Container(
+              margin: const EdgeInsets.only(left: 4),
+              decoration: BoxDecoration(
+                gradient: AppTokens.blueGradient,
+                borderRadius: BorderRadius.circular(10),
               ),
-            ],
-          ),
-        ],
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: onRestore,
+                  child: const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Icon(
+                      Icons.restore_rounded,
+                      size: 18,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  String _formatTime(DateTime value) {
+  static String _formatTimeCompact(DateTime dt) {
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    if (diff.inMinutes < 1) return '刚刚';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}分钟前';
+    if (diff.inHours < 24) return '${diff.inHours}小时前';
+    if (diff.inDays < 7) return '${diff.inDays}天前';
     String two(int v) => v.toString().padLeft(2, '0');
-    return '${two(value.month)}-${two(value.day)} ${two(value.hour)}:${two(value.minute)}';
+    return '${two(dt.month)}-${two(dt.day)}';
+  }
+}
+
+/// 多图缩略图（支持 1 张大图 / 2×2 网格）
+class _HistoryThumbnails extends StatelessWidget {
+  final List<String> images;
+  final ValueChanged<String> onCopy;
+
+  const _HistoryThumbnails({
+    required this.images,
+    required this.onCopy,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (images.isEmpty) {
+      return Container(
+        width: 88,
+        height: 88,
+        decoration: BoxDecoration(
+          color: const Color(0xFFEFF3F9),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Icon(Icons.image_not_supported_outlined, size: 28),
+      );
+    }
+
+    final limited = images.take(4).toList();
+
+    return GestureDetector(
+      onTap: () => showImageLightbox(
+        context,
+        urls: images.map(_resolveImageUrl).toList(),
+        onCopy: onCopy,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: limited.length == 1
+            ? SizedBox(
+                width: 88,
+                height: 88,
+                child: CachedNetworkImage(
+                  imageUrl: _normalizeUrl(limited.first),
+                  fit: BoxFit.cover,
+                  placeholder: (context, url) => _thumbPlaceholder,
+                  errorWidget: (context, url, error) => _thumbError,
+                ),
+              )
+            : SizedBox(
+                width: 88,
+                height: 88,
+                child: GridView.count(
+                  crossAxisCount: 2,
+                  physics: const NeverScrollableScrollPhysics(),
+                  padding: EdgeInsets.zero,
+                  mainAxisSpacing: 1,
+                  crossAxisSpacing: 1,
+                  children: limited
+                      .map((url) => CachedNetworkImage(
+                            imageUrl: _normalizeUrl(url),
+                            fit: BoxFit.cover,
+                            placeholder: (context, url) => _thumbPlaceholder,
+                            errorWidget: (context, url, error) => _thumbError,
+                          ))
+                      .toList(),
+                ),
+              ),
+      ),
+    );
   }
 
-  Widget _buildThumbnail(String url, BuildContext ctx) {
-    String? rawUrl;
+  /// Lowercase the host and, if the URL is a proxy (`/api/image/proxy?url=…`),
+  /// extract the underlying raw OSS URL so the thumbnail loads directly.
+  String _normalizeUrl(String url) {
     try {
       final uri = Uri.parse(url);
       if (uri.path.contains('/api/image/proxy')) {
         final extracted = uri.queryParameters['url'];
         if (extracted != null && extracted.isNotEmpty) {
-          rawUrl = Uri.decodeComponent(extracted);
+          return Uri.decodeComponent(extracted);
+        }
+      }
+      return uri.replace(host: uri.host.toLowerCase()).toString();
+    } catch (_) {
+      return url;
+    }
+  }
+
+  Widget get _thumbPlaceholder => Container(
+        color: const Color(0xFFEFF3F9),
+        child: const Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+
+  Widget get _thumbError => Container(
+        color: const Color(0xFFEFF3F9),
+        child: const Icon(Icons.broken_image_outlined, size: 18),
+      );
+
+  /// If [url] is a proxy URL (`/api/image/proxy?url=...`), extract the
+  /// underlying raw OSS URL so the lightbox loads it directly.
+  static String _resolveImageUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      if (uri.path.contains('/api/image/proxy')) {
+        final extracted = uri.queryParameters['url'];
+        if (extracted != null && extracted.isNotEmpty) {
+          return Uri.decodeComponent(extracted);
         }
       }
     } catch (_) {}
-    String? normalizedRaw;
-    if (rawUrl != null) {
-      try {
-        final uri = Uri.parse(rawUrl);
-        normalizedRaw = uri.replace(host: uri.host.toLowerCase()).toString();
-      } catch (_) {}
-    }
-    return GestureDetector(
-      onTap: () => _showImageUrlDialog(url, ctx),
-      child: CompactThumbnailImage(primaryUrl: url, rawUrl: normalizedRaw),
-    );
+    return url;
   }
+}
 
-  void _showImageUrlDialog(String url, BuildContext ctx) {
-    showDialog(
-      context: ctx,
-      builder: (dialogCtx) => AlertDialog(
-        title: const Text('图片链接'),
-        content: SelectableText(url, style: const TextStyle(fontSize: 11)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogCtx),
-            child: const Text('关闭'),
-          ),
-          OutlinedButton(
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: url));
-              Navigator.pop(dialogCtx);
-              ScaffoldMessenger.of(
-                ctx,
-              ).showSnackBar(const SnackBar(content: Text('已复制链接')));
-            },
-            child: const Text('复制'),
+/// 历史条目参数徽章
+class _HistoryBadge extends StatelessWidget {
+  final String label;
+  final IconData? icon;
+
+  const _HistoryBadge({required this.label, this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 10, color: AppTokens.textTertiary),
+            const SizedBox(width: 2),
+          ],
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: AppTokens.textSecondary,
+            ),
           ),
         ],
       ),

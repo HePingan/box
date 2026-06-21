@@ -5,8 +5,14 @@ import 'package:flutter/material.dart';
 import 'app/app.dart';
 import 'app/app_bootstrap.dart';
 import 'app/app_providers.dart';
+import 'features/account/data/account_store.dart';
 
 void main() {
+  // Step 0: 尽早加载登录态，这样 AppDrawer 打开时无需等待
+  BoxAccountStore().loadSession().then((session) {
+    globalSessionNotifier.value = session;
+  });
+
   // Step 1: Disable Flutter's red error screen for assertions entirely.
   // This prevents ANY assertion failure from showing the red screen.
   // Errors will still be logged to console but won't crash the app.

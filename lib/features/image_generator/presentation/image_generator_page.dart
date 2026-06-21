@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:dio/dio.dart';
 import 'package:gal/gal.dart';
 import 'package:open_filex/open_filex.dart';
@@ -36,7 +37,8 @@ class ImageGeneratorPage extends StatefulWidget {
   State<ImageGeneratorPage> createState() => _ImageGeneratorPageState();
 }
 
-class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
+class _ImageGeneratorPageState extends State<ImageGeneratorPage>
+    with WidgetsBindingObserver {
   final ImageGeneratorClient _client = const ImageGeneratorClient();
   final ImageGeneratorStore _store = const ImageGeneratorStore();
   final BoxAccountStore _accountStore = BoxAccountStore();
@@ -60,7 +62,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   ImagePlatformQuota? _platformQuota;
   String? _platformError;
   int _count = 1;
-  bool _loading = false;
+  final ValueNotifier<bool> _loadingNotifier = ValueNotifier<bool>(false);
+  bool get _loading => _loadingNotifier.value;
   bool _loadingModels = false;
   bool _showAllModels = false;
   bool _draftLoaded = false;
@@ -72,6 +75,11 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   List<ImageGenerationHistoryItem> _history = const [];
   final Map<String, GlobalKey> _imageCaptureKeys = {};
   final Set<String> _selectedStyles = {};
+  int _generationId = 0;
+
+  /// Cache of raw image bytes keyed by URL (populated by
+  /// [NetworkImageWithFallback.onImageLoaded]).
+  static final Map<String, Uint8List> _imageBytesCache = {};
 
   static const _styleLabels = [
     '写实摄影',
@@ -87,6 +95,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _applyDraft(ImageGeneratorDraft.defaults(), notify: false);
     _loadStoredState();
     _loadAccountSession();
@@ -99,10 +108,23 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     ]) {
       controller.addListener(_scheduleSaveDraft);
     }
+    // Listen for raw image bytes from NetworkImageWithFallback.
+    NetworkImageWithFallback.onBytesAvailable = _onBytesAvailable;
+  }
+
+  /// Called by [NetworkImageWithFallback] when raw image bytes are available.
+  static void _onBytesAvailable(String url, Uint8List bytes) {
+    _imageBytesCache[url] = bytes;
+    final normalized = _normalizeUrl(url);
+    if (normalized != url) {
+      _imageBytesCache[normalized] = bytes;
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _loadingNotifier.dispose();
     _draftDebounce?.cancel();
     _saveDraftNow();
     _baseUrlController.dispose();
@@ -111,7 +133,26 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     _modelController.dispose();
     _promptController.dispose();
     _negativeController.dispose();
+    NetworkImageWithFallback.onBytesAvailable = null;
     super.dispose();
+  }
+
+  /// Track whether the app was in the middle of generation when backgrounded.
+  bool _wasGeneratingOnPause = false;
+  int _generationRetries = 0;
+  static const int _maxRetries = 2;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused && _loading) {
+      _wasGeneratingOnPause = true;
+    } else if (state == AppLifecycleState.resumed && _wasGeneratingOnPause) {
+      _wasGeneratingOnPause = false;
+      // If the request completed while we were away, results are already set.
+      // If still loading, the HTTP request should complete normally.
+      // If it failed, the error handler already ran — show it as-is.
+    }
   }
 
   Future<void> _loadStoredState() async {
@@ -366,6 +407,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       );
     } on ImageGeneratorException catch (e) {
       if (!mounted) return;
+      _loadingNotifier.value = false;
+      _generationRetries = 0;
       setState(() {
         _modelListError = e.message;
         _loadingModels = false;
@@ -409,6 +452,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       ).showSnackBar(SnackBar(content: Text('已获取平台模型 ${models.length} 个')));
     } on ImageGeneratorException catch (e) {
       if (!mounted) return;
+      _loadingNotifier.value = false;
+      _generationRetries = 0;
       setState(() {
         _modelListError = e.message;
         _loadingModels = false;
@@ -567,14 +612,49 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
 
     File? localFile;
 
+    // Strategy 0: grab raw bytes from DefaultCacheManager.
+    //    CachedNetworkImage stores the original downloaded bytes here
+    //    when it renders each thumbnail — zero network, zero quality loss.
+    for (final candidateUrl in {imageUrl, _normalizeUrl(imageUrl)}) {
+      if (localFile != null) break;
+      try {
+        localFile = await _downloadFromCache(candidateUrl);
+      } catch (e) {
+        debugPrint('Strategy 0 (cache $candidateUrl) failed: $e');
+      }
+    }
+
+    // Strategy 0b: check the _imageBytesCache (populated by
+    //    NetworkImageWithFallback.onImageLoaded) as a fallback
+    //    in case DefaultCacheManager API didn't work but the bytes
+    //    were captured at render time.
+    if (localFile == null) {
+      final bytes = _imageBytesCache[imageUrl];
+      if (bytes != null && bytes.length > 1024) {
+        try {
+          final docDir = await getApplicationDocumentsDirectory();
+          final saveDir = Directory('${docDir.path}/box_downloads');
+          if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
+          localFile = File(
+            '${saveDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
+          );
+          await localFile.writeAsBytes(bytes);
+        } catch (e) {
+          debugPrint('Strategy 0b (bytes cache) failed: $e');
+        }
+      }
+    }
+
     // Strategy 1: download directly via HttpClient (native Dart, no Dio).
     //    curl works fine from this machine, so the URL is valid.
     //    On the phone, native HttpClient may handle TLS/networking
     //    differently than Dio/OkHttp.
-    try {
-      localFile = await _downloadViaHttpClient(imageUrl);
-    } catch (e) {
-      debugPrint('Strategy 1 (HttpClient) failed: $e');
+    if (localFile == null) {
+      try {
+        localFile = await _downloadViaHttpClient(imageUrl);
+      } catch (e) {
+        debugPrint('Strategy 1 (HttpClient) failed: $e');
+      }
     }
 
     // Strategy 2: download via Dio with browser-like headers
@@ -587,8 +667,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     }
 
     // Strategy 3: overlay-based full-resolution capture.
-    //    Renders CachedNetworkImageProvider in a temporary 1024×1024
-    //    overlay, then captures via RepaintBoundary at 1:1.
+    //    Renders CachedNetworkImageProvider in a temporary overlay,
+    //    then captures via RepaintBoundary at 1:1.
     if (localFile == null) {
       try {
         localFile = await _captureViaOverlay(imageUrl);
@@ -614,6 +694,33 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     } else {
       _showDownloadError(context, '所有下载方式均失败，请复制链接手动下载', imageUrl);
     }
+  }
+
+  /// Normalise the URL the same way [SmartImageLoader] does.
+  static String _normalizeUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      return uri.replace(host: uri.host.toLowerCase()).toString();
+    } catch (_) {
+      return url;
+    }
+  }
+
+  /// Grab raw file bytes from [DefaultCacheManager] — zero network, zero
+  /// quality loss because it's the original downloaded blob.
+  Future<File?> _downloadFromCache(String url) async {
+    final fileInfo = await DefaultCacheManager().getFileFromCache(url);
+    if (fileInfo == null || !fileInfo.file.existsSync()) return null;
+    final bytes = await fileInfo.file.readAsBytes();
+    if (bytes.length <= 1024) return null;
+    final docDir = await getApplicationDocumentsDirectory();
+    final saveDir = Directory('${docDir.path}/box_downloads');
+    if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
+    final file = File(
+      '${saveDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
+    );
+    await file.writeAsBytes(bytes);
+    return file;
   }
 
   /// Strategy 1: download using dart:io [HttpClient] (native, no Dio).
@@ -687,15 +794,58 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   }
 
   /// Strategy 3: create a temporary overlay rendering the image at full
-  /// resolution (1024×1024) and capture via [RepaintBoundary].
-  /// Uses [CachedNetworkImageProvider] so the image loads from cache
-  /// (memory or disk) — zero network requests in the best case.
+  /// resolution and capture via [RepaintBoundary].
+  ///
+  /// First tries to read raw bytes from [DefaultCacheManager] directly
+  /// (could have been missed by Strategy 0 due to key normalisation edge
+  /// cases), then falls back to creating a visible overlay, waiting for
+  /// the image to render, and capturing the pixels.
   Future<File?> _captureViaOverlay(String imageUrl) async {
+    // Grab the overlay reference upfront (before any async gap) so the
+    // analyzer knows `context` is safe.
+    final overlay = Overlay.of(context, rootOverlay: true);
+    final normalisedUrl = _normalizeUrl(imageUrl);
+
+    // --- Attempt A: direct cache lookup with both original & normalised keys ---
+    for (final key in {imageUrl, normalisedUrl}) {
+      try {
+        final fi = await DefaultCacheManager().getFileFromCache(key);
+        if (fi != null && fi.file.existsSync()) {
+          final bytes = await fi.file.readAsBytes();
+          if (bytes.length > 1024) {
+            final docDir = await getApplicationDocumentsDirectory();
+            final saveDir = Directory('${docDir.path}/box_downloads');
+            if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
+            final file = File(
+              '${saveDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
+            );
+            await file.writeAsBytes(bytes);
+            return file;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // --- Attempt B: grab from the _imageBytesCache (populated at render time) ---
+    {
+      final bytes = _imageBytesCache[imageUrl] ?? _imageBytesCache[normalisedUrl];
+      if (bytes != null && bytes.length > 1024) {
+        final docDir = await getApplicationDocumentsDirectory();
+        final saveDir = Directory('${docDir.path}/box_downloads');
+        if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
+        final file = File(
+          '${saveDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
+        );
+        await file.writeAsBytes(bytes);
+        return file;
+      }
+    }
+
+    // --- Attempt C: RepaintBoundary capture of a fresh overlay ---
+    // Even if cache doesn't have the file, the CachedNetworkImageProvider
+    // in the overlay may load it from the Flutter ImageCache (memory).
     final captureKey = GlobalKey();
     final imageLoaded = Completer<void>();
-
-    // We need a rendering context — use the current overlay.
-    final overlay = Overlay.of(context, rootOverlay: true);
 
     OverlayEntry? entry;
     entry = OverlayEntry(
@@ -708,7 +858,6 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             filterQuality: FilterQuality.high,
             frameBuilder: (_, child, frame, _) {
               if (frame != null && !imageLoaded.isCompleted) {
-                // Wait one post-frame callback so painting finishes
                 WidgetsBinding.instance.addPostFrameCallback(
                   (_) => imageLoaded.complete(),
                 );
@@ -729,13 +878,10 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     overlay.insert(entry);
 
     try {
-      // Wait for the image to finish loading and painting
       await imageLoaded.future.timeout(
         const Duration(seconds: 10),
         onTimeout: () => imageLoaded.complete(),
       );
-
-      // One more frame to ensure the buffer is flushed
       await Future<void>.delayed(const Duration(milliseconds: 100));
       if (!mounted) return null;
 
@@ -1092,9 +1238,14 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     await _saveDraftNow();
     if (!mounted) return;
     final params = _currentParams();
+    ++_generationId;
+    _generationRetries = 0;
+    _loadingNotifier.value = true;
     setState(() {
-      _loading = true;
       _error = null;
+      _results = const [];  // Clear old results immediately so the user
+      // sees the loading state instead of stale data.
+      _imageCaptureKeys.clear();
     });
 
     try {
@@ -1123,6 +1274,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
         ),
       );
       if (!mounted) return;
+      _loadingNotifier.value = false;
+      _generationRetries = 0;
       setState(() {
         _results = displayImages;
         _imageCaptureKeys.clear();
@@ -1134,13 +1287,14 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
           imageCount: response.images.length,
           resultFormat: _resultFormat(response.images),
         );
-        _loading = false;
       });
       if (_accessMode == ImageGeneratorAccessMode.platformQuota) {
         unawaited(_refreshPlatformQuota());
       }
     } on ImageGeneratorException catch (e) {
       if (!mounted) return;
+      _loadingNotifier.value = false;
+      _generationRetries = 0;
       setState(() {
         _error = e.message;
         _lastDiagnostics = _buildDiagnostics(
@@ -1150,10 +1304,30 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
           message: e.message,
           rawPreview: e.rawPreview,
         );
-        _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
+      // If the app was backgrounded during generation and the request
+      // failed with a connection error, retry automatically.
+      final msg = e.toString();
+      if (_wasGeneratingOnPause &&
+          _generationRetries < _maxRetries &&
+          (msg.contains('Connection abort') ||
+           msg.contains('Software caused') ||
+           msg.contains('SocketException') ||
+           msg.contains('connection closed') ||
+           msg.contains('timed out'))) {
+        _wasGeneratingOnPause = false;
+        _generationRetries++;
+        _loadingNotifier.value = false;
+        setState(() => _error = '网络中断，第 $_generationRetries 次重试…');
+        await Future.delayed(const Duration(milliseconds: 800));
+        if (!mounted) return;
+        _generate();
+        return;
+      }
+      _loadingNotifier.value = false;
+      _generationRetries = 0;
       setState(() {
         _error = '生成失败：$e';
         _lastDiagnostics = _buildDiagnostics(
@@ -1161,7 +1335,6 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
           success: false,
           message: '生成失败：$e',
         );
-        _loading = false;
       });
     }
   }
@@ -1655,32 +1828,42 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
                         ),
                       ),
                     ],
-                    if (_loading) ...[
-                      const SizedBox(height: 8),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppTokens.warning.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: AppTokens.warning.withValues(alpha: 0.3),
-                          ),
-                        ),
-                        child: const Text(
-                          '⏳ 生成中，通常 1-5 分钟',
-                          style: TextStyle(
-                            color: AppTokens.textPrimary,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                    ],
+                    ListenableBuilder(
+                      listenable: _loadingNotifier,
+                      builder: (context, _) {
+                        if (!_loadingNotifier.value) {
+                          return const SizedBox.shrink();
+                        }
+                        return Column(
+                          children: [
+                            const SizedBox(height: 8),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppTokens.warning.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: AppTokens.warning.withValues(alpha: 0.3),
+                                ),
+                              ),
+                              child: const Text(
+                                '⏳ 生成中，通常 1-5 分钟',
+                                style: TextStyle(
+                                  color: AppTokens.textPrimary,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
                     const SizedBox(height: 8),
-                    // Results
+                    // Results — 响应式网格
                     if (_results.isEmpty)
                       const AppEmptyState(
                         title: '暂无图片',
@@ -1688,23 +1871,71 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
                         icon: Icons.image_search_rounded,
                       )
                     else
-                      ..._results.map(
-                        (item) {
-                          final key = _imageCaptureKeys.putIfAbsent(
-                            item.image,
-                            () => GlobalKey(),
-                          );
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: GeneratedImageTileCompact(
-                              captureKey: key,
-                              item: item,
-                              onCopy: _copyText,
-                              onDownload: _downloadImage,
-                              prompt: _promptController.text.trim(),
-                              negativePrompt: _negativeController.text.trim(),
-                              parameterSummary: parameterSummary,
-                            ),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final useGrid = constraints.maxWidth > 600;
+
+                          if (useGrid) {
+                            final tiles = _results.map(
+                              (item) {
+                                final key = _imageCaptureKeys.putIfAbsent(
+                                  item.image,
+                                  () => GlobalKey(),
+                                );
+                                return Padding(
+                                  padding: const EdgeInsets.all(4),
+                                  child: GeneratedImageTileCompact(
+                                    key: ValueKey(
+                                      'result_${_generationId}_${item.image}',
+                                    ),
+                                    captureKey: key,
+                                    item: item,
+                                    isNew: true,
+                                    onCopy: _copyText,
+                                    onDownload: _downloadImage,
+                                    prompt: _promptController.text.trim(),
+                                    negativePrompt:
+                                        _negativeController.text.trim(),
+                                    parameterSummary: parameterSummary,
+                                  ),
+                                );
+                              },
+                            ).toList();
+
+                            return Wrap(
+                              children: tiles
+                                  .map((t) => SizedBox(
+                                        width: (constraints.maxWidth - 8) / 2,
+                                        child: t,
+                                      ))
+                                  .toList(),
+                            );
+                          }
+
+                          return Column(
+                            children: _results.map((item) {
+                              final key = _imageCaptureKeys.putIfAbsent(
+                                item.image,
+                                () => GlobalKey(),
+                              );
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: GeneratedImageTileCompact(
+                                  key: ValueKey(
+                                    'result_${_generationId}_${item.image}',
+                                  ),
+                                  captureKey: key,
+                                  item: item,
+                                  isNew: true,
+                                  onCopy: _copyText,
+                                  onDownload: _downloadImage,
+                                  prompt: _promptController.text.trim(),
+                                  negativePrompt:
+                                      _negativeController.text.trim(),
+                                  parameterSummary: parameterSummary,
+                                ),
+                              );
+                            }).toList(),
                           );
                         },
                       ),
@@ -1744,23 +1975,29 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             right: 16,
             bottom: 16,
             child: SafeArea(
-              child: FilledButton.icon(
-                onPressed: _loading ? null : _generate,
-                icon: _loading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.auto_fix_high_rounded),
-                label: Text(_loading ? '生成中…' : '开始生成'),
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  textStyle: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                  ),
-                ),
+              child: ListenableBuilder(
+                listenable: _loadingNotifier,
+                builder: (context, _) {
+                  final loading = _loadingNotifier.value;
+                  return FilledButton.icon(
+                    onPressed: loading ? null : _generate,
+                    icon: loading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.auto_fix_high_rounded),
+                    label: Text(loading ? '生成中…' : '开始生成'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
           ),

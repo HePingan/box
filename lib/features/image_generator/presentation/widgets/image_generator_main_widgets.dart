@@ -1173,7 +1173,7 @@ class _GeneratedImageTile extends StatelessWidget {
                 label: const Text('复制参数'),
               ),
               OutlinedButton.icon(
-                onPressed: () => onDownload(item.image),
+                onPressed: () => onDownload(item.rawUrl ?? item.image),
                 icon: const Icon(Icons.download_rounded),
                 label: const Text('保存图片'),
               ),

@@ -1,8 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as enc;
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../domain/account_models.dart';
@@ -46,6 +47,10 @@ String? _decrypt(String encoded) {
   }
 }
 
+/// 全局登录状态广播 — AppDrawer 等远端组件可自动响应
+final ValueNotifier<BoxAccountSession?> globalSessionNotifier =
+    ValueNotifier<BoxAccountSession?>(null);
+
 class BoxAccountStore {
   static const _serverUrlKey = 'boxAccount.serverUrl';
   static const _tokenKey = 'boxAccount.tokenEnc';
@@ -87,6 +92,13 @@ class BoxAccountStore {
     }
   }
 
+  /// 加载会话并同步到全局通知器
+  Future<BoxAccountSession?> loadSessionAndNotify() async {
+    final session = await loadSession();
+    globalSessionNotifier.value = session;
+    return session;
+  }
+
   Future<String> loadServerUrl() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(_serverUrlKey) ?? '';
@@ -116,6 +128,7 @@ class BoxAccountStore {
       _userJsonKey,
       _encrypt(jsonEncode(session.user.toJson())),
     );
+    globalSessionNotifier.value = session;
   }
 
   Future<void> clearSession({bool keepServerUrl = true}) async {
@@ -123,5 +136,6 @@ class BoxAccountStore {
     if (!keepServerUrl) await prefs.remove(_serverUrlKey);
     await prefs.remove(_tokenKey);
     await prefs.remove(_userJsonKey);
+    globalSessionNotifier.value = null;
   }
 }

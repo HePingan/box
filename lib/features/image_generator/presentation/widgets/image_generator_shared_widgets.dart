@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 
 import 'package:box/design_system/app_tokens.dart';
 import '../../domain/image_generator_preflight.dart';
@@ -371,6 +372,11 @@ class WebImageWithFallbackState extends State<WebImageWithFallback> {
           width: double.infinity,
           height: 260,
           fit: BoxFit.contain,
+          imageBuilder: (context, imageProvider) {
+            // Image loaded successfully — capture raw bytes from cache.
+            NetworkImageWithFallback.captureBytes(_currentUrl);
+            return Image(image: imageProvider);
+          },
           placeholder: (_, _) => Container(
             color: Colors.transparent,
             child: const Center(child: CircularProgressIndicator()),
@@ -436,6 +442,31 @@ class NetworkImageWithFallback extends StatefulWidget {
   final String primaryUrl;
   final String? fallbackUrl;
 
+  /// Global callback invoked whenever a [NetworkImageWithFallback]
+  /// successfully loads an image from cache.  The raw file bytes from
+  /// [DefaultCacheManager] are supplied so the caller can stash them for
+  /// offline / share use.
+  static void Function(String url, Uint8List bytes)? onBytesAvailable;
+
+  /// URLs we've already forwarded bytes for (avoid repeated work).
+  static final Set<String> _processedUrls = {};
+
+  /// Attempt to grab raw file bytes from [DefaultCacheManager] and forward
+  /// them via [onBytesAvailable].  Idempotent — each URL is processed at
+  /// most once.
+  static void captureBytes(String url) {
+    if (onBytesAvailable == null) return;
+    if (_processedUrls.contains(url)) return;
+    _processedUrls.add(url);
+    DefaultCacheManager().getFileFromCache(url).then((info) {
+      if (info == null || !info.file.existsSync()) return;
+      final bytes = info.file.readAsBytesSync();
+      if (bytes.length > 1024) {
+        onBytesAvailable!(url, bytes);
+      }
+    });
+  }
+
   @override
   State<NetworkImageWithFallback> createState() =>
       NetworkImageWithFallbackState();
@@ -476,6 +507,11 @@ class NetworkImageWithFallbackState extends State<NetworkImageWithFallback> {
           width: double.infinity,
           height: 260,
           fit: BoxFit.contain,
+          imageBuilder: (context, imageProvider) {
+            // Image loaded successfully — capture raw bytes from cache.
+            NetworkImageWithFallback.captureBytes(_currentUrl);
+            return Image(image: imageProvider);
+          },
           placeholder: (_, _) => Container(
             color: Colors.transparent,
             child: const Center(child: CircularProgressIndicator()),
@@ -1103,6 +1139,360 @@ class PreflightRowCompact extends StatelessWidget {
               style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Lightbox — 全屏图片预览（支持多图滑动、缩放、下载、复制）
+// ═══════════════════════════════════════════════════════════════
+
+/// 调起全屏图片预览
+///
+/// [urls] 图片 URL 列表，[initialIndex] 起始索引，
+/// [onDownload] / [onCopy] 可选回调。
+Future<T?> showImageLightbox<T>(
+  BuildContext context, {
+  required List<String> urls,
+  int initialIndex = 0,
+  ValueChanged<String>? onDownload,
+  ValueChanged<String>? onCopy,
+}) {
+  return Navigator.push<T>(
+    context,
+    PageRouteBuilder(
+      opaque: false,
+      barrierColor: Colors.black.withValues(alpha: 0.92),
+      barrierDismissible: true,
+      pageBuilder: (ctx, animation, secondaryAnimation) {
+        return _ImageLightboxPage(
+          urls: urls,
+          initialIndex: initialIndex,
+          onDownload: onDownload,
+          onCopy: onCopy,
+        );
+      },
+      transitionsBuilder: (ctx, animation, secondaryAnimation, child) {
+        return FadeTransition(opacity: animation, child: child);
+      },
+    ),
+  );
+}
+
+class _ImageLightboxPage extends StatefulWidget {
+  final List<String> urls;
+  final int initialIndex;
+  final ValueChanged<String>? onDownload;
+  final ValueChanged<String>? onCopy;
+
+  const _ImageLightboxPage({
+    required this.urls,
+    required this.initialIndex,
+    this.onDownload,
+    this.onCopy,
+  });
+
+  @override
+  State<_ImageLightboxPage> createState() => _ImageLightboxPageState();
+}
+
+class _ImageLightboxPageState extends State<_ImageLightboxPage> {
+  late PageController _pageController;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: _currentIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final total = widget.urls.length;
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            // 主图片滑动区域
+            PageView.builder(
+              controller: _pageController,
+              itemCount: total,
+              onPageChanged: (i) => setState(() => _currentIndex = i),
+              itemBuilder: (ctx, index) {
+                return _LightboxImage(
+                  url: widget.urls[index],
+                  onTapClose: () => Navigator.pop(context),
+                );
+              },
+            ),
+
+            // 顶部栏
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              child: _LightboxTopBar(
+                current: _currentIndex,
+                total: total,
+                currentUrl: widget.urls[_currentIndex],
+                onClose: () => Navigator.pop(context),
+                onDownload: widget.onDownload,
+                onCopy: widget.onCopy,
+              ),
+            ),
+
+            // 底部提示
+            if (total > 1)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 12,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${_currentIndex + 1} / $total  ← 左右滑动 →',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LightboxImage extends StatefulWidget {
+  final String url;
+  final VoidCallback onTapClose;
+
+  const _LightboxImage({
+    required this.url,
+    required this.onTapClose,
+  });
+
+  @override
+  State<_LightboxImage> createState() => _LightboxImageState();
+}
+
+class _LightboxImageState extends State<_LightboxImage> {
+  late String _currentUrl;
+  bool _triedFallback = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentUrl = widget.url;
+  }
+
+  @override
+  void didUpdateWidget(_LightboxImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.url != oldWidget.url) {
+      _currentUrl = widget.url;
+      _triedFallback = false;
+    }
+  }
+
+  /// Try to extract the raw OSS URL from a proxy URL.
+  /// Proxy pattern: `$base/api/image/proxy?url=<encoded-raw-url>`
+  static String? extractRawUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      if (uri.path.contains('/api/image/proxy')) {
+        final extracted = uri.queryParameters['url'];
+        if (extracted != null && extracted.isNotEmpty) {
+          return Uri.decodeComponent(extracted);
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  void _tryFallback() {
+    if (_triedFallback) return;
+
+    // Try extracting raw URL from proxy URL
+    final extracted = extractRawUrl(_currentUrl);
+    if (extracted != null && extracted != _currentUrl) {
+      setState(() {
+        _currentUrl = extracted;
+        _triedFallback = true;
+      });
+      return;
+    }
+
+    // No fallback available — show error
+    setState(() => _triedFallback = true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: widget.onTapClose,
+      child: InteractiveViewer(
+        minScale: 0.8,
+        maxScale: 5.0,
+        child: Center(
+          child: CachedNetworkImage(
+            imageUrl: _currentUrl,
+            fit: BoxFit.contain,
+            placeholder: (context, url) => const SizedBox(
+              width: 60,
+              height: 60,
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+                color: Colors.white54,
+              ),
+            ),
+            errorWidget: (context, url, error) {
+              if (!_triedFallback) {
+                // Retry with fallback URL
+                WidgetsBinding.instance.addPostFrameCallback(
+                  (_) => _tryFallback(),
+                );
+                return const SizedBox(
+                  width: 60,
+                  height: 60,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    color: Colors.white54,
+                  ),
+                );
+              }
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.broken_image_outlined,
+                      size: 48, color: Colors.white38),
+                  const SizedBox(height: 8),
+                  Text(
+                    '加载失败',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.5),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  GestureDetector(
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(text: _currentUrl));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('链接已复制')),
+                      );
+                    },
+                    child: const Text(
+                      '复制链接重试',
+                      style: TextStyle(
+                        color: Colors.blueAccent,
+                        fontSize: 12,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LightboxTopBar extends StatelessWidget {
+  final int current;
+  final int total;
+  final String currentUrl;
+  final VoidCallback onClose;
+  final ValueChanged<String>? onDownload;
+  final ValueChanged<String>? onCopy;
+
+  const _LightboxTopBar({
+    required this.current,
+    required this.total,
+    required this.currentUrl,
+    required this.onClose,
+    this.onDownload,
+    this.onCopy,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withValues(alpha: 0.5),
+            Colors.transparent,
+          ],
+        ),
+      ),
+      child: Row(
+        children: [
+          // 关闭按钮
+          IconButton(
+            icon: const Icon(Icons.close_rounded, color: Colors.white),
+            onPressed: onClose,
+          ),
+          // 序号
+          if (total > 1)
+            Container(
+              margin: const EdgeInsets.only(left: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Text(
+                '${current + 1} / $total',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          const Spacer(),
+          // 下载
+          if (onDownload != null)
+            IconButton(
+              icon: const Icon(Icons.download_rounded, color: Colors.white),
+              tooltip: '保存图片',
+              onPressed: () => onDownload!(currentUrl),
+            ),
+          // 复制 URL
+          if (onCopy != null)
+            IconButton(
+              icon: const Icon(Icons.copy_rounded, color: Colors.white),
+              tooltip: '复制链接',
+              onPressed: () => onCopy!(currentUrl),
+            ),
         ],
       ),
     );
