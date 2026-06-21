@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
 import 'package:gal/gal.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
@@ -530,7 +531,6 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
 
   void _downloadImage(String imageUrl) async {
     if (kIsWeb) {
-      // On web, use anchor element to trigger browser download
       try {
         downloadImage(imageUrl);
       } catch (e) {
@@ -543,12 +543,17 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       return;
     }
 
-    // On mobile: download then show action options
-    ScaffoldMessenger.of(context).showSnackBar(
+    // On mobile: show loading, download, then present actions
+    final scaffold = ScaffoldMessenger.of(context);
+    scaffold.showSnackBar(
       const SnackBar(
         content: Row(
           children: [
-            SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
             SizedBox(width: 12),
             Text('正在下载图片…'),
           ],
@@ -558,40 +563,50 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     );
 
     try {
-      final tmpDir = await getTemporaryDirectory();
+      // Download to a stable location: app-documents/box_downloads/
+      final docDir = await getApplicationDocumentsDirectory();
+      final saveDir = Directory('${docDir.path}/box_downloads');
+      if (!saveDir.existsSync()) {
+        saveDir.createSync(recursive: true);
+      }
       final file = File(
-        '${tmpDir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
+        '${saveDir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
       );
 
-      final client = Dio();
+      final client = Dio(BaseOptions(connectTimeout: const Duration(seconds: 15)));
       await client.download(
         imageUrl,
         file.path,
         options: Options(
-          responseType: ResponseType.bytes,
           followRedirects: true,
           receiveTimeout: const Duration(seconds: 60),
         ),
       );
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      scaffold.hideCurrentSnackBar();
 
       if (!file.existsSync() || file.lengthSync() <= 0) {
-        throw Exception('文件下载不完整或为空');
+        throw Exception('下载不完整');
       }
 
-      // 显示操作菜单
       await _showDownloadActions(context, file, imageUrl);
     } catch (e) {
       debugPrint('下载图片失败: $e');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      // 最终兜底：复制链接
-      await Clipboard.setData(ClipboardData(text: imageUrl));
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('下载失败，图片链接已复制到剪贴板')),
+      scaffold.hideCurrentSnackBar();
+      scaffold.showSnackBar(
+        SnackBar(
+          content: Text('下载失败: ${e.toString().length > 80 ? e.toString().substring(0, 80) : e}'),
+          action: SnackBarAction(
+            label: '复制链接',
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: imageUrl));
+              if (!mounted) return;
+              scaffold.showSnackBar(const SnackBar(content: Text('链接已复制')));
+            },
+          ),
+        ),
       );
     }
   }
@@ -601,6 +616,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     File file,
     String imageUrl,
   ) async {
+    final sizeKb = (file.lengthSync() / 1024).toStringAsFixed(1);
     await showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -628,7 +644,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${(file.lengthSync() / 1024).toStringAsFixed(1)} KB',
+                  '$sizeKb KB',
                   style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
                 ),
                 const SizedBox(height: 24),
@@ -675,31 +691,68 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   }
 
   Future<void> _saveToGallery(File file, String imageUrl) async {
+    // Strategy 1: gal (MediaStore on Android 10+)
     try {
       await Gal.putImage(file.path);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('✅ 已保存到相册')),
       );
+      return;
     } catch (e) {
-      debugPrint('保存到相册失败: $e');
+      debugPrint('gal 保存失败: $e');
+    }
+
+    // Strategy 2: copy to public Pictures/box/ then try open_filex
+    try {
+      final extDir = Directory('/storage/emulated/0/Pictures/box');
+      if (!extDir.existsSync()) extDir.createSync(recursive: true);
+      final target = File(
+        '${extDir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
+      );
+      await file.copy(target.path);
+
+      // Try Gal again from the public path
+      try {
+        await Gal.putImage(target.path);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ 已保存到相册')),
+        );
+        return;
+      } catch (_) {}
+
+      // Last resort: open with system viewer
+      await OpenFilex.open(target.path);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('保存到相册失败，请尝试手动保存'),
-          action: SnackBarAction(
-            label: '复制链接',
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: imageUrl));
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('链接已复制')),
-              );
-            },
-          ),
+          content: Text('图片已保存到 ${target.path}'),
+          duration: const Duration(seconds: 5),
         ),
       );
+      return;
+    } catch (e) {
+      debugPrint('保存到相册(兜底)也失败: $e');
     }
+
+    // All strategies failed
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('保存失败，请手动保存或复制链接'),
+        action: SnackBarAction(
+          label: '复制链接',
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: imageUrl));
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('链接已复制')),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _shareFile(File file, String imageUrl) async {
@@ -712,12 +765,13 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       );
     } catch (e) {
       debugPrint('分享失败: $e');
-      if (!mounted) return;
-      // Fallback: copy URL
-      await Clipboard.setData(ClipboardData(text: imageUrl));
+      // Fallback: try open_filex
+      try {
+        await OpenFilex.open(file.path);
+      } catch (_) {}
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('分享失败，链接已复制')),
+        const SnackBar(content: Text('分享失败')),
       );
     }
   }
