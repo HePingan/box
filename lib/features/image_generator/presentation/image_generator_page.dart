@@ -699,11 +699,9 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
 
     OverlayEntry? entry;
     entry = OverlayEntry(
-      builder: (_) => RepaintBoundary(
-        key: captureKey,
-        child: SizedBox(
-          width: 1024,
-          height: 1024,
+      builder: (_) => Center(
+        child: RepaintBoundary(
+          key: captureKey,
           child: Image(
             image: CachedNetworkImageProvider(imageUrl),
             fit: BoxFit.contain,
