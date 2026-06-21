@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io' show Directory, File;
+import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -8,7 +8,6 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
-import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:gal/gal.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
@@ -568,28 +567,42 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
 
     File? localFile;
 
-    // Strategy 0: capture from RepaintBoundary (guaranteed, 0 network)
+    // Strategy 1: download directly via HttpClient (native Dart, no Dio).
+    //    curl works fine from this machine, so the URL is valid.
+    //    On the phone, native HttpClient may handle TLS/networking
+    //    differently than Dio/OkHttp.
     try {
-      localFile = await _captureFromRepaintBoundary(imageUrl);
+      localFile = await _downloadViaHttpClient(imageUrl);
     } catch (e) {
-      debugPrint('Strategy 0 (RepaintBoundary) failed: $e');
+      debugPrint('Strategy 1 (HttpClient) failed: $e');
     }
 
-    // Strategy 1: extract bytes from Flutter image cache / disk cache
-    if (localFile == null) {
-      try {
-        localFile = await _imageFromCache(imageUrl);
-      } catch (e) {
-        debugPrint('Strategy 1 (cache) failed: $e');
-      }
-    }
-
-    // Strategy 2: download via Dio with browser headers
+    // Strategy 2: download via Dio with browser-like headers
     if (localFile == null) {
       try {
         localFile = await _downloadViaDio(imageUrl);
       } catch (e) {
         debugPrint('Strategy 2 (Dio) failed: $e');
+      }
+    }
+
+    // Strategy 3: overlay-based full-resolution capture.
+    //    Renders CachedNetworkImageProvider in a temporary 1024×1024
+    //    overlay, then captures via RepaintBoundary at 1:1.
+    if (localFile == null) {
+      try {
+        localFile = await _captureViaOverlay(imageUrl);
+      } catch (e) {
+        debugPrint('Strategy 3 (overlay capture) failed: $e');
+      }
+    }
+
+    // Strategy 4: screen thumbnail capture (fallback — lower quality)
+    if (localFile == null) {
+      try {
+        localFile = await _captureFromRepaintBoundary(imageUrl);
+      } catch (e) {
+        debugPrint('Strategy 4 (screen capture) failed: $e');
       }
     }
 
@@ -603,88 +616,41 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     }
   }
 
-  /// Strategy 0: capture the on-screen rendered image via [RepaintBoundary].
-  /// This is 100% reliable because it grabs pixels already on screen —
-  /// zero network requests, no cache key mismatches.
-  Future<File?> _captureFromRepaintBoundary(String imageUrl) async {
-    final key = _imageCaptureKeys[imageUrl];
-    if (key == null || key.currentContext == null) return null;
-
-    final boundary = key.currentContext!.findRenderObject();
-    if (boundary is! RenderRepaintBoundary) return null;
-
-    final ui.Image captured = await boundary.toImage(pixelRatio: 3.0);
-    final byteData = await captured.toByteData(
-      format: ui.ImageByteFormat.png,
-    );
-    if (byteData == null) return null;
-
-    final tmpDir = await getTemporaryDirectory();
+  /// Strategy 1: download using dart:io [HttpClient] (native, no Dio).
+  Future<File?> _downloadViaHttpClient(String imageUrl) async {
+    final client = HttpClient();
+    client.userAgent =
+        'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36';
+    final request = await client.getUrl(Uri.parse(imageUrl));
+    request.headers.set('Accept', 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8');
+    request.headers.set('Accept-Language', 'zh-CN,zh;q=0.9,en;q=0.8');
+    request.headers.set('Referer', 'https://files.anyroutes.cn/');
+    final response = await request.close();
+    if (response.statusCode != 200) {
+      throw Exception('HTTP ${response.statusCode}');
+    }
+    final bytes = <int>[];
+    await for (final chunk in response) {
+      bytes.addAll(chunk);
+    }
+    final docDir = await getApplicationDocumentsDirectory();
+    final saveDir = Directory('${docDir.path}/box_downloads');
+    if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
     final file = File(
-      '${tmpDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
+      '${saveDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
     );
-    await file.writeAsBytes(byteData.buffer.asUint8List());
+    await file.writeAsBytes(bytes);
     return file;
   }
 
-  /// Use [CachedNetworkImageProvider] to resolve from Flutter's cache.
-  /// This reaches both the memory cache and the disk cache from
-  /// [flutter_cache_manager], so the image bytes are obtained without
-  /// a second network request.
-  Future<File?> _imageFromCache(String imageUrl) async {
-    // 1) Try disk cache (flutter_cache_manager)
-    try {
-      final mgr = DefaultCacheManager();
-      final cached = await mgr.getFileFromCache(imageUrl);
-      if (cached != null && cached.file.existsSync() && cached.file.lengthSync() > 0) {
-        return cached.file;
-      }
-    } catch (_) {}
-
-    // 2) Resolve via Flutter image cache (memory cache).
-    //    If the image is currently on screen the decoded image
-    //    should still be in memory.
-    try {
-      final provider = CachedNetworkImageProvider(imageUrl);
-      final stream = provider.resolve(ImageConfiguration.empty);
-      final completer = Completer<ui.Image>();
-      late final ImageStreamListener listener;
-      listener = ImageStreamListener(
-        (ImageInfo info, bool sync) {
-          if (!completer.isCompleted) completer.complete(info.image);
-        },
-        onError: (exception, stackTrace) {
-          if (!completer.isCompleted) completer.completeError(exception);
-        },
-      );
-      stream.addListener(listener);
-      final image = await completer.future;
-      final byteData = await image.toByteData(
-        format: ui.ImageByteFormat.png,
-      );
-      stream.removeListener(listener);
-      if (byteData == null) return null;
-
-      // Write to a temp file
-      final tmpDir = await getTemporaryDirectory();
-      final file = File(
-        '${tmpDir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
-      );
-      await file.writeAsBytes(byteData.buffer.asUint8List());
-      return file;
-    } catch (e) {
-      debugPrint('CachedNetworkImageProvider 解析失败: $e');
-      return null;
-    }
-  }
-
-  /// Fallback: download via Dio with browser-like headers.
+  /// Strategy 2: download via Dio with browser headers.
   Future<File?> _downloadViaDio(String imageUrl) async {
     final docDir = await getApplicationDocumentsDirectory();
     final saveDir = Directory('${docDir.path}/box_downloads');
     if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
     final file = File(
-      '${saveDir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
+      '${saveDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
     );
 
     final client = Dio(
@@ -717,6 +683,105 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     if (!file.existsSync() || file.lengthSync() <= 0) {
       throw Exception('下载不完整');
     }
+    return file;
+  }
+
+  /// Strategy 3: create a temporary overlay rendering the image at full
+  /// resolution (1024×1024) and capture via [RepaintBoundary].
+  /// Uses [CachedNetworkImageProvider] so the image loads from cache
+  /// (memory or disk) — zero network requests in the best case.
+  Future<File?> _captureViaOverlay(String imageUrl) async {
+    final captureKey = GlobalKey();
+    final imageLoaded = Completer<void>();
+
+    // We need a rendering context — use the current overlay.
+    final overlay = Overlay.of(context, rootOverlay: true);
+
+    OverlayEntry? entry;
+    entry = OverlayEntry(
+      builder: (_) => RepaintBoundary(
+        key: captureKey,
+        child: SizedBox(
+          width: 1024,
+          height: 1024,
+          child: Image(
+            image: CachedNetworkImageProvider(imageUrl),
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.high,
+            frameBuilder: (_, child, frame, _) {
+              if (frame != null && !imageLoaded.isCompleted) {
+                // Wait one post-frame callback so painting finishes
+                WidgetsBinding.instance.addPostFrameCallback(
+                  (_) => imageLoaded.complete(),
+                );
+              }
+              return child;
+            },
+            errorBuilder: (_, error, _) {
+              if (!imageLoaded.isCompleted) {
+                imageLoaded.completeError(error);
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      ),
+    );
+
+    overlay.insert(entry);
+
+    try {
+      // Wait for the image to finish loading and painting
+      await imageLoaded.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => imageLoaded.complete(),
+      );
+
+      // One more frame to ensure the buffer is flushed
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      if (!mounted) return null;
+
+      final boundary = captureKey.currentContext?.findRenderObject();
+      if (boundary is! RenderRepaintBoundary) return null;
+
+      final ui.Image captured = await boundary.toImage(pixelRatio: 1.0);
+      final byteData = await captured.toByteData(
+        format: ui.ImageByteFormat.png,
+      );
+      if (byteData == null) return null;
+
+      final tmpDir = await getTemporaryDirectory();
+      final file = File(
+        '${tmpDir.path}/ai_original_${DateTime.now().millisecondsSinceEpoch}.png',
+      );
+      await file.writeAsBytes(byteData.buffer.asUint8List());
+      return file;
+    } finally {
+      entry.remove();
+    }
+  }
+
+  /// Strategy 4: capture the on-screen rendered thumbnail via
+  /// [RepaintBoundary]. Guaranteed to succeed but quality may be
+  /// lower than the original.
+  Future<File?> _captureFromRepaintBoundary(String imageUrl) async {
+    final key = _imageCaptureKeys[imageUrl];
+    if (key == null || key.currentContext == null) return null;
+
+    final boundary = key.currentContext!.findRenderObject();
+    if (boundary is! RenderRepaintBoundary) return null;
+
+    final ui.Image captured = await boundary.toImage(pixelRatio: 4.0);
+    final byteData = await captured.toByteData(
+      format: ui.ImageByteFormat.png,
+    );
+    if (byteData == null) return null;
+
+    final tmpDir = await getTemporaryDirectory();
+    final file = File(
+      '${tmpDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
+    );
+    await file.writeAsBytes(byteData.buffer.asUint8List());
     return file;
   }
 
