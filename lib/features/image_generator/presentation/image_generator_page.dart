@@ -573,8 +573,23 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
         '${saveDir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
       );
 
-      final client = Dio(BaseOptions(connectTimeout: const Duration(seconds: 15)));
-      await client.download(
+      final client = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 15),
+          // 模拟浏览器 User-Agent，避免 CDN 拦截非浏览器请求
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 '
+                '(KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
+            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Referer': 'https://files.anyroutes.cn/',
+          },
+          // 接受任何状态码，手动处理
+          validateStatus: (_) => true,
+        ),
+      );
+      final response = await client.download(
         imageUrl,
         file.path,
         options: Options(
@@ -582,6 +597,13 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
           receiveTimeout: const Duration(seconds: 60),
         ),
       );
+
+      // 手动检查状态码
+      if (response.statusCode != null && response.statusCode! >= 400) {
+        throw Exception(
+          'HTTP ${response.statusCode} ${response.statusMessage ?? ''}',
+        );
+      }
 
       if (!mounted) return;
       scaffold.hideCurrentSnackBar();
@@ -595,20 +617,40 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       debugPrint('下载图片失败: $e');
       if (!mounted) return;
       scaffold.hideCurrentSnackBar();
-      scaffold.showSnackBar(
-        SnackBar(
-          content: Text('下载失败: ${e.toString().length > 80 ? e.toString().substring(0, 80) : e}'),
-          action: SnackBarAction(
-            label: '复制链接',
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: imageUrl));
-              if (!mounted) return;
-              scaffold.showSnackBar(const SnackBar(content: Text('链接已复制')));
-            },
+      _showDownloadError(context, e, imageUrl);
+    }
+  }
+
+  void _showDownloadError(BuildContext context, Object error, String imageUrl) {
+    final msg = error.toString();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('下载失败'),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            msg,
+            style: const TextStyle(fontSize: 13),
           ),
         ),
-      );
-    }
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: imageUrl));
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('链接已复制')),
+              );
+            },
+            child: const Text('复制链接'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showDownloadActions(
