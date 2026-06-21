@@ -1,9 +1,11 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:io' show Directory, File;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:gal/gal.dart';
@@ -562,72 +564,128 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       ),
     );
 
+    File? localFile;
+
+    // Strategy 1: extract bytes from Flutter image cache / disk cache
     try {
-      // Strategy 1: use cached image (already displayed on screen)
-      final cache = DefaultCacheManager();
-      final cached = await cache.getFileFromCache(imageUrl);
-      if (cached != null && cached.file.existsSync() && cached.file.lengthSync() > 0) {
-        if (!mounted) return;
-        scaffold.hideCurrentSnackBar();
-        await _showDownloadActions(context, cached.file, imageUrl);
-        return;
-      }
+      localFile = await _imageFromCache(imageUrl);
     } catch (e) {
-      debugPrint('读缓存失败(可忽略): $e');
+      debugPrint('Strategy 1 (cache) failed: $e');
     }
 
-    // Strategy 2: download via Dio with browser-like headers
-    try {
-      final docDir = await getApplicationDocumentsDirectory();
-      final saveDir = Directory('${docDir.path}/box_downloads');
-      if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
-      final file = File(
-        '${saveDir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
-      );
+    // Strategy 2: download via Dio with browser headers
+    if (localFile == null) {
+      try {
+        localFile = await _downloadViaDio(imageUrl);
+      } catch (e) {
+        debugPrint('Strategy 2 (Dio) failed: $e');
+      }
+    }
 
-      final client = Dio(
-        BaseOptions(
-          connectTimeout: const Duration(seconds: 15),
-          headers: {
-            'User-Agent':
-                'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 '
-                '(KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
-            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-            'Referer': 'https://files.anyroutes.cn/',
-          },
-          validateStatus: (_) => true,
-        ),
-      );
-      final response = await client.download(
-        imageUrl,
-        file.path,
-        options: Options(
-          followRedirects: true,
-          receiveTimeout: const Duration(seconds: 60),
-        ),
-      );
-      if (response.statusCode != null && response.statusCode! >= 400) {
-        throw Exception(
-          'HTTP ${response.statusCode} ${response.statusMessage ?? ''}',
-        );
-      }
-      if (!mounted) return;
-      scaffold.hideCurrentSnackBar();
-      if (!file.existsSync() || file.lengthSync() <= 0) {
-        throw Exception('下载不完整');
-      }
-      await _showDownloadActions(context, file, imageUrl);
-    } catch (e) {
-      debugPrint('下载图片失败: $e');
-      if (!mounted) return;
-      scaffold.hideCurrentSnackBar();
-      _showDownloadError(context, e, imageUrl);
+    if (!mounted) return;
+    scaffold.hideCurrentSnackBar();
+
+    if (localFile != null && localFile.existsSync() && localFile.lengthSync() > 0) {
+      await _showDownloadActions(context, localFile, imageUrl);
+    } else {
+      _showDownloadError(context, '所有下载方式均失败，请复制链接手动下载', imageUrl);
     }
   }
 
-  void _showDownloadError(BuildContext context, Object error, String imageUrl) {
-    final msg = error.toString();
+  /// Use [CachedNetworkImageProvider] to resolve from Flutter's cache.
+  /// This reaches both the memory cache and the disk cache from
+  /// [flutter_cache_manager], so the image bytes are obtained without
+  /// a second network request.
+  Future<File?> _imageFromCache(String imageUrl) async {
+    // 1) Try disk cache (flutter_cache_manager)
+    try {
+      final mgr = DefaultCacheManager();
+      final cached = await mgr.getFileFromCache(imageUrl);
+      if (cached != null && cached.file.existsSync() && cached.file.lengthSync() > 0) {
+        return cached.file;
+      }
+    } catch (_) {}
+
+    // 2) Resolve via Flutter image cache (memory cache).
+    //    If the image is currently on screen the decoded image
+    //    should still be in memory.
+    try {
+      final provider = CachedNetworkImageProvider(imageUrl);
+      final stream = provider.resolve(ImageConfiguration.empty);
+      final completer = Completer<ui.Image>();
+      late final ImageStreamListener listener;
+      listener = ImageStreamListener(
+        (ImageInfo info, bool sync) {
+          if (!completer.isCompleted) completer.complete(info.image);
+        },
+        onError: (exception, stackTrace) {
+          if (!completer.isCompleted) completer.completeError(exception);
+        },
+      );
+      stream.addListener(listener);
+      final image = await completer.future;
+      final byteData = await image.toByteData(
+        format: ui.ImageByteFormat.png,
+      );
+      stream.removeListener(listener);
+      if (byteData == null) return null;
+
+      // Write to a temp file
+      final tmpDir = await getTemporaryDirectory();
+      final file = File(
+        '${tmpDir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
+      );
+      await file.writeAsBytes(byteData.buffer.asUint8List());
+      return file;
+    } catch (e) {
+      debugPrint('CachedNetworkImageProvider 解析失败: $e');
+      return null;
+    }
+  }
+
+  /// Fallback: download via Dio with browser-like headers.
+  Future<File?> _downloadViaDio(String imageUrl) async {
+    final docDir = await getApplicationDocumentsDirectory();
+    final saveDir = Directory('${docDir.path}/box_downloads');
+    if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
+    final file = File(
+      '${saveDir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
+    );
+
+    final client = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        headers: {
+          'User-Agent':
+              'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 '
+              '(KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          'Referer': 'https://files.anyroutes.cn/',
+        },
+        validateStatus: (_) => true,
+      ),
+    );
+    final response = await client.download(
+      imageUrl,
+      file.path,
+      options: Options(
+        followRedirects: true,
+        receiveTimeout: const Duration(seconds: 60),
+      ),
+    );
+    if (response.statusCode != null && response.statusCode! >= 400) {
+      throw Exception(
+        'HTTP ${response.statusCode} ${response.statusMessage ?? ''}',
+      );
+    }
+    if (!file.existsSync() || file.lengthSync() <= 0) {
+      throw Exception('下载不完整');
+    }
+    return file;
+  }
+
+  void _showDownloadError(BuildContext context, String msg, String imageUrl) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
