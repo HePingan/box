@@ -5,12 +5,13 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
+import 'package:gal/gal.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import 'package:box/features/account/data/account_store.dart';
 import 'package:box/features/account/domain/account_models.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:open_filex/open_filex.dart';
 
 import '../data/image_generator_client.dart';
 import '../data/image_generator_store.dart';
@@ -535,26 +536,34 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       } catch (e) {
         await Clipboard.setData(ClipboardData(text: imageUrl));
         if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('下载失败，图片链接已复制到剪贴板')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('下载失败，图片链接已复制到剪贴板')),
+        );
       }
       return;
     }
 
-    // On mobile: download image to persistent storage, then try to open / share
+    // On mobile: download then show action options
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Row(
+          children: [
+            SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(width: 12),
+            Text('正在下载图片…'),
+          ],
+        ),
+        duration: Duration(seconds: 30),
+      ),
+    );
+
     try {
+      final tmpDir = await getTemporaryDirectory();
+      final file = File(
+        '${tmpDir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
+      );
+
       final client = Dio();
-      // 使用持久目录（非临时目录），用户可找到文件
-      final docDir = await getApplicationDocumentsDirectory();
-      final saveDir = Directory('${docDir.path}/box_downloads');
-      if (!saveDir.existsSync()) {
-        saveDir.createSync(recursive: true);
-      }
-
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final file = File('${saveDir.path}/ai_image_$timestamp.png');
-
       await client.download(
         imageUrl,
         file.path,
@@ -566,87 +575,151 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       );
 
       if (!mounted) return;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
-      if (file.existsSync() && file.lengthSync() > 0) {
-        // 尝试用系统打开（用户可自行保存到相册）
-        final result = await OpenFilex.open(file.path);
-        if (result.type == ResultType.done) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('图片已保存到：${file.path}'),
-              action: SnackBarAction(
-                label: '分享',
-                onPressed: () => _shareImage(file.path),
-              ),
-            ),
-          );
-        } else {
-          // 如果无法直接打开，至少告知文件位置
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('图片已下载到：${file.path}'),
-              duration: const Duration(seconds: 5),
-              action: SnackBarAction(
-                label: '复制路径',
-                onPressed: () async {
-                  await Clipboard.setData(ClipboardData(text: file.path));
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(const SnackBar(content: Text('路径已复制')));
-                },
-              ),
-            ),
-          );
-        }
-      } else {
+      if (!file.existsSync() || file.lengthSync() <= 0) {
         throw Exception('文件下载不完整或为空');
       }
+
+      // 显示操作菜单
+      await _showDownloadActions(context, file, imageUrl);
     } catch (e) {
       debugPrint('下载图片失败: $e');
-      // 尝试临时目录作为应急方案
-      try {
-        final client = Dio();
-        final tmpDir = await getTemporaryDirectory();
-        final tmpFile = File(
-          '${tmpDir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
-        );
-        await client.download(
-          imageUrl,
-          tmpFile.path,
-          options: Options(
-            responseType: ResponseType.bytes,
-            followRedirects: true,
-            receiveTimeout: const Duration(seconds: 60),
-          ),
-        );
-        if (tmpFile.existsSync()) {
-          await OpenFilex.open(tmpFile.path);
-          if (!mounted) return;
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('图片已下载，请从文件管理器查看')));
-          return;
-        }
-      } catch (_) {
-        // 都失败了，复制链接
-      }
-
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       // 最终兜底：复制链接
       await Clipboard.setData(ClipboardData(text: imageUrl));
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('下载失败，图片链接已复制到剪贴板')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('下载失败，图片链接已复制到剪贴板')),
+      );
     }
   }
 
-  /// 使用平台分享发送图片
-  void _shareImage(String filePath) async {
-    // 简单通过 OpenFilex 分享 — 依赖系统分享菜单
-    await OpenFilex.open(filePath, type: 'image/png');
+  Future<void> _showDownloadActions(
+    BuildContext context,
+    File file,
+    String imageUrl,
+  ) async {
+    await showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  '图片已下载',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${(file.lengthSync() / 1024).toStringAsFixed(1)} KB',
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+                ),
+                const SizedBox(height: 24),
+                _ActionTile(
+                  icon: Icons.photo_library_outlined,
+                  title: '保存到相册',
+                  subtitle: '将图片添加到系统相册',
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await _saveToGallery(file, imageUrl);
+                  },
+                ),
+                const Divider(height: 1),
+                _ActionTile(
+                  icon: Icons.share_outlined,
+                  title: '分享',
+                  subtitle: '通过其他应用发送',
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await _shareFile(file, imageUrl);
+                  },
+                ),
+                const Divider(height: 1),
+                _ActionTile(
+                  icon: Icons.copy_rounded,
+                  title: '复制链接',
+                  subtitle: '将图片 URL 复制到剪贴板',
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await Clipboard.setData(ClipboardData(text: imageUrl));
+                    if (!ctx.mounted) return;
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(content: Text('图片链接已复制')),
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _saveToGallery(File file, String imageUrl) async {
+    try {
+      await Gal.putImage(file.path);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('✅ 已保存到相册')),
+      );
+    } catch (e) {
+      debugPrint('保存到相册失败: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('保存到相册失败，请尝试手动保存'),
+          action: SnackBarAction(
+            label: '复制链接',
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: imageUrl));
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('链接已复制')),
+              );
+            },
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _shareFile(File file, String imageUrl) async {
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path)],
+          text: 'AI 生成的图片',
+        ),
+      );
+    } catch (e) {
+      debugPrint('分享失败: $e');
+      if (!mounted) return;
+      // Fallback: copy URL
+      await Clipboard.setData(ClipboardData(text: imageUrl));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('分享失败，链接已复制')),
+      );
+    }
   }
 
   void _setParam(VoidCallback update) {
@@ -1427,6 +1500,59 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Bottom sheet action tile used in download action sheet.
+class _ActionTile extends StatelessWidget {
+  const _ActionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
+        child: Row(
+          children: [
+            Icon(icon, size: 24, color: AppTokens.primaryBlue),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
