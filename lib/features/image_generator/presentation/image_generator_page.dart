@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:gal/gal.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
@@ -543,19 +544,18 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       return;
     }
 
-    // On mobile: show loading, download, then present actions
+    // On mobile
     final scaffold = ScaffoldMessenger.of(context);
     scaffold.showSnackBar(
       const SnackBar(
         content: Row(
           children: [
             SizedBox(
-              width: 20,
-              height: 20,
+              width: 20, height: 20,
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
             SizedBox(width: 12),
-            Text('正在下载图片…'),
+            Text('正在处理…'),
           ],
         ),
         duration: Duration(seconds: 30),
@@ -563,12 +563,24 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     );
 
     try {
-      // Download to a stable location: app-documents/box_downloads/
+      // Strategy 1: use cached image (already displayed on screen)
+      final cache = DefaultCacheManager();
+      final cached = await cache.getFileFromCache(imageUrl);
+      if (cached != null && cached.file.existsSync() && cached.file.lengthSync() > 0) {
+        if (!mounted) return;
+        scaffold.hideCurrentSnackBar();
+        await _showDownloadActions(context, cached.file, imageUrl);
+        return;
+      }
+    } catch (e) {
+      debugPrint('读缓存失败(可忽略): $e');
+    }
+
+    // Strategy 2: download via Dio with browser-like headers
+    try {
       final docDir = await getApplicationDocumentsDirectory();
       final saveDir = Directory('${docDir.path}/box_downloads');
-      if (!saveDir.existsSync()) {
-        saveDir.createSync(recursive: true);
-      }
+      if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
       final file = File(
         '${saveDir.path}/ai_image_${DateTime.now().millisecondsSinceEpoch}.png',
       );
@@ -576,7 +588,6 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       final client = Dio(
         BaseOptions(
           connectTimeout: const Duration(seconds: 15),
-          // 模拟浏览器 User-Agent，避免 CDN 拦截非浏览器请求
           headers: {
             'User-Agent':
                 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 '
@@ -585,7 +596,6 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
             'Referer': 'https://files.anyroutes.cn/',
           },
-          // 接受任何状态码，手动处理
           validateStatus: (_) => true,
         ),
       );
@@ -597,21 +607,16 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
           receiveTimeout: const Duration(seconds: 60),
         ),
       );
-
-      // 手动检查状态码
       if (response.statusCode != null && response.statusCode! >= 400) {
         throw Exception(
           'HTTP ${response.statusCode} ${response.statusMessage ?? ''}',
         );
       }
-
       if (!mounted) return;
       scaffold.hideCurrentSnackBar();
-
       if (!file.existsSync() || file.lengthSync() <= 0) {
         throw Exception('下载不完整');
       }
-
       await _showDownloadActions(context, file, imageUrl);
     } catch (e) {
       debugPrint('下载图片失败: $e');

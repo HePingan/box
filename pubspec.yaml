@@ -51,6 +51,7 @@ dependencies:
   hive_flutter: ^1.1.0
   chewie: ^1.14.1
   cached_network_image: ^3.4.1
+  flutter_cache_manager: ^3.4.1
   image_picker: ^1.1.2
   file_picker: 12.0.0-beta.7
   web: ^1.1.1
