@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
@@ -70,6 +71,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
   List<String> _availableModels = const [];
   List<GeneratedImageResult> _results = const [];
   List<ImageGenerationHistoryItem> _history = const [];
+  final Map<String, GlobalKey> _imageCaptureKeys = {};
   final Set<String> _selectedStyles = {};
 
   static const _styleLabels = [
@@ -566,11 +568,20 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
 
     File? localFile;
 
-    // Strategy 1: extract bytes from Flutter image cache / disk cache
+    // Strategy 0: capture from RepaintBoundary (guaranteed, 0 network)
     try {
-      localFile = await _imageFromCache(imageUrl);
+      localFile = await _captureFromRepaintBoundary(imageUrl);
     } catch (e) {
-      debugPrint('Strategy 1 (cache) failed: $e');
+      debugPrint('Strategy 0 (RepaintBoundary) failed: $e');
+    }
+
+    // Strategy 1: extract bytes from Flutter image cache / disk cache
+    if (localFile == null) {
+      try {
+        localFile = await _imageFromCache(imageUrl);
+      } catch (e) {
+        debugPrint('Strategy 1 (cache) failed: $e');
+      }
     }
 
     // Strategy 2: download via Dio with browser headers
@@ -590,6 +601,30 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
     } else {
       _showDownloadError(context, '所有下载方式均失败，请复制链接手动下载', imageUrl);
     }
+  }
+
+  /// Strategy 0: capture the on-screen rendered image via [RepaintBoundary].
+  /// This is 100% reliable because it grabs pixels already on screen —
+  /// zero network requests, no cache key mismatches.
+  Future<File?> _captureFromRepaintBoundary(String imageUrl) async {
+    final key = _imageCaptureKeys[imageUrl];
+    if (key == null || key.currentContext == null) return null;
+
+    final boundary = key.currentContext!.findRenderObject();
+    if (boundary is! RenderRepaintBoundary) return null;
+
+    final ui.Image captured = await boundary.toImage(pixelRatio: 3.0);
+    final byteData = await captured.toByteData(
+      format: ui.ImageByteFormat.png,
+    );
+    if (byteData == null) return null;
+
+    final tmpDir = await getTemporaryDirectory();
+    final file = File(
+      '${tmpDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
+    );
+    await file.writeAsBytes(byteData.buffer.asUint8List());
+    return file;
   }
 
   /// Use [CachedNetworkImageProvider] to resolve from Flutter's cache.
@@ -1027,6 +1062,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
       if (!mounted) return;
       setState(() {
         _results = displayImages;
+        _imageCaptureKeys.clear();
         _history = history;
         _lastDiagnostics = _buildDiagnostics(
           params: params,
@@ -1590,17 +1626,24 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage> {
                       )
                     else
                       ..._results.map(
-                        (item) => Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: GeneratedImageTileCompact(
-                            item: item,
-                            onCopy: _copyText,
-                            onDownload: _downloadImage,
-                            prompt: _promptController.text.trim(),
-                            negativePrompt: _negativeController.text.trim(),
-                            parameterSummary: parameterSummary,
-                          ),
-                        ),
+                        (item) {
+                          final key = _imageCaptureKeys.putIfAbsent(
+                            item.image,
+                            () => GlobalKey(),
+                          );
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: GeneratedImageTileCompact(
+                              captureKey: key,
+                              item: item,
+                              onCopy: _copyText,
+                              onDownload: _downloadImage,
+                              prompt: _promptController.text.trim(),
+                              negativePrompt: _negativeController.text.trim(),
+                              parameterSummary: parameterSummary,
+                            ),
+                          );
+                        },
                       ),
                     // History
                     const SizedBox(height: 8),

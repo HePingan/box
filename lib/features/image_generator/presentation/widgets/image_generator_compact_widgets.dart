@@ -284,6 +284,7 @@ class GeneratedImageTileCompact extends StatelessWidget {
     required this.prompt,
     required this.negativePrompt,
     required this.parameterSummary,
+    this.captureKey,
   });
 
   final GeneratedImageResult item;
@@ -292,6 +293,7 @@ class GeneratedImageTileCompact extends StatelessWidget {
   final String prompt;
   final String negativePrompt;
   final String parameterSummary;
+  final GlobalKey? captureKey;
 
   @override
   Widget build(BuildContext context) {
@@ -306,10 +308,13 @@ class GeneratedImageTileCompact extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Thumbnail
-          SmartImageLoader(
-            url: item.image,
-            isDataUrl: item.isDataUrl,
-            fallbackUrl: item.rawUrl,
+          RepaintBoundary(
+            key: captureKey,
+            child: SmartImageLoader(
+              url: item.image,
+              isDataUrl: item.isDataUrl,
+              fallbackUrl: item.rawUrl,
+            ),
           ),
           if (item.revisedPrompt != null && item.revisedPrompt!.isNotEmpty) ...[
             const SizedBox(height: 6),
