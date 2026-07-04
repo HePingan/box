@@ -1,11 +1,17 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path_provider/path_provider.dart';
 
 class CacheStore {
-  CacheStore({required this.namespace});
+  CacheStore({required this.namespace, bool? webMode})
+      : webMode = webMode ?? kIsWeb;
+  CacheStore.web() : namespace = 'web', webMode = true;
+
+  static CacheStore inMemory(String namespace) => CacheStore(namespace: namespace, webMode: true);
+
   final String namespace;
+  final bool webMode;
   final Map<String, String> _webCache = {};
 
   Future<Directory> _rootDir() async {
@@ -35,17 +41,17 @@ class CacheStore {
     };
     final jsonString = jsonEncode(payload);
 
-    if (kIsWeb) {
+    if (webMode) {
       _webCache[_safeName(key)] = jsonString;
       return;
     }
     final file = await _fileFor(key);
-    await file.writeAsString(jsonString, flush: true);
+    await file.writeAsString(jsonString);
   }
 
   Future<dynamic> read(String key) async {
     String? rawData;
-    if (kIsWeb) {
+    if (webMode) {
       rawData = _webCache[_safeName(key)];
     } else {
       final file = await _fileFor(key);
@@ -70,7 +76,7 @@ class CacheStore {
   }
 
   Future<void> remove(String key) async {
-    if (kIsWeb) {
+    if (webMode) {
       _webCache.remove(_safeName(key));
       return;
     }

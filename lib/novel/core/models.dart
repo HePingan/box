@@ -47,6 +47,27 @@ class NovelBook {
     );
   }
 
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is NovelBook &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          title == other.title &&
+          author == other.author &&
+          intro == other.intro &&
+          coverUrl == other.coverUrl &&
+          detailUrl == other.detailUrl &&
+          category == other.category &&
+          status == other.status &&
+          wordCount == other.wordCount;
+
+  @override
+  int get hashCode => Object.hash(id, title, author, intro, coverUrl, detailUrl, category, status, wordCount);
+
+  @override
+  String toString() => 'NovelBook(id: $id, title: $title, author: $author)';
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'title': title,
@@ -80,6 +101,27 @@ class NovelChapter {
 
   const NovelChapter({required this.title, required this.url});
 
+  NovelChapter copyWith({String? title, String? url}) {
+    return NovelChapter(
+      title: title ?? this.title,
+      url: url ?? this.url,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is NovelChapter &&
+          runtimeType == other.runtimeType &&
+          title == other.title &&
+          url == other.url;
+
+  @override
+  int get hashCode => Object.hash(title, url);
+
+  @override
+  String toString() => 'NovelChapter(title: $title, url: $url)';
+
   Map<String, dynamic> toJson() => {'title': title, 'url': url};
 
   factory NovelChapter.fromJson(Map<String, dynamic> json) {
@@ -95,6 +137,32 @@ class NovelDetail {
   final List<NovelChapter> chapters;
 
   const NovelDetail({required this.book, required this.chapters});
+
+  NovelDetail copyWith({NovelBook? book, List<NovelChapter>? chapters}) {
+    return NovelDetail(
+      book: book ?? this.book,
+      chapters: chapters ?? this.chapters,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! NovelDetail) return false;
+    final o = other;
+    if (book != o.book) return false;
+    if (chapters.length != o.chapters.length) return false;
+    for (var i = 0; i < chapters.length; i++) {
+      if (chapters[i] != o.chapters[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hash(book, Object.hashAll(chapters));
+
+  @override
+  String toString() => 'NovelDetail(book: $book, chapters: ${chapters.length})';
 
   Map<String, dynamic> toJson() => {
     'book': book.toJson(),
@@ -129,11 +197,45 @@ class ChapterContent {
     this.fromCache = false,
   });
 
+  ChapterContent copyWith({
+    String? title,
+    String? content,
+    int? chapterIndex,
+    String? sourceUrl,
+    bool? fromCache,
+  }) {
+    return ChapterContent(
+      title: title ?? this.title,
+      content: content ?? this.content,
+      chapterIndex: chapterIndex ?? this.chapterIndex,
+      sourceUrl: sourceUrl ?? this.sourceUrl,
+      fromCache: fromCache ?? this.fromCache,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChapterContent &&
+          runtimeType == other.runtimeType &&
+          title == other.title &&
+          content == other.content &&
+          chapterIndex == other.chapterIndex &&
+          sourceUrl == other.sourceUrl &&
+          fromCache == other.fromCache;
+
+  @override
+  int get hashCode => Object.hash(title, content, chapterIndex, sourceUrl, fromCache);
+
+  @override
+  String toString() => 'ChapterContent(title: $title, chapterIndex: $chapterIndex, fromCache: $fromCache)';
+
   Map<String, dynamic> toJson() => {
     'title': title,
     'content': content,
     'chapterIndex': chapterIndex,
     'sourceUrl': sourceUrl,
+    'fromCache': fromCache,
   };
 
   factory ChapterContent.fromJson(
@@ -165,6 +267,40 @@ class ReadingProgress {
     required this.updatedAt,
   });
 
+  ReadingProgress copyWith({
+    String? bookId,
+    int? chapterIndex,
+    String? chapterTitle,
+    double? scrollOffset,
+    int? updatedAt,
+  }) {
+    return ReadingProgress(
+      bookId: bookId ?? this.bookId,
+      chapterIndex: chapterIndex ?? this.chapterIndex,
+      chapterTitle: chapterTitle ?? this.chapterTitle,
+      scrollOffset: scrollOffset ?? this.scrollOffset,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ReadingProgress &&
+          runtimeType == other.runtimeType &&
+          bookId == other.bookId &&
+          chapterIndex == other.chapterIndex &&
+          chapterTitle == other.chapterTitle &&
+          scrollOffset == other.scrollOffset &&
+          updatedAt == other.updatedAt;
+
+  @override
+  int get hashCode => Object.hash(bookId, chapterIndex, chapterTitle, scrollOffset, updatedAt);
+
+  @override
+  String toString() =>
+      'ReadingProgress(bookId: $bookId, chapterIndex: $chapterIndex, chapterTitle: $chapterTitle, scrollOffset: $scrollOffset)';
+
   Map<String, dynamic> toJson() => {
     'bookId': bookId,
     'chapterIndex': chapterIndex,
@@ -188,30 +324,85 @@ class ReaderSettings {
   final double fontSize;
   final double lineHeight;
   final ReaderThemeMode themeMode;
+  final double brightness;
+  final bool keepScreenOn;
+  final bool enableHaptic;
+  final double letterSpacing;
+  final String? fontFamily;
 
   const ReaderSettings({
     this.fontSize = 18,
     this.lineHeight = 1.8,
     this.themeMode = ReaderThemeMode.warm,
+    this.brightness = 1.0,
+    this.keepScreenOn = false,
+    this.enableHaptic = true,
+    this.letterSpacing = 0.0,
+    this.fontFamily,
   });
 
   ReaderSettings copyWith({
     double? fontSize,
     double? lineHeight,
     ReaderThemeMode? themeMode,
+    double? brightness,
+    bool? keepScreenOn,
+    bool? enableHaptic,
+    double? letterSpacing,
+    String? fontFamily,
   }) {
     return ReaderSettings(
       fontSize: fontSize ?? this.fontSize,
       lineHeight: lineHeight ?? this.lineHeight,
       themeMode: themeMode ?? this.themeMode,
+      brightness: brightness ?? this.brightness,
+      keepScreenOn: keepScreenOn ?? this.keepScreenOn,
+      enableHaptic: enableHaptic ?? this.enableHaptic,
+      letterSpacing: letterSpacing ?? this.letterSpacing,
+      fontFamily: fontFamily ?? this.fontFamily,
     );
   }
 
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ReaderSettings &&
+          runtimeType == other.runtimeType &&
+          fontSize == other.fontSize &&
+          lineHeight == other.lineHeight &&
+          themeMode == other.themeMode &&
+          brightness == other.brightness &&
+          keepScreenOn == other.keepScreenOn &&
+          enableHaptic == other.enableHaptic &&
+          letterSpacing == other.letterSpacing &&
+          fontFamily == other.fontFamily;
+
+  @override
+  int get hashCode => Object.hash(
+        fontSize,
+        lineHeight,
+        themeMode,
+        brightness,
+        keepScreenOn,
+        enableHaptic,
+        letterSpacing,
+        fontFamily,
+      );
+
+  @override
+  String toString() =>
+      'ReaderSettings(fontSize: $fontSize, lineHeight: $lineHeight, themeMode: $themeMode, brightness: $brightness, keepScreenOn: $keepScreenOn, enableHaptic: $enableHaptic)';
+
   Map<String, dynamic> toJson() => {
-    'fontSize': fontSize,
-    'lineHeight': lineHeight,
-    'themeMode': themeMode.name,
-  };
+        'fontSize': fontSize,
+        'lineHeight': lineHeight,
+        'themeMode': themeMode.name,
+        'brightness': brightness,
+        'keepScreenOn': keepScreenOn,
+        'enableHaptic': enableHaptic,
+        'letterSpacing': letterSpacing,
+        'fontFamily': fontFamily,
+      };
 
   factory ReaderSettings.fromJson(Map<String, dynamic> json) {
     final modeName = json['themeMode'] as String? ?? ReaderThemeMode.warm.name;
@@ -224,6 +415,11 @@ class ReaderSettings {
       fontSize: (json['fontSize'] as num?)?.toDouble() ?? 18,
       lineHeight: (json['lineHeight'] as num?)?.toDouble() ?? 1.8,
       themeMode: mode,
+      brightness: (json['brightness'] as num?)?.toDouble() ?? 1.0,
+      keepScreenOn: json['keepScreenOn'] as bool? ?? false,
+      enableHaptic: json['enableHaptic'] as bool? ?? true,
+      letterSpacing: (json['letterSpacing'] as num?)?.toDouble() ?? 0.0,
+      fontFamily: json['fontFamily'] as String?,
     );
   }
 }

@@ -57,7 +57,7 @@ dependencies:
   web: ^1.1.1
   gal: ^2.3.2
   share_plus: ^13.1.0
-
+  wakelock_plus: ^1.3.1
 
 dev_dependencies:
   flutter_test:
@@ -84,6 +84,7 @@ flutter:
   assets:
     - assets/data/public_apis_index.json
     - assets/data/public_apis_domestic_available.json
+    - assets/data/maoyan_book_source.json
 
   # To add assets to your application, add an assets section, like this:
   # assets:

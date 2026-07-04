@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../design_system/widgets/app_back_button.dart';
 import '../design_system/widgets/app_page_scaffold.dart';
 import '../utils/app_logger.dart';
 
@@ -33,6 +34,7 @@ class DebugLogPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('调试日志'),
+        leading: AppBackButton(onPressed: () => Navigator.pop(context)),
         actions: [
           IconButton(
             tooltip: '复制全部',

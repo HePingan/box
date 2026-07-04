@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:box/design_system/app_tokens.dart';
+import 'package:box/design_system/widgets/app_back_button.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 
@@ -189,9 +190,9 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
       subtitle: '多源并发查找 · 按来源分组 · 直达播放详情',
       badge: '全网',
       accentGradient: AppTokens.neonVioletGradient,
-      leading: IconButton.filledTonal(
+      leading: AppBackButton(
         onPressed: () => Navigator.maybePop(context),
-        icon: const Icon(Icons.arrow_back_rounded),
+        label: '聚合搜索',
       ),
       actions: const [
         AppStatusPill(

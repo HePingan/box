@@ -13,13 +13,9 @@ class AppProviders extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Use Provider (not ChangeNotifierProvider) to wrap the ChangeNotifiers.
-    // Provider does NOT create an InheritedNotifier, so notifyListeners()
-    // will never trigger the InheritedNotifier ancestry assertion.
-    // Consumers still use context.watch<T>() and context.select<T, R>() normally.
     return MultiProvider(
       providers: [
-        Provider<BookSourceManager>(
+        ChangeNotifierProvider<BookSourceManager>(
           create: (_) => BookSourceManager(bootstrap.prefs),
         ),
         Provider<VideoController>(create: (_) => VideoController()),

@@ -1,6 +1,7 @@
-import 'dart:math';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import 'package:box/daily_news_page.dart';
 import 'package:box/design_system/app_tokens.dart';
@@ -12,6 +13,13 @@ import 'package:box/video_module.dart';
 import 'package:box/features/image_generator/presentation/image_generator_page.dart';
 
 import 'widgets/home_widgets.dart';
+
+/// 新闻条目（标题 + 详情链接）
+class _NewsItem {
+  const _NewsItem({required this.title, this.url});
+  final String title;
+  final String? url;
+}
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key, this.onSwitchTab});
@@ -29,7 +37,7 @@ class _HomePageState extends State<HomePage>
 
   String _todayDateStr = '';
   bool _isLoadingNews = true;
-  List<String> _newsList = [];
+  List<_NewsItem> _newsItems = [];
 
   @override
   void initState() {
@@ -66,16 +74,43 @@ class _HomePageState extends State<HomePage>
     setState(() => _isLoadingNews = true);
 
     try {
-      await Future.delayed(const Duration(milliseconds: 500));
-      final random = Random().nextInt(100);
-      _newsList = [
-        '漂白鸡爪掀行业震荡 多品牌回应',
-        '商务部回应美方对华发起301调查',
-        '又被曝！曼玲粥铺被扒“糊弄式”堂食',
-        '编号：$random 备用内容',
-      ];
-    } catch (_) {
-      _newsList = ['网络加载失败，请稍后重试'];
+      // 同时拉取今日和昨日热点，混合后随机选4条
+      final today = DateTime.now();
+      final yesterdayStr =
+          '${today.year}${today.month.toString().padLeft(2, '0')}${(today.day - 1).toString().padLeft(2, '0')}';
+
+      final results = await Future.wait([
+        http.get(Uri.parse('https://news-at.zhihu.com/api/4/news/latest')),
+        http.get(Uri.parse(
+            'https://news-at.zhihu.com/api/4/news/before/$yesterdayStr')),
+      ]);
+
+      final allItems = <_NewsItem>[];
+
+      for (final resp in results) {
+        if (resp.statusCode != 200) continue;
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final stories = data['stories'] as List<dynamic>? ?? [];
+        for (final s in stories) {
+          final item = s as Map<String, dynamic>;
+          final title = item['title'] as String?;
+          if (title != null && title.isNotEmpty) {
+            allItems.add(_NewsItem(
+              title: title,
+              url: item['url'] as String?,
+            ));
+          }
+        }
+      }
+
+      if (allItems.isEmpty) {
+        _newsItems = [const _NewsItem(title: '暂无热点新闻，下拉刷新重试')];
+      } else {
+        allItems.shuffle();
+        _newsItems = allItems.take(4).toList();
+      }
+    } catch (e) {
+      _newsItems = [const _NewsItem(title: '网络异常，请稍后重试')];
     } finally {
       if (mounted) {
         setState(() => _isLoadingNews = false);
@@ -110,20 +145,15 @@ class _HomePageState extends State<HomePage>
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
       child: Row(
         children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              gradient: AppTokens.violetGradient,
-              borderRadius: BorderRadius.circular(14),
+          IconButton(
+            tooltip: '菜单',
+            icon: const Icon(
+              Icons.menu_rounded,
+              color: AppTokens.textSecondary,
             ),
-            child: const Icon(
-              Icons.home_rounded,
-              color: Colors.white,
-              size: 22,
-            ),
+            onPressed: () => appScaffoldKey.currentState?.openDrawer(),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -147,14 +177,6 @@ class _HomePageState extends State<HomePage>
                 ),
               ],
             ),
-          ),
-          IconButton(
-            tooltip: '菜单',
-            icon: const Icon(
-              Icons.menu_rounded,
-              color: AppTokens.textSecondary,
-            ),
-            onPressed: () => appScaffoldKey.currentState?.openDrawer(),
           ),
         ],
       ),
@@ -227,10 +249,7 @@ class _HomePageState extends State<HomePage>
       valueListenable: HomePluginHost.instance.listenable,
       builder: (context, plugins, child) {
         final customPlugins = plugins
-            .where(
-              (p) =>
-                  !p.builtIn && p.area == HomePluginArea.recommend && p.enabled,
-            )
+            .where((p) => !p.builtIn && p.enabled)
             .toList();
 
         if (customPlugins.isEmpty) {
@@ -422,7 +441,21 @@ class _HomePageState extends State<HomePage>
                 ),
               )
             else
-              ..._newsList.take(3).map((t) => HomeNewsLine(text: t)),
+              ..._newsItems.take(3).map(
+                    (item) => GestureDetector(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => DailyNewsPage(
+                              initialUrl: item.url,
+                            ),
+                          ),
+                        );
+                      },
+                      child: HomeNewsLine(text: item.title),
+                    ),
+                  ),
           ],
         ),
       ),

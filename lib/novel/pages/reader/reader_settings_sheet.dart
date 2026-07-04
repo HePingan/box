@@ -110,6 +110,28 @@ class ReaderSettingsSheet extends StatelessWidget {
                   '字体大小',
                   style: TextStyle(color: textColor.withValues(alpha: 0.75)),
                 ),
+                // 字号预设 Quick Pick
+                Row(
+                  children: const [14, 18, 22, 26].map((size) {
+                    final selected = settings.fontSize == size;
+                    return Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 3),
+                        child: ChoiceChip(
+                          label: Text('${size == 14 ? "小" : size == 18 ? "中" : size == 22 ? "大" : "特大"}', style: TextStyle(fontSize: 11)),
+                          selected: selected,
+                          showCheckmark: false,
+                          selectedColor: Colors.orange.withValues(alpha: 0.22),
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          onSelected: (_) => onSettingsChanged(settings.copyWith(fontSize: size.toDouble())),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 8),
+                // 微调滑条
                 Slider(
                   value: settings.fontSize,
                   min: 14,
@@ -122,20 +144,113 @@ class ReaderSettingsSheet extends StatelessWidget {
                   },
                 ),
 
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 Text(
                   '行距',
                   style: TextStyle(color: textColor.withValues(alpha: 0.75)),
                 ),
                 Slider(
                   value: settings.lineHeight,
-                  min: 1.4,
-                  max: 2.4,
-                  divisions: 10,
+                  min: 1.2,
+                  max: 3.0,
+                  divisions: 18,
                   activeColor: Colors.orange,
                   inactiveColor: textColor.withValues(alpha: 0.2),
                   onChanged: (v) {
                     onSettingsChanged(settings.copyWith(lineHeight: v));
+                  },
+                ),
+
+                const SizedBox(height: 16),
+                Text(
+                  '字间距',
+                  style: TextStyle(color: textColor.withValues(alpha: 0.75)),
+                ),
+                Slider(
+                  value: settings.letterSpacing,
+                  min: 0.0,
+                  max: 1.0,
+                  divisions: 10,
+                  activeColor: Colors.orange,
+                  inactiveColor: textColor.withValues(alpha: 0.2),
+                  onChanged: (v) {
+                    onSettingsChanged(settings.copyWith(letterSpacing: v));
+                  },
+                ),
+
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Text(
+                      '字体',
+                      style: TextStyle(color: textColor.withValues(alpha: 0.75)),
+                    ),
+                    const SizedBox(width: 12),
+                    DropdownButton<String?>(
+                      value: settings.fontFamily,
+                      dropdownColor: bgColor,
+                      hint: Text('系统默认', style: TextStyle(color: textColor.withValues(alpha: 0.6))),
+                      items: const [
+                        DropdownMenuItem(value: null, child: Text('系统默认')),
+                        DropdownMenuItem(value: 'serif', child: Text('衬线体')),
+                        DropdownMenuItem(value: 'monospace', child: Text('等宽体')),
+                      ],
+                      onChanged: (v) {
+                        onSettingsChanged(settings.copyWith(fontFamily: v));
+                      },
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 20),
+                // 亮度调节（半透明遮罩叠加层）
+                Row(
+                  children: [
+                    Icon(Icons.brightness_6_rounded, size: 18, color: textColor.withValues(alpha: 0.7)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Slider(
+                        value: settings.brightness,
+                        min: 0.2,
+                        max: 1.0,
+                        divisions: 16,
+                        activeColor: Colors.orange,
+                        inactiveColor: textColor.withValues(alpha: 0.2),
+                        onChanged: (v) {
+                          onSettingsChanged(settings.copyWith(brightness: v));
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 18),
+                // 屏幕常亮
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    '阅读时保持屏幕常亮',
+                    style: TextStyle(fontSize: 14, color: textColor.withValues(alpha: 0.8)),
+                  ),
+                  value: settings.keepScreenOn,
+                  activeColor: Colors.orange,
+                  onChanged: (v) {
+                    onSettingsChanged(settings.copyWith(keepScreenOn: v));
+                  },
+                ),
+
+                const SizedBox(height: 18),
+                // 点击震动
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    '翻页时震动反馈',
+                    style: TextStyle(fontSize: 14, color: textColor.withValues(alpha: 0.8)),
+                  ),
+                  value: settings.enableHaptic,
+                  activeColor: Colors.orange,
+                  onChanged: (v) {
+                    onSettingsChanged(settings.copyWith(enableHaptic: v));
                   },
                 ),
 
@@ -168,8 +283,8 @@ class ReaderSettingsSheet extends StatelessWidget {
                     ),
                     _themeButton(
                       label: '夜间',
-                      backgroundColor: const Color(0xFF141414),
-                      labelColor: Colors.white70, // 💡 深色背景用白字
+                      backgroundColor: const Color(0xFF1E2028),
+                      labelColor: const Color(0xFFD0C8B8),
                       mode: ReaderThemeMode.dark,
                       settings: settings,
                       onPressed: () {

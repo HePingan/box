@@ -26,6 +26,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
   static const double _indicatorHeight = 46.0;
 
   final ScrollController _scrollController = ScrollController();
+  final TextEditingController _searchController = TextEditingController();
 
   // 👉 性能优化绝招：使用极轻量的 Notifier 单独控制滚动条位置，彻底脱离复杂的组件树重绘
   final ValueNotifier<double> _scrollRatioNotifier = ValueNotifier(0.0);
@@ -33,6 +34,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
   bool _reversed = false;
   bool _jumpScheduled = false;
   bool _isDragging = false; // 标记是否正在被手指拖拽，拖动时挂起列表自身的重绘通知
+  String _searchQuery = '';
 
   AnimationController? _fadeController;
   Timer? _hideIndicatorTimer;
@@ -70,6 +72,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
     _fadeController?.dispose();
     _scrollController.dispose();
     _scrollRatioNotifier.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -100,14 +103,31 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
 
   void _jumpNearCurrent() {
     if (!_scrollController.hasClients) return;
-    final total = widget.controller.totalChapters;
-    if (total <= 0) return;
+    final allChapters = widget.controller.detail.chapters;
+    if (allChapters.isEmpty) return;
 
-    final visualIndex = _reversed
-        ? (total - 1 - widget.controller.chapterIndex)
-        : widget.controller.chapterIndex;
+    final query = _searchQuery.trim().toLowerCase();
+    final filtered = query.isEmpty
+        ? List<int>.generate(allChapters.length, (i) => i)
+        : allChapters
+            .asMap()
+            .entries
+            .where((e) => e.value.title.toLowerCase().contains(query))
+            .map((e) => e.key)
+            .toList();
 
-    final targetOffset = ((visualIndex - 4).clamp(0, total - 1)) * _itemHeight;
+    if (filtered.isEmpty) return;
+
+    final currentIdx = widget.controller.chapterIndex;
+    final posInFiltered = filtered.indexOf(currentIdx);
+    if (posInFiltered < 0) return;
+
+    final displayIdx = _reversed
+        ? (filtered.length - 1 - posInFiltered)
+        : posInFiltered;
+
+    final targetOffset =
+        ((displayIdx - 4).clamp(0, filtered.length - 1)) * _itemHeight;
     final maxExtent = _scrollController.position.maxScrollExtent;
 
     _scrollController.jumpTo(targetOffset.toDouble().clamp(0.0, maxExtent));
@@ -215,7 +235,22 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
     return SafeAnimatedBuilder(
       animation: controller,
       builder: (context, _) {
-        final total = controller.totalChapters;
+        final controller = widget.controller;
+        final allChapters = controller.detail.chapters;
+        final total = allChapters.length;
+        final query = _searchQuery.trim().toLowerCase();
+
+        // 过滤章节索引
+        final filtered = query.isEmpty
+            ? List<int>.generate(total, (i) => i)
+            : allChapters
+                .asMap()
+                .entries
+                .where((e) => e.value.title.toLowerCase().contains(query))
+                .map((e) => e.key)
+                .toList();
+
+        final displayTotal = filtered.length;
 
         if (!_jumpScheduled) {
           _jumpScheduled = true;
@@ -277,11 +312,61 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
                   height: 1,
                   color: widget.textColor.withValues(alpha: 0.08),
                 ),
+
+                // 搜索栏
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  child: TextField(
+                    controller: _searchController,
+                    onChanged: (v) => setState(() => _searchQuery = v),
+                    style: TextStyle(
+                      color: widget.textColor.withValues(alpha: 0.85),
+                      fontSize: 13,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: '搜索章节...',
+                      hintStyle: TextStyle(
+                        color: widget.textColor.withValues(alpha: 0.4),
+                        fontSize: 13,
+                      ),
+                      prefixIcon: Icon(
+                        Icons.search_rounded,
+                        size: 16,
+                        color: widget.textColor.withValues(alpha: 0.45),
+                      ),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? GestureDetector(
+                              onTap: () {
+                                _searchController.clear();
+                                setState(() => _searchQuery = '');
+                              },
+                              child: Icon(
+                                Icons.close_rounded,
+                                size: 14,
+                                color: widget.textColor.withValues(alpha: 0.5),
+                              ),
+                            )
+                          : null,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      filled: true,
+                      fillColor: widget.textColor.withValues(alpha: 0.05),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                ),
+
                 Expanded(
-                  child: total <= 0
+                  child: displayTotal <= 0
                       ? Center(
                           child: Text(
-                            '暂无章节',
+                            query.isEmpty ? '暂无章节' : '无匹配章节',
                             style: TextStyle(
                               color: widget.textColor.withValues(alpha: 0.55),
                             ),
@@ -302,18 +387,17 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
                               },
                               child: ListView.builder(
                                 controller: _scrollController,
-                                itemCount: total,
+                                itemCount: displayTotal,
                                 itemExtent: _itemHeight,
-                                // 👉 只使用很弱的弹簧效果，防止与拖拽打架造成闪烁
                                 physics: const ClampingScrollPhysics(),
                                 itemBuilder: (_, i) {
-                                  final visualIndex = _reversed
-                                      ? total - 1 - i
+                                  final filteredIdx = _reversed
+                                      ? filtered.length - 1 - i
                                       : i;
-                                  final chapter =
-                                      controller.detail.chapters[visualIndex];
-                                  final current =
-                                      visualIndex == controller.chapterIndex;
+                                  final chapterIndex = filtered[filteredIdx];
+                                  final chapter = allChapters[chapterIndex];
+                                  final current = chapterIndex == controller.chapterIndex;
+                                  final isRead = controller.isChapterRead(chapterIndex);
 
                                   return Container(
                                     height: _itemHeight,
@@ -337,21 +421,35 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
                                         style: TextStyle(
                                           color: current
                                               ? Colors.orange
-                                              : widget.textColor,
+                                              : widget.textColor.withValues(alpha: isRead ? 0.75 : 0.9),
                                           fontWeight: current
-                                              ? FontWeight.bold
-                                              : FontWeight.normal,
+                                              ? FontWeight.w700
+                                              : FontWeight.w500,
                                         ),
                                       ),
-                                      trailing: current
-                                          ? const Icon(
+                                      trailing: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          if (isRead && !current)
+                                            Container(
+                                              width: 6,
+                                              height: 6,
+                                              margin: const EdgeInsets.only(right: 6),
+                                              decoration: BoxDecoration(
+                                                color: Colors.green.withValues(alpha: 0.6),
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                          if (current)
+                                            const Icon(
                                               Icons.my_location_rounded,
                                               size: 16,
                                               color: Colors.orange,
-                                            )
-                                          : null,
+                                            ),
+                                        ],
+                                      ),
                                       onTap: () {
-                                        Navigator.pop(context, visualIndex);
+                                        Navigator.pop(context, chapterIndex);
                                       },
                                     ),
                                   );

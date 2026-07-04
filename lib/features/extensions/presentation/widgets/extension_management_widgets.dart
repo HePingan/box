@@ -2,35 +2,49 @@ import 'package:flutter/material.dart';
 
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
+import 'package:box/design_system/widgets/press_scale.dart';
 import 'package:box/plugin_manager.dart';
+
+// ═══════════════════════════════════════════════════════════════════
+// ExtensionHeroCard — 动态指标 + 核心操作
+// ═══════════════════════════════════════════════════════════════════
 
 class ExtensionHeroCard extends StatelessWidget {
   const ExtensionHeroCard({
     super.key,
     required this.pluginCount,
+    required this.enabledCount,
+    required this.bookSourceCount,
+    required this.videoSourceCount,
     required this.onOpenMarket,
     required this.onImportJson,
+    required this.onExportJson,
   });
 
   final int pluginCount;
+  final int enabledCount;
+  final int bookSourceCount;
+  final int videoSourceCount;
   final VoidCallback onOpenMarket;
   final VoidCallback onImportJson;
+  final VoidCallback onExportJson;
 
   @override
   Widget build(BuildContext context) {
     return AppLightHeroCard(
       margin: EdgeInsets.zero,
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      eyebrow: '扩展管理中心',
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+      eyebrow: '',
       title: '扩展中心',
-      subtitle: '插件、资源规则、备份与诊断统一管理',
+      subtitle:
+          '${pluginCount} 个插件 · ${bookSourceCount + videoSourceCount} 个资源规则',
       badge: 'EXT HUB',
       accentGradient: AppTokens.violetGradient,
-      leading: const _ExtensionLightIcon(
-        icon: Icons.admin_panel_settings_rounded,
-      ),
+      leading: _ExtensionLightIcon(icon: Icons.admin_panel_settings_rounded),
       actions: [
-        GestureDetector(
+        // 插件市场 — 主入口
+        PressScale(
+          child: GestureDetector(
           onTap: onOpenMarket,
           child: const AppStatusPill(
             label: '插件市场',
@@ -38,13 +52,51 @@ class ExtensionHeroCard extends StatelessWidget {
             color: AppTokens.violet,
           ),
         ),
-        GestureDetector(
-          onTap: onImportJson,
-          child: const AppStatusPill(
-            label: '导入',
-            icon: Icons.download_for_offline_rounded,
-            color: AppTokens.emerald,
+        ),
+        // 管理菜单
+        PopupMenuButton<String>(
+          padding: EdgeInsets.zero,
+          iconSize: 20,
+          icon: const Icon(
+            Icons.more_vert_rounded,
+            color: AppTokens.textSecondary,
           ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          onSelected: (action) {
+            switch (action) {
+              case 'import':
+                onImportJson();
+              case 'export':
+                onExportJson();
+            }
+          },
+          itemBuilder: (_) => const [
+            PopupMenuItem(
+              value: 'import',
+              child: ListTile(
+                leading: Icon(
+                  Icons.download_for_offline_rounded,
+                  color: AppTokens.emerald,
+                ),
+                title: Text('导入 JSON'),
+                subtitle: Text('粘贴或 URL 拉取配置', style: TextStyle(fontSize: 11)),
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+              ),
+            ),
+            PopupMenuItem(
+              value: 'export',
+              child: ListTile(
+                leading: Icon(Icons.upload_file_rounded, color: AppTokens.cyan),
+                title: Text('导出 JSON'),
+                subtitle: Text('复制插件快照', style: TextStyle(fontSize: 11)),
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+              ),
+            ),
+          ],
         ),
       ],
       metrics: [
@@ -52,12 +104,15 @@ class ExtensionHeroCard extends StatelessWidget {
           child: _ExtensionLightMetric(value: '$pluginCount', label: '插件'),
         ),
         const SizedBox(width: 8),
-        const Expanded(
-          child: _ExtensionLightMetric(value: '书源', label: '小说规则'),
+        Expanded(
+          child: _ExtensionLightMetric(value: '$bookSourceCount', label: '书源'),
         ),
         const SizedBox(width: 8),
-        const Expanded(
-          child: _ExtensionLightMetric(value: '片源', label: '影视规则'),
+        Expanded(
+          child: _ExtensionLightMetric(
+            value: '${enabledCount - bookSourceCount - videoSourceCount}',
+            label: '其他',
+          ),
         ),
       ],
     );
@@ -76,7 +131,7 @@ class _ExtensionLightIcon extends StatelessWidget {
       height: 38,
       decoration: BoxDecoration(
         color: AppTokens.violet.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(color: AppTokens.violet.withValues(alpha: 0.16)),
       ),
       child: const Icon(
@@ -115,6 +170,7 @@ class _ExtensionLightMetric extends StatelessWidget {
                 color: AppTokens.textPrimary,
                 fontSize: 12.5,
                 fontWeight: FontWeight.w900,
+                fontFeatures: [FontFeature.tabularFigures()],
               ),
             ),
           ),
@@ -133,270 +189,9 @@ class _ExtensionLightMetric extends StatelessWidget {
   }
 }
 
-class ExtensionPluginSection extends StatelessWidget {
-  const ExtensionPluginSection({
-    super.key,
-    required this.area,
-    required this.plugins,
-    required this.onRunPlugin,
-    required this.onToggleEnabled,
-    required this.onUninstall,
-  });
-
-  final HomePluginArea area;
-  final List<HomePlugin> plugins;
-  final Future<void> Function(BuildContext context, HomePlugin plugin)
-  onRunPlugin;
-  final Future<void> Function(HomePlugin plugin, bool enabled) onToggleEnabled;
-  final Future<void> Function(HomePlugin plugin) onUninstall;
-
-  @override
-  Widget build(BuildContext context) {
-    final areaColor = _colorForArea(area);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: AppTokens.divider),
-        boxShadow: AppTokens.shadowSm(),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: areaColor.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(area.icon, size: 18, color: areaColor),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _areaHubTitle(area),
-                      style: const TextStyle(
-                        color: AppTokens.textPrimary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _areaHubSubtitle(area),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppTokens.textSecondary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              PluginStatusChip(text: '${plugins.length} 个', color: areaColor),
-            ],
-          ),
-          const SizedBox(height: 10),
-          if (plugins.isEmpty)
-            const AppEmptyState(
-              title: '暂无插件',
-              message: '可从插件市场安装，或新增自定义插件。',
-              icon: Icons.extension_off_rounded,
-              height: 118,
-            )
-          else
-            Column(
-              children: plugins
-                  .map(
-                    (plugin) => _PluginListTile(
-                      plugin: plugin,
-                      onRunPlugin: onRunPlugin,
-                      onToggleEnabled: onToggleEnabled,
-                      onUninstall: onUninstall,
-                    ),
-                  )
-                  .toList(),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Color _colorForArea(HomePluginArea area) {
-    switch (area) {
-      case HomePluginArea.recommend:
-        return Colors.deepPurple;
-      case HomePluginArea.music:
-        return Colors.pink;
-      case HomePluginArea.video:
-        return Colors.indigo;
-      case HomePluginArea.comic:
-        return Colors.teal;
-      case HomePluginArea.novel:
-        return Colors.orange;
-      case HomePluginArea.center:
-        return Colors.blueGrey;
-    }
-  }
-
-  String _areaHubTitle(HomePluginArea area) {
-    switch (area) {
-      case HomePluginArea.recommend:
-        return '首页推荐扩展';
-      case HomePluginArea.music:
-        return '音乐能力扩展';
-      case HomePluginArea.video:
-        return '影视能力扩展';
-      case HomePluginArea.comic:
-        return '漫画能力扩展';
-      case HomePluginArea.novel:
-        return '小说能力扩展';
-      case HomePluginArea.center:
-        return '中心控制扩展';
-    }
-  }
-
-  String _areaHubSubtitle(HomePluginArea area) {
-    switch (area) {
-      case HomePluginArea.recommend:
-        return '展示在首页推荐区的快捷能力';
-      case HomePluginArea.music:
-        return '音乐搜索、歌单和音频相关扩展';
-      case HomePluginArea.video:
-        return '影视搜索、片源和播放链路扩展';
-      case HomePluginArea.comic:
-        return '漫画收藏、搜索和榜单扩展';
-      case HomePluginArea.novel:
-        return '小说书架、书源和阅读扩展';
-      case HomePluginArea.center:
-        return '配置、诊断和系统级扩展';
-    }
-  }
-}
-
-class _PluginListTile extends StatelessWidget {
-  const _PluginListTile({
-    required this.plugin,
-    required this.onRunPlugin,
-    required this.onToggleEnabled,
-    required this.onUninstall,
-  });
-
-  final HomePlugin plugin;
-  final Future<void> Function(BuildContext context, HomePlugin plugin)
-  onRunPlugin;
-  final Future<void> Function(HomePlugin plugin, bool enabled) onToggleEnabled;
-  final Future<void> Function(HomePlugin plugin) onUninstall;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
-      decoration: BoxDecoration(
-        color: plugin.enabled
-            ? plugin.color.withValues(alpha: 0.04)
-            : AppTokens.surfaceMuted,
-        borderRadius: BorderRadius.circular(17),
-        border: Border.all(
-          color: plugin.enabled
-              ? plugin.color.withValues(alpha: 0.18)
-              : AppTokens.divider,
-        ),
-      ),
-      child: Row(
-        children: [
-          GestureDetector(
-            onTap: () => onRunPlugin(context, plugin),
-            child: Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: plugin.color.withValues(alpha: 0.13),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(plugin.icon, color: plugin.color, size: 19),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => onRunPlugin(context, plugin),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          plugin.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: AppTokens.textPrimary,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      PluginStatusChip(
-                        text: plugin.enabled ? '已启用' : '未启用',
-                        color: plugin.enabled
-                            ? AppTokens.emerald
-                            : AppTokens.textTertiary,
-                      ),
-                      if (plugin.builtIn) ...[
-                        const SizedBox(width: 4),
-                        const PluginStatusChip(
-                          text: '内置',
-                          color: AppTokens.primaryBlue,
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    plugin.subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppTokens.textSecondary,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Switch.adaptive(
-            value: plugin.enabled,
-            onChanged: (value) => onToggleEnabled(plugin, value),
-          ),
-          if (!plugin.builtIn)
-            IconButton(
-              tooltip: '卸载插件',
-              onPressed: () => onUninstall(plugin),
-              icon: const Icon(Icons.delete_outline_rounded),
-              color: AppTokens.rose,
-            ),
-        ],
-      ),
-    );
-  }
-}
+// ═══════════════════════════════════════════════════════════════════
+// ExtensionManagementTile — 管理操作卡片
+// ═══════════════════════════════════════════════════════════════════
 
 class ExtensionManagementTile extends StatelessWidget {
   const ExtensionManagementTile({
@@ -407,6 +202,9 @@ class ExtensionManagementTile extends StatelessWidget {
     required this.color,
     required this.onTap,
     this.primary = false,
+    this.count,
+    this.trailing,
+    this.gradient,
   });
 
   final String title;
@@ -415,6 +213,9 @@ class ExtensionManagementTile extends StatelessWidget {
   final Color color;
   final VoidCallback onTap;
   final bool primary;
+  final int? count;
+  final Widget? trailing;
+  final Gradient? gradient;
 
   @override
   Widget build(BuildContext context) {
@@ -422,87 +223,137 @@ class ExtensionManagementTile extends StatelessWidget {
     final muted = primary
         ? Colors.white.withValues(alpha: 0.78)
         : AppTokens.textSecondary;
-    final decoration = primary
+    final bgGradient =
+        gradient ??
+        (primary
+            ? LinearGradient(
+                colors: [color, color.withValues(alpha: 0.72)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : null);
+
+    final decoration = bgGradient != null
         ? BoxDecoration(
-            gradient: LinearGradient(
-              colors: [color, color.withValues(alpha: 0.72)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
+            gradient: bgGradient,
             borderRadius: BorderRadius.circular(22),
             boxShadow: AppTokens.shadowSm(color: color),
           )
         : BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: AppTokens.divider),
             boxShadow: AppTokens.shadowSm(color: color),
           );
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(primary ? 22 : 20),
-        onTap: onTap,
-        child: Container(
-          constraints: BoxConstraints(minHeight: primary ? 92 : 104),
+    return PressScale(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(primary ? 22 : 20),
+          onTap: onTap,
+          child: Container(
+          constraints: const BoxConstraints(minHeight: 98),
           padding: const EdgeInsets.all(14),
           decoration: decoration,
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: primary
-                      ? Colors.white.withValues(alpha: 0.18)
-                      : color.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(15),
-                ),
-                child: Icon(icon, color: primary ? Colors.white : color),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: foreground,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w900,
+              // 顶部：图标 + 计数 Badge
+              Row(
+                children: [
+                  // 图标容器
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: primary
+                          ? Colors.white.withValues(alpha: 0.20)
+                          : color.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(8),
+                      border: primary
+                          ? null
+                          : Border.all(color: color.withValues(alpha: 0.12)),
+                    ),
+                    child: Icon(
+                      icon,
+                      color: primary ? Colors.white : color,
+                      size: 22,
+                    ),
+                  ),
+                  const Spacer(),
+                  // 计数 Badge
+                  if (count != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: primary
+                            ? Colors.white.withValues(alpha: 0.20)
+                            : color.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(
+                          AppTokens.radiusPill,
+                        ),
+                      ),
+                      child: Text(
+                        '$count',
+                        style: TextStyle(
+                          color: foreground,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 5),
-                    Text(
-                      subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: muted,
-                        fontSize: 12,
-                        height: 1.35,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
+                  const SizedBox(width: 6),
+                  // 右侧箭头
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 18,
+                    color: primary
+                        ? Colors.white.withValues(alpha: 0.50)
+                        : AppTokens.textTertiary,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // 标题
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: foreground,
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
-              Icon(
-                Icons.chevron_right_rounded,
-                color: primary ? Colors.white : AppTokens.textTertiary,
+              const SizedBox(height: 3),
+              // 副标题
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: muted,
+                  fontSize: 11,
+                  height: 1.3,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ],
           ),
         ),
       ),
+      ),
     );
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// PluginStatusChip
+// ═══════════════════════════════════════════════════════════════════
 
 class PluginStatusChip extends StatelessWidget {
   const PluginStatusChip({super.key, required this.text, required this.color});
@@ -525,6 +376,118 @@ class PluginStatusChip extends StatelessWidget {
           fontSize: 10,
           fontWeight: FontWeight.w900,
         ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PluginDetailSheet — 插件详情弹出层
+// ═══════════════════════════════════════════════════════════════════
+
+class PluginDetailSheet extends StatelessWidget {
+  const PluginDetailSheet({super.key, required this.plugin});
+
+  final HomePlugin plugin;
+
+  @override
+  Widget build(BuildContext context) {
+    final payload = plugin.customConfig?.payload ?? '';
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: plugin.color.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(plugin.icon, color: plugin.color, size: 26),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        plugin.title,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        plugin.subtitle,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            _detailRow('状态', plugin.enabled ? '已启用' : '已禁用'),
+            _detailRow('区域', plugin.area.label),
+            _detailRow('类型', plugin.builtIn ? '内置插件' : '自定义插件'),
+            _detailRow('ID', plugin.id),
+            _detailRow('描述', plugin.subtitle),
+            if (payload.isNotEmpty) _detailRow('动作参数', payload),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 72,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey.shade500,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppTokens.textPrimary,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

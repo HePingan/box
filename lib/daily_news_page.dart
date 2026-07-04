@@ -2,25 +2,31 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'design_system/widgets/app_back_button.dart';
+
 class DailyNewsPage extends StatefulWidget {
-  const DailyNewsPage({super.key});
+  const DailyNewsPage({super.key, this.initialUrl});
+
+  /// 具体新闻的 URL，为空时加载默认门户页
+  final String? initialUrl;
 
   @override
   State<DailyNewsPage> createState() => _DailyNewsPageState();
 }
 
 class _DailyNewsPageState extends State<DailyNewsPage> {
-  // 定义网页控制器
   late final WebViewController _controller;
 
   @override
   void initState() {
     super.initState();
-    // 初始化网页控制器，设置允许运行JS，并加载你提供的网址
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..loadRequest(
-        Uri.parse('https://actcpc.heytapimage.com/oh5/3/1/index.html#/'),
+        Uri.parse(
+          widget.initialUrl ??
+              'https://actcpc.heytapimage.com/oh5/3/1/index.html#/',
+        ),
       );
   }
 
@@ -34,44 +40,30 @@ class _DailyNewsPageState extends State<DailyNewsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      // 自定义顶部标题栏（按照图2复刻）
       appBar: AppBar(
         backgroundColor: Colors.white,
-        scrolledUnderElevation: 0, // 页面滚动时不要变色
+        scrolledUnderElevation: 0,
         elevation: 0,
-        // 左侧返回按钮
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black87),
+        leading: AppBackButton(
           onPressed: () => Navigator.pop(context),
+          label: widget.initialUrl != null ? '热点详情' : '视界日报',
         ),
-        // 标题
-        title: const Text(
-          '视界日报',
-          style: TextStyle(
+        title: Text(
+          widget.initialUrl != null ? '热点详情' : '视界日报',
+          style: const TextStyle(
             color: Colors.black87,
             fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
         ),
         centerTitle: false,
-        // 右侧的刷新和更多按钮
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh, color: Colors.black87),
-            onPressed: () {
-              _controller.reload(); // 点击刷新网页
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.more_vert, color: Colors.black87),
-            onPressed: () {
-              // 更多功能留空
-            },
+            onPressed: () => _controller.reload(),
           ),
         ],
       ),
-
-      // 主体部分显示网页视图
       body: WebViewWidget(controller: _controller),
     );
   }

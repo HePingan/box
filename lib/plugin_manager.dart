@@ -4,7 +4,11 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'features/extensions/plugins/plugin_toolbox.dart';
+
 import 'daily_news_page.dart';
+import 'features/quiz_plugin/quiz_entry_page.dart';
+import 'features/quiz_plugin/quiz_plugin_entry.dart';
 import 'features/image_generator/presentation/image_generator_page.dart';
 import 'novel/core/cache_store.dart';
 
@@ -37,7 +41,31 @@ bool _asBool(dynamic value, [bool fallback = false]) {
   return fallback;
 }
 
-enum HomePluginArea { recommend, music, video, comic, novel, center }
+enum HomePluginArea {
+  recommend,
+  music,
+  video,
+  comic,
+  novel,
+  center;
+
+  String get label {
+    switch (this) {
+      case HomePluginArea.recommend:
+        return '推荐';
+      case HomePluginArea.music:
+        return '音乐';
+      case HomePluginArea.video:
+        return '影视';
+      case HomePluginArea.comic:
+        return '漫画';
+      case HomePluginArea.novel:
+        return '小说';
+      case HomePluginArea.center:
+        return '工具';
+    }
+  }
+}
 
 extension HomePluginAreaX on HomePluginArea {
   String get label {
@@ -494,6 +522,49 @@ class HomePluginHost {
     await _persist();
   }
 
+  Future<void> reorderPlugin(HomePluginArea area, int oldIndex, int newIndex) async {
+    await bootstrap();
+    final inArea = List<HomePlugin>.from(
+      _notifier.value.where((p) => p.area == area),
+    );
+    inArea.sort((a, b) {
+      final c = a.sort.compareTo(b.sort);
+      if (c != 0) return c;
+      return a.title.compareTo(b.title);
+    });
+
+    if (oldIndex < 0 || oldIndex >= inArea.length) return;
+    if (newIndex < 0 || newIndex >= inArea.length) return;
+
+    final moved = inArea.removeAt(oldIndex);
+    inArea.insert(newIndex, moved);
+
+    // 重新分配 sort 值
+    int base = 100;
+    for (final p in inArea) {
+      if (p.id == moved.id) {
+        // 分配中间值
+        final prevSort = newIndex > 0 ? inArea[newIndex - 1].sort : 0;
+        final nextSort = newIndex < inArea.length - 1
+            ? inArea[newIndex + 1].sort
+            : prevSort + 200;
+        base = (prevSort + nextSort) ~/ 2;
+      }
+    }
+
+    base = 100;
+    final list = List<HomePlugin>.from(_notifier.value);
+    for (int i = 0; i < inArea.length; i++) {
+      final idx = list.indexWhere((p) => p.id == inArea[i].id);
+      if (idx >= 0) {
+        list[idx] = list[idx].copyWith(sort: base + i * 100);
+      }
+    }
+
+    _notifier.value = _sorted(list);
+    await _persist();
+  }
+
   Future<void> restoreDefaults() async {
     await bootstrap();
     _notifier.value = _sorted(_buildDefaultPlugins());
@@ -695,6 +766,8 @@ class HomePluginHost {
   }
 
   List<HomePlugin> _buildDefaultPlugins() {
+    // 注册答题插件自动搜题的 MethodChannel handler
+    QuizPluginEntry.initAutoSearch();
     return <HomePlugin>[
       HomePlugin(
         id: 'builtin_daily_news',
@@ -713,16 +786,110 @@ class HomePluginHost {
         },
       ),
       HomePlugin(
-        id: 'builtin_music_rank',
-        title: '音乐榜单',
-        subtitle: '音乐插件入口示例',
-        icon: Icons.queue_music_outlined,
-        color: Colors.pinkAccent,
-        area: HomePluginArea.music,
+        id: 'builtin_json_formatter',
+        title: 'JSON 格式化',
+        subtitle: '粘贴 JSON 一键格式化与校验',
+        icon: Icons.data_object_rounded,
+        color: Colors.orange,
+        area: HomePluginArea.recommend,
         builtIn: true,
-        sort: 10,
+        sort: 15,
         onTap: (context) async {
-          await _showSnack(context, '音乐榜单插件开发中...');
+          await PluginToolbox.showJsonFormatter(context);
+        },
+      ),
+      HomePlugin(
+        id: 'builtin_base64',
+        title: 'Base64 编解码',
+        subtitle: '文本 ↔ Base64 双向转换',
+        icon: Icons.lock_outline,
+        color: Colors.teal,
+        area: HomePluginArea.recommend,
+        builtIn: true,
+        sort: 20,
+        onTap: (context) async {
+          await PluginToolbox.showBase64Tool(context);
+        },
+      ),
+      HomePlugin(
+        id: 'builtin_password_gen',
+        title: '密码生成器',
+        subtitle: '随机生成强密码，安全可靠',
+        icon: Icons.vpn_key_outlined,
+        color: Colors.red,
+        area: HomePluginArea.center,
+        builtIn: true,
+        sort: 25,
+        onTap: (context) async {
+          await PluginToolbox.showPasswordGenerator(context);
+        },
+      ),
+      HomePlugin(
+        id: 'builtin_timestamp',
+        title: '时间戳转换',
+        subtitle: 'Unix 时间戳 ↔ 日期互转',
+        icon: Icons.schedule_rounded,
+        color: Colors.deepPurple,
+        area: HomePluginArea.center,
+        builtIn: true,
+        sort: 30,
+        onTap: (context) async {
+          await PluginToolbox.showTimestampConverter(context);
+        },
+      ),
+      HomePlugin(
+        id: 'builtin_url_codec',
+        title: 'URL 编解码',
+        subtitle: 'URL 编码 / 解码转换工具',
+        icon: Icons.link_rounded,
+        color: Colors.indigo,
+        area: HomePluginArea.center,
+        builtIn: true,
+        sort: 35,
+        onTap: (context) async {
+          await PluginToolbox.showUrlCodec(context);
+        },
+      ),
+      HomePlugin(
+        id: 'builtin_qrcode',
+        title: '二维码生成',
+        subtitle: '文本/链接一键生成二维码',
+        icon: Icons.qr_code_2_rounded,
+        color: Colors.blueGrey,
+        area: HomePluginArea.center,
+        builtIn: true,
+        sort: 40,
+        onTap: (context) async {
+          await PluginToolbox.showQrCodeGenerator(context);
+        },
+      ),
+      HomePlugin(
+        id: 'builtin_quiz_entry',
+        title: '录入题目',
+        subtitle: '录入题目、选项、答案和解析',
+        icon: Icons.edit_note_rounded,
+        color: const Color(0xFF0891B2),
+        area: HomePluginArea.center,
+        builtIn: true,
+        sort: 50,
+        onTap: (context) async {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => QuizEntryPage()),
+          );
+        },
+      ),
+      HomePlugin(
+        id: 'builtin_quiz_plugin',
+        title: '答题助手',
+        subtitle: '捕获屏幕题目，自动搜索答案',
+        icon: Icons.quiz_outlined,
+        color: const Color(0xFF4F46E5),
+        area: HomePluginArea.center,
+        builtIn: true,
+        sort: 46,
+        onTap: (context) async {
+          await QuizPluginEntry.showConfigSheet(context);
         },
       ),
       HomePlugin(
@@ -742,16 +909,35 @@ class HomePluginHost {
         },
       ),
       HomePlugin(
-        id: 'builtin_comic_rank',
-        title: '漫画排行',
-        subtitle: '漫画插件入口示例',
+        id: 'builtin_comic_shelf',
+        title: '漫画收藏',
+        subtitle: '管理你的漫画收藏列表',
         icon: Icons.collections_bookmark_outlined,
         color: Colors.teal,
         area: HomePluginArea.comic,
         builtIn: true,
         sort: 10,
         onTap: (context) async {
-          await _showSnack(context, '漫画排行插件开发中...');
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => Scaffold(
+                appBar: AppBar(title: const Text('漫画收藏')),
+                body: const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.collections_bookmark_outlined,
+                          size: 64, color: Colors.grey),
+                      SizedBox(height: 16),
+                      Text('漫画功能将在后续版本上线',
+                          style: TextStyle(color: Colors.grey)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
         },
       ),
       HomePlugin(

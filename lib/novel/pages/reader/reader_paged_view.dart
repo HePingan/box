@@ -13,6 +13,7 @@ class ReaderPagedView extends StatelessWidget {
     required this.textColor,
     required this.topPadding,
     required this.onPageChanged,
+    this.onLookupWord,
   });
 
   final ReaderController controller;
@@ -23,9 +24,11 @@ class ReaderPagedView extends StatelessWidget {
   final double topPadding;
   final ValueChanged<int> onPageChanged;
 
+  /// 查词回调（从 contextMenuBuilder -> 选中文字）
+  final void Function(String word)? onLookupWord;
+
   Widget _buildBoundaryPage({required bool isNext}) {
     final canMove = isNext ? controller.canGoNext : controller.canGoPrev;
-
     final tip = !canMove
         ? (isNext ? '已经是最后一章' : '已经是第一章')
         : (isNext ? '继续左滑进入下一章' : '继续右滑进入上一章');
@@ -98,7 +101,6 @@ class ReaderPagedView extends StatelessWidget {
         if (viewIndex == 0) {
           return _buildBoundaryPage(isNext: false);
         }
-
         if (viewIndex == totalPages + 1) {
           return _buildBoundaryPage(isNext: true);
         }
@@ -145,12 +147,49 @@ class ReaderPagedView extends StatelessWidget {
                   ),
                 ),
               Expanded(
-                child: Text(
+                child: SelectableText(
                   textPages[index],
+                  contextMenuBuilder: (context, editableTextState) {
+                    final selection =
+                        editableTextState.textEditingValue.selection;
+                    String? selectedText;
+                    if (selection.isValid && !selection.isCollapsed) {
+                      selectedText =
+                          editableTextState.textEditingValue.text
+                              .substring(selection.start, selection.end);
+                    }
+                    return AdaptiveTextSelectionToolbar(
+                      anchors: editableTextState.contextMenuAnchors,
+                      children: [
+                        for (final item
+                            in editableTextState.contextMenuButtonItems)
+                          TextButton(
+                            onPressed: () {
+                              item.onPressed?.call();
+                              if (item.type !=
+                                  ContextMenuButtonType.selectAll) {
+                                editableTextState.hideToolbar();
+                              }
+                            },
+                            child: Text(item.label ?? ''),
+                          ),
+                        if (selectedText != null && selectedText.isNotEmpty)
+                          TextButton(
+                            onPressed: () {
+                              editableTextState.hideToolbar();
+                              final word = selectedText;
+                              if (word != null) onLookupWord?.call(word);
+                            },
+                            child: const Text('查词'),
+                          ),
+                      ],
+                    );
+                  },
                   style: TextStyle(
                     fontSize: settings.fontSize,
                     height: settings.lineHeight,
-                    letterSpacing: 0.6,
+                    letterSpacing: settings.letterSpacing + 0.6,
+                    fontFamily: settings.fontFamily,
                     color: textColor,
                   ),
                 ),

@@ -1,18 +1,62 @@
 import 'cache_store.dart';
 import 'models.dart';
 import 'novel_cache_keys.dart';
+import 'novel_exceptions.dart';
 import 'novel_source.dart';
 
 class NovelRepository {
-  NovelRepository({required this.source, required this.cache});
+  NovelRepository({
+    required this.source,
+    required this.cache,
+    this.searchTtl = defaultSearchTtl,
+    this.pathListTtl = defaultPathListTtl,
+    this.detailTtl = defaultDetailTtl,
+    this.chapterTtl = defaultChapterTtl,
+  });
 
   final NovelSource source;
   final CacheStore cache;
 
-  static const Duration _searchTtl = Duration(minutes: 10);
-  static const Duration _pathListTtl = Duration(minutes: 8);
-  static const Duration _detailTtl = Duration(hours: 8);
-  static const Duration _chapterTtl = Duration(days: 30);
+  /// 缓存策略配置
+  static const Duration defaultSearchTtl = Duration(minutes: 10);
+  static const Duration defaultPathListTtl = Duration(minutes: 8);
+  static const Duration defaultDetailTtl = Duration(hours: 8);
+  static const Duration defaultChapterTtl = Duration(days: 30);
+
+  final Duration searchTtl;
+  final Duration pathListTtl;
+  final Duration detailTtl;
+  final Duration chapterTtl;
+
+  /// 通用缓存模板方法：读缓存 → 数据源 → 写缓存 → 异常回退缓存
+  Future<T> _withCache<T>({
+    required String key,
+    required Duration ttl,
+    required bool forceRefresh,
+    required T? Function(dynamic) decoder,
+    required Future<T> Function() source,
+    required dynamic Function(T) encoder,
+    bool Function(T)? validate,
+  }) async {
+    if (!forceRefresh) {
+      final cached = decoder(await cache.read(key));
+      if (cached != null && (validate == null || validate(cached))) {
+        return cached;
+      }
+    }
+
+    try {
+      final result = await source();
+      await cache.write(key, encoder(result), ttl: ttl);
+      return result;
+    } catch (_) {
+      final cached = decoder(await cache.read(key));
+      if (cached != null && (validate == null || validate(cached))) {
+        return cached;
+      }
+      rethrow;
+    }
+  }
 
   List<NovelBook>? _decodeBooks(dynamic cached) {
     if (cached is! List) return null;
@@ -56,25 +100,14 @@ class NovelRepository {
     bool forceRefresh = false,
   }) async {
     final key = NovelCacheKeys.search(keyword, page);
-
-    if (!forceRefresh) {
-      final cached = _decodeBooks(await cache.read(key));
-      if (cached != null) return cached;
-    }
-
-    try {
-      final books = await source.searchBooks(keyword, page: page);
-      await cache.write(
-        key,
-        books.map((e) => e.toJson()).toList(),
-        ttl: _searchTtl,
-      );
-      return books;
-    } catch (_) {
-      final cached = _decodeBooks(await cache.read(key));
-      if (cached != null) return cached;
-      rethrow;
-    }
+    return _withCache(
+      key: key,
+      ttl: searchTtl,
+      forceRefresh: forceRefresh,
+      decoder: _decodeBooks,
+      encoder: (books) => books.map((e) => e.toJson()).toList(),
+      source: () => source.searchBooks(keyword, page: page),
+    );
   }
 
   Future<List<NovelBook>> fetchByPath(
@@ -82,25 +115,14 @@ class NovelRepository {
     bool forceRefresh = false,
   }) async {
     final key = NovelCacheKeys.path(path);
-
-    if (!forceRefresh) {
-      final cached = _decodeBooks(await cache.read(key));
-      if (cached != null) return cached;
-    }
-
-    try {
-      final books = await source.fetchByPath(path);
-      await cache.write(
-        key,
-        books.map((e) => e.toJson()).toList(),
-        ttl: _pathListTtl,
-      );
-      return books;
-    } catch (_) {
-      final cached = _decodeBooks(await cache.read(key));
-      if (cached != null) return cached;
-      rethrow;
-    }
+    return _withCache(
+      key: key,
+      ttl: pathListTtl,
+      forceRefresh: forceRefresh,
+      decoder: _decodeBooks,
+      encoder: (books) => books.map((e) => e.toJson()).toList(),
+      source: () => source.fetchByPath(path),
+    );
   }
 
   Future<NovelDetail> fetchDetail({
@@ -109,25 +131,15 @@ class NovelRepository {
     bool forceRefresh = false,
   }) async {
     final key = NovelCacheKeys.detail(bookId: bookId, detailUrl: detailUrl);
-
-    if (!forceRefresh) {
-      final cached = _decodeDetail(await cache.read(key));
-      if (cached != null) return cached;
-    }
-
-    try {
-      final detail = await source.fetchDetail(
-        bookId: bookId,
-        detailUrl: detailUrl,
-      );
-
-      await cache.write(key, detail.toJson(), ttl: _detailTtl);
-      return detail;
-    } catch (_) {
-      final cached = _decodeDetail(await cache.read(key));
-      if (cached != null) return cached;
-      rethrow;
-    }
+    return _withCache(
+      key: key,
+      ttl: detailTtl,
+      forceRefresh: forceRefresh,
+      decoder: _decodeDetail,
+      encoder: (detail) => detail.toJson(),
+      source: () => source.fetchDetail(bookId: bookId, detailUrl: detailUrl),
+      validate: (detail) => detail.chapters.isNotEmpty,
+    );
   }
 
   Future<ChapterContent> fetchChapter({
@@ -136,29 +148,21 @@ class NovelRepository {
     bool forceRefresh = false,
   }) async {
     if (chapterIndex < 0 || chapterIndex >= detail.chapters.length) {
-      throw Exception('章节索引越界: $chapterIndex (共 ${detail.chapters.length} 章)');
+      throw NovelSourceException(
+        '章节索引越界: $chapterIndex (共 ${detail.chapters.length} 章)',
+      );
     }
     final chapter = detail.chapters[chapterIndex];
     final key = NovelCacheKeys.chapter(chapter.url);
-
-    if (!forceRefresh) {
-      final cached = _decodeChapter(await cache.read(key));
-      if (cached != null) return cached;
-    }
-
-    try {
-      final chapterContent = await source.fetchChapter(
-        detail: detail,
-        chapterIndex: chapterIndex,
-      );
-
-      await cache.write(key, chapterContent.toJson(), ttl: _chapterTtl);
-      return chapterContent;
-    } catch (_) {
-      final cached = _decodeChapter(await cache.read(key));
-      if (cached != null) return cached;
-      rethrow;
-    }
+    return _withCache(
+      key: key,
+      ttl: chapterTtl,
+      forceRefresh: forceRefresh,
+      decoder: _decodeChapter,
+      encoder: (content) => content.toJson(),
+      source: () =>
+          source.fetchChapter(detail: detail, chapterIndex: chapterIndex),
+    );
   }
 
   Future<void> prefetchChapter({

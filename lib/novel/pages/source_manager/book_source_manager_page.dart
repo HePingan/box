@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../design_system/app_tokens.dart';
-import '../../../design_system/widgets/app_cards.dart';
 import '../../../design_system/widgets/app_page_scaffold.dart';
 
 import '../../core/novel_source_capability.dart';
@@ -16,6 +15,7 @@ import '../novel_list_page.dart';
 import 'book_source_diagnostic_page.dart';
 import 'book_source_manager.dart';
 import 'book_source_model.dart';
+import 'widgets/book_source_manager_hero.dart';
 import 'widgets/book_source_manager_widgets.dart';
 
 class BookSourceManagerPage extends StatefulWidget {
@@ -29,8 +29,20 @@ class BookSourceManagerPage extends StatefulWidget {
 
 class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
   final TextEditingController _searchController = TextEditingController();
-
   String _keyword = '';
+  final Set<String> _expandedIds = {};
+
+  void _toggleExpand(String id) {
+    setState(() {
+      if (_expandedIds.contains(id)) {
+        _expandedIds.remove(id);
+      } else {
+        _expandedIds.add(id);
+      }
+    });
+  }
+
+  bool _isExpanded(String id) => _expandedIds.contains(id);
 
   @override
   void dispose() {
@@ -38,64 +50,19 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
     super.dispose();
   }
 
-  List<BookSourceModel> _parseSources(String text) {
-    final t = text.trim();
-    if (t.isEmpty) return [];
-
-    try {
-      if (t.startsWith('[')) {
-        final decoded = jsonDecode(t);
-        if (decoded is List) {
-          return decoded
-              .whereType<Map>()
-              .map(
-                (e) => BookSourceModel.fromJson(Map<String, dynamic>.from(e)),
-              )
-              .toList();
-        }
-      } else if (t.startsWith('{')) {
-        final decoded = jsonDecode(t);
-        if (decoded is Map) {
-          return [BookSourceModel.fromJson(Map<String, dynamic>.from(decoded))];
-        }
-      }
-    } catch (_) {
-      // 继续按空行分段尝试
-    }
-
-    final blocks = t.split(RegExp(r'\n\s*\n'));
-    final result = <BookSourceModel>[];
-
-    for (final block in blocks) {
-      final b = block.trim();
-      if (b.isEmpty) continue;
-
-      try {
-        final decoded = jsonDecode(b);
-        if (decoded is Map) {
-          result.add(
-            BookSourceModel.fromJson(Map<String, dynamic>.from(decoded)),
-          );
-        }
-      } catch (_) {}
-    }
-
-    return result;
-  }
-
   void _showSnack(String text) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
+  // ── Dialogs ──
+
   Future<void> _showImportDialog() async {
     final inputController = TextEditingController();
-
     final text = await showDialog<String>(
       context: context,
       builder: (context) {
         final maxDialogHeight = MediaQuery.sizeOf(context).height * 0.72;
-
         return AlertDialog(
           title: const Text('导入书源规则 JSON'),
           content: ConstrainedBox(
@@ -118,8 +85,6 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
                   Flexible(
                     child: TextField(
                       controller: inputController,
-                      minLines: 8,
-                      maxLines: null,
                       expands: true,
                       textAlignVertical: TextAlignVertical.top,
                       decoration: const InputDecoration(
@@ -153,7 +118,6 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
       },
     );
     inputController.dispose();
-
     if (!mounted || text == null || text.trim().isEmpty) return;
 
     final sources = _parseSources(text);
@@ -161,7 +125,6 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
       _showSnack('没有解析到有效书源');
       return;
     }
-
     await _showImportPreviewDialog(sources);
   }
 
@@ -169,316 +132,372 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
     final reports = sources
         .map((e) => NovelSourceCapabilityDetector.detect(e.toJson()))
         .toList();
-
     final usableCount = reports.where((e) => e.isUsableForRead).length;
     final partialCount = reports.where((e) => e.isPartiallySupported).length;
     final unsupportedCount = reports
         .where((e) => e.adapterKind == NovelSourceAdapterKind.unsupported)
         .length;
 
-    final ok =
-        await showDialog<bool>(
-          context: context,
-          builder: (context) {
-            return AlertDialog(
-              title: const Text('书源导入预检查'),
-              content: SizedBox(
-                width: 680,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('书源导入预检查'),
+          content: SizedBox(
+            width: 680,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('检测到 ${sources.length} 条书源规则'),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
-                    Text('检测到 ${sources.length} 条书源规则'),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        BookSourceSimpleChip(
-                          text: '可用 $usableCount',
-                          color: Colors.green,
-                          backgroundColor: Colors.green.withValues(alpha: 0.10),
-                        ),
-                        BookSourceSimpleChip(
-                          text: '部分支持 $partialCount',
-                          color: Colors.orange,
-                          backgroundColor: Colors.orange.withValues(
-                            alpha: 0.10,
-                          ),
-                        ),
-                        BookSourceSimpleChip(
-                          text: '暂不支持 $unsupportedCount',
-                          color: Colors.redAccent,
-                          backgroundColor: Colors.redAccent.withValues(
-                            alpha: 0.10,
-                          ),
-                        ),
-                      ],
+                    BookSourceSimpleChip(
+                      text: '可用 $usableCount',
+                      color: Colors.green,
+                      backgroundColor: Colors.green.withValues(alpha: 0.10),
                     ),
-                    const SizedBox(height: 14),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 360),
-                      child: ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: reports.length,
-                        separatorBuilder: (_, _) => const Divider(height: 16),
-                        itemBuilder: (_, i) {
-                          final report = reports[i];
-                          final color = bookSourceReportColor(report);
-
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                report.sourceName,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 14.5,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: color.withValues(alpha: 0.10),
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: Text(
-                                      report.statusLabel,
-                                      style: TextStyle(
-                                        color: color,
-                                        fontSize: 11.5,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.blue.withValues(
-                                        alpha: 0.10,
-                                      ),
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: Text(
-                                      report.adapterLabel,
-                                      style: const TextStyle(
-                                        color: Colors.blue,
-                                        fontSize: 11.5,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              if (report.primaryBlocker.isNotEmpty) ...[
-                                const SizedBox(height: 6),
-                                Text(
-                                  report.primaryBlocker,
-                                  style: const TextStyle(
-                                    color: Colors.redAccent,
-                                    fontSize: 12.5,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          );
-                        },
-                      ),
+                    BookSourceSimpleChip(
+                      text: '部分支持 $partialCount',
+                      color: Colors.orange,
+                      backgroundColor: Colors.orange.withValues(alpha: 0.10),
                     ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      '说明：导入不会拦截“暂不支持”的书源，但建议导入后先点“诊断”查看详情。',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: Colors.black54,
-                        height: 1.5,
-                      ),
+                    BookSourceSimpleChip(
+                      text: '暂不支持 $unsupportedCount',
+                      color: Colors.redAccent,
+                      backgroundColor: Colors.redAccent.withValues(alpha: 0.10),
                     ),
                   ],
                 ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('取消'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('确认导入书源'),
+                const SizedBox(height: 14),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 360),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: reports.length,
+                    separatorBuilder: (_, _) => const Divider(height: 16),
+                    itemBuilder: (_, i) {
+                      final report = reports[i];
+                      final color = bookSourceReportColor(report);
+                      final source = sources[i];
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            source.bookSourceName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              BookSourceSimpleChip(
+                                text: report.statusLabel,
+                                color: color,
+                              ),
+                              const SizedBox(width: 6),
+                              BookSourceSimpleChip(
+                                text: report.adapterLabel,
+                                color: Colors.indigo,
+                              ),
+                            ],
+                          ),
+                          if (report.warnings.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                report.warnings.first,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.orange.shade700,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
                 ),
               ],
-            );
-          },
-        ) ??
-        false;
-
-    if (!ok || !mounted) return;
-
-    final manager = context.read<BookSourceManager>();
-    final count = await manager.addMany(sources);
-
-    if (!mounted) return;
-
-    _showSnack('成功导入 $count 个书源');
-
-    if (unsupportedCount > 0) {
-      await showDialog<void>(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('导入完成'),
-          content: Text(
-            '其中有 $unsupportedCount 条书源当前版本暂不完整支持。\n'
-            '你可以在书源列表中点击“诊断”查看详细原因。',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('知道了'),
-            ),
-          ],
-        ),
-      );
-    }
-  }
-
-  Future<void> _showEditorDialog({BookSourceModel? source}) async {
-    final controller = TextEditingController(
-      text: source == null
-          ? const JsonEncoder.withIndent('  ').convert({
-              'bookSourceName': '',
-              'bookSourceUrl': '',
-              'bookSourceGroup': '',
-              'searchUrl': '',
-              'exploreUrl': '',
-              'ruleSearch': {},
-              'ruleBookInfo': {},
-              'ruleToc': {},
-              'ruleContent': {},
-            })
-          : const JsonEncoder.withIndent('  ').convert(source.toJson()),
-    );
-
-    final raw = await showDialog<String>(
-      context: context,
-      builder: (context) {
-        final maxDialogHeight = MediaQuery.sizeOf(context).height * 0.72;
-
-        return AlertDialog(
-          title: Text(source == null ? '新增书源规则 JSON' : '编辑书源规则 JSON'),
-          content: ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: maxDialogHeight),
-            child: SizedBox(
-              width: 620,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '编辑单个书源对象；保存前会校验 JSON 格式。',
-                    style: TextStyle(color: Colors.black54, fontSize: 12.5),
-                  ),
-                  const SizedBox(height: 10),
-                  Flexible(
-                    child: TextField(
-                      controller: controller,
-                      minLines: 8,
-                      maxLines: null,
-                      expands: true,
-                      textAlignVertical: TextAlignVertical.top,
-                      decoration: const InputDecoration(
-                        labelText: '单个书源 JSON',
-                        hintText: '请输入单个规则书源 JSON',
-                        border: OutlineInputBorder(),
-                      ),
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 12.5,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
             ),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(context, false),
               child: const Text('取消'),
             ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, controller.text),
-              child: const Text('保存规则'),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(context, true),
+              icon: const Icon(Icons.download_rounded),
+              label: Text('导入 ${sources.length} 条'),
             ),
           ],
         );
       },
     );
-    controller.dispose();
 
-    if (!mounted || raw == null || raw.trim().isEmpty) return;
-
-    try {
-      final decoded = jsonDecode(raw);
-
-      if (decoded is! Map) {
-        throw const FormatException('编辑模式只接受单个书源 JSON 对象，不接受数组');
-      }
-
-      final next = BookSourceModel.fromJson(Map<String, dynamic>.from(decoded));
+    if (ok == true && mounted) {
       final manager = context.read<BookSourceManager>();
-
-      if (source != null && source.id != next.id) {
-        await manager.deleteById(source.id);
+      int added = 0;
+      for (final s in sources) {
+        try {
+          await manager.addOrUpdate(s);
+          added++;
+        } catch (e) {
+          _showSnack('导入失败: ${s.bookSourceName} → $e');
+        }
       }
+      _showSnack('成功导入 $added / ${sources.length} 条书源');
+    }
+  }
 
-      await manager.addOrUpdate(next);
+  Future<void> _showEditorDialog({BookSourceModel? source}) async {
+    final isNew = source == null;
+    final nameCtrl = TextEditingController(text: source?.bookSourceName ?? '');
+    final urlCtrl = TextEditingController(text: source?.bookSourceUrl ?? '');
+    final jsonCtrl = TextEditingController(
+      text: source != null ? source.toRawJson() : '',
+    );
+    var mode = 'form';
 
-      if (!mounted) return;
-      _showSnack(source == null ? '书源已新增' : '书源已更新');
+    final result = await showDialog<BookSourceModel?>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(isNew ? '新增书源' : '编辑书源'),
+              content: SizedBox(
+                width: 520,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('表单'),
+                            selected: mode == 'form',
+                            onSelected: (_) =>
+                                setDialogState(() => mode = 'form'),
+                          ),
+                          const SizedBox(width: 8),
+                          ChoiceChip(
+                            label: const Text('原始 JSON'),
+                            selected: mode == 'raw',
+                            onSelected: (_) =>
+                                setDialogState(() => mode = 'raw'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      if (mode == 'form') ...[
+                        TextField(
+                          controller: nameCtrl,
+                          decoration: const InputDecoration(
+                            labelText: '书源名称 *',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: urlCtrl,
+                          decoration: const InputDecoration(
+                            labelText: '书源地址 *',
+                            hintText: 'https://...',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                        ),
+                      ] else ...[
+                        TextField(
+                          controller: jsonCtrl,
+                          maxLines: 12,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: '书源 JSON',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('取消'),
+                ),
+                FilledButton.icon(
+                  onPressed: () {
+                    if (mode == 'form') {
+                      final name = nameCtrl.text.trim();
+                      final url = urlCtrl.text.trim();
+                      if (name.isEmpty || url.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('名称和地址不能为空')),
+                        );
+                        return;
+                      }
+                      final existing = source?.toJson() ?? {};
+                      existing['bookSourceName'] = name;
+                      existing['bookSourceUrl'] = url;
+                      Navigator.pop(
+                        context,
+                        BookSourceModel.fromJson(existing),
+                      );
+                    } else {
+                      try {
+                        final decoded = jsonDecode(jsonCtrl.text);
+                        Navigator.pop(
+                          context,
+                          BookSourceModel.fromJson(
+                            Map<String, dynamic>.from(decoded),
+                          ),
+                        );
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('JSON 解析失败: $e')),
+                        );
+                      }
+                    }
+                  },
+                  icon: Icon(isNew ? Icons.add_rounded : Icons.save_rounded),
+                  label: Text(isNew ? '新增' : '保存'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    nameCtrl.dispose();
+    urlCtrl.dispose();
+    jsonCtrl.dispose();
+
+    if (result == null || !mounted) return;
+    try {
+      final manager = context.read<BookSourceManager>();
+      await manager.addOrUpdate(result);
+      _showSnack('${isNew ? "新增" : "已更新"} ${result.bookSourceName}');
     } catch (e) {
-      if (!mounted) return;
-      _showSnack('保存失败：$e');
+      _showSnack('保存失败: $e');
     }
   }
 
   Future<void> _confirmDelete(BookSourceModel source) async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('删除书源'),
-          content: Text('确定删除「${source.bookSourceName}」吗？'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('删除'),
-            ),
-          ],
-        );
-      },
+      builder: (context) => AlertDialog(
+        title: const Text('删除书源'),
+        content: Text('确定删除 "${source.bookSourceName}" 吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.delete_forever_rounded),
+            label: const Text('删除'),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+          ),
+        ],
+      ),
     );
+    if (ok == true && mounted) {
+      try {
+        await context.read<BookSourceManager>().deleteById(source.id);
+        _showSnack('已删除 ${source.bookSourceName}');
+      } catch (e) {
+        _showSnack('删除失败: $e');
+      }
+    }
+  }
 
-    if (ok != true || !mounted) return;
+  Future<void> _showDiagnostic(BookSourceModel source) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BookSourceDiagnosticPage(source: source),
+      ),
+    );
+  }
 
-    await context.read<BookSourceManager>().deleteById(source.id);
+  // ── Actions ──
+
+  Future<void> _applySource(BookSourceModel source) async {
+    final report = NovelSourceCapabilityDetector.detect(source.toJson());
+    if (report.adapterKind == NovelSourceAdapterKind.unsupported) {
+      final ok =
+          await showDialog<bool>(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text('当前书源暂不完整支持'),
+              content: Text(
+                report.primaryBlocker.isNotEmpty
+                    ? '${report.primaryBlocker}\n\n仍要设为当前书源吗？'
+                    : '该书源当前版本暂不完整支持，仍要设为当前书源吗？',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('取消'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('仍然使用'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!ok || !mounted) return;
+    }
+
+    final manager = context.read<BookSourceManager>();
+    await manager.setCurrentSource(source.id, ensureEnabled: true);
+    NovelModule.configureRuleSource(bookSourceJson: source.toJson());
 
     if (!mounted) return;
-    _showSnack('已删除书源');
+    _showSnack('已切换到书源：${source.bookSourceName}');
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
+      (_) => false,
+    );
+  }
+
+  Future<void> _exportSource(BookSourceModel source) async {
+    await Clipboard.setData(
+      ClipboardData(
+        text: const JsonEncoder.withIndent('  ').convert(source.toJson()),
+      ),
+    );
+    if (!mounted) return;
+    _showSnack('已复制书源：${source.bookSourceName}');
+  }
+
+  Future<void> _exportCurrentSource() async {
+    final manager = context.read<BookSourceManager>();
+    final current = manager.currentSource;
+    if (current == null) {
+      _showSnack('当前没有正在使用的书源');
+      return;
+    }
+    await _exportSource(current);
   }
 
   Future<void> _previewSource(BookSourceModel source) async {
@@ -505,41 +524,35 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
     );
   }
 
-  Future<void> _showDiagnostic(BookSourceModel source) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => BookSourceDiagnosticPage(source: source),
-      ),
-    );
-  }
-
-  Future<void> _exportSource(BookSourceModel source) async {
-    await Clipboard.setData(
-      ClipboardData(
-        text: const JsonEncoder.withIndent('  ').convert(source.toJson()),
-      ),
-    );
-
-    if (!mounted) return;
-    _showSnack('已复制书源：${source.bookSourceName}');
-  }
-
-  Future<void> _exportCurrentSource() async {
+  Future<void> _checkAllHealth() async {
     final manager = context.read<BookSourceManager>();
-    final current = manager.currentSource;
-
-    if (current == null) {
-      _showSnack('当前没有正在使用的书源');
+    final enabled = manager.enabledItems;
+    if (enabled.isEmpty) {
+      _showSnack('没有已启用的书源需要检测');
       return;
     }
 
-    await _exportSource(current);
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _HealthCheckDialog(enabledCount: enabled.length),
+    );
+
+    for (int i = 0; i < enabled.length; i++) {
+      if (!mounted) return;
+      await manager.ping(enabled[i]);
+    }
+
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+
+    if (!mounted) return;
+    _showSnack('检测完成：${enabled.length} 个书源');
   }
 
   Future<void> _testSource(BookSourceModel source) async {
     final keywordController = TextEditingController(text: '斗罗');
-
     final keyword = await showDialog<String>(
       context: context,
       builder: (context) {
@@ -566,7 +579,6 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
       },
     );
     keywordController.dispose();
-
     if (!mounted || keyword == null || keyword.trim().isEmpty) return;
 
     showDialog<void>(
@@ -578,12 +590,10 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
     try {
       final sourceImpl = NovelSourceFactory.fromBookSourceJson(source.toJson());
       final books = await sourceImpl.searchBooks(keyword.trim(), page: 1);
-
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pop();
 
       final preview = books.take(8).toList();
-
       await showDialog<void>(
         context: context,
         builder: (context) {
@@ -614,9 +624,9 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
                                 if (b.author.isNotEmpty) b.author,
                                 if (b.category.isNotEmpty) b.category,
                                 if (b.status.isNotEmpty) b.status,
-                              ].join(' · ').ifEmpty('暂无更多信息'),
+                              ].join(' · '),
                               style: const TextStyle(
-                                fontSize: 12.5,
+                                fontSize: 12,
                                 color: Colors.black54,
                               ),
                             ),
@@ -637,56 +647,8 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
     } catch (e) {
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pop();
-
       _showSnack('测试失败：$e');
     }
-  }
-
-  Future<void> _applySource(BookSourceModel source) async {
-    final report = NovelSourceCapabilityDetector.detect(source.toJson());
-
-    if (report.adapterKind == NovelSourceAdapterKind.unsupported) {
-      final ok =
-          await showDialog<bool>(
-            context: context,
-            builder: (_) => AlertDialog(
-              title: const Text('当前书源暂不完整支持'),
-              content: Text(
-                report.primaryBlocker.isNotEmpty
-                    ? '${report.primaryBlocker}\n\n仍要设为当前书源吗？'
-                    : '该书源当前版本暂不完整支持，仍要设为当前书源吗？',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('取消'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('仍然使用'),
-                ),
-              ],
-            ),
-          ) ??
-          false;
-
-      if (!ok || !mounted) return;
-    }
-
-    final manager = context.read<BookSourceManager>();
-
-    await manager.setCurrentSource(source.id, ensureEnabled: true);
-
-    NovelModule.configureRuleSource(bookSourceJson: source.toJson());
-
-    if (!mounted) return;
-
-    _showSnack('已切换到书源：${source.bookSourceName}');
-
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
-      (_) => false,
-    );
   }
 
   Future<void> _toggleEnable(
@@ -694,226 +656,53 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
     BookSourceModel source,
     bool value,
   ) async {
-    await manager.setEnabled(source.id, value);
-
-    if (!mounted) return;
-
-    _showSnack(
-      value ? '已启用：${source.bookSourceName}' : '已禁用：${source.bookSourceName}',
-    );
+    final updated = source.copyWith(enabled: value);
+    await manager.addOrUpdate(updated);
+    setState(() {});
   }
 
-  Widget _buildManagerHero(BookSourceManager manager, int visibleCount) {
-    final total = manager.items.length;
-    final enabled = manager.enabledItems.length;
-    final currentName = manager.currentSource?.bookSourceName.trim();
+  // ── Utilities ──
 
-    return AppLightHeroCard(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      eyebrow: 'SOURCE RULES',
-      title: '书源管理',
-      subtitle: currentName != null && currentName.isNotEmpty
-          ? '当前默认：$currentName'
-          : '导入、预检查并启用小说规则源',
-      badge: '小说',
-      accentGradient: AppTokens.violetGradient,
-      leading: IconButton.filledTonal(
-        onPressed: () => Navigator.maybePop(context),
-        icon: const Icon(Icons.arrow_back_rounded),
-      ),
-      actions: [
-        AppStatusPill(
-          label: '全部 $total',
-          icon: Icons.rule_folder_rounded,
-          color: AppTokens.violet,
-        ),
-        AppStatusPill(
-          label: '启用 $enabled',
-          icon: Icons.check_circle_rounded,
-          color: AppTokens.emerald,
-        ),
-        if (_keyword.trim().isNotEmpty)
-          AppStatusPill(
-            label: '匹配 $visibleCount',
-            icon: Icons.search_rounded,
-            color: AppTokens.primaryBlue,
-          ),
-      ],
-    );
+  List<BookSourceModel> _parseSources(String text) {
+    final t = text.trim();
+    if (t.isEmpty) return [];
+    try {
+      if (t.startsWith('[')) {
+        final decoded = jsonDecode(t);
+        if (decoded is List) {
+          return decoded
+              .whereType<Map>()
+              .map(
+                (e) => BookSourceModel.fromJson(Map<String, dynamic>.from(e)),
+              )
+              .toList();
+        }
+      } else if (t.startsWith('{')) {
+        final decoded = jsonDecode(t);
+        if (decoded is Map) {
+          return [BookSourceModel.fromJson(Map<String, dynamic>.from(decoded))];
+        }
+      }
+    } catch (_) {}
+
+    final blocks = t.split(RegExp(r'\n\s*\n'));
+    final result = <BookSourceModel>[];
+    for (final block in blocks) {
+      final b = block.trim();
+      if (b.isEmpty) continue;
+      try {
+        final decoded = jsonDecode(b);
+        if (decoded is Map) {
+          result.add(
+            BookSourceModel.fromJson(Map<String, dynamic>.from(decoded)),
+          );
+        }
+      } catch (_) {}
+    }
+    return result;
   }
 
-  Widget _buildStartupBanner() {
-    if (widget.startupMessage.trim().isEmpty) return const SizedBox.shrink();
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTokens.warning.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-        border: Border.all(color: AppTokens.warning.withValues(alpha: 0.18)),
-      ),
-      child: Text(
-        widget.startupMessage,
-        style: const TextStyle(
-          color: AppTokens.warning,
-          fontSize: 12.5,
-          height: 1.45,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildQuickActions() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: AppCompactActionCard(
-              title: '导入书源',
-              subtitle: 'JSON / 预检查',
-              icon: Icons.playlist_add_rounded,
-              color: AppTokens.violet,
-              onTap: _showImportDialog,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: AppCompactActionCard(
-              title: '新增规则',
-              subtitle: '手动编辑',
-              icon: Icons.add_box_rounded,
-              color: AppTokens.primaryBlue,
-              onTap: () => _showEditorDialog(),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: AppCompactActionCard(
-              title: '导出',
-              subtitle: '当前书源',
-              icon: Icons.ios_share_rounded,
-              color: AppTokens.emerald,
-              onTap: _exportCurrentSource,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSearchBox() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: AppTokens.divider),
-        boxShadow: AppTokens.shadowSm(color: AppTokens.violet),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.search_rounded, color: AppTokens.violet),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: _searchController,
-              onChanged: (v) => setState(() => _keyword = v),
-              decoration: const InputDecoration(
-                hintText: '搜索名称 / 分组 / 域名',
-                border: InputBorder.none,
-                isDense: true,
-              ),
-            ),
-          ),
-          if (_keyword.isNotEmpty)
-            IconButton(
-              tooltip: '清空',
-              icon: const Icon(Icons.close_rounded),
-              onPressed: () {
-                _searchController.clear();
-                setState(() => _keyword = '');
-              },
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmptySources() {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(
-        16,
-        44,
-        16,
-        AppTokens.pageBottomPadding,
-      ),
-      children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(22, 26, 22, 24),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.9),
-            borderRadius: BorderRadius.circular(AppTokens.radiusLg),
-            border: Border.all(color: AppTokens.divider),
-            boxShadow: AppTokens.shadowSm(),
-          ),
-          child: Column(
-            children: [
-              Container(
-                width: 62,
-                height: 62,
-                decoration: BoxDecoration(
-                  color: AppTokens.surfaceTint,
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: Icon(
-                  _keyword.trim().isEmpty
-                      ? Icons.rule_folder_outlined
-                      : Icons.search_off_rounded,
-                  color: AppTokens.violet,
-                  size: 32,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Text(
-                _keyword.trim().isEmpty ? '还没有书源' : '没有找到匹配的书源',
-                style: const TextStyle(
-                  color: AppTokens.textPrimary,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _keyword.trim().isEmpty
-                    ? '点击“导入书源”粘贴 JSON，系统会先做可用性预检查。'
-                    : '换个关键词，或清空搜索查看全部书源。',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: AppTokens.textSecondary,
-                  fontSize: 12.5,
-                  height: 1.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (_keyword.trim().isEmpty) ...[
-                const SizedBox(height: 16),
-                FilledButton.icon(
-                  onPressed: _showImportDialog,
-                  icon: const Icon(Icons.playlist_add_rounded),
-                  label: const Text('导入书源'),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+  // ── Build ──
 
   @override
   Widget build(BuildContext context) {
@@ -924,13 +713,30 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
       safeBottom: false,
       child: Column(
         children: [
-          _buildManagerHero(manager, sources.length),
-          _buildStartupBanner(),
-          _buildQuickActions(),
-          _buildSearchBox(),
+          BookSourceManagerHero(
+            manager: manager,
+            visibleCount: sources.length,
+            keyword: _keyword,
+          ),
+          BookSourceStartupBanner(message: widget.startupMessage),
+          BookSourceQuickActions(
+            onImport: _showImportDialog,
+            onAddRule: () => _showEditorDialog(),
+            onExportCurrent: _exportCurrentSource,
+            onCheckHealth: _checkAllHealth,
+          ),
+          BookSourceSearchBox(
+            controller: _searchController,
+            keyword: _keyword,
+            onChanged: (v) => setState(() => _keyword = v),
+            onClear: () {
+              _searchController.clear();
+              setState(() => _keyword = '');
+            },
+          ),
           Expanded(
             child: sources.isEmpty
-                ? _buildEmptySources()
+                ? BookSourceEmptySources(keyword: _keyword)
                 : ListView.builder(
                     padding: const EdgeInsets.fromLTRB(
                       16,
@@ -939,19 +745,25 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
                       AppTokens.pageBottomPadding + 32,
                     ),
                     itemCount: sources.length,
-                    itemBuilder: (_, i) => BookSourceCard(
-                      source: sources[i],
-                      manager: manager,
-                      onToggleEnable: (v) =>
-                          _toggleEnable(manager, sources[i], v),
-                      onApply: () => _applySource(sources[i]),
-                      onDiagnostic: () => _showDiagnostic(sources[i]),
-                      onEdit: () => _showEditorDialog(source: sources[i]),
-                      onTest: () => _testSource(sources[i]),
-                      onExport: () => _exportSource(sources[i]),
-                      onPreview: () => _previewSource(sources[i]),
-                      onDelete: () => _confirmDelete(sources[i]),
-                    ),
+                    itemBuilder: (_, i) {
+                      final src = sources[i];
+                      final expanded = _isExpanded(src.id);
+                      return BookSourceCard(
+                        source: src,
+                        manager: manager,
+                        expanded: expanded,
+                        onTapExpand: () => _toggleExpand(src.id),
+                        onToggleEnable: (v) =>
+                            _toggleEnable(manager, src, v),
+                        onApply: () => _applySource(src),
+                        onDiagnostic: () => _showDiagnostic(src),
+                        onEdit: () => _showEditorDialog(source: src),
+                        onTest: () => _testSource(src),
+                        onExport: () => _exportSource(src),
+                        onPreview: () => _previewSource(src),
+                        onDelete: () => _confirmDelete(src),
+                      );
+                    },
                   ),
           ),
         ],
@@ -960,8 +772,45 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
   }
 }
 
-extension on String {
-  String ifEmpty(String fallback) {
-    return trim().isEmpty ? fallback : this;
+/// 检测进行中的对话框
+class _HealthCheckDialog extends StatelessWidget {
+  const _HealthCheckDialog({required this.enabledCount});
+
+  final int enabledCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 36,
+              height: 36,
+              child: CircularProgressIndicator(strokeWidth: 3),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '正在检测 $enabledCount 个书源…',
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '请稍候，正在逐源测试连通性',
+              style: TextStyle(
+                fontSize: 12.5,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

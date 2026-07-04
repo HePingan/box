@@ -1,24 +1,27 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../design_system/app_tokens.dart';
-import '../../../design_system/widgets/app_cards.dart';
+import '../../design_system/widgets/shimmer_skeleton.dart';
+import '../../design_system/widgets/empty_error_states.dart';
 import '../../../design_system/widgets/app_page_scaffold.dart';
-import '../controllers/novel_detail_controller.dart';
+import '../core/book_deduplicator.dart';
 import '../core/models.dart';
 import '../core/rule_novel_source.dart';
 import '../novel_module.dart';
-import 'novel_detail_page.dart';
 import 'source_manager/book_source_bootstrap.dart';
 import 'source_manager/book_source_manager_page.dart';
 import '../core/wtzw_novel_source.dart';
+import 'widgets/novel_book_card.dart';
+import 'widgets/novel_list_views.dart';
+import 'widgets/novel_list_bars.dart';
+import 'widgets/novel_stats_bar.dart';
+import 'widgets/novel_cache_dialog.dart';
+import '../core/novel_cache_manager.dart';
 
-/// 为了兼容你项目里之前所有入口仍然使用
-/// `NovelListPageWithProvider()` 的写法，这里保留这个包装类。
-/// 但增强版页面本身已经不依赖 NovelListController 了。
+/// 包装类，兼容原有 `NovelListPageWithProvider()` 入口写法。
 class NovelListPageWithProvider extends StatelessWidget {
   const NovelListPageWithProvider({super.key});
 
@@ -28,11 +31,8 @@ class NovelListPageWithProvider extends StatelessWidget {
   }
 }
 
-class _ExploreMenuEntry {
-  final String title;
-  final String url;
-
-  const _ExploreMenuEntry({required this.title, required this.url});
+class _ExploreMenuEntry extends ExploreMenuEntry {
+  const _ExploreMenuEntry({required super.title, required super.url});
 }
 
 class NovelListPage extends StatefulWidget {
@@ -83,6 +83,18 @@ class _NovelListPageState extends State<NovelListPage> {
 
   bool get _supportsExplore => _exploreEntries.isNotEmpty;
 
+  // ── 缓存管理 ──
+  late final NovelCacheManager _cacheManager;
+
+  Future<void> _showCacheDialog() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (_) => NovelCacheDialog(cacheManager: _cacheManager),
+    );
+    // 重新加载页面以更新缓存统计
+    if (mounted) setState(() {});
+  }
+
   _ExploreMenuEntry? get _selectedExploreEntry {
     if (_selectedExploreIndex < 0 ||
         _selectedExploreIndex >= _exploreEntries.length) {
@@ -94,6 +106,7 @@ class _NovelListPageState extends State<NovelListPage> {
   @override
   void initState() {
     super.initState();
+    _cacheManager = NovelCacheManager(namespace: 'novel');
     _scrollController.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _bootstrapAndLoad();
@@ -415,17 +428,7 @@ class _NovelListPageState extends State<NovelListPage> {
   }
 
   void _appendUniqueBooks(List<NovelBook> incoming) {
-    final seen = <String>{
-      for (final b in _books)
-        b.id.isNotEmpty ? 'id:${b.id}' : 'url:${b.detailUrl}',
-    };
-
-    for (final b in incoming) {
-      final key = b.id.isNotEmpty ? 'id:${b.id}' : 'url:${b.detailUrl}';
-      if (seen.add(key)) {
-        _books.add(b);
-      }
-    }
+    BookDeduplicator.appendUnique(_books, incoming);
   }
 
   Future<void> _openSourceManager() async {
@@ -440,376 +443,170 @@ class _NovelListPageState extends State<NovelListPage> {
     await _bootstrapAndLoad();
   }
 
-  Widget _buildCoverFallback({double width = 64, double height = 86}) {
-    return Container(
-      width: width,
-      height: height,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF312E81), Color(0xFF7C3AED), Color(0xFFF59E0B)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      alignment: Alignment.center,
-      child: const Icon(Icons.auto_stories_rounded, color: Colors.white70),
-    );
-  }
-
-  Widget _buildBookCard(NovelBook book) {
-    final meta = <String>[
-      if (book.author.trim().isNotEmpty) '作者 ${book.author.trim()}',
-      if (book.category.trim().isNotEmpty) book.category.trim(),
-      if (book.status.trim().isNotEmpty) book.status.trim(),
-      if (book.wordCount.trim().isNotEmpty) book.wordCount.trim(),
-    ].join(' · ');
-
-    return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => ChangeNotifierProvider(
-              create: (_) => NovelDetailController(entryBook: book),
-              child: NovelDetailPage(entryBook: book),
-            ),
-          ),
-        );
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 14),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: const Color(0xFFEDE9FE)),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF7C3AED).withValues(alpha: 0.08),
-              blurRadius: 22,
-              offset: const Offset(0, 12),
-            ),
-          ],
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: book.coverUrl.trim().isNotEmpty
-                  ? Image.network(
-                      book.coverUrl,
-                      width: 76,
-                      height: 108,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) =>
-                          _buildCoverFallback(width: 76, height: 108),
-                    )
-                  : _buildCoverFallback(width: 76, height: 108),
-            ),
-            const SizedBox(width: 13),
-            Expanded(
-              child: SizedBox(
-                height: 108,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      book.title.trim().isNotEmpty ? book.title : '未知书名',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        height: 1.16,
-                        fontWeight: FontWeight.w900,
-                        color: AppTokens.inkDark,
-                      ),
-                    ),
-                    const SizedBox(height: 7),
-                    Text(
-                      meta.isNotEmpty ? meta : '作者与分类待补全',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Color(0xFF7C3AED),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      book.intro.trim().isNotEmpty
-                          ? book.intro
-                          : '还没有简介哦，点击进入查看章节。',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        height: 1.35,
-                        color: Color(0xFF64748B),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeroSection() {
-    return AppLightHeroCard(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      eyebrow: '阅读内容中心',
-      title: '小说书架',
-      subtitle: _currentSourceName.isNotEmpty
-          ? '当前书源：$_currentSourceName · 搜索与发现'
-          : '导入书源后即可搜索与发现新书',
-      badge: 'NOVEL',
-      accentGradient: AppTokens.violetGradient,
-      leading: _NovelLightIconButton(
-        icon: Icons.local_library_rounded,
-        onTap: _openSourceManager,
-      ),
-      actions: [
-        const AppStatusPill(
-          label: '书源管理',
-          icon: Icons.tune_rounded,
-          color: AppTokens.violet,
-        ),
-        AppStatusPill(
-          label: _loading ? '加载中' : '刷新',
-          icon: _loading ? Icons.sync_rounded : Icons.refresh_rounded,
-          color: AppTokens.primaryBlue,
-        ),
-      ],
-      metrics: [
-        Expanded(
-          child: _NovelLightMetric(
-            value: '${_books.length}',
-            label: _searchMode ? '搜索结果' : '发现书籍',
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _NovelLightMetric(
-            value: '${_exploreEntries.length}',
-            label: '发现频道',
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _NovelLightMetric(
-            value: _supportsExplore ? '发现' : '搜索',
-            label: '当前模式',
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSearchBar() {
+  Widget _buildCompactHeader() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
       child: Row(
         children: [
-          Expanded(
-            child: TextField(
-              controller: _searchController,
-              textInputAction: TextInputAction.search,
-              onSubmitted: (_) => _doSearch(),
-              decoration: InputDecoration(
-                hintText: '输入书名或作者名进行搜索',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _searchMode
-                    ? IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: _cancelSearch,
-                      )
-                    : null,
-                filled: true,
-                fillColor: Colors.white,
-                contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                border: OutlineInputBorder(
-                  borderSide: BorderSide.none,
-                  borderRadius: BorderRadius.circular(12),
-                ),
+          GestureDetector(
+            onTap: _openSourceManager,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppTokens.violet.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.library_books_rounded,
+                    size: 14,
+                    color: AppTokens.violet,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _currentSourceName.isNotEmpty ? _currentSourceName : '书源',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppTokens.violet,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
           const SizedBox(width: 8),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue.shade50,
-              foregroundColor: Colors.blue.shade700,
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
+          if (_searchMode)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.blue.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '搜索：$_keyword',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.blue,
+                ),
               ),
             ),
-            onPressed: _doSearch,
-            child: const Text('搜索'),
+          if (_supportsExplore && !_searchMode)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppTokens.emerald.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '发现 · ${_books.length}本',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppTokens.emerald,
+                ),
+              ),
+            ),
+          const Spacer(),
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded, size: 20),
+            onPressed: _loading ? null : _handleRefresh,
+            style: IconButton.styleFrom(
+              foregroundColor: AppTokens.textSecondary,
+              padding: const EdgeInsets.all(6),
+              minimumSize: const Size(32, 32),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildSourceInfo() {
-    final activeExploreTitle = _selectedExploreEntry?.title ?? '';
-
-    final subtitle = _searchMode
-        ? '搜索结果：${_keyword.isNotEmpty ? _keyword : "未命名关键词"}'
-        : _supportsExplore
-        ? '当前显示：${activeExploreTitle.isNotEmpty ? activeExploreTitle : "书源发现页"}'
-        : '当前书源不支持发现页，请直接搜索';
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_currentSourceName.isNotEmpty)
-            Text(
-              '书源：$_currentSourceName',
-              style: const TextStyle(
-                fontSize: 12.5,
-                color: Colors.blueGrey,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: const TextStyle(fontSize: 12.5, color: Colors.black54),
-          ),
-        ],
-      ),
+  Widget _buildSearchBar() {
+    return NovelSearchBar(
+      controller: _searchController,
+      onSearch: _doSearch,
+      onCancel: _cancelSearch,
+      showCancel: _searchMode,
     );
   }
 
   Widget _buildExploreBar() {
-    if (_searchMode || !_supportsExplore) {
+    if (_searchMode || !_supportsExplore || _exploreEntries.isEmpty) {
       return const SizedBox.shrink();
     }
-
-    return Container(
-      height: 46,
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        scrollDirection: Axis.horizontal,
-        itemBuilder: (context, index) {
-          final item = _exploreEntries[index];
-          final selected = index == _selectedExploreIndex;
-
-          return ChoiceChip(
-            label: Text(item.title),
-            selected: selected,
-            onSelected: (_) => _selectExplore(index),
-            selectedColor: Colors.blue.shade50,
-            labelStyle: TextStyle(
-              color: selected ? Colors.blue.shade700 : Colors.black87,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            ),
-            side: BorderSide(
-              color: selected ? Colors.blue.shade200 : Colors.grey.shade300,
-            ),
-            backgroundColor: Colors.white,
-          );
-        },
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemCount: _exploreEntries.length,
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, right: 16, bottom: 4),
+      child: SizedBox(
+        height: 32,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          itemBuilder: (context, index) {
+            final entry = _exploreEntries[index];
+            final isSelected = index == _selectedExploreIndex;
+            return GestureDetector(
+              onTap: () => _selectExplore(index),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: isSelected ? AppTokens.violet : AppTokens.surfaceMuted,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: isSelected ? AppTokens.violet : AppTokens.divider,
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  entry.title,
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : AppTokens.textSecondary,
+                    fontSize: 12,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ),
+            );
+          },
+          separatorBuilder: (_, _) => const SizedBox(width: 6),
+          itemCount: _exploreEntries.length,
+        ),
       ),
     );
   }
 
   Widget _buildNotConfiguredView() {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(
-        24,
-        40,
-        24,
-        AppTokens.pageBottomPadding + 32,
-      ),
-      children: [
-        const SizedBox(height: 80),
-        const Icon(
-          Icons.auto_stories_outlined,
-          size: 60,
-          color: Colors.black26,
-        ),
-        const SizedBox(height: 16),
-        const Center(
-          child: Text(
-            '未配置规则书源',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: Colors.redAccent,
-            ),
-          ),
-        ),
-        const SizedBox(height: 10),
-        Center(
-          child: Text(
-            _startupMessage.isNotEmpty ? _startupMessage : '请先导入并启用一个小说书源。',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 13,
-              color: Colors.black54,
-              height: 1.6,
-            ),
-          ),
-        ),
-        const SizedBox(height: 20),
-        Center(
-          child: ElevatedButton.icon(
-            onPressed: _openSourceManager,
-            icon: const Icon(Icons.tune),
-            label: const Text('去配置书源'),
-          ),
-        ),
-      ],
+    return NovelNotConfiguredView(
+      message: _startupMessage,
+      onConfigurePressed: _openSourceManager,
     );
   }
 
   Widget _buildLoadingView() {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      children: const [
-        SizedBox(height: 180),
-        Center(child: CircularProgressIndicator()),
-      ],
-    );
+    return const BookListSkeleton();
   }
 
   Widget _buildEmptyView() {
-    String text;
-
-    if (_searchMode) {
-      text = _error.isNotEmpty ? _error : '没有搜索到相关书籍';
-    } else if (_supportsExplore) {
-      text = _error.isNotEmpty ? _error : '暂无相关数据';
-    } else {
-      text = '当前书源不支持发现页，请直接搜索';
+    final text = _searchMode
+        ? (_error.isNotEmpty ? _error : '没有搜索到相关书籍')
+        : _supportsExplore
+        ? (_error.isNotEmpty ? _error : '暂无相关数据')
+        : '当前书源不支持发现页，请直接搜索';
+    if (_error.isNotEmpty) {
+      return ErrorStateView(
+        message: text,
+        onRetry: _searchMode
+            ? () => _doSearch()
+            : null,
+      );
     }
-
-    final errorStyle = TextStyle(
-      color: _error.isNotEmpty ? Colors.redAccent : Colors.black54,
-    );
-
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      children: [
-        const SizedBox(height: 180),
-        Center(child: Text(text, style: errorStyle)),
-        const SizedBox(height: AppTokens.pageBottomPadding + 32),
-      ],
+    return EmptyStateView(
+      icon: _searchMode ? Icons.search_off_rounded : Icons.explore_off_rounded,
+      title: text,
+      subtitle: _searchMode ? '试试换个关键词搜索' : '试试切换其他书源',
     );
   }
 
@@ -842,7 +639,7 @@ class _NovelListPageState extends State<NovelListPage> {
       itemCount: _books.length + 1,
       itemBuilder: (context, index) {
         if (index < _books.length) {
-          return _buildBookCard(_books[index]);
+          return NovelBookCard(book: _books[index]);
         }
 
         if (_loadingMore) {
@@ -894,12 +691,18 @@ class _NovelListPageState extends State<NovelListPage> {
   @override
   Widget build(BuildContext context) {
     return AppPageScaffold(
+      maxContentWidth: 660,
       safeBottom: false,
       child: Column(
         children: [
-          _buildHeroSection(),
+          _buildCompactHeader(),
+          NovelStatsBar(
+            sourceCount: _currentSourceName.isNotEmpty ? 1 : 0,
+            bookCount: _books.length,
+            cacheManager: _cacheManager,
+            onCacheTapped: _showCacheDialog,
+          ),
           _buildSearchBar(),
-          _buildSourceInfo(),
           _buildExploreBar(),
           if (_error.isNotEmpty && _books.isNotEmpty)
             Container(
@@ -919,76 +722,6 @@ class _NovelListPageState extends State<NovelListPage> {
             child: RefreshIndicator(
               onRefresh: _handleRefresh,
               child: _buildListBody(),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _NovelLightIconButton extends StatelessWidget {
-  const _NovelLightIconButton({required this.icon, required this.onTap});
-
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: onTap,
-      child: Container(
-        width: 38,
-        height: 38,
-        decoration: BoxDecoration(
-          color: const Color(0xFFF2F6FF),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFE0E8F6)),
-        ),
-        child: Icon(icon, color: AppTokens.violet, size: 21),
-      ),
-    );
-  }
-}
-
-class _NovelLightMetric extends StatelessWidget {
-  const _NovelLightMetric({required this.value, required this.label});
-
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF6F8FD),
-        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Flexible(
-            child: Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTokens.textPrimary,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: const TextStyle(
-              color: AppTokens.textSecondary,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
             ),
           ),
         ],

@@ -1,0 +1,29 @@
+{
+  "bookSourceUrl": "http://download.yichnmedia.com",
+  "bookSourceName": "猫眼看书（优++）",
+  "bookSourceGroup": "优++",
+  "bookSourceComment": "// http://download.yichnmedia.com\n// http://download.biqugexsapp.com\n// http://ddxs.xsappxz.com\n_path = {\n    DownApp: \"/client/version\",\n    GetHost: \"/client/config/value?key=landing_page_domain\",\n    LoginID: \"/auth/third; post; type=5&openid= ${R32} &firstBoot=1\"\n};\nsetv = (json) => source.setVariable(JSON.stringify(json, null, \"\\t\"));\ntry {\n    $ = JSON.parse(source.getVariable());\n} catch (err) {\n    $ = {\n        time: 20240202,\n        domains: [\n            [\"longchunbajiao\", 0],\n            [\"yybhsl\", 0],\n            [\"wzyjxf\", 0],\n            [\"zjlzgg\", 0],\n            [\"sxwlyhzp\", 0],\n            [\"anwaben\", 0],\n            [\"basusan\", 0],\n            [\"myweipin\", 0],\n            [\"lemiyigou\", 0],\n            [\"xingliangglobal\", 1],\n            [\"fangweicong\", 1],\n            [\"yuanxifayi\", 1],\n            [\"xqjcool\", 1]\n        ]\n    }\n    setv($);\n}\n_reg = /http:\\/\\/api\\.(.+)\\.com/i\ngetHost = i => {\n    [domain, uType] = $.domains[i];\n    [aesKey, Authorization] = [\n        [\"f041c49714d39908\", \"bearereyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwOlwvXC9hcGkubXl3ZWlwaW4uY29tXC9hdXRoXC90aGlyZCIsImlhdCI6MTcwNjg0NjM2NiwiZXhwIjoxODAwMTU4MzY2LCJuYmYiOjE3MDY4NDYzNjYsImp0aSI6IjRVbU5BZVpHQ1hvaGNpSEgiLCJzdWIiOjc3MDg5OSwicHJ2IjoiYTFjYjAzNzE4MDI5NmM2YTE5MzhlZjMwYjQzNzk0NjcyZGQwMTZjNSJ9.lOpKG-vWne5Ub8g6byvF53iQjldPUC1-BMoO-OuhOlA\"],\n        [\"4395daa50ad6baf7\", \"bearereyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwOlwvXC9hcGkueGluZ2xpYW5nZ2xvYmFsLmNvbVwvYXV0aFwvdGhpcmQiLCJpYXQiOjE3MDY4NjA2NzcsImV4cCI6MTgwMDE3MjY3NywibmJmIjoxNzA2ODYwNjc3LCJqdGkiOiJxdXBGbWo5cnJRMHFoTFVIIiwic3ViIjozMjY4ODcsInBydiI6ImExY2IwMzcxODAyOTZjNmExOTM4ZWYzMGI0Mzc5NDY3MmRkMDE2YzUifQ.CQsDsiDJyyriPmJuT6A38KIvGgq6BEOMWl8H5plqArQ\"]\n    ][uType];\n    headers = \",\" + JSON.stringify({\n        \"headers\": {\n            \"client-device\": java.md5Encode(aesKey),\n            \"Authorization\": Authorization\n        }\n    });\n    host = `http://api.${domain}.com`;\n}\ngetData = (uri) => {\n    url = host + uri + headers;\n    data = java.ajaxAll([url])[0];\n}\nvuri = \"/search?keyword=深空彼岸\";\ntime = +java.timeFormatUTC(new Date(), 'yyyyMMdd', 8);\narr1 = [];\narr2 = [];\narr3 = [];\nif ($.time < time && 0) {\n    java.toast(\"检测更新中\");\n    try {\n        for (i in $.domains) {\n            arr1.push($.domains[i]);\n            arr2.push($.domains[i]);\n            getHost(i);\n            try {\n                getData(vuri);\n                if (data.code() == 200) {\n                    arr2.length = arr2.length - 1;\n                    try {\n                        getData(_path.GetHost);\n                        domain = JSON.parse(data.body()).data.landingPageDomain;\n                        arr3.push([domain.match(_reg)[1], uType]);\n                    } catch (err) {}\n                } else {\n                    arr1.length = arr1.length - 1;\n                }\n            } catch (err) {\n                arr1.length = arr1.length - 1;\n            }\n        }\n        array = arr1.concat(arr3);\n        $.domains = array.filter(function(item, index) {\n            return array.findIndex(function(value) {\n                return value[0] === item[0] && value[1] === item[1];\n            }) === index && arr2.findIndex(function(value) {\n                return value[0] === item[0] && value[1] === item[1];\n            })\n        });\n        $.time = time\n        setv($);\n        java.toast(\"接口更新成功\");\n    } catch (err) {\n        java.toast(\"未知错误：\" + err);\n    }\n}\nrun = Path => {\n    for (i in $.domains) {\n        getHost(i);\n        try {\n            getData(java.hexDecodeToString(result));\n            if (data.code() == 200)\n                return $$ = JSON.parse(data.body())[Path];\n        } catch (err) {}\n    }\n    return $$ = {};\n}\neurl = Path => `data:;base64,${java.base64Encode(Path)},{\"type\":\"maoyankanshu\"}`;",
+  "header": "{\n    \"client-version\": \"2.3.0\",\n    \"client-brand\": \"HONOR\",\n    \"client-source\": \"android\",\n    \"client-name\": \"app.maoyankanshu.novel\",\n    \"User-Agent\": \"okhttp/4.9.2\"\n}",
+  "searchUrl": "data:;base64,{{java.base64Encode(\"/search?keyword=\"+key+\"&page=\"+page)}},{\"type\":\"maoyankanshu\"}",
+  "exploreUrl": "",
+  "enabled": true,
+  "weight": 10,
+  "customOrder": 0,
+  "ruleSearch": {
+    "name": "$.novelName",
+    "author": "$.authorName",
+    "coverUrl": "$.cover",
+    "bookList": "@js:\neval(String(source.bookSourceComment));\nrun(\"data\").map(($$,i)=>{\n$$.cover = $$.cover.replace(_reg, host);\n$$.bookUrl = eurl('/novel/'+$$.novelId);\nreturn JSON.stringify($$);\n});",
+    "summary": "$.summary",
+    "kind": "$.className"
+  },
+  "ruleBookInfo": {
+    "init": "@js:\neval(String(source.bookSourceComment));\nrun(\"data\");\n$$.cover = $$.cover.replace(_reg, host);\n$$.tocUrl = eurl('/novel/'+$$.novelId+'/chapters');\nJSON.stringify($$);"
+  },
+  "ruleToc": {
+    "chapterList": "@js:\neval(String(source.bookSourceComment));\n\nList = run(\"data\").list;\n\nCipher = java.createSymmetricCrypto(\"AES/CBC/PKCS5Padding\", aesKey, \"0123456789abcdef\");\n\nList.map($$=>{\n\tpath = Cipher.decryptStr($$.path);\ntry{\n\tpath = String(path).split(_reg)[2];\n}catch(err){}\n\treturn {\n\t\tname: $$.chapterName,\n\t\tpath: eurl(path),\n\t}\n});"
+  },
+  "ruleContent": {
+    "content": "@js:\neval(String(source.bookSourceComment));\nrun(\"content\");"
+  }
+}

@@ -4,16 +4,37 @@ import 'models.dart';
 import 'novel_cache_keys.dart';
 
 class BookshelfManager {
-  static String get _key => NovelCacheKeys.bookshelf;
+  BookshelfManager._();
 
-  static Future<List<NovelBook>> getBookshelf() async {
-    final prefs = await SharedPreferences.getInstance();
-    final str = prefs.getString(_key);
-    if (str == null || str.isEmpty) return [];
+  static final BookshelfManager _instance = BookshelfManager._();
+  static BookshelfManager get instance => _instance;
+
+  static const String _storageKey = NovelCacheKeys.bookshelf;
+
+  SharedPreferences? _prefs;
+  List<NovelBook>? _bookshelfCache;
+
+  Future<SharedPreferences> get _prefsAsync async {
+    _prefs ??= await SharedPreferences.getInstance();
+    return _prefs!;
+  }
+
+  Future<List<NovelBook>> getBookshelf() async {
+    if (_bookshelfCache != null) return _bookshelfCache!;
+
+    final prefs = await _prefsAsync;
+    final str = prefs.getString(_storageKey);
+    if (str == null || str.isEmpty) {
+      _bookshelfCache = [];
+      return _bookshelfCache!;
+    }
 
     try {
       final raw = jsonDecode(str);
-      if (raw is! List) return [];
+      if (raw is! List) {
+        _bookshelfCache = [];
+        return _bookshelfCache!;
+      }
       final books = <NovelBook>[];
       for (final item in raw) {
         if (item is Map) {
@@ -22,87 +43,47 @@ class BookshelfManager {
           } catch (_) {}
         }
       }
-      return _dedupe(books);
+      _bookshelfCache = _dedupe(books);
     } catch (_) {
-      return [];
+      _bookshelfCache = [];
     }
+    return _bookshelfCache!;
   }
 
-  static Future<List<NovelDetail>> getBookshelfBooks() async {
+  Future<List<NovelDetail>> getBookshelfBooks() async {
     final books = await getBookshelf();
-    final details = <NovelDetail>[];
-    for (final book in books) {
-      details.add(NovelDetail(book: book, chapters: []));
-    }
-    return details;
+    return books
+        .map((book) => NovelDetail(book: book, chapters: const []))
+        .toList();
   }
 
-  static Future<bool> isInBookshelf(String bookId) async {
+  Future<bool> isInBookshelf(String bookId) async {
     final books = await getBookshelf();
     return books.any((b) => b.id == bookId || b.detailUrl == bookId);
   }
 
-  static Future<void> addToBookshelf(NovelBook book) async {
+  Future<void> addToBookshelf(NovelBook book) async {
     final books = await getBookshelf();
-    books.removeWhere((b) => _bookKey(b) == _bookKey(book));
+    final key = _bookKey(book);
+    books.removeWhere((b) => _bookKey(b) == key);
     books.insert(0, book);
     await _save(books);
   }
 
-  static Future<void> replaceBookshelf(List<NovelBook> books) async {
+  Future<void> replaceBookshelf(List<NovelBook> books) async {
     await _save(books);
   }
 
-  static Future<void> removeFromBookshelf(String bookId) async {
+  Future<void> removeFromBookshelf(String bookId) async {
     final books = await getBookshelf();
     books.removeWhere((b) => b.id == bookId || b.detailUrl == bookId);
     await _save(books);
-    await _removeReadingProgress(bookId);
   }
 
-  static Future<void> clearBookshelf() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_key);
-  }
-
-  // 阅读进度相关
-  static String _progressKey(String bookId) {
-    return '${NovelCacheKeys.readingProgress}_$bookId';
-  }
-
-  static Future<ReadingProgress?> getReadingProgress(String bookId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final str = prefs.getString(_progressKey(bookId));
-    if (str == null || str.isEmpty) return null;
-    try {
-      final json = jsonDecode(str) as Map<String, dynamic>;
-      return ReadingProgress.fromJson(json);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  static Future<void> saveReadingProgress(ReadingProgress progress) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _progressKey(progress.bookId),
-      jsonEncode(progress.toJson()),
-    );
-  }
-
-  static Future<void> _removeReadingProgress(String bookId) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_progressKey(bookId));
-  }
-
-  static Future<void> clearAllReadingProgress() async {
-    final prefs = await SharedPreferences.getInstance();
-    final keys = prefs.getKeys();
-    for (final key in keys) {
-      if (key.startsWith('${NovelCacheKeys.readingProgress}_')) {
-        await prefs.remove(key);
-      }
-    }
+  Future<void> clearBookshelf() async {
+    final prefs = await _prefsAsync;
+    await prefs.remove(_storageKey);
+    _bookshelfCache = [];
   }
 
   static String _bookKey(NovelBook book) {
@@ -122,10 +103,11 @@ class BookshelfManager {
     return result;
   }
 
-  static Future<void> _save(List<NovelBook> books) async {
-    final prefs = await SharedPreferences.getInstance();
+  Future<void> _save(List<NovelBook> books) async {
+    final prefs = await _prefsAsync;
     final normalized = _dedupe(books);
     final list = normalized.map((b) => b.toJson()).toList();
-    await prefs.setString(_key, jsonEncode(list));
+    await prefs.setString(_storageKey, jsonEncode(list));
+    _bookshelfCache = normalized;
   }
 }

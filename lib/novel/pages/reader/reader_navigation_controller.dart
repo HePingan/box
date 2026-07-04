@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'reader_controller.dart';
 
@@ -32,6 +33,9 @@ class ReaderNavigationController extends ChangeNotifier {
   bool get isScrollMode => readerController.isScrollMode;
   bool get showMenu => readerController.showMenu;
 
+  /// 当前是否启用震动反馈
+  bool get enableHaptic => readerController.settings.enableHaptic;
+
   void setJumpTarget(ReaderJumpTarget target) {
     jumpTarget = target;
     notifyListeners();
@@ -51,6 +55,7 @@ class ReaderNavigationController extends ChangeNotifier {
   }) async {
     if (index < 0 || index >= readerController.totalChapters) return;
 
+    if (enableHaptic) HapticFeedback.lightImpact();
     jumpTarget = target;
     onResetPagedState(target);
 
@@ -120,11 +125,12 @@ class ReaderNavigationController extends ChangeNotifier {
     final x = details.globalPosition.dx;
     final y = details.globalPosition.dy;
 
-    // 中间区域：打开菜单
-    if (x > size.width * 0.33 &&
-        x < size.width * 0.66 &&
-        y > size.height * 0.33 &&
-        y < size.height * 0.66) {
+    // 中间区域：打开菜单 (30%-70%, 更宽的触发区)
+    if (x > size.width * 0.30 &&
+        x < size.width * 0.70 &&
+        y > size.height * 0.25 &&
+        y < size.height * 0.75) {
+      if (enableHaptic) HapticFeedback.lightImpact();
       readerController.setMenuVisible(true);
       return;
     }
@@ -137,6 +143,7 @@ class ReaderNavigationController extends ChangeNotifier {
       final current = scrollController.offset;
 
       if (y < size.height * 0.33) {
+        if (enableHaptic) HapticFeedback.lightImpact();
         scrollController.animateTo(
           (current - step).clamp(
             0.0,
@@ -146,6 +153,7 @@ class ReaderNavigationController extends ChangeNotifier {
           curve: Curves.easeOutCubic,
         );
       } else if (y > size.height * 0.66) {
+        if (enableHaptic) HapticFeedback.lightImpact();
         scrollController.animateTo(
           (current + step).clamp(
             0.0,
@@ -174,6 +182,7 @@ class ReaderNavigationController extends ChangeNotifier {
           );
         }
       } else {
+        if (enableHaptic) HapticFeedback.lightImpact();
         pageController.previousPage(
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeInOut,
@@ -191,6 +200,7 @@ class ReaderNavigationController extends ChangeNotifier {
           );
         }
       } else {
+        if (enableHaptic) HapticFeedback.lightImpact();
         pageController.nextPage(
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeInOut,

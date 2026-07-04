@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../features/admin/register_providers.dart';
 import '../novel/pages/source_manager/book_source_bootstrap.dart';
 import '../utils/app_logger.dart';
 import '../utils/http_overrides.dart';
@@ -33,6 +34,7 @@ class AppBootstrap {
     final prefs = await SharedPreferences.getInstance();
     final novelBootstrap = await BookSourceBootstrap.loadAndConfigure(prefs);
     _configureVideoCatalog();
+    registerResourceProviders();
 
     return AppBootstrapResult(prefs: prefs, novelBootstrap: novelBootstrap);
   }

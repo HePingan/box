@@ -200,6 +200,8 @@ class AppPageScaffold extends StatelessWidget {
     this.useGradient = true,
     this.safeTop = true,
     this.safeBottom = false,
+    this.padding,
+    this.maxContentWidth,
   });
 
   final Widget child;
@@ -208,14 +210,32 @@ class AppPageScaffold extends StatelessWidget {
   final bool safeTop;
   final bool safeBottom;
 
+  /// 统一的水平方向内边距。
+  /// 设置后，所有页面无需重复写 `EdgeInsets.symmetric(horizontal: 16)`。
+  final EdgeInsetsGeometry? padding;
+
+  /// 平板适配：内容最大宽度约束。
+  /// 设置后，在大屏上内容居中并限制阅读宽度（推荐 600～700），
+  /// 小屏上仍为全宽。
+  final double? maxContentWidth;
+
   @override
   Widget build(BuildContext context) {
-    final body = DecoratedBox(
+    Widget body = child;
+    if (maxContentWidth != null) {
+      body = Center(
+        child: SizedBox(width: maxContentWidth, child: body),
+      );
+    }
+    if (padding != null) {
+      body = Padding(padding: padding!, child: body);
+    }
+    body = DecoratedBox(
       decoration: BoxDecoration(
         color: backgroundColor,
         gradient: useGradient ? AppTokens.pageGradient : null,
       ),
-      child: SafeArea(top: safeTop, bottom: safeBottom, child: child),
+      child: SafeArea(top: safeTop, bottom: safeBottom, child: body),
     );
 
     return Scaffold(backgroundColor: backgroundColor, body: body);

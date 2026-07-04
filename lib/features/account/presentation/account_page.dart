@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../design_system/app_tokens.dart';
+import '../../../design_system/widgets/app_back_button.dart';
 import '../../../design_system/widgets/app_cards.dart';
 import '../../../design_system/widgets/app_page_scaffold.dart';
 import '../../../app/app_routes.dart';
@@ -271,11 +272,12 @@ class _AccountPageState extends State<AccountPage> {
     return AppPageScaffold(
       child: CustomScrollView(
         slivers: [
-          const SliverAppBar(
+          SliverAppBar(
             pinned: true,
             backgroundColor: AppTokens.background,
             surfaceTintColor: Colors.transparent,
-            title: Text('账号中心'),
+            leading: AppBackButton(onPressed: () => Navigator.pop(context)),
+            title: const Text('账号中心'),
           ),
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),

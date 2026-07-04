@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:box/design_system/app_tokens.dart';
+import 'package:box/design_system/widgets/app_back_button.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 
@@ -179,9 +180,9 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
       subtitle: '${widget.currentSource.name} · 轻量结果卡片 · 直达播放详情',
       badge: '视频',
       accentGradient: AppTokens.blueGradient,
-      leading: IconButton.filledTonal(
+      leading: AppBackButton(
         onPressed: () => Navigator.maybePop(context),
-        icon: const Icon(Icons.arrow_back_rounded),
+        label: '源内搜索',
       ),
       actions: const [
         AppStatusPill(

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/source_health_service.dart';
 import 'book_source_model.dart';
 
 class BookSourceManager extends ChangeNotifier {
@@ -16,10 +17,29 @@ class BookSourceManager extends ChangeNotifier {
   final List<BookSourceModel> _items = [];
   String? _currentSourceId;
 
+  late final SourceHealthService _healthService = SourceHealthService();
+
   List<BookSourceModel> get items => List.unmodifiable(_items);
 
   List<BookSourceModel> get enabledItems =>
       _items.where((e) => e.enabled).toList();
+
+  /// 健康且启用的书源（用于搜索降级）
+  List<BookSourceModel> get healthyEnabledItems {
+    final now = DateTime.now();
+    return _items.where((e) {
+      if (!e.enabled) return false;
+      final health = getHealth(e.id);
+      if (health.status == SourceHealthStatus.unknown) return true; // 未检测时信任
+      if (health.status == SourceHealthStatus.down) return false;
+      // 缓存过期后也信任（可能只是临时故障）
+      if (health.lastChecked != null &&
+          now.difference(health.lastChecked!) > _healthService.cacheTtl) {
+        return true;
+      }
+      return health.isUsable;
+    }).toList();
+  }
 
   String? get currentSourceId => _currentSourceId;
 
@@ -271,5 +291,32 @@ class BookSourceManager extends ChangeNotifier {
       if (item.enabled) return item.id;
     }
     return null;
+  }
+
+  // ── 健康检查 ──
+
+  /// 获取指定书源的健康快照
+  SourceHealthSnapshot getHealth(String sourceId) {
+    return _healthService.getHealth(sourceId);
+  }
+
+  /// 检测所有已启用书源的健康状态
+  Future<Map<String, SourceHealthSnapshot>> pingAll() async {
+    final results = await _healthService.pingAll(enabledItems);
+    notifyListeners();
+    return results;
+  }
+
+  /// 检测单个书源的健康状态
+  Future<SourceHealthSnapshot> ping(BookSourceModel source) async {
+    final result = await _healthService.ping(source);
+    notifyListeners();
+    return result;
+  }
+
+  /// 清空健康缓存
+  void clearHealthCache() {
+    _healthService.clearCache();
+    notifyListeners();
   }
 }

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="quiz_accessibility_desc">答题助手：自动捕获屏幕上的题目并搜索答案，结果展示在悬浮窗中。</string>
+</resources>

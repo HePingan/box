@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
-import 'package:crypto/crypto.dart';
-import 'package:encrypt/encrypt.dart' as enc;
-import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 
+import 'book_deduplicator.dart';
+import 'text_cleaner.dart';
+import 'wtzw_crypto.dart';
 import 'models.dart';
+import 'novel_exceptions.dart';
+import 'novel_http_client.dart';
 import 'novel_source.dart';
 
 class WtzwNovelSource implements NovelSource {
@@ -14,7 +16,8 @@ class WtzwNovelSource implements NovelSource {
     required this.name,
     required this.baseUrl,
     required this.exploreUrl,
-  });
+    NovelHttpClient? httpClient,
+  }) : _httpClient = httpClient ?? NovelHttpClient.create();
 
   factory WtzwNovelSource.fromBookSourceJson(Map<String, dynamic> json) {
     return WtzwNovelSource(
@@ -40,12 +43,9 @@ class WtzwNovelSource implements NovelSource {
   final String name;
   final String baseUrl;
   final String exploreUrl;
+  final NovelHttpClient _httpClient;
 
   static const Duration _timeout = Duration(seconds: 20);
-
-  static const String _signKey = 'd3dGiJc651gSQ8w1';
-  static const String _chapterContentKey = '242ccb8230d709e1';
-  static const String _imeiIp = '2937357107';
 
   static const String _apiBcBase = 'https://api-bc.wtzw.com';
   static const String _apiKsBase = 'https://api-ks.wtzw.com';
@@ -60,8 +60,6 @@ class WtzwNovelSource implements NovelSource {
     'channel': 'unknown',
     'qm-params': '',
   };
-
-  static final RegExp _htmlTag = RegExp(r'<[^>]+>');
 
   String _str(dynamic value) => value == null ? '' : value.toString().trim();
 
@@ -110,38 +108,14 @@ class WtzwNovelSource implements NovelSource {
     return _asMap(_readPath(root, path));
   }
 
-  String _md5Sign(Map<String, dynamic> data) {
-    final normalized = <String, String>{};
-    for (final entry in data.entries) {
-      if (entry.value == null) continue;
-      normalized[entry.key] = '${entry.value}';
-    }
-
-    final keys = normalized.keys.toList()..sort();
-    final raw = StringBuffer();
-    for (final key in keys) {
-      raw.write('$key=${normalized[key] ?? ''}');
-    }
-    raw.write(_signKey);
-
-    return md5.convert(utf8.encode(raw.toString())).toString();
-  }
-
   Map<String, String> _signedHeaders() {
     final headers = Map<String, String>.from(_baseHeaders);
-    headers['sign'] = _md5Sign(headers);
+    headers['sign'] = WtzwCrypto.md5Sign(headers);
     return headers;
   }
 
   Map<String, String> _withParamSign(Map<String, dynamic> params) {
-    final normalized = <String, String>{};
-    for (final entry in params.entries) {
-      if (entry.value == null) continue;
-      normalized[entry.key] = '${entry.value}';
-    }
-
-    normalized['sign'] = _md5Sign(normalized);
-    return normalized;
+    return WtzwCrypto.withParamSign(params);
   }
 
   String _encodeQuery(Map<String, String> params) {
@@ -172,12 +146,14 @@ class WtzwNovelSource implements NovelSource {
     Map<String, String>? headers,
   }) async {
     final uri = _buildUri(url, queryParameters: queryParameters);
-    final response = await http
-        .get(uri, headers: headers ?? _signedHeaders())
-        .timeout(_timeout);
+    final response = await _httpClient.get(
+      uri,
+      headers: headers ?? _signedHeaders(),
+      timeout: _timeout,
+    );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('HTTP ${response.statusCode} for $uri');
+      throw HttpException('HTTP ${response.statusCode} for $uri');
     }
 
     return utf8.decode(response.bodyBytes, allowMalformed: true);
@@ -198,7 +174,7 @@ class WtzwNovelSource implements NovelSource {
     if (decoded is Map<String, dynamic>) return decoded;
     if (decoded is Map) return Map<String, dynamic>.from(decoded);
 
-    throw Exception('接口返回不是 JSON 对象');
+    throw ParseException('接口返回不是 JSON 对象');
   }
 
   String _extractTags(dynamic value) {
@@ -234,22 +210,7 @@ class WtzwNovelSource implements NovelSource {
   }
 
   String _cleanText(String input) {
-    var text = input
-        .replaceAll('&nbsp;', ' ')
-        .replaceAll('\u3000', ' ')
-        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
-        .replaceAll(RegExp(r'</p>', caseSensitive: false), '\n')
-        .replaceAll(RegExp(r'<p[^>]*>', caseSensitive: false), '')
-        .replaceAll(
-          RegExp(r'<script[\s\S]*?</script>', caseSensitive: false),
-          '',
-        )
-        .replaceAll(RegExp(r'<style[\s\S]*?</style>', caseSensitive: false), '')
-        .replaceAll(_htmlTag, '');
-
-    text = text.replaceAll(RegExp(r'\r\n?'), '\n');
-    text = text.replaceAll(RegExp(r'\n{3,}'), '\n\n');
-    return text.trim();
+    return TextCleaner.stripHtml(input);
   }
 
   String _buildIntro({required String intro, String tags = ''}) {
@@ -265,14 +226,18 @@ class WtzwNovelSource implements NovelSource {
   String _detailUrl(String bookId) {
     final params = _withParamSign({
       'id': bookId,
-      'imei_ip': _imeiIp,
+      'imei_ip': WtzwCrypto.imeiIp,
       'teeny_mode': '0',
     });
     return '$_apiBcBase/api/v4/book/detail?${_encodeQuery(params)}';
   }
 
   String _chapterContentUrl(String bookId, String chapterId) {
-    final params = _withParamSign({'id': bookId, 'chapterId': chapterId});
+    final params = _withParamSign({
+      'id': bookId,
+      'chapterId': chapterId,
+      'imei_ip': WtzwCrypto.imeiIp,
+    });
     return '$_apiKsBase/api/v1/chapter/content?${_encodeQuery(params)}';
   }
 
@@ -406,46 +371,11 @@ class WtzwNovelSource implements NovelSource {
     );
   }
 
-  List<NovelBook> _uniqueBooks(List<NovelBook> books) {
-    final out = <NovelBook>[];
-    final seen = <String>{};
+  List<NovelBook> _uniqueBooks(List<NovelBook> books) =>
+      BookDeduplicator.deduplicate(books);
 
-    for (final book in books) {
-      final key = book.id.isNotEmpty
-          ? 'id:${book.id}'
-          : 'url:${book.detailUrl}';
-      if (seen.add(key)) {
-        out.add(book);
-      }
-    }
-
-    return out;
-  }
-
-  String _decryptChapterContent(String encodedContent) {
-    try {
-      final raw = encodedContent.trim();
-      if (raw.isEmpty) return '';
-
-      final allBytes = base64Decode(raw);
-      if (allBytes.length <= 16) return raw;
-
-      final ivBytes = Uint8List.fromList(allBytes.sublist(0, 16));
-      final cipherBytes = Uint8List.fromList(allBytes.sublist(16));
-
-      final encrypter = enc.Encrypter(
-        enc.AES(
-          enc.Key.fromUtf8(_chapterContentKey),
-          mode: enc.AESMode.cbc,
-          padding: 'PKCS7',
-        ),
-      );
-
-      return encrypter.decrypt(enc.Encrypted(cipherBytes), iv: enc.IV(ivBytes));
-    } catch (_) {
-      return encodedContent;
-    }
-  }
+  String _decryptChapterContent(String encodedContent) =>
+      WtzwCrypto.decryptChapterContent(encodedContent);
 
   @override
   Future<List<NovelBook>> searchBooks(String keyword, {int page = 1}) async {
@@ -455,7 +385,7 @@ class WtzwNovelSource implements NovelSource {
     final headers = _signedHeaders();
     final params = _withParamSign({
       'gender': '3',
-      'imei_ip': _imeiIp,
+      'imei_ip': WtzwCrypto.imeiIp,
       'page': '$page',
       'wd': kw,
     });
@@ -546,14 +476,14 @@ class WtzwNovelSource implements NovelSource {
     final id = _extractBookId(bookId: bookId, detailUrl: detailUrl);
 
     if (id.isEmpty) {
-      throw Exception('书籍 ID 为空，无法获取详情');
+      throw NovelSourceException('书籍 ID 为空，无法获取详情');
     }
 
     final headers = _signedHeaders();
 
     final detailParams = _withParamSign({
       'id': id,
-      'imei_ip': _imeiIp,
+      'imei_ip': WtzwCrypto.imeiIp,
       'teeny_mode': '0',
     });
 
@@ -565,32 +495,44 @@ class WtzwNovelSource implements NovelSource {
 
     final bookMap = _readMapPath(detailJson, ['data', 'book']);
     if (bookMap.isEmpty) {
-      throw Exception('详情接口返回为空');
+      throw NovelSourceException('详情接口返回为空');
     }
 
     final book = _bookFromDetail(bookMap);
 
-    final tocParams = _withParamSign({'id': id});
+    // 章节 API 需要 imei_ip 参数
+    final tocParams = _withParamSign({'id': id, 'imei_ip': WtzwCrypto.imeiIp});
 
-    final tocJson = await _getJsonMap(
-      '$_apiKsBase/api/v1/chapter/chapter-list',
-      queryParameters: tocParams,
-      headers: headers,
-    );
-
-    final chapterList = _readListPath(tocJson, ['data', 'chapter_lists']);
-    final chapters = <NovelChapter>[];
-
-    for (final item in chapterList) {
-      final map = _asMap(item);
-      final chapterId = _str(map['id']);
-      final title = _str(map['title']);
-
-      if (chapterId.isEmpty || title.isEmpty) continue;
-
-      chapters.add(
-        NovelChapter(title: title, url: _chapterContentUrl(id, chapterId)),
+    List<NovelChapter> chapters = <NovelChapter>[];
+    try {
+      final tocJson = await _getJsonMap(
+        '$_apiKsBase/api/v1/chapter/chapter-list',
+        queryParameters: tocParams,
+        headers: headers,
       );
+
+      // 检查 API 是否返回错误（如验签失败）
+      final errorTitle = _str(_readPath(tocJson, ['errors', 'title']));
+      if (errorTitle.isNotEmpty) {
+        debugPrint('WTZW章节列表API返回错误: $errorTitle — id=$id');
+      }
+
+      final chapterList = _readListPath(tocJson, ['data', 'chapter_lists']);
+
+      for (final item in chapterList) {
+        final map = _asMap(item);
+        final chapterId = _str(map['id']);
+        final title = _str(map['title']);
+
+        if (chapterId.isEmpty || title.isEmpty) continue;
+
+        chapters.add(
+          NovelChapter(title: title, url: _chapterContentUrl(id, chapterId)),
+        );
+      }
+    } catch (e) {
+      // 章节列表失败不阻塞整体详情（book info 已有）
+      debugPrint('WTZW章节列表加载失败: $e — id=$id');
     }
 
     return NovelDetail(book: book, chapters: chapters);
@@ -614,7 +556,7 @@ class WtzwNovelSource implements NovelSource {
     if (requestUrl.trim().isEmpty || !requestUrl.startsWith('http')) {
       final bookId = detail.book.id.trim();
       if (bookId.isEmpty) {
-        throw Exception('书籍 ID 为空，无法请求章节正文');
+        throw NovelSourceException('书籍 ID 为空，无法请求章节正文');
       }
 
       if (chapterId.isEmpty) {
@@ -622,7 +564,7 @@ class WtzwNovelSource implements NovelSource {
       }
 
       if (chapterId.isEmpty) {
-        throw Exception('章节 ID 为空，无法请求章节正文');
+        throw NovelSourceException('章节 ID 为空，无法请求章节正文');
       }
 
       requestUrl = _chapterContentUrl(bookId, chapterId);

@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'design_system/widgets/app_back_button.dart';
+
 class ToolWebPage extends StatefulWidget {
   final String title; // 工具的名字 (比如：在线PS)
   final String url; // 工具的网址 (比如：https://www.photopea.com/)
@@ -58,7 +60,10 @@ class _ToolWebPageState extends State<ToolWebPage> {
         backgroundColor: Colors.white,
         elevation: 0,
         scrolledUnderElevation: 0,
-        iconTheme: const IconThemeData(color: Colors.black87),
+        leading: AppBackButton(
+          onPressed: () => Navigator.pop(context),
+          label: widget.title,
+        ),
         actions: [
           // 添加一个刷新按钮，如果工具卡住了可以点击重载
           IconButton(

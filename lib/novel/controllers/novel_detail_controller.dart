@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../core/models.dart';
+import '../core/novel_exceptions.dart';
 import '../novel_module.dart';
-import '../core/bookshelf_manager.dart';
 
 class NovelDetailController extends ChangeNotifier {
   final NovelBook entryBook;
@@ -38,7 +38,7 @@ class NovelDetailController extends ChangeNotifier {
 
   Future<void> _checkInBookshelf() async {
     final bookId = _detail?.book.id ?? entryBook.id;
-    final inShelf = await BookshelfManager.isInBookshelf(bookId);
+    final inShelf = await NovelModule.bookshelf.isInBookshelf(bookId);
     _inBookshelf = inShelf;
     notifyListeners();
   }
@@ -82,10 +82,91 @@ class NovelDetailController extends ChangeNotifier {
       if (merged.book.intro.trim().isEmpty) {
         _silentPatchMissingMetadata(merged.book.title, merged.book.author);
       }
+    } on FormatException {
+      // 书源切换后，旧书 detailUrl/id 格式不兼容当前书源
+      await _tryRemapOrError();
+    } on NovelException {
+      await _tryRemapOrError();
     } catch (e) {
       _error = '加载失败：$e';
       _loading = false;
       notifyListeners();
+    }
+  }
+
+  /// 书源不兼容时，尝试按书名搜索重新匹配；失败则显示友好提示
+  Future<void> _tryRemapOrError() async {
+    final remapped = await _tryRemapByTitle();
+    if (remapped != null) {
+      _detail = remapped;
+      _loading = false;
+      _error = '';
+      notifyListeners();
+      return;
+    }
+    _error = '书源已更换，请在书架中移除该书籍后重新搜索添加';
+    _loading = false;
+    notifyListeners();
+  }
+
+  /// 书源切换后，旧书的 detailUrl/id 在当前书源中无法使用。
+  /// 尝试按书名搜索，若找到则自动「映射」到当前书源并更新书架。
+  Future<NovelDetail?> _tryRemapByTitle() async {
+    final title = entryBook.title.trim();
+    final author = entryBook.author.trim();
+    if (title.isEmpty) return null;
+
+    try {
+      final results = await NovelModule.repository.searchBooks(
+        title,
+        page: 1,
+        forceRefresh: true,
+      );
+
+      // 优先匹配书名 + 作者，其次仅匹配书名
+      NovelBook? match;
+      for (final book in results) {
+        if (book.title == title && author.isNotEmpty && book.author == author) {
+          match = book;
+          break;
+        }
+      }
+      match ??= results.cast<NovelBook?>().firstWhere(
+        (b) => b!.title == title,
+        orElse: () => results.isNotEmpty ? results.first : null,
+      );
+
+      if (match == null) return null;
+
+      // 用新书源的 detailUrl 重新获取详情
+      final detail = await NovelModule.repository.fetchDetail(
+        bookId: match.id,
+        detailUrl: match.detailUrl,
+        forceRefresh: true,
+      );
+
+      // 更新书架条目 → 下次直接走新书源
+      await NovelModule.bookshelf.addToBookshelf(match);
+
+      final merged = NovelDetail(
+        book: match.copyWith(
+          title: detail.book.title.isNotEmpty ? detail.book.title : null,
+          author: detail.book.author.isNotEmpty ? detail.book.author : null,
+          intro: detail.book.intro.isNotEmpty ? detail.book.intro : null,
+          coverUrl: detail.book.coverUrl.isNotEmpty
+              ? detail.book.coverUrl
+              : null,
+          category:
+              detail.book.category.isNotEmpty ? detail.book.category : null,
+          status: detail.book.status.isNotEmpty ? detail.book.status : null,
+          wordCount:
+              detail.book.wordCount.isNotEmpty ? detail.book.wordCount : null,
+        ),
+        chapters: detail.chapters,
+      );
+      return merged;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -130,10 +211,10 @@ class NovelDetailController extends ChangeNotifier {
   Future<void> toggleBookshelf() async {
     final bookToSave = _detail?.book ?? entryBook;
     if (_inBookshelf) {
-      await BookshelfManager.removeFromBookshelf(bookToSave.id);
+      await NovelModule.bookshelf.removeFromBookshelf(bookToSave.id);
       _inBookshelf = false;
     } else {
-      await BookshelfManager.addToBookshelf(bookToSave);
+      await NovelModule.bookshelf.addToBookshelf(bookToSave);
       _inBookshelf = true;
     }
     notifyListeners();
@@ -143,6 +224,7 @@ class NovelDetailController extends ChangeNotifier {
     if (_isCaching) {
       _cancelCache = true;
       _isCaching = false;
+      _cacheCurrent = 0;
       notifyListeners();
       return;
     }
@@ -177,6 +259,7 @@ class NovelDetailController extends ChangeNotifier {
 
     if (!_cancelCache) {
       _isCaching = false;
+      _cacheCurrent = 0;
       notifyListeners();
     }
   }

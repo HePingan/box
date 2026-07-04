@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../design_system/app_tokens.dart';
+import '../../../design_system/widgets/app_back_button.dart';
 import '../../../design_system/widgets/app_cards.dart';
 import '../../../design_system/widgets/app_page_scaffold.dart';
 import '../data/account_store.dart';
@@ -397,6 +398,7 @@ class _AdminPageState extends State<AdminPage> {
             pinned: true,
             backgroundColor: AppTokens.background,
             surfaceTintColor: Colors.transparent,
+            leading: AppBackButton(onPressed: () => Navigator.pop(context)),
             title: const Text('Box 管理后台'),
             actions: [
               IconButton(

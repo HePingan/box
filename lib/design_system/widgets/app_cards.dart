@@ -127,6 +127,7 @@ class AppMetricTile extends StatelessWidget {
               color: foreground,
               fontSize: 18,
               fontWeight: FontWeight.w900,
+              fontFeatures: [FontFeature.tabularFigures()],
             ),
           ),
           const SizedBox(height: 4),
@@ -504,6 +505,7 @@ class AppLightHeroCard extends StatelessWidget {
                     fontSize: 12,
                     height: 1.2,
                     fontWeight: FontWeight.w600,
+                    fontFeatures: [FontFeature.tabularFigures()],
                   ),
                 ),
                 if (metrics.isNotEmpty) ...[

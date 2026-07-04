@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../design_system/widgets/app_back_button.dart';
+import '../../design_system/widgets/empty_error_states.dart';
+import '../../design_system/widgets/shimmer_skeleton.dart';
 import '../controllers/novel_detail_controller.dart';
 import '../core/models.dart';
 import 'reader_page.dart';
-import '../../design_system/app_tokens.dart';
 
 class NovelDetailPage extends StatefulWidget {
   const NovelDetailPage({super.key, required this.entryBook});
@@ -15,16 +17,24 @@ class NovelDetailPage extends StatefulWidget {
 }
 
 class _NovelDetailPageState extends State<NovelDetailPage> {
+  bool _introExpanded = false;
+
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<NovelDetailController>();
     final detail = controller.detail;
 
     if (controller.loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const DetailPageSkeleton();
     }
     if (detail == null) {
-      return Scaffold(body: Center(child: Text(controller.error)));
+      return Scaffold(
+        backgroundColor: const Color(0xFFF6F3FF),
+        body: ErrorStateView(
+          message: controller.error,
+          onRetry: () => controller.reload(forceRefresh: true),
+        ),
+      );
     }
 
     final book = detail.book;
@@ -43,78 +53,52 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
-            expandedHeight: 292,
+            expandedHeight: 200,
+            collapsedHeight: 56,
             pinned: true,
-            backgroundColor: const Color(0xFF2E1065),
-            foregroundColor: Colors.white,
-            title: const Text('小说详情'),
+            stretch: true,
+            backgroundColor: const Color(0xFFF6F3FF),
+            surfaceTintColor: Colors.transparent,
+            foregroundColor: const Color(0xFF2E1065),
+            leading: AppBackButtonLight(onPressed: () => Navigator.pop(context)),
+            title: Text(
+              book.title,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
             actions: [
               IconButton(
-                icon: const Icon(Icons.refresh),
+                icon: const Icon(Icons.refresh_rounded, size: 22),
                 onPressed: () => controller.reload(forceRefresh: true),
+                tooltip: '刷新',
               ),
             ],
             flexibleSpace: FlexibleSpaceBar(
-              background: _buildDetailHero(book, metaString, displayIntro),
+              background: _buildDetailHero(book, metaString),
             ),
           ),
+          // 简介 + 进度
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
-              child: _buildActionPanel(controller, chaps),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: _buildIntroCard(displayIntro, chaps, controller),
             ),
           ),
+          // 操作栏
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-              child: _buildProgressPanel(controller, chaps),
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+              child: _buildActionBar(controller, chaps),
             ),
           ),
+          // 章节标题
           SliverToBoxAdapter(child: _buildChapterHeader(controller)),
+          // 章节列表
           SliverList.builder(
             itemCount: chaps.length,
             itemBuilder: (ctx, i) {
               final index = controller.reverse ? chaps.length - 1 - i : i;
               final cur = controller.progress?.chapterIndex == index;
-              return Container(
-                margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                decoration: BoxDecoration(
-                  color: cur ? const Color(0xFFF3E8FF) : Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: cur
-                        ? const Color(0xFFC084FC)
-                        : const Color(0xFFEDE9FE),
-                  ),
-                ),
-                child: ListTile(
-                  leading: CircleAvatar(
-                    radius: 16,
-                    backgroundColor: cur
-                        ? const Color(0xFF7C3AED)
-                        : const Color(0xFFF1F5F9),
-                    child: Text(
-                      '${index + 1}',
-                      style: TextStyle(
-                        color: cur ? Colors.white : const Color(0xFF64748B),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                  title: Text(
-                    chaps[index].title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: cur ? const Color(0xFF6D28D9) : AppTokens.inkDark,
-                      fontWeight: cur ? FontWeight.w900 : FontWeight.w700,
-                    ),
-                  ),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () => _openReader(context, index),
-                ),
-              );
+              return _buildChapterItem(index, chaps[index], cur, controller);
             },
           ),
           const SliverToBoxAdapter(child: SizedBox(height: 28)),
@@ -123,117 +107,272 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     );
   }
 
-  Widget _buildDetailHero(
-    NovelBook book,
-    String metaString,
-    String displayIntro,
-  ) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xFF2E1065), Color(0xFF7C3AED), Color(0xFFF59E0B)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-          ),
+  Widget _buildDetailHero(NovelBook book, String metaString) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, kToolbarHeight + 8, 20, 16),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFFF6F3FF), Color(0xFFEDE9FE)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(18, 92, 18, 18),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(18),
-                child: Image.network(
-                  book.coverUrl,
-                  width: 96,
-                  height: 136,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => Container(
-                    width: 96,
-                    height: 136,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.18),
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: const Icon(
-                      Icons.auto_stories_rounded,
-                      color: Colors.white70,
-                    ),
-                  ),
+      ),
+      alignment: Alignment.bottomLeft,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 88,
+            height: 124,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            foregroundDecoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: Colors.black.withValues(alpha: 0.10),
+                width: 0.5,
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Image.network(
+              book.coverUrl,
+              width: 88,
+              height: 124,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => Container(
+                width: 88,
+                height: 124,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFDDD6FE),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.auto_stories_rounded,
+                  color: Color(0xFF7C3AED),
+                  size: 36,
                 ),
               ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'BOOK DETAIL · 新版',
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.8,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      book.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        height: 1.1,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      metaString.isNotEmpty ? metaString : '分类与进度数据装载中',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.82),
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      displayIntro,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.72),
-                        fontSize: 12,
-                        height: 1.35,
-                      ),
-                    ),
-                  ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  book.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    height: 1.15,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF2E1065),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  metaString.isNotEmpty ? metaString : '数据加载中',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF7C3AED),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIntroCard(
+    String intro,
+    List<NovelChapter> chaps,
+    NovelDetailController controller,
+  ) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFEDE9FE)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.auto_stories_rounded,
+                size: 16,
+                color: Color(0xFF7C3AED),
+              ),
+              const SizedBox(width: 6),
+              const Text(
+                '简介',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF1E293B),
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${chaps.length} 章',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF94A3B8),
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ],
           ),
-        ),
-      ],
+          const SizedBox(height: 8),
+          LayoutBuilder(
+            builder: (ctx, constraints) {
+              // 检测是否超 4 行
+              const style = TextStyle(
+                fontSize: 13,
+                height: 1.55,
+                color: Color(0xFF475569),
+              );
+              final span = TextSpan(text: intro, style: style);
+              final tp = TextPainter(
+                text: span,
+                maxLines: 4,
+                textDirection: TextDirection.ltr,
+              );
+              tp.layout(maxWidth: constraints.maxWidth);
+              final isLong = tp.didExceedMaxLines;
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    intro,
+                    maxLines: _introExpanded ? null : 4,
+                    overflow: _introExpanded
+                        ? TextOverflow.visible
+                        : TextOverflow.ellipsis,
+                    style: style,
+                  ),
+                  if (isLong)
+                    GestureDetector(
+                      onTap: () => setState(() => _introExpanded = !_introExpanded),
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _introExpanded ? '收起' : '展开全文',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF7C3AED),
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            Icon(
+                              _introExpanded
+                                  ? Icons.keyboard_arrow_up_rounded
+                                  : Icons.keyboard_arrow_down_rounded,
+                              size: 16,
+                              color: Color(0xFF7C3AED),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+          // 阅读进度条
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  controller.progress != null
+                      ? Icons.menu_book_rounded
+                      : Icons.book_outlined,
+                  size: 15,
+                  color: const Color(0xFF7C3AED),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    controller.progress != null
+                        ? '读到：${controller.progress!.chapterTitle}'
+                        : '暂无阅读记录',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: controller.progress != null
+                          ? const Color(0xFF475569)
+                          : const Color(0xFF94A3B8),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                if (controller.isCaching)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 52,
+                        child: LinearProgressIndicator(
+                          value: controller.cacheTotal == 0
+                              ? 0
+                              : (controller.cacheCurrent /
+                                    controller.cacheTotal),
+                          minHeight: 4,
+                          color: const Color(0xFFF59E0B),
+                          backgroundColor: const Color(0xFFFFEDD5),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${controller.cacheCurrent}/${controller.cacheTotal}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFFF59E0B),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildActionPanel(
+  Widget _buildActionBar(
     NovelDetailController controller,
     List<NovelChapter> chaps,
   ) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFEDE9FE)),
       ),
       child: Row(
@@ -246,113 +385,136 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                       context,
                       controller.progress?.chapterIndex ?? 0,
                     ),
-              icon: const Icon(Icons.chrome_reader_mode_rounded),
+              icon: const Icon(Icons.chrome_reader_mode_rounded, size: 18),
               label: Text(controller.progress == null ? '开始阅读' : '继续阅读'),
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFF7C3AED),
                 foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                textStyle: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ),
           const SizedBox(width: 10),
-          OutlinedButton(
-            onPressed: controller.loading ? null : controller.toggleBookshelf,
-            child: Text(controller.inBookshelf ? '移出书架' : '+ 书架'),
+          _buildMiniButton(
+            icon: controller.inBookshelf
+                ? Icons.bookmark
+                : Icons.bookmark_border,
+            label: '书架',
+            onTap: controller.loading ? null : controller.toggleBookshelf,
+            active: controller.inBookshelf,
           ),
-          const SizedBox(width: 8),
-          OutlinedButton(
-            onPressed: controller.toggleCache,
-            child: Text(controller.isCaching ? '暂停' : '缓存'),
+          const SizedBox(width: 6),
+          _buildMiniButton(
+            icon: controller.isCaching
+                ? Icons.downloading
+                : Icons.download_outlined,
+            label: '缓存',
+            onTap: controller.toggleCache,
+            active: controller.isCaching,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildProgressPanel(
-    NovelDetailController controller,
-    List<NovelChapter> chaps,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.86),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFEDE9FE)),
-      ),
-      child: controller.isCaching
-          ? Row(
-              children: [
-                Expanded(
-                  child: LinearProgressIndicator(
-                    value: controller.cacheTotal == 0
-                        ? 0
-                        : (controller.cacheCurrent / controller.cacheTotal),
-                    minHeight: 7,
-                    color: const Color(0xFFF59E0B),
-                    backgroundColor: const Color(0xFFFFEDD5),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  '${controller.cacheCurrent}/${controller.cacheTotal}',
-                  style: const TextStyle(
-                    color: Color(0xFFF59E0B),
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ],
-            )
-          : Text(
-              controller.progress != null
-                  ? '上次读到：${controller.progress!.chapterTitle}'
-                  : '共 ${chaps.length} 章 · 可加入书架后继续追更',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 13,
-                color: Color(0xFF64748B),
-                fontWeight: FontWeight.w700,
-              ),
+  Widget _buildMiniButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onTap,
+    bool active = false,
+  }) {
+    return Material(
+      color: active ? const Color(0xFFF3E8FF) : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: active ? const Color(0xFFC084FC) : const Color(0xFFE2E8F0),
             ),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: active
+                    ? const Color(0xFF7C3AED)
+                    : const Color(0xFF64748B),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: active
+                      ? const Color(0xFF7C3AED)
+                      : const Color(0xFF64748B),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
   Widget _buildChapterHeader(NovelDetailController controller) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       child: Row(
         children: [
+          const Icon(
+            Icons.list_alt_rounded,
+            size: 18,
+            color: Color(0xFF2E1065),
+          ),
+          const SizedBox(width: 6),
           const Text(
             '章节目录',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF2E1065),
+            ),
           ),
           const Spacer(),
           GestureDetector(
             onTap: () => controller.toggleReverse(),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-                border: Border.all(color: const Color(0xFFEDE9FE)),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
               ),
               child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
                     controller.reverse
-                        ? Icons.vertical_align_top
-                        : Icons.vertical_align_bottom,
-                    size: 16,
+                        ? Icons.arrow_upward_rounded
+                        : Icons.arrow_downward_rounded,
+                    size: 14,
                     color: const Color(0xFF7C3AED),
                   ),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 3),
                   Text(
                     controller.reverse ? '正序' : '倒序',
                     style: const TextStyle(
-                      fontSize: 13,
+                      fontSize: 12,
                       color: Color(0xFF7C3AED),
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
@@ -360,6 +522,73 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildChapterItem(
+    int index,
+    NovelChapter chapter,
+    bool isCurrent,
+    NovelDetailController controller,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      child: Material(
+        color: isCurrent ? const Color(0xFFF3E8FF) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => _openReader(context, index),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 26,
+                  height: 26,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: isCurrent
+                        ? const Color(0xFF7C3AED)
+                        : const Color(0xFFF1F5F9),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '${index + 1}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: isCurrent ? Colors.white : const Color(0xFF94A3B8),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    chapter.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
+                      color: isCurrent
+                          ? const Color(0xFF6D28D9)
+                          : const Color(0xFF334155),
+                    ),
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: isCurrent
+                      ? const Color(0xFF7C3AED)
+                      : const Color(0xFFCBD5E1),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

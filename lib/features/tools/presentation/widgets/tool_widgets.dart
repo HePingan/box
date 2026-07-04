@@ -5,182 +5,7 @@ import 'package:box/features/api_hub/presentation/api_hub_page.dart';
 import 'package:box/features/tools/application/tool_catalog.dart';
 import 'package:box/tool_web_page.dart';
 
-class ToolGlassButton extends StatelessWidget {
-  const ToolGlassButton({super.key, required this.icon, required this.onTap});
-
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: onTap,
-      child: Container(
-        width: 42,
-        height: 42,
-        decoration: BoxDecoration(
-          color: const Color(0xFFF2F6FF),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFE0E8F6)),
-        ),
-        child: Icon(icon, color: AppTokens.primaryBlue, size: 22),
-      ),
-    );
-  }
-}
-
-class ToolMetric extends StatelessWidget {
-  const ToolMetric({super.key, required this.value, required this.label});
-
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF6F8FD),
-        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            value,
-            style: const TextStyle(
-              color: AppTokens.textPrimary,
-              fontSize: 13,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTokens.textSecondary,
-                fontSize: 10.5,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class ToolHighlightCard extends StatelessWidget {
-  const ToolHighlightCard({
-    super.key,
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.gradient,
-    this.onTap,
-  });
-
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final List<Color> gradient;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = gradient.first;
-    return InkWell(
-      borderRadius: BorderRadius.circular(22),
-      onTap: onTap,
-      child: Container(
-        width: 168,
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.94),
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: const Color(0xFFE7ECF5)),
-          boxShadow: AppTokens.shadowSm(color: color),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(15),
-              ),
-              child: Icon(icon, color: color, size: 21),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppTokens.textPrimary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppTokens.textSecondary,
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class ToolStatusBadge extends StatelessWidget {
-  const ToolStatusBadge({super.key, required this.label, required this.color});
-
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-        border: Border.all(color: color.withValues(alpha: 0.18)),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 10,
-          fontWeight: FontWeight.w900,
-        ),
-      ),
-    );
-  }
-}
-
+/// 分类展开卡片（核心 UI 组件）
 class ExpandableCategoryCard extends StatefulWidget {
   final ToolCategory category;
   const ExpandableCategoryCard({super.key, required this.category});
@@ -335,17 +160,17 @@ class _ExpandableCategoryCardState extends State<ExpandableCategoryCard> {
                           spacing: 6,
                           runSpacing: 6,
                           children: [
-                            ToolStatusBadge(
+                            _ToolStatusBadge(
                               label: '${widget.category.tools.length} 个工具',
                               color: widget.category.iconBgColor,
                             ),
                             if (widget.category.tools.any(_isAvailableTool))
-                              const ToolStatusBadge(
+                              const _ToolStatusBadge(
                                 label: '含可用工具',
                                 color: Color(0xFF059669),
                               )
                             else
-                              const ToolStatusBadge(
+                              const _ToolStatusBadge(
                                 label: '开发中',
                                 color: Color(0xFF64748B),
                               ),
@@ -466,6 +291,34 @@ class _ExpandableCategoryCardState extends State<ExpandableCategoryCard> {
                 : const SizedBox.shrink(),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 状态标签（仅 ExpandableCategoryCard 内部使用）
+class _ToolStatusBadge extends StatelessWidget {
+  const _ToolStatusBadge({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+        ),
       ),
     );
   }

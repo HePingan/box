@@ -40,6 +40,127 @@ class ReaderPaginationRequest {
   final int cacheSize;
 }
 
+// ──────────────────────────────────────────
+// 增量分页结果
+// ──────────────────────────────────────────
+
+/// [paginateIncremental] 的返回值
+class IncrementalPaginationResult {
+  const IncrementalPaginationResult({
+    required this.firstChunk,
+    required this.remaining,
+  });
+
+  /// 首批可立即渲染的页面（≥ 1 页）
+  final List<String> firstChunk;
+
+  /// 异步迭代器，每次 moveNext() 返回一批后续页面
+  final IncrementalPageIterator remaining;
+}
+
+/// 异步分页迭代器
+class IncrementalPageIterator {
+  final ReaderPaginationRequest _request;
+  final int _chunkSize;
+  final double _safeFirstH;
+  final double _safeNormalH;
+  TextStyle? _style;
+  TextPainter? _painter;
+  int _start;
+  int _pagesProduced;
+
+  IncrementalPageIterator({
+    required ReaderPaginationRequest request,
+    required int chunkSize,
+    required double safeFirstH,
+    required double safeNormalH,
+    required int startOffset,
+  })  : _request = request,
+        _chunkSize = chunkSize,
+        _safeFirstH = safeFirstH,
+        _safeNormalH = safeNormalH,
+        _start = startOffset,
+        _pagesProduced = 0;
+
+  /// 一个 always-done 的空迭代器
+  IncrementalPageIterator.empty()
+      : _request = const ReaderPaginationRequest(
+          bookId: '',
+          chapterIndex: 0,
+          content: '',
+          fitWidth: 0,
+          firstPageHeight: 0,
+          normalPageHeight: 0,
+          fontSize: 14,
+          lineHeight: 1.5,
+        ),
+        _chunkSize = 1,
+        _safeFirstH = 0,
+        _safeNormalH = 0,
+        _start = 0,
+        _pagesProduced = 0;
+
+  /// 是否有更多页面
+  bool get isDone => _start >= _request.content.length;
+
+  /// 生成下一批页面（最多 [_chunkSize] 页）
+  List<String> nextChunk() {
+    if (_start >= _request.content.length) return const [];
+
+    final text = _request.content;
+    _style ??= TextStyle(
+      fontSize: _request.fontSize,
+      height: _request.lineHeight,
+      letterSpacing: _request.letterSpacing,
+    );
+    _painter ??= TextPainter(textDirection: _request.textDirection);
+
+    final pages = <String>[];
+    final painter = _painter!;
+    final style = _style!;
+
+    for (int i = 0; i < _chunkSize && _start < text.length; i++) {
+      // 跳过开头连续换行，避免空白页
+      while (_start < text.length && text[_start] == '\n') {
+        _start++;
+      }
+
+      if (_start >= text.length) break;
+
+      int low = _start;
+      int high = text.length;
+      int best = _start;
+
+      final maxH = _pagesProduced == 0 ? _safeFirstH : _safeNormalH;
+
+      while (low <= high) {
+        final mid = low + ((high - low) ~/ 2);
+
+        painter.text = TextSpan(text: text.substring(_start, mid), style: style);
+        painter.layout(maxWidth: _request.fitWidth);
+
+        if (painter.height <= maxH) {
+          best = mid;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+
+      if (best <= _start) {
+        best = _start + 1;
+        if (best > text.length) best = text.length;
+      }
+
+      pages.add(text.substring(_start, best));
+      _start = best;
+      _pagesProduced++;
+    }
+
+    return pages;
+  }
+}
+
 /// 阅读器分页工具
 ///
 /// 职责：
@@ -56,7 +177,7 @@ class ReaderPaginator {
     _cache.clear();
   }
 
-  /// 执行分页
+  /// 执行全量分页（同步）
   static List<String> paginate(ReaderPaginationRequest request) {
     final key = _buildCacheKey(request);
 
@@ -67,7 +188,7 @@ class ReaderPaginator {
       return List<String>.from(cached);
     }
 
-    final pages = _paginate(request);
+    final pages = _paginateAll(request);
 
     _cache[key] = List<String>.unmodifiable(pages);
     while (_cache.length > request.cacheSize) {
@@ -75,6 +196,52 @@ class ReaderPaginator {
     }
 
     return List<String>.from(pages);
+  }
+
+  /// 增量分页：首批立即返回，后续通过 [IncrementalPageIterator] 异步获取
+  ///
+  /// [chunkSize] 控制每批生成的页数，默认 5。
+  static IncrementalPaginationResult paginateIncremental(
+    ReaderPaginationRequest request, {
+    int chunkSize = 5,
+  }) {
+    final text = request.content;
+
+    if (text.isEmpty) {
+      return IncrementalPaginationResult(
+        firstChunk: [''],
+        remaining: IncrementalPageIterator.empty(),
+      );
+    }
+
+    if (request.fitWidth <= 0 ||
+        request.firstPageHeight <= 0 ||
+        request.normalPageHeight <= 0) {
+      return IncrementalPaginationResult(
+        firstChunk: [text],
+        remaining: IncrementalPageIterator.empty(),
+      );
+    }
+
+    final safeFirstH =
+        request.firstPageHeight < 80 ? 80.0 : request.firstPageHeight;
+    final safeNormalH =
+        request.normalPageHeight < 80 ? 80.0 : request.normalPageHeight;
+
+    // 先取第一块
+    final it = IncrementalPageIterator(
+      request: request,
+      chunkSize: chunkSize,
+      safeFirstH: safeFirstH,
+      safeNormalH: safeNormalH,
+      startOffset: 0,
+    );
+    final firstChunk = it.nextChunk();
+
+    return IncrementalPaginationResult(
+      firstChunk: firstChunk,
+      remaining: it,
+    );
   }
 
   static String _buildCacheKey(ReaderPaginationRequest request) {
@@ -94,7 +261,8 @@ class ReaderPaginator {
     ].join('|');
   }
 
-  static List<String> _paginate(ReaderPaginationRequest request) {
+  /// 全量计算（内部复用，供 [paginate] 使用）
+  static List<String> _paginateAll(ReaderPaginationRequest request) {
     final text = request.content;
 
     if (text.isEmpty) {
@@ -107,59 +275,22 @@ class ReaderPaginator {
       return <String>[text];
     }
 
-    final pages = <String>[];
+    final safeFirstH =
+        request.firstPageHeight < 80 ? 80.0 : request.firstPageHeight;
+    final safeNormalH =
+        request.normalPageHeight < 80 ? 80.0 : request.normalPageHeight;
 
-    final style = TextStyle(
-      fontSize: request.fontSize,
-      height: request.lineHeight,
-      letterSpacing: request.letterSpacing,
+    final it = IncrementalPageIterator(
+      request: request,
+      chunkSize: 999999, // 一次性拿完
+      safeFirstH: safeFirstH,
+      safeNormalH: safeNormalH,
+      startOffset: 0,
     );
 
-    final painter = TextPainter(textDirection: request.textDirection);
-
-    int start = 0;
-    final safeFirstH = request.firstPageHeight < 80
-        ? 80.0
-        : request.firstPageHeight;
-    final safeNormalH = request.normalPageHeight < 80
-        ? 80.0
-        : request.normalPageHeight;
-
-    while (start < text.length) {
-      // 跳过开头连续换行，避免空白页
-      while (start < text.length && text[start] == '\n') {
-        start++;
-      }
-
-      if (start >= text.length) break;
-
-      int low = start;
-      int high = text.length;
-      int best = start;
-
-      final maxH = pages.isEmpty ? safeFirstH : safeNormalH;
-
-      while (low <= high) {
-        final mid = low + ((high - low) ~/ 2);
-
-        painter.text = TextSpan(text: text.substring(start, mid), style: style);
-        painter.layout(maxWidth: request.fitWidth);
-
-        if (painter.height <= maxH) {
-          best = mid;
-          low = mid + 1;
-        } else {
-          high = mid - 1;
-        }
-      }
-
-      if (best <= start) {
-        best = start + 1;
-        if (best > text.length) best = text.length;
-      }
-
-      pages.add(text.substring(start, best));
-      start = best;
+    final pages = <String>[];
+    while (!it.isDone) {
+      pages.addAll(it.nextChunk());
     }
 
     if (pages.isEmpty) {

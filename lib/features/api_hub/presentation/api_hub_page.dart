@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:box/design_system/app_tokens.dart';
+import 'package:box/design_system/widgets/app_back_button.dart';
 import 'package:box/design_system/widgets/app_bottom_sheet.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
@@ -438,9 +439,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
       subtitle: '国内网络实测可用 · 短链 / 二维码 / 头像 / 随机封面 / API 清单',
       badge: '12 TOOLS',
       accentGradient: AppTokens.blueGradient,
-      leading: IconButton.filledTonal(
+      leading: AppBackButton(
         onPressed: () => Navigator.maybePop(context),
-        icon: const Icon(Icons.arrow_back_rounded),
+        label: 'API 能力中心',
       ),
       actions: const [
         AppStatusPill(

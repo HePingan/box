@@ -1,4 +1,5 @@
 import 'core/cache_store.dart';
+import 'core/bookshelf_manager.dart';
 import 'core/models.dart';
 import 'core/novel_repository.dart';
 import 'core/novel_source.dart';
@@ -18,14 +19,24 @@ class NovelModule {
     return _repository!;
   }
 
+  static BookshelfManager get bookshelf => BookshelfManager.instance;
+
   /// 仅保留：规则书源 JSON 配置
   static void configureRuleSource({
     required Map<String, dynamic> bookSourceJson,
     CacheStore? cache,
+    Duration? searchTtl,
+    Duration? pathListTtl,
+    Duration? detailTtl,
+    Duration? chapterTtl,
   }) {
     _repository = NovelRepository(
       source: NovelSourceFactory.fromBookSourceJson(bookSourceJson),
       cache: cache ?? CacheStore(namespace: 'novel_module'),
+      searchTtl: searchTtl ?? NovelRepository.defaultSearchTtl,
+      pathListTtl: pathListTtl ?? NovelRepository.defaultPathListTtl,
+      detailTtl: detailTtl ?? NovelRepository.defaultDetailTtl,
+      chapterTtl: chapterTtl ?? NovelRepository.defaultChapterTtl,
     );
   }
 

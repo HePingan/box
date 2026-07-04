@@ -1,15 +1,13 @@
 {
-    "name": "Geek工具箱 Pro",
-    "short_name": "Geek工具箱",
+    "name": "box",
+    "short_name": "box",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#f5f5f5",
-    "theme_color": "#1a1a2e",
-    "description": "全能的极客工具集 — AI 生图工坊、插件扩展、内容管理、远程运维",
-    "orientation": "any",
+    "background_color": "#0175C2",
+    "theme_color": "#0175C2",
+    "description": "A new Flutter project.",
+    "orientation": "portrait-primary",
     "prefer_related_applications": false,
-    "categories": ["productivity", "utilities", "developer tools"],
-    "screenshots": [],
     "icons": [
         {
             "src": "icons/Icon-192.png",

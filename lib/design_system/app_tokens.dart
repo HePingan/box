@@ -119,9 +119,19 @@ class AppTokens {
   static List<BoxShadow> cardShadow({Color color = ink, double alpha = 0.08}) {
     return [
       BoxShadow(
-        color: color.withValues(alpha: alpha),
-        blurRadius: 20,
-        offset: const Offset(0, 10),
+        color: color.withValues(alpha: 0.03),
+        blurRadius: 1,
+        offset: const Offset(0, 0),
+      ),
+      BoxShadow(
+        color: color.withValues(alpha: 0.05),
+        blurRadius: 4,
+        offset: const Offset(0, 2),
+      ),
+      BoxShadow(
+        color: color.withValues(alpha: 0.04),
+        blurRadius: 12,
+        offset: const Offset(0, 6),
       ),
     ];
   }
@@ -129,23 +139,43 @@ class AppTokens {
   static List<BoxShadow> shadowSm({Color color = ink}) {
     return [
       BoxShadow(
-        color: color.withValues(alpha: 0.05),
-        blurRadius: 12,
-        offset: const Offset(0, 6),
+        color: color.withValues(alpha: 0.02),
+        blurRadius: 1,
+        offset: const Offset(0, 0),
+      ),
+      BoxShadow(
+        color: color.withValues(alpha: 0.03),
+        blurRadius: 3,
+        offset: const Offset(0, 1.5),
+      ),
+      BoxShadow(
+        color: color.withValues(alpha: 0.03),
+        blurRadius: 8,
+        offset: const Offset(0, 4),
       ),
     ];
   }
 
   static List<BoxShadow> shadowMd({Color color = ink}) {
-    return cardShadow(color: color, alpha: 0.08);
+    return cardShadow(color: color);
   }
 
   static List<BoxShadow> shadowLg({Color color = ink}) {
     return [
       BoxShadow(
-        color: color.withValues(alpha: 0.12),
-        blurRadius: 28,
-        offset: const Offset(0, 14),
+        color: color.withValues(alpha: 0.04),
+        blurRadius: 2,
+        offset: const Offset(0, 0),
+      ),
+      BoxShadow(
+        color: color.withValues(alpha: 0.06),
+        blurRadius: 6,
+        offset: const Offset(0, 4),
+      ),
+      BoxShadow(
+        color: color.withValues(alpha: 0.06),
+        blurRadius: 16,
+        offset: const Offset(0, 10),
       ),
     ];
   }

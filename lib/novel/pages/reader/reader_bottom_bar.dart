@@ -12,6 +12,9 @@ class ReaderBottomBar extends StatelessWidget {
     required this.onPrev,
     required this.onNext,
     required this.onSettings,
+    this.onBookmarkList,
+    this.onSearch,
+    this.onDictionary,
   });
 
   final ReaderController controller;
@@ -21,6 +24,9 @@ class ReaderBottomBar extends StatelessWidget {
   final VoidCallback? onPrev;
   final VoidCallback? onNext;
   final VoidCallback? onSettings;
+  final VoidCallback? onBookmarkList;
+  final VoidCallback? onSearch;
+  final VoidCallback? onDictionary;
 
   Widget _action(IconData icon, String text, VoidCallback? onTap) {
     final disabled = onTap == null;
@@ -32,9 +38,9 @@ class ReaderBottomBar extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 28, color: textColor),
+            Icon(icon, size: 26, color: textColor),
             const SizedBox(height: 2),
-            Text(text, style: TextStyle(fontSize: 12, color: textColor)),
+            Text(text, style: TextStyle(fontSize: 11, color: textColor)),
           ],
         ),
       ),
@@ -45,7 +51,7 @@ class ReaderBottomBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      padding: const EdgeInsets.only(top: 14, bottom: 18),
+      padding: const EdgeInsets.only(top: 12, bottom: 16),
       decoration: BoxDecoration(
         color: bgColor.withValues(alpha: 0.94),
         borderRadius: BorderRadius.circular(26),
@@ -62,6 +68,9 @@ class ReaderBottomBar extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           _action(Icons.format_list_bulleted, '目录', onDirectory),
+          _action(Icons.search_rounded, '搜索', onSearch),
+          _action(Icons.bookmark_outline_rounded, '书签', onBookmarkList),
+          _action(Icons.menu_book_rounded, '查词', onDictionary),
           _action(Icons.skip_previous_rounded, '上一章', onPrev),
           _action(Icons.skip_next_rounded, '下一章', onNext),
           _action(Icons.settings_outlined, '设置', onSettings),

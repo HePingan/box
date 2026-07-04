@@ -35,11 +35,7 @@
   <title>Geek工具箱 Pro</title>
   <link rel="manifest" href="manifest.json">
 
-  <!-- 预加载关键资源 -->
-  <link rel="preconnect" href="https://storage.flutter-io.cn" crossorigin>
-
   <style>
-    /* === 全局重置 === */
     html, body {
       margin: 0;
       padding: 0;
@@ -49,7 +45,6 @@
       background-color: #f5f5f5;
     }
 
-    /* === 加载 splash 动画 === */
     #splash {
       position: fixed;
       inset: 0;
@@ -99,117 +94,41 @@
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
-
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
 
-    /* === 自定义滚动条 === */
-    ::-webkit-scrollbar {
-      width: 8px;
-      height: 8px;
-    }
-    ::-webkit-scrollbar-track {
-      background: transparent;
-    }
-    ::-webkit-scrollbar-thumb {
-      background: rgba(0,0,0,0.15);
-      border-radius: 4px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-      background: rgba(0,0,0,0.25);
-    }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
 
-    /* === Flutter canvas 全屏 === */
-    flutter-view, flt-scene, canvas {
-      width: 100%;
-      height: 100%;
-      display: block;
-    }
-
-    /* 选中颜色 */
-    ::selection {
-      background: rgba(33, 150, 243, 0.25);
-    }
+    flutter-view, flt-scene, canvas { width: 100%; height: 100%; display: block; }
+    ::selection { background: rgba(33, 150, 243, 0.25); }
   </style>
 </head>
 <body>
-  <!-- 加载 Splash 屏 -->
   <div id="splash">
     <div class="splash-logo">G</div>
     <div class="splash-title">Geek工具箱</div>
     <div class="splash-spinner"></div>
   </div>
 
-  <!-- Flutter 启动脚本（不含 async，保证加载顺序） -->
-  <script src="flutter_bootstrap.js"></script>
+  <script src="flutter_bootstrap.js" async></script>
 
   <script>
-    // === 隐藏 splash（Flutter app 就绪后触发） ===
-    // Flutter web 加载完毕后会触发 DOMContentLoaded 或者我们可以检测 canvas 出现
     const splash = document.getElementById('splash');
     function hideSplash() {
       if (!splash || splash.classList.contains('hidden')) return;
       splash.classList.add('hidden');
       setTimeout(() => { splash.style.display = 'none'; }, 500);
     }
-
-    // 1. 检测 canvas 出现（CanvasKit 模式）
-    const observer = new MutationObserver(() => {
-      if (document.querySelector('canvas[aria-hidden]')) {
-        hideSplash();
-      }
+    const obs = new MutationObserver(() => {
+      if (document.querySelector('canvas[aria-hidden]')) hideSplash();
     });
-    observer.observe(document.body, { childList: true, subtree: true });
-
-    // 2. 检测 DOM 渲染模式
+    obs.observe(document.body, { childList: true, subtree: true });
     document.addEventListener('flutter-first-frame', hideSplash);
-
-    // 3. 兜底：6 秒后强制隐藏
     setTimeout(hideSplash, 6000);
-
-    // === 精简版错误拦截（仅在 Flutter 层面拦截） ===
-    // 覆盖 dart:html / AssertionError 相关的控制台错误
-    const origConsoleError = console.error;
-    console.error = function(...args) {
-      const msg = args.join(' ');
-      if (msg.includes('ancestor == this') ||
-          msg.includes('InheritedNotifier') ||
-          msg.includes('notifyClients') ||
-          msg.includes('AssertionError')) {
-        return; // silent suppress
-      }
-      origConsoleError.apply(console, args);
-    };
-
-    // 拦截页面上 Flutter 错误 div 渲染
-    const errorObserver = new MutationObserver((mutations) => {
-      for (const m of mutations) {
-        for (const node of m.addedNodes) {
-          if (node.nodeType === 1) {
-            const c = (node.className || '') + (node.id || '');
-            if (c.includes('exception') || c.includes('error-screen') || c.includes('flutter-error')) {
-              console.warn('[Web] Suppressed Flutter error overlay');
-              node.remove();
-            }
-          }
-        }
-      }
-    });
-    errorObserver.observe(document.body, { childList: true, subtree: true });
-
-    // === 抑制浏览器右键菜单（避免在 Canvas 上显示默认菜单） ===
-    document.addEventListener('contextmenu', (e) => {
-      // 仅在 Flutter canvas 区域内阻止
-      const target = e.target;
-      if (target && (target.tagName === 'CANVAS' || target.closest('flt-scene, flutter-view'))) {
-        e.preventDefault();
-      }
-    });
-
-    // === 允许 drop/paste 事件经过（Flutter Web 原生支持） ===
-    document.addEventListener('dragover', (e) => e.preventDefault());
-    document.addEventListener('drop', (e) => e.preventDefault());
   </script>
 </body>
 </html>

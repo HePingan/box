@@ -9,12 +9,16 @@ class ReaderTopBar extends StatelessWidget {
     required this.bgColor,
     required this.textColor,
     required this.onBack,
+    this.onBookmark,
+    this.onDictionary,
   });
 
   final ReaderController controller;
   final Color bgColor;
   final Color textColor;
   final VoidCallback onBack;
+  final VoidCallback? onBookmark;
+  final VoidCallback? onDictionary;
 
   @override
   Widget build(BuildContext context) {
@@ -56,6 +60,32 @@ class ReaderTopBar extends StatelessWidget {
                 color: textColor,
               ),
             ),
+          ),
+          // 词典按钮
+          IconButton(
+            icon: Icon(
+              Icons.menu_book_rounded,
+              color: textColor,
+              size: 20,
+            ),
+            tooltip: '词典',
+            onPressed: () {
+              onDictionary?.call();
+            },
+          ),
+          // 书签按钮
+          IconButton(
+            icon: Icon(
+              controller.hasBookmarkForCurrent
+                  ? Icons.bookmark_rounded
+                  : Icons.bookmark_border_rounded,
+              color: textColor,
+              size: 20,
+            ),
+            tooltip: '书签',
+            onPressed: () {
+              onBookmark?.call();
+            },
           ),
           const SizedBox(width: 8),
         ],

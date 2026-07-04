@@ -1,5 +1,9 @@
 import 'dart:convert';
 
+import '../../core/kuaiyan_novel_source.dart';
+import '../../core/maoyan_novel_source.dart';
+import '../../core/wtzw_novel_source.dart';
+
 class BookSourceModel {
   final Map<String, dynamic> _rawJson;
 
@@ -11,6 +15,7 @@ class BookSourceModel {
   final bool enabled;
   final int weight;
   final int customOrder;
+  final String _sourceKind;
 
   BookSourceModel({
     required Map<String, dynamic> rawJson,
@@ -22,9 +27,20 @@ class BookSourceModel {
     required this.enabled,
     required this.weight,
     required this.customOrder,
-  }) : _rawJson = Map<String, dynamic>.from(rawJson);
+    String? sourceKind,
+  })  : _sourceKind = sourceKind ?? _detectKind(rawJson),
+        _rawJson = Map<String, dynamic>.from(rawJson);
 
-  String get id => '${bookSourceUrl.trim()}|${bookSourceName.trim()}';
+  static String _detectKind(Map<String, dynamic> json) {
+    if (WtzwNovelSource.supportsBookSourceJson(json)) return 'wtzw';
+    if (MaoYanNovelSource.supportsBookSourceJson(json)) return 'maoyan';
+    if (KuaiYanNovelSource.supportsBookSourceJson(json)) return 'kuaiyan';
+    return 'rule';
+  }
+
+  String get id => '${_norm(bookSourceUrl)}|${_norm(bookSourceName)}|$_sourceKind';
+
+  static String _norm(String v) => v.trim();
 
   Map<String, dynamic> toJson() {
     final json = Map<String, dynamic>.from(_rawJson);
@@ -44,10 +60,13 @@ class BookSourceModel {
   String toRawJson() => const JsonEncoder.withIndent('  ').convert(toJson());
 
   factory BookSourceModel.fromJson(Map<String, dynamic> json) {
+    final name = (json['bookSourceName'] ?? '').toString();
+    final url = (json['bookSourceUrl'] ?? '').toString();
+
     return BookSourceModel(
       rawJson: json,
-      bookSourceName: (json['bookSourceName'] ?? '').toString(),
-      bookSourceUrl: (json['bookSourceUrl'] ?? '').toString(),
+      bookSourceName: name,
+      bookSourceUrl: url,
       bookSourceGroup: (json['bookSourceGroup'] ?? '').toString(),
       searchUrl: (json['searchUrl'] ?? '').toString(),
       exploreUrl: (json['exploreUrl'] ?? '').toString(),
