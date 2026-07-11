@@ -4,7 +4,6 @@ import 'dart:math';
 
 import 'package:http/http.dart' as http;
 
-import '../../design_system/app_tokens.dart';
 import 'quiz_config.dart';
 import 'quiz_bank.dart';
 
@@ -65,7 +64,7 @@ class QuizEngine {
 
   QuizConfig config;
 
-  Future<QuizResult> search(String question) async {
+  Future<QuizResult> search(String question, {bool forceExternalSearch = false}) async {
     final stopwatch = Stopwatch()..start();
     final trimmed = question.trim();
     if (trimmed.isEmpty) {
@@ -88,11 +87,11 @@ class QuizEngine {
       }
     }
 
-    if (!config.autoSearch) {
+    if (!forceExternalSearch && !config.autoSearch) {
       return QuizResult(question: question, error: '未开启自动搜题', elapsedMs: stopwatch.elapsedMilliseconds);
     }
 
-    if (config.apiUrl.isNotEmpty) {
+    if (config.allowExternalApi && config.apiUrl.isNotEmpty) {
       try {
         final result = await _searchCustomApi(trimmed);
         if (result.isSuccess) {
@@ -101,78 +100,54 @@ class QuizEngine {
       } catch (_) {}
     }
 
-    try {
-      final result = await _searchBuiltIn(trimmed);
-      return result.copyWith(elapsedMs: stopwatch.elapsedMilliseconds, source: result.source.isEmpty ? '内置检索' : result.source);
-    } catch (e) {
-      return QuizResult(question: question, error: '搜题失败：$e', elapsedMs: stopwatch.elapsedMilliseconds);
+    if (config.allowExternalApi) {
+      try {
+        final result = await _searchBuiltIn(trimmed);
+        return result.copyWith(elapsedMs: stopwatch.elapsedMilliseconds, source: result.source.isEmpty ? '内置检索' : result.source);
+      } catch (e) {
+        return QuizResult(question: question, error: '搜题失败：$e', elapsedMs: stopwatch.elapsedMilliseconds);
+      }
     }
+
+    return QuizResult(question: question, error: '本地题库未找到；外部搜题已关闭', elapsedMs: stopwatch.elapsedMilliseconds);
   }
 
   Future<List<QuizAnswer>?> _searchBank(String question) async {
-    final all = await QuizBankStorage.loadAll();
-    if (all.isEmpty) return null;
-
-    String clean(String text) {
-      final q = text.replaceAll(RegExp(r'\s+'), '').toLowerCase();
-      // 去掉常见题干前缀：单选题/判断题/选择题/多选题/题型标记
-      var t = q;
-      t = t.replaceAll(RegExp(r'^(\[单选题\]|\[多选题\]|\[判断题\]|\[选择题\]|\[单选题\]|\[问答题\]|【单选题】|【多选题】|【判断题】|【选择题】|\[单选\]|\[判断\])'), '');
-      // 去掉括号及内容：(图片)(图文)(材料一)(节选自...)【图片】【说明】
-      t = t.replaceAll(RegExp(r'(\([^）]*\)|（[^）]*）|【[^】]*】)'), '');
-      // 去掉题号 1. 2. 12.
-      t = t.replaceAll(RegExp(r'^\d+[.、]'), '');
-      return t.trim();
-    }
-
-    final hay = clean(question);
+    await QuizBankCache.instance.ensureLoaded();
+    final hay = QuizBankTextNormalizer.cleanForMatch(question);
     if (hay.isEmpty) return null;
 
+    final candidates = QuizBankCache.instance.candidatesFor(hay);
+    if (candidates.isEmpty) return null;
+
     final scored = <({QuizBankItem item, int score})>[];
-    for (final item in all) {
-      final target = clean(item.question);
+    for (final item in candidates) {
+      final target = QuizBankTextNormalizer.cleanForMatch(item.question);
       if (target.isEmpty) continue;
 
-      final normHay = hay;
-      final normTarget = target;
-
       int score = 0;
-      if (normHay == normTarget) {
+      if (hay == target) {
         score = 100;
-      } else if (normTarget.contains(normHay) || normHay.contains(normTarget)) {
-        score = 65;
+      } else if (target.contains(hay) || hay.contains(target)) {
+        final shorter = min(hay.length, target.length);
+        final longer = max(hay.length, target.length);
+        score = longer == 0 ? 0 : (72 + shorter / longer * 24).round();
       } else {
-        // 字符集交集得分
-        final setHay = normHay.split('').toSet();
-        final setTarget = normTarget.split('').toSet();
-        final inter = setHay.intersection(setTarget).length;
-        final minLen = min(setHay.length, setTarget.length);
-        if (minLen > 0) score = (inter / minLen * 70).toInt();
-        if (score < 30 && minLen >= 5) {
-          // 滑动窗口公共子串加分
-          final smaller = minLen == setHay.length ? normHay : normTarget;
-          final bigger = minLen == setHay.length ? normTarget : normHay;
-          final window = (smaller.length / 3).floor().clamp(3, smaller.length);
-          int matches = 0;
-          for (var i = 0; i <= smaller.length - window; i++) {
-            final sub = smaller.substring(i, i + window);
-            if (bigger.contains(sub)) matches++;
-          }
-          score = max(score, (matches * 6).clamp(30, 64));
-        }
+        score = _similarityScore(hay, target);
       }
 
-      if (score >= 35) scored.add((item: item, score: score));
+      if (score >= 55) scored.add((item: item, score: score));
     }
 
     scored.sort((a, b) => b.score.compareTo(a.score));
     final top = scored.take(config.bankMaxMatches).toList();
-    if (top.isEmpty || top.first.score < 35) return null;
+    if (top.isEmpty || top.first.score < 60) return null;
 
     return top.map((entry) {
       final item = entry.item;
+      final formatted = _formatBankAnswer(item, entry.score);
       return QuizAnswer(
-        text: item.options.join('\n'),
+        text: formatted,
         confidence: entry.score / 100,
         source: '本地题库',
         options: item.options,
@@ -180,6 +155,66 @@ class QuizEngine {
         analysis: item.analysis,
       );
     }).toList();
+  }
+
+  String _formatBankAnswer(QuizBankItem item, int score) {
+    final lines = <String>[
+      '匹配题目：${item.question}',
+      if (item.correctAnswer.trim().isNotEmpty) '答案：${_resolveCorrectAnswerText(item)}',
+      if (item.options.isNotEmpty) '选项：\n${item.options.join('\n')}',
+      if ((item.analysis ?? '').trim().isNotEmpty) '解析：${item.analysis}',
+      '相似度：$score%',
+    ];
+    return lines.join('\n');
+  }
+
+  String _resolveCorrectAnswerText(QuizBankItem item) {
+    final raw = item.correctAnswer.trim();
+    if (raw.isEmpty) return '';
+    final normalized = raw.toUpperCase();
+    final optionMatch = RegExp(r'^[A-H]$').firstMatch(normalized);
+    if (optionMatch != null) {
+      final index = normalized.codeUnitAt(0) - 'A'.codeUnitAt(0);
+      if (index >= 0 && index < item.options.length) {
+        return '$normalized. ${item.options[index]}';
+      }
+    }
+    final number = int.tryParse(raw);
+    if (number != null && number >= 1 && number <= item.options.length) {
+      return '$raw. ${item.options[number - 1]}';
+    }
+    return raw;
+  }
+
+
+  int _similarityScore(String a, String b) {
+    if (a.isEmpty || b.isEmpty) return 0;
+    final lcs = _longestCommonSubsequenceLength(a, b);
+    final lcsScore = (lcs * 200 / (a.length + b.length)).round();
+    final setA = a.split('').toSet();
+    final setB = b.split('').toSet();
+    final union = setA.union(setB).length;
+    final inter = setA.intersection(setB).length;
+    final jaccard = union == 0 ? 0 : (inter * 100 / union).round();
+    // 字符集合重叠容易把“机动车/道路/正确/错误”等通用词误判，作为弱信号限幅。
+    return max(lcsScore, min(jaccard, 72));
+  }
+
+  int _longestCommonSubsequenceLength(String a, String b) {
+    final previous = List<int>.filled(b.length + 1, 0);
+    final current = List<int>.filled(b.length + 1, 0);
+    for (var i = 1; i <= a.length; i++) {
+      for (var j = 1; j <= b.length; j++) {
+        current[j] = a.codeUnitAt(i - 1) == b.codeUnitAt(j - 1)
+            ? previous[j - 1] + 1
+            : max(previous[j], current[j - 1]);
+      }
+      for (var j = 0; j <= b.length; j++) {
+        previous[j] = current[j];
+        current[j] = 0;
+      }
+    }
+    return previous[b.length];
   }
 
   Future<QuizResult> _searchCustomApi(String question) async {

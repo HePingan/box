@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:box/novel/core/offline_book_info.dart';
 import 'package:box/novel/core/offline_cache_service.dart';
 import 'package:box/novel/core/cache_store.dart';
 import 'package:box/novel/core/models.dart';

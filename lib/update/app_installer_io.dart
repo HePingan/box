@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'update_models.dart';
+import 'update_security.dart';
 
 class AppInstaller {
   static Future<void> downloadAndInstall({
@@ -16,6 +17,12 @@ class AppInstaller {
   }) async {
     if (manifest.downloadUrl.isEmpty) {
       throw Exception('下载地址为空');
+    }
+    validateUpdateDownloadUrl(manifest.downloadUrl);
+
+    final expectedSha256 = normalizeSha256Hex(manifest.sha256 ?? '');
+    if (!isValidSha256Hex(expectedSha256)) {
+      throw Exception('更新包缺少有效的 SHA-256 校验值');
     }
 
     final dio = Dio(
@@ -40,17 +47,15 @@ class AppInstaller {
       },
     );
 
-    if (manifest.sha256 != null && manifest.sha256!.isNotEmpty) {
-      final bytes = await File(savePath).readAsBytes();
-      final digest = sha256.convert(bytes).toString();
-      if (digest.toLowerCase() != manifest.sha256!.toLowerCase()) {
-        try {
-          await File(savePath).delete();
-        } catch (_) {
-          // 删除失败不应掩盖真正的校验失败。
-        }
-        throw Exception('APK 校验失败，文件可能损坏或被篡改');
+    final bytes = await File(savePath).readAsBytes();
+    final digest = sha256.convert(bytes).toString();
+    if (digest.toLowerCase() != expectedSha256) {
+      try {
+        await File(savePath).delete();
+      } catch (_) {
+        // 删除失败不应掩盖真正的校验失败。
       }
+      throw Exception('APK 校验失败，文件可能损坏或被篡改');
     }
 
     // 强行拉起系统安装器，并捕获它的返回状态

@@ -25,7 +25,7 @@ class RegionSelectorView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     companion object {
-        private const val MIN_SIZE = 80
+        private const val MIN_SIZE = 80f
         private const val HANDLE_RADIUS = 18f
         private const val STROKE_WIDTH = 2f
         private const val DOUBLE_TAP_MAX_DISTANCE = 50f
@@ -56,7 +56,7 @@ class RegionSelectorView @JvmOverloads constructor(
         isAntiAlias = true
     }
 
-    private var region = RectF(100f, 300f, 500f, 800f)
+    private var region = RectF(40f, 80f, 360f, 340f)
     private val tempRegion = RectF()
 
     private var dragMode = DragMode.NONE
@@ -72,6 +72,7 @@ class RegionSelectorView @JvmOverloads constructor(
 
     fun setRegion(r: RectF) {
         region.set(r)
+        clampRegionToBounds()
         invalidate()
     }
 
@@ -81,6 +82,11 @@ class RegionSelectorView @JvmOverloads constructor(
 
     fun setOnRegionConfirmedListener(listener: () -> Unit) {
         onRegionConfirmed = listener
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        clampRegionToBounds()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -99,7 +105,7 @@ class RegionSelectorView @JvmOverloads constructor(
             canvas.drawCircle(center.x, center.y, HANDLE_RADIUS - 4f, borderPaint)
         }
 
-        canvas.drawText("拖动调整识别区域", region.left + 12f, region.top - 24f, textPaint)
+        canvas.drawText("拖动调整识别区域，双击保存", region.left + 12f, max(32f, region.top - 24f), textPaint)
         canvas.restoreToCount(saved)
     }
 
@@ -150,12 +156,12 @@ class RegionSelectorView @JvmOverloads constructor(
                 dragMode = hitHandle(x, y) ?: if (hitInside(x, y)) DragMode.MOVE else DragMode.NONE
                 if (dragMode != DragMode.NONE) parent.requestDisallowInterceptTouchEvent(true)
 
-                // 双击检测
                 val now = System.currentTimeMillis()
                 val dx = x - lastTapPoint.x
                 val dy = y - lastTapPoint.y
                 if (now - lastTapTime < DOUBLE_TAP_MAX_TIME &&
-                    Math.hypot(dx.toDouble(), dy.toDouble()) < DOUBLE_TAP_MAX_DISTANCE) {
+                    Math.hypot(dx.toDouble(), dy.toDouble()) < DOUBLE_TAP_MAX_DISTANCE
+                ) {
                     onRegionConfirmed?.invoke()
                     return true
                 }
@@ -169,10 +175,7 @@ class RegionSelectorView @JvmOverloads constructor(
                 when (dragMode) {
                     DragMode.MOVE -> {
                         tempRegion.offset(dx, dy)
-                        tempRegion.left = max(0f, tempRegion.left)
-                        tempRegion.top = max(0f, tempRegion.top)
-                        tempRegion.right = min(width.toFloat(), tempRegion.right)
-                        tempRegion.bottom = min(height.toFloat(), tempRegion.bottom)
+                        keepMoveInsideBounds(tempRegion)
                     }
                     DragMode.TOP_LEFT -> {
                         tempRegion.left = min(tempRegion.right - MIN_SIZE, tempRegion.left + dx)
@@ -205,6 +208,7 @@ class RegionSelectorView @JvmOverloads constructor(
                     else -> {}
                 }
                 region.set(tempRegion)
+                clampRegionToBounds()
                 invalidate()
                 lastPoint.set(x, y)
                 onRegionChanged?.invoke(getRegion())
@@ -215,6 +219,33 @@ class RegionSelectorView @JvmOverloads constructor(
             }
         }
         return true
+    }
+
+    private fun keepMoveInsideBounds(rect: RectF) {
+        if (width <= 0 || height <= 0) return
+        val dx = when {
+            rect.left < 0f -> -rect.left
+            rect.right > width.toFloat() -> width.toFloat() - rect.right
+            else -> 0f
+        }
+        val dy = when {
+            rect.top < 0f -> -rect.top
+            rect.bottom > height.toFloat() -> height.toFloat() - rect.bottom
+            else -> 0f
+        }
+        rect.offset(dx, dy)
+    }
+
+    private fun clampRegionToBounds() {
+        if (width <= 0 || height <= 0) return
+        val maxWidth = width.toFloat()
+        val maxHeight = height.toFloat()
+        if (region.width() < MIN_SIZE) region.right = min(maxWidth, region.left + MIN_SIZE)
+        if (region.height() < MIN_SIZE) region.bottom = min(maxHeight, region.top + MIN_SIZE)
+        region.left = region.left.coerceIn(0f, max(0f, maxWidth - MIN_SIZE))
+        region.top = region.top.coerceIn(0f, max(0f, maxHeight - MIN_SIZE))
+        region.right = region.right.coerceIn(region.left + MIN_SIZE, maxWidth)
+        region.bottom = region.bottom.coerceIn(region.top + MIN_SIZE, maxHeight)
     }
 
     private enum class DragMode {

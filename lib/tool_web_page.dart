@@ -16,26 +16,59 @@ class ToolWebPage extends StatefulWidget {
 
 class _ToolWebPageState extends State<ToolWebPage> {
   late final WebViewController _controller;
+  late final Uri? _initialUri;
   bool _isLoading = true; // 加载状态指示
+  bool _hasValidInitialUrl = true;
 
   @override
   void initState() {
     super.initState();
+    _initialUri = Uri.tryParse(widget.url.trim());
+    final initialUri = _initialUri;
+    _hasValidInitialUrl = initialUri != null && _isAllowedUri(initialUri);
+
     // 初始化网页控制器，打开JS权限，以此保证 Photopea 这类复杂的网页能正常运行
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0x00000000))
       ..setNavigationDelegate(
         NavigationDelegate(
+          onNavigationRequest: (request) {
+            final uri = Uri.tryParse(request.url);
+            if (uri == null || !_isAllowedUri(uri)) {
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
           onPageFinished: (String url) {
             // 网页加载完成了，关掉转圈圈
             if (mounted) {
               setState(() => _isLoading = false);
             }
           },
+          onWebResourceError: (_) {
+            if (mounted) {
+              setState(() => _isLoading = false);
+            }
+          },
         ),
-      )
-      ..loadRequest(Uri.parse(widget.url)); // 加载你传过来的网址
+      );
+
+    if (_hasValidInitialUrl) {
+      _controller.loadRequest(_initialUri!);
+    } else {
+      _isLoading = false;
+    }
+  }
+
+  bool _isAllowedUri(Uri uri) {
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'https' && scheme != 'http') return false;
+
+    final initialHost = _initialUri?.host.toLowerCase();
+    final host = uri.host.toLowerCase();
+    return initialHost != null &&
+        (host == initialHost || host.endsWith('.$initialHost'));
   }
 
   @override
@@ -68,17 +101,22 @@ class _ToolWebPageState extends State<ToolWebPage> {
           // 添加一个刷新按钮，如果工具卡住了可以点击重载
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () {
-              setState(() => _isLoading = true);
-              _controller.reload();
-            },
+            onPressed: _hasValidInitialUrl
+                ? () {
+                    setState(() => _isLoading = true);
+                    _controller.reload();
+                  }
+                : null,
           ),
         ],
       ),
       // Stack 将网页和加载动画叠在一起
       body: Stack(
         children: [
-          WebViewWidget(controller: _controller),
+          if (_hasValidInitialUrl)
+            WebViewWidget(controller: _controller)
+          else
+            const Center(child: Text('无效或不受信任的网页地址')),
           if (_isLoading)
             const Center(
               child: CircularProgressIndicator(color: Colors.blue), // 蓝色的加载小圆圈

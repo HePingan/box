@@ -61,9 +61,22 @@ void main() {
       expect(result, isEmpty);
     });
 
-    test('buildListPage returns widget', () {
+    testWidgets('buildListPage returns widget', (tester) async {
       final provider = BookSourceResourceProvider();
-      expect(() => provider.buildListPage(context: null!), throwsA(anything));
+      late Widget built;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) {
+              built = provider.buildListPage(context: context);
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+
+      expect(built, isA<Widget>());
     });
 
     test('create throws unimplemented', () {
@@ -103,9 +116,22 @@ void main() {
       expect(result, isEmpty);
     });
 
-    test('buildListPage returns widget', () {
+    testWidgets('buildListPage returns widget', (tester) async {
       final provider = VideoSourceResourceProvider();
-      expect(() => provider.buildListPage(context: null!), throwsA(anything));
+      late Widget built;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) {
+              built = provider.buildListPage(context: context);
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+
+      expect(built, isA<Widget>());
     });
 
     test('create throws unimplemented', () {
@@ -220,11 +246,10 @@ void main() {
     }
 
     testWidgets('BookSourceTab renders without crash', (tester) async {
-      final provider = BookSourceResourceProvider();
       await tester.pumpWidget(wrapApp(
         const Placeholder(), // 先测试 Provider 是否能被构建
       ));
-      // 验证 Provider 树可正常工作
+
       expect(find.byType(Placeholder), findsOneWidget);
     });
   });

@@ -7,7 +7,9 @@ class QuizConfig {
     this.apiUrl = '',
     this.apiKey = '',
     this.autoSearch = true,
+    this.displayMode = 'notification',
     this.filterNoise = true,
+    this.debugCapture = false,
     this.maxCaptureLines = 8,
     this.overlayX = 0.0,
     this.overlayY = 0.0,
@@ -17,13 +19,18 @@ class QuizConfig {
     this.bankEnabled = true,
     this.bankPriority = true,
     this.bankMaxMatches = 3,
+    this.allowExternalApi = false,
   });
 
   final bool enabled;
   final String apiUrl;
   final String apiKey;
   final bool autoSearch;
+  /// 显示模式：overlay=普通悬浮窗，accessibility_overlay=无障碍悬浮，notification=通知栏，manual=手动。
+  final String displayMode;
   final bool filterNoise;
+  /// 调试捕获：显示无障碍原始/清洗后的屏幕文本，便于定位捕获或匹配问题。
+  final bool debugCapture;
   final int maxCaptureLines;
   final double overlayX;
   final double overlayY;
@@ -41,13 +48,17 @@ class QuizConfig {
   final bool bankEnabled;
   final bool bankPriority;
   final int bankMaxMatches;
+  /// 是否允许把题目发送到第三方/自定义网络 API；默认关闭，仅使用本地题库。
+  final bool allowExternalApi;
 
   QuizConfig copyWith({
     bool? enabled,
     String? apiUrl,
     String? apiKey,
     bool? autoSearch,
+    String? displayMode,
     bool? filterNoise,
+    bool? debugCapture,
     int? maxCaptureLines,
     double? overlayX,
     double? overlayY,
@@ -57,13 +68,16 @@ class QuizConfig {
     bool? bankEnabled,
     bool? bankPriority,
     int? bankMaxMatches,
+    bool? allowExternalApi,
   }) {
     return QuizConfig(
       enabled: enabled ?? this.enabled,
       apiUrl: apiUrl ?? this.apiUrl,
       apiKey: apiKey ?? this.apiKey,
       autoSearch: autoSearch ?? this.autoSearch,
+      displayMode: displayMode ?? this.displayMode,
       filterNoise: filterNoise ?? this.filterNoise,
+      debugCapture: debugCapture ?? this.debugCapture,
       maxCaptureLines: maxCaptureLines ?? this.maxCaptureLines,
       overlayX: overlayX ?? this.overlayX,
       overlayY: overlayY ?? this.overlayY,
@@ -73,6 +87,7 @@ class QuizConfig {
       bankEnabled: bankEnabled ?? this.bankEnabled,
       bankPriority: bankPriority ?? this.bankPriority,
       bankMaxMatches: bankMaxMatches ?? this.bankMaxMatches,
+      allowExternalApi: allowExternalApi ?? this.allowExternalApi,
     );
   }
 
@@ -81,7 +96,9 @@ class QuizConfig {
     'apiUrl': apiUrl,
     'apiKey': apiKey,
     'autoSearch': autoSearch,
+    'displayMode': displayMode,
     'filterNoise': filterNoise,
+    'debugCapture': debugCapture,
     'maxCaptureLines': maxCaptureLines,
     'overlayX': overlayX,
     'overlayY': overlayY,
@@ -91,6 +108,7 @@ class QuizConfig {
     'bankEnabled': bankEnabled,
     'bankPriority': bankPriority,
     'bankMaxMatches': bankMaxMatches,
+    'allowExternalApi': allowExternalApi,
   };
 
   factory QuizConfig.fromJson(Map<String, dynamic> json) => QuizConfig(
@@ -98,7 +116,9 @@ class QuizConfig {
     apiUrl: (json['apiUrl'] as String?) ?? '',
     apiKey: (json['apiKey'] as String?) ?? '',
     autoSearch: (json['autoSearch'] as bool?) ?? true,
+    displayMode: _parseDisplayMode(json['displayMode'] as String?),
     filterNoise: (json['filterNoise'] as bool?) ?? true,
+    debugCapture: (json['debugCapture'] as bool?) ?? false,
     maxCaptureLines: (json['maxCaptureLines'] as num?)?.toInt() ?? 8,
     overlayX: (json['overlayX'] as num?)?.toDouble() ?? 0.0,
     overlayY: (json['overlayY'] as num?)?.toDouble() ?? 0.0,
@@ -108,5 +128,18 @@ class QuizConfig {
     bankEnabled: (json['bankEnabled'] as bool?) ?? true,
     bankPriority: (json['bankPriority'] as bool?) ?? true,
     bankMaxMatches: (json['bankMaxMatches'] as num?)?.toInt() ?? 3,
+    allowExternalApi: (json['allowExternalApi'] as bool?) ?? false,
   );
+
+  static String _parseDisplayMode(String? value) {
+    switch (value) {
+      case 'overlay':
+      case 'notification':
+      case 'accessibility_overlay':
+      case 'manual':
+        return value!;
+      default:
+        return 'notification';
+    }
+  }
 }

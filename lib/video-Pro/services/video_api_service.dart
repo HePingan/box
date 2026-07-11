@@ -32,7 +32,7 @@ class VideoApiService {
     ),
     proxyPrefix: String.fromEnvironment(
       'VIDEO_VOD_PROXY_PREFIX',
-      defaultValue: 'https://proxy.shuabu.eu.org/?url=',
+      defaultValue: kDefaultVideoProxyPrefix,
     ),
   );
 

@@ -5,6 +5,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'update_dialog.dart';
 import 'update_service.dart';
 import 'update_models.dart';
+import 'update_security.dart';
 
 class UpdateBootstrapPage extends StatefulWidget {
   final Widget nextPage;
@@ -15,6 +16,7 @@ class UpdateBootstrapPage extends StatefulWidget {
 
   /// 强更检查失败时是否允许进入主界面
   final bool allowProceedOnCheckFailure;
+  final UpdateManifestSecurityConfig updateSecurity;
 
   const UpdateBootstrapPage({
     super.key,
@@ -24,6 +26,7 @@ class UpdateBootstrapPage extends StatefulWidget {
     required this.platform,
     required this.channel,
     this.allowProceedOnCheckFailure = true,
+    this.updateSecurity = const UpdateManifestSecurityConfig(),
   });
 
   @override
@@ -65,6 +68,7 @@ class _UpdateBootstrapPageState extends State<UpdateBootstrapPage> {
         channel: widget.channel,
         versionCode: currentCode,
         packageName: info.packageName,
+        security: widget.updateSecurity,
       );
 
       if (!mounted) return;

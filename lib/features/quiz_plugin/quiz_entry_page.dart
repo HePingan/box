@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../design_system/app_tokens.dart';
 import 'quiz_bank.dart';
 
 class QuizEntryPage extends StatefulWidget {

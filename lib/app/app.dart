@@ -28,6 +28,7 @@ class BoxApp extends StatelessWidget {
         platform: AppConfig.updatePlatform,
         channel: AppConfig.appChannel,
         allowProceedOnCheckFailure: AppConfig.allowProceedOnCheckFailure,
+        updateSecurity: AppConfig.updateSecurityConfig,
       ),
     );
   }

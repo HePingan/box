@@ -15,6 +15,7 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "com.example.box/quiz_plugin"
         private const val REQUEST_OVERLAY_PERMISSION = 1001
+        private const val REQUEST_NOTIFICATION_PERMISSION = 1002
     }
 
     private var overlayManager: QuizOverlayManager? = null
@@ -40,8 +41,14 @@ class MainActivity : FlutterActivity() {
                     requestOverlayPermission()
                     result.success(true)
                 }
+                "requestNotificationPermission" -> {
+                    requestNotificationPermission()
+                    result.success(true)
+                }
                 "setOverlayVisible" -> {
                     val visible = call.argument<Boolean>("visible") ?: false
+                    val mode = call.argument<String>("displayMode")
+                    overlayManager?.setDisplayMode(mode)
                     try {
                         if (visible) {
                             if (overlayManager == null) {
@@ -53,12 +60,17 @@ class MainActivity : FlutterActivity() {
                                 result.success(false)
                                 return@setMethodCallHandler
                             }
-                            if (hasOverlayPermission()) {
-                                Toast.makeText(this, "正在尝试显示悬浮窗...", Toast.LENGTH_SHORT).show()
+                            if (mode == "notification" || mode == "manual" || mode == "accessibility_overlay" || hasOverlayPermission()) {
+                                if (mode == "notification" || mode == "accessibility_overlay") {
+                                    requestNotificationPermission()
+                                }
+                                if (mode == "overlay") {
+                                    Toast.makeText(this, "正在尝试显示悬浮窗...", Toast.LENGTH_SHORT).show()
+                                }
                                 overlayManager?.setVisible(true)
                                 result.success(true)
                             } else {
-                                Toast.makeText(this, "悬浮窗权限未开启，请先授权", Toast.LENGTH_LONG).show()
+                                Toast.makeText(this, "悬浮窗权限未开启，请先授权，或切换为通知/手动模式", Toast.LENGTH_LONG).show()
                                 requestOverlayPermission()
                                 result.success(false)
                             }
@@ -68,32 +80,6 @@ class MainActivity : FlutterActivity() {
                         }
                     } catch (e: Throwable) {
                         Toast.makeText(this, "悬浮窗控制异常: ${e.javaClass.simpleName} ${e.message}", Toast.LENGTH_LONG).show()
-                        result.success(false)
-                    }
-                }
-                "showFallbackActivity" -> {
-                    try {
-                        val intent = Intent(this, OverlayFallbackActivity::class.java).apply {
-                            val q = call.argument<String>("question") ?: ""
-                            val a = call.argument<String>("answers") ?: ""
-                            putExtra("question", q)
-                            putExtra("answers", a)
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        startActivity(intent)
-                        result.success(true)
-                    } catch (e: Throwable) {
-                        Toast.makeText(this, "保底显示层启动失败", Toast.LENGTH_SHORT).show()
-                        result.success(false)
-                    }
-                }
-                "hideFallbackActivity" -> {
-                    try {
-                        val intent = Intent(this, OverlayFallbackActivity::class.java)
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        startActivity(intent)
-                        result.success(true)
-                    } catch (_: Throwable) {
                         result.success(false)
                     }
                 }
@@ -107,7 +93,12 @@ class MainActivity : FlutterActivity() {
                     val question = call.argument<String>("question") ?: ""
                     val answers = call.argument<String>("answers")
                     val isSearching = call.argument<Boolean>("isSearching")
+                    val mode = call.argument<String>("displayMode")
+                    overlayManager?.setDisplayMode(mode)
                     overlayManager?.updateContent(question, answers, isSearching)
+                    if (mode == "notification" || (mode != "accessibility_overlay" && overlayManager?.isVisible() != true)) {
+                        overlayManager?.showNotificationOnly()
+                    }
                     result.success(true)
                 }
                 "onQuestionCaptured" -> {
@@ -127,31 +118,32 @@ class MainActivity : FlutterActivity() {
                     val right = call.argument<Double>("right")?.toInt() ?: return@setMethodCallHandler
                     val bottom = call.argument<Double>("bottom")?.toInt() ?: return@setMethodCallHandler
 
-                    val intent = Intent(this, QuizAccessibilityService::class.java).apply {
-                        action = "UPDATE_REGION"
+                    val intent = Intent(QuizAccessibilityService.ACTION_UPDATE_REGION).apply {
+                        setPackage(packageName)
                         putExtra("left", left)
                         putExtra("top", top)
                         putExtra("right", right)
                         putExtra("bottom", bottom)
                     }
                     try {
-                        startService(intent)
+                        sendBroadcast(intent)
                     } catch (_: Exception) {}
 
                     result.success(true)
                 }
                 "openRegionSelector" -> {
-                    if (overlayManager?.let { true } == false) {
+                    if (overlayManager?.isVisible() != true) {
                         if (hasOverlayPermission()) {
+                            overlayManager?.setDisplayMode("overlay")
                             overlayManager?.setVisible(true)
                         } else {
                             requestOverlayPermission()
+                            result.success(false)
+                            return@setMethodCallHandler
                         }
                     }
                     try {
-                        val method = overlayManager?.javaClass?.getDeclaredMethod("toggleRegionMode")
-                        method?.isAccessible = true
-                        method?.invoke(overlayManager)
+                        overlayManager?.toggleRegionMode()
                     } catch (_: Exception) {}
                     result.success(true)
                 }
@@ -170,6 +162,7 @@ class MainActivity : FlutterActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_OVERLAY_PERMISSION) {
             if (hasOverlayPermission()) {
+                overlayManager?.setDisplayMode("overlay")
                 overlayManager?.setVisible(true)
             }
         }
@@ -223,6 +216,14 @@ class MainActivity : FlutterActivity() {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivityForResult(intent, REQUEST_OVERLAY_PERMISSION)
+        }
+    }
+
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), REQUEST_NOTIFICATION_PERMISSION)
         }
     }
 }

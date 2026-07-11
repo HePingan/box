@@ -3,6 +3,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../config/video_proxy_config.dart';
+
 import '../../design_system/widgets/app_page_scaffold.dart';
 import '../controller/history_controller.dart';
 import '../controller/video_controller.dart';
@@ -37,8 +39,7 @@ class VideoSliverHome extends StatefulWidget {
 }
 
 class _VideoSliverHomeState extends State<VideoSliverHome> {
-  static const String _fallbackCatalogUrl =
-      'https://proxy.shuabu.eu.org?format=0&source=jin18';
+  static const String _fallbackCatalogUrl = kDefaultVideoCatalogUrlFormat0;
 
   final ScrollController _scrollController = ScrollController();
   bool _autoLoadMoreRunning = false;

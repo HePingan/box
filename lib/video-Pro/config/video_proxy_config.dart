@@ -1,3 +1,10 @@
+const String kDefaultVideoProxyHost = 'https://proxy.shuabu.eu.org';
+const String kDefaultVideoProxyPrefix = '$kDefaultVideoProxyHost/?url=';
+const String kDefaultVideoCatalogUrlFormat0 =
+    '$kDefaultVideoProxyHost?format=0&source=jin18';
+const String kDefaultVideoCatalogUrlFormat1 =
+    '$kDefaultVideoProxyHost?format=1&source=jin18';
+
 class VideoProxyConfig {
   final bool enabled;
   final bool mediaEnabled;
@@ -6,7 +13,7 @@ class VideoProxyConfig {
   const VideoProxyConfig({
     this.enabled = true,
     this.mediaEnabled = false,
-    this.proxyPrefix = 'https://proxy.shuabu.eu.org/?url=',
+    this.proxyPrefix = kDefaultVideoProxyPrefix,
   });
 
   VideoProxyConfig copyWith({

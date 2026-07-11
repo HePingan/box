@@ -158,14 +158,12 @@ class OfflineCacheService {
         detailUrl: meta.id, // 用 id 作为 detailUrl
         forceRefresh: false,
       );
-      if (detail != null) {
-        final cached = await countCachedChapters(detail);
-        return meta.copyWith(
-          cachedChapters: cached,
-          totalChapters: detail.chapters.length,
-          estimatedBytes: cached * 3, // 每章约 3KB 估算
-        );
-      }
+      final cached = await countCachedChapters(detail);
+      return meta.copyWith(
+        cachedChapters: cached,
+        totalChapters: detail.chapters.length,
+        estimatedBytes: cached * 3, // 每章约 3KB 估算
+      );
     } catch (_) {
       // 加载失败 → 不展示缓存统计
     }
@@ -189,10 +187,8 @@ class OfflineCacheService {
         detailUrl: bookId,
         forceRefresh: false,
       );
-      if (detail != null) {
-        await _clearChapterCache(detail);
-        return true;
-      }
+      await _clearChapterCache(detail);
+      return true;
     } catch (_) {}
     return false;
   }
@@ -210,7 +206,9 @@ class OfflineCacheService {
   Future<void> clearAllWithChapters() async {
     final metas = await getOfflineMetas();
     for (final meta in metas) {
-      await clearCacheById(meta.id).catchError((_) {});
+      try {
+        await clearCacheById(meta.id);
+      } catch (_) {}
     }
     await clearAll();
   }
@@ -326,22 +324,20 @@ class OfflineCacheService {
         detailUrl: meta.id,
         forceRefresh: false,
       );
-      if (detail != null) {
-        int cached = 0;
-        for (final ch in detail.chapters) {
-          if (ch.url.trim().isEmpty) continue;
-          final data = await cache.read(NovelCacheKeys.chapter(ch.url.trim()));
-          if (data != null) {
-            cached++;
-            // 粗略估算大小（第一次读取时计算）
-          }
+      int cached = 0;
+      for (final ch in detail.chapters) {
+        if (ch.url.trim().isEmpty) continue;
+        final data = await cache.read(NovelCacheKeys.chapter(ch.url.trim()));
+        if (data != null) {
+          cached++;
+          // 粗略估算大小（第一次读取时计算）
         }
-        return meta.copyWith(
-          cachedChapters: cached,
-          totalChapters: detail.chapters.length,
-          estimatedBytes: cached * 3072, // ~3KB/章
-        );
       }
+      return meta.copyWith(
+        cachedChapters: cached,
+        totalChapters: detail.chapters.length,
+        estimatedBytes: cached * 3072, // ~3KB/章
+      );
     } catch (_) {}
     return meta;
   }

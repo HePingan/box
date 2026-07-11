@@ -15,6 +15,16 @@ class DailyNewsPage extends StatefulWidget {
 }
 
 class _DailyNewsPageState extends State<DailyNewsPage> {
+  static final Uri _fallbackUri =
+      Uri.parse('https://actcpc.heytapimage.com/oh5/3/1/index.html#/');
+
+  static const Set<String> _allowedHosts = {
+    'actcpc.heytapimage.com',
+    'daily.zhihu.com',
+    'news-at.zhihu.com',
+    'news-at-cdn.zhihu.com',
+  };
+
   late final WebViewController _controller;
 
   @override
@@ -22,12 +32,35 @@ class _DailyNewsPageState extends State<DailyNewsPage> {
     super.initState();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..loadRequest(
-        Uri.parse(
-          widget.initialUrl ??
-              'https://actcpc.heytapimage.com/oh5/3/1/index.html#/',
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest: (request) {
+            final uri = Uri.tryParse(request.url);
+            if (uri == null || !_isAllowedUri(uri)) {
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
         ),
-      );
+      )
+      ..loadRequest(_initialUri());
+  }
+
+  Uri _initialUri() {
+    final raw = widget.initialUrl?.trim();
+    final uri = raw == null || raw.isEmpty ? null : Uri.tryParse(raw);
+    if (uri == null || !_isAllowedUri(uri)) return _fallbackUri;
+    return uri;
+  }
+
+  bool _isAllowedUri(Uri uri) {
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'https' && scheme != 'http') return false;
+
+    final host = uri.host.toLowerCase();
+    return _allowedHosts.any(
+      (allowed) => host == allowed || host.endsWith('.$allowed'),
+    );
   }
 
   @override

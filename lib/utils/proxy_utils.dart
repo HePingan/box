@@ -1,13 +1,17 @@
-/// 全局代理包裹函数：让一切资源走你的专属 shuabu 节点
+import '../video-Pro/config/video_proxy_config.dart';
+
+/// 全局代理包裹函数：让一切资源走统一配置的代理节点。
 String wrapWithProxy(String rawUrl) {
   final url = rawUrl.trim();
   if (url.isEmpty || !url.startsWith('http')) return url;
 
-  // 刚才你配好的专属域名！
-  const proxyHost = 'https://proxy.shuabu.eu.org';
+  final proxyUri = Uri.tryParse(kDefaultVideoProxyHost);
+  final uri = Uri.tryParse(url);
+  if (proxyUri != null &&
+      uri != null &&
+      uri.host.toLowerCase() == proxyUri.host.toLowerCase()) {
+    return url; // 防止重复套娃
+  }
 
-  if (url.contains('shuabu.eu.org')) return url; // 防止重复套娃
-
-  // 效果：https://proxy.shuabu.eu.org/https://api.zuidapi.com/...
-  return '$proxyHost/$url';
+  return '$kDefaultVideoProxyHost/$url';
 }

@@ -8,6 +8,7 @@ import '../features/admin/register_providers.dart';
 import '../novel/pages/source_manager/book_source_bootstrap.dart';
 import '../utils/app_logger.dart';
 import '../utils/http_overrides.dart';
+import '../video-Pro/config/video_proxy_config.dart';
 import '../video_module.dart';
 
 class AppBootstrapResult {
@@ -82,8 +83,8 @@ class AppBootstrap {
     VideoModule.configureLicensedCatalogSource(
       catalogName: 'OuonnkiTV',
       catalogUrls: const [
-        'https://proxy.shuabu.eu.org?format=0&source=jin18',
-        'https://proxy.shuabu.eu.org?format=1&source=jin18',
+        kDefaultVideoCatalogUrlFormat0,
+        kDefaultVideoCatalogUrlFormat1,
       ],
     );
   }

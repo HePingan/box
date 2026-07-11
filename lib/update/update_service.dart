@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'update_models.dart';
 import 'update_response_parser.dart';
+import 'update_security.dart';
 
 class UpdateService {
   UpdateService._();
@@ -42,6 +43,7 @@ class UpdateService {
     required String packageName,
     String? deviceId,
     String? userId,
+    UpdateManifestSecurityConfig security = const UpdateManifestSecurityConfig(),
   }) async {
     final validatedUrl = _validateUpdateUrl(checkUrl);
     if (validatedUrl == null) {
@@ -56,14 +58,19 @@ class UpdateService {
           'channel': channel,
           'version_code': versionCode,
           'package_name': packageName,
-          'device_id': ?deviceId,
-          'user_id': ?userId,
+          if (deviceId != null && deviceId.isNotEmpty) 'device_id': deviceId,
+          if (userId != null && userId.isNotEmpty) 'user_id': userId,
           'ts': DateTime.now().millisecondsSinceEpoch,
         },
       );
 
       final map = extractUpdateDataMap(res.data);
       final manifest = UpdateManifest.fromJson(map);
+      validateUpdateManifestSecurity(
+        manifest: manifest,
+        rawManifestJson: map,
+        security: security,
+      );
 
       // 服务端返回的如果是“旧版本/同版本”，依然可以缓存，
       // 但真正是否弹窗，由上层 bootstrap 兜底判断。

@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.RectF
 import android.os.Build
 import android.util.Log
 import android.view.Gravity
@@ -13,6 +14,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -38,6 +40,7 @@ class QuizOverlayManager(private val context: Context) {
     private var channel: MethodChannel? = null
     private var currentQuestion = ""
     private var currentAnswers = ""
+    private var displayMode = "overlay"
 
     init {
         try {
@@ -55,16 +58,57 @@ class QuizOverlayManager(private val context: Context) {
 
     fun isVisible(): Boolean = isVisible
 
+    fun setDisplayMode(mode: String?) {
+        displayMode = when (mode) {
+            "notification", "manual", "overlay", "accessibility_overlay" -> mode
+            else -> "overlay"
+        }
+    }
+
     fun setVisible(visible: Boolean) {
-        if (visible) showWithFallback() else hide()
+        if (visible) showByDisplayMode() else hide()
+    }
+
+    fun showNotificationOnly() {
+        showNotificationFallback()
     }
 
     fun updateContent(question: String, answers: String?, isSearching: Boolean?) {
+        if (question.isNotBlank() && question != currentQuestion && answers == null) {
+            currentAnswers = ""
+        }
         currentQuestion = question
         if (answers != null) currentAnswers = answers
         updateView()
+        if (displayMode == "accessibility_overlay") {
+            if (!showAccessibilityOverlay()) {
+                showNotificationFallback()
+            }
+        }
         if (isSearching == true) {
             Toast.makeText(context.applicationContext, "正在搜题...", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun showByDisplayMode() {
+        when (displayMode) {
+            "manual" -> {
+                hide()
+                Toast.makeText(context.applicationContext, "已启用手动模式：请在应用内手动搜题", Toast.LENGTH_SHORT).show()
+            }
+            "notification" -> {
+                hideOverlayViewOnly()
+                showNotificationFallback()
+                Toast.makeText(context.applicationContext, "已切换到通知栏提示模式", Toast.LENGTH_SHORT).show()
+            }
+            "accessibility_overlay" -> {
+                hideOverlayViewOnly()
+                if (!showAccessibilityOverlay()) {
+                    showNotificationFallback()
+                    Toast.makeText(context.applicationContext, "无障碍悬浮不可用，已改用通知栏提示", Toast.LENGTH_LONG).show()
+                }
+            }
+            else -> showWithFallback()
         }
     }
 
@@ -75,11 +119,11 @@ class QuizOverlayManager(private val context: Context) {
             return
         }
 
-        var success = runCatching { show() }.getOrElse { false }
+        val success = runCatching { show() }.getOrElse { false }
         if (!success) {
-            Log.w(TAG, "try fallback notification + activity")
+            Log.w(TAG, "overlay failed; fallback to notification")
             showNotificationFallback()
-            showFallbackActivity()
+            Toast.makeText(context.applicationContext, "悬浮窗不可用，已改用通知栏提示", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -100,15 +144,16 @@ class QuizOverlayManager(private val context: Context) {
         overlayView = inflater.inflate(R.layout.quiz_overlay, null)
         Toast.makeText(context.applicationContext, "正在创建悬浮窗视图...", Toast.LENGTH_SHORT).show()
 
-        var layoutFlag: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+        val width = (context.resources.displayMetrics.widthPixels * 0.86f).toInt()
+        val layoutFlag: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
         params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            width,
             WindowManager.LayoutParams.WRAP_CONTENT,
             layoutFlag,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -137,6 +182,9 @@ class QuizOverlayManager(private val context: Context) {
         }
 
         overlayView?.findViewById<View>(R.id.btn_area)?.setOnClickListener {
+            toggleRegionMode()
+        }
+        overlayView?.findViewById<View>(R.id.btn_search)?.setOnClickListener {
             channel?.invokeMethod("manualSearch", mapOf("question" to currentQuestion))
         }
         overlayView?.findViewById<View>(R.id.btn_close)?.setOnClickListener {
@@ -155,39 +203,131 @@ class QuizOverlayManager(private val context: Context) {
             Toast.makeText(context.applicationContext, "悬浮窗创建失败(${e.javaClass.simpleName})：${e.message}", Toast.LENGTH_LONG).show()
         }
 
-        if (layoutFlag == WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                layoutFlag = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                params?.type = layoutFlag
-                windowManager?.addView(overlayView, params)
-                isVisible = true
-                Toast.makeText(context.applicationContext, "已切换为普通悬浮窗模式", Toast.LENGTH_SHORT).show()
-                return true
-            } catch (e2: Exception) {
-                e2.printStackTrace()
-                Toast.makeText(context.applicationContext, "悬浮窗仍无法启动：${e2.message}", Toast.LENGTH_LONG).show()
-            }
-        }
-
         return false
     }
 
-    private fun showFallbackActivity() {
-        try {
-            val intent = Intent(context, OverlayFallbackActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                putExtra("question", currentQuestion)
-                putExtra("answers", currentAnswers)
+    fun toggleRegionMode() {
+        val root = overlayView ?: return
+        val selector = root.findViewById<View>(R.id.region_selector) ?: return
+        val toolbar = root.findViewById<View>(R.id.region_toolbar)
+        val show = selector.visibility != View.VISIBLE
+        selector.visibility = if (show) View.VISIBLE else View.GONE
+        toolbar?.visibility = if (show) View.VISIBLE else View.GONE
+        root.findViewById<View>(R.id.answer_container)?.visibility = if (show) View.GONE else View.VISIBLE
+        if (show) {
+            (selector.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+                lp.width = FrameLayout.LayoutParams.MATCH_PARENT
+                lp.height = 420
+                selector.layoutParams = lp
             }
-            context.startActivity(intent)
-            Toast.makeText(context.applicationContext, "已启动保底显示层", Toast.LENGTH_SHORT).show()
-        } catch (e: Throwable) {
-            Log.w(TAG, "fallback activity failed", e)
-            Toast.makeText(context.applicationContext, "保底显示层启动失败", Toast.LENGTH_SHORT).show()
+            (toolbar?.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+                lp.width = FrameLayout.LayoutParams.MATCH_PARENT
+                lp.height = 48
+                toolbar.layoutParams = lp
+            }
+        }
+        val regionSelector = selector as? RegionSelectorView
+        if (show) {
+            loadRegion()?.let { regionSelector?.setRegion(screenToSelectorRegion(it, selector)) }
+            regionSelector?.setOnRegionConfirmedListener {
+                saveSelectorRegion(selector, closeAfterSave = true)
+            }
+        }
+        root.findViewById<View>(R.id.btn_region_cancel)?.setOnClickListener { toggleRegionMode() }
+        root.findViewById<View>(R.id.btn_region_save)?.setOnClickListener {
+            saveSelectorRegion(selector, closeAfterSave = true)
         }
     }
 
+    private fun saveSelectorRegion(selectorView: View, closeAfterSave: Boolean) {
+        val selector = selectorView as? RegionSelectorView ?: return
+        val screenRegion = selectorToScreenRegion(selector.getRegion(), selectorView)
+        saveRegion(screenRegion)
+        Toast.makeText(context.applicationContext, "识别区域已保存", Toast.LENGTH_SHORT).show()
+        if (closeAfterSave) toggleRegionMode()
+    }
+
+    private fun selectorToScreenRegion(region: RectF, selectorView: View): RectF {
+        val location = IntArray(2)
+        selectorView.getLocationOnScreen(location)
+        return RectF(
+            region.left + location[0],
+            region.top + location[1],
+            region.right + location[0],
+            region.bottom + location[1]
+        )
+    }
+
+    private fun screenToSelectorRegion(region: RectF, selectorView: View): RectF {
+        val location = IntArray(2)
+        selectorView.getLocationOnScreen(location)
+        return RectF(
+            region.left - location[0],
+            region.top - location[1],
+            region.right - location[0],
+            region.bottom - location[1]
+        )
+    }
+
+    private fun saveRegion(region: RectF) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_REGION, "${region.left},${region.top},${region.right},${region.bottom}")
+            .apply()
+        notifyAccessibilityServiceRegion(region)
+    }
+
+    private fun notifyAccessibilityServiceRegion(region: RectF) {
+        val intent = Intent(QuizAccessibilityService.ACTION_UPDATE_REGION).apply {
+            setPackage(context.packageName)
+            putExtra("left", region.left.toInt())
+            putExtra("top", region.top.toInt())
+            putExtra("right", region.right.toInt())
+            putExtra("bottom", region.bottom.toInt())
+        }
+        try {
+            context.sendBroadcast(intent)
+        } catch (_: Throwable) {}
+    }
+
+    private fun loadRegion(): RectF? {
+        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(KEY_REGION, null) ?: return null
+        val parts = raw.split(',').mapNotNull { it.toFloatOrNull() }
+        if (parts.size != 4) return null
+        return RectF(parts[0], parts[1], parts[2], parts[3])
+    }
+
+    private fun showAccessibilityOverlay(): Boolean {
+        if (!QuizAccessibilityService.isRunning()) return false
+        val intent = Intent(QuizAccessibilityService.ACTION_SHOW_ACCESSIBILITY_OVERLAY).apply {
+            setPackage(context.packageName)
+            putExtra(QuizAccessibilityService.EXTRA_QUESTION, currentQuestion)
+            putExtra(QuizAccessibilityService.EXTRA_ANSWERS, currentAnswers)
+        }
+        return try {
+            context.sendBroadcast(intent)
+            true
+        } catch (e: Throwable) {
+            Log.w(TAG, "send accessibility overlay command failed", e)
+            false
+        }
+    }
+
+    private fun hideAccessibilityOverlay() {
+        if (!QuizAccessibilityService.isRunning()) return
+        val intent = Intent(QuizAccessibilityService.ACTION_HIDE_ACCESSIBILITY_OVERLAY).setPackage(context.packageName)
+        try {
+            context.sendBroadcast(intent)
+        } catch (_: Throwable) {}
+    }
+
     private fun showNotificationFallback() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            context.checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.w(TAG, "notification permission not granted")
+            return
+        }
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
         val channelId = "quiz_overlay_fallback"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -211,10 +351,11 @@ class QuizOverlayManager(private val context: Context) {
             .setContentTitle("答题助手")
             .setContentText(answers)
             .setStyle(NotificationCompat.BigTextStyle().bigText("$question\n\n$answers"))
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(Notification.CATEGORY_CALL)
-            .setFullScreenIntent(pending, true)
-            .setOngoing(true)
+            .setContentIntent(pending)
+            .setAutoCancel(displayMode != "notification")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(Notification.CATEGORY_STATUS)
+            .setOngoing(displayMode == "notification")
             .build()
 
         try {
@@ -223,30 +364,33 @@ class QuizOverlayManager(private val context: Context) {
     }
 
     private fun bringToFront() {
+        val view = overlayView ?: return
+        val lp = params ?: return
+        val wm = windowManager ?: return
         try {
-            params?.let {
-                it.flags = it.flags or WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER
-                windowManager?.updateViewLayout(overlayView, it)
-            }
-        } catch (_: Exception) {}
+            wm.removeView(view)
+            wm.addView(view, lp)
+            isVisible = true
+        } catch (e: Exception) {
+            Log.w(TAG, "bring overlay to front failed", e)
+            try { wm.updateViewLayout(view, lp) } catch (_: Exception) {}
+        }
     }
 
     fun hide() {
-        if (!isVisible && overlayView == null) return
-        try { windowManager?.removeView(overlayView) } catch (_: Exception) {}
-        overlayView = null
-        isVisible = false
-
+        hideOverlayViewOnly()
+        hideAccessibilityOverlay()
         try {
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             nm?.cancel(NOTIFICATION_ID)
         } catch (_: Exception) {}
+    }
 
-        try {
-            val intent = Intent(context, OverlayFallbackActivity::class.java)
-            (context as? MainActivity)?.finishAffinity()
-            context.startActivity(intent)
-        } catch (_: Exception) {}
+    private fun hideOverlayViewOnly() {
+        if (!isVisible && overlayView == null) return
+        try { windowManager?.removeView(overlayView) } catch (_: Exception) {}
+        overlayView = null
+        isVisible = false
     }
 
     private fun updateView() {

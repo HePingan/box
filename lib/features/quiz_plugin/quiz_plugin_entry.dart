@@ -23,7 +23,6 @@ class QuizPluginEntry {
   static const MethodChannel _channel = MethodChannel(_kChannel);
 
   // 自动搜题状态
-  static bool _autoSearchInitialized = false;
   static QuizEngine? _engineForAutoSearch;
 
   // 配置持久化
@@ -67,24 +66,18 @@ class QuizPluginEntry {
     } catch (_) {}
   }
 
-  static Future<void> setOverlayVisible(bool visible) async {
+  static Future<void> requestNotificationPermission() async {
     try {
-      await _channel.invokeMethod('setOverlayVisible', {'visible': visible});
+      await _channel.invokeMethod('requestNotificationPermission');
     } catch (_) {}
   }
 
-  static Future<void> showFallbackActivity({required String question, required String answers}) async {
+  static Future<void> setOverlayVisible(bool visible, {String displayMode = 'overlay'}) async {
     try {
-      await _channel.invokeMethod('showFallbackActivity', {
-        'question': question,
-        'answers': answers,
+      await _channel.invokeMethod('setOverlayVisible', {
+        'visible': visible,
+        'displayMode': displayMode,
       });
-    } catch (_) {}
-  }
-
-  static Future<void> hideFallbackActivity() async {
-    try {
-      await _channel.invokeMethod('hideFallbackActivity');
     } catch (_) {}
   }
 
@@ -108,21 +101,18 @@ class QuizPluginEntry {
     required String question,
     String? answers,
     bool? isSearching,
+    String displayMode = 'overlay',
   }) async {
     try {
       await _channel.invokeMethod('updateOverlayContent', {
         'question': question,
+        'displayMode': displayMode,
         if (answers != null) 'answers': answers,
         if (isSearching != null) 'isSearching': isSearching,
       });
     } catch (_) {}
   }
 
-  static Future<void> sendResultToOverlay(String jsonResult) async {
-    try {
-      await _channel.invokeMethod('sendResult', {'result': jsonResult});
-    } catch (_) {}
-  }
 
   static Future<void> openRegionSelector() async {
     try {
@@ -141,26 +131,79 @@ class QuizPluginEntry {
     } catch (_) {}
   }
 
+  static String _formatResultForOverlay(QuizResult result) {
+    if (result.isSuccess) {
+      return result.answers.map((answer) => answer.text).where((text) => text.trim().isNotEmpty).join('\n\n');
+    }
+    return result.error?.isNotEmpty == true ? result.error! : '未找到答案';
+  }
+
+  static String _formatDebugCapture(String captured) {
+    final lines = captured
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .take(12)
+        .toList();
+    final preview = lines.isEmpty ? captured.trim() : lines.join('\n');
+    return '【调试】无障碍捕获到 ${captured.length} 字 / ${lines.length} 行\n'
+        '若这里有题目但无答案，说明卡在题库匹配；若这里为空/不是题目，说明卡在屏幕捕获或识别区域。\n\n'
+        '$preview';
+  }
+
+  static Future<void> _handleCapturedQuestion(String question, String method) async {
+    final captured = question.trim();
+    if (captured.isEmpty) return;
+    final config = await loadConfig();
+    if (!config.enabled && method != 'manualSearch') return;
+
+    final shouldSearch = method == 'manualSearch' || config.autoSearch;
+    if (config.debugCapture && method != 'manualSearch') {
+      await updateOverlayContent(
+        question: '调试捕获：无障碍已回传屏幕文本',
+        answers: _formatDebugCapture(captured),
+        isSearching: false,
+        displayMode: config.displayMode,
+      );
+    }
+    if (!shouldSearch) {
+      await updateOverlayContent(
+        question: captured,
+        answers: '已捕获题目，自动搜题已关闭',
+        isSearching: false,
+        displayMode: config.displayMode,
+      );
+      return;
+    }
+
+    final engine = _engineForAutoSearch ??= QuizEngine(config: config);
+    engine.config = config;
+    await updateOverlayContent(
+      question: config.debugCapture ? '调试捕获：正在用下方文本搜题' : captured,
+      answers: config.debugCapture ? '${_formatDebugCapture(captured)}\n\n正在搜题...' : '正在搜题...',
+      isSearching: true,
+      displayMode: config.displayMode,
+    );
+    final result = await engine.search(captured, forceExternalSearch: method == 'manualSearch');
+    await updateOverlayContent(
+      question: captured,
+      answers: config.debugCapture
+          ? '${_formatResultForOverlay(result)}\n\n--- 调试捕获文本 ---\n${_formatDebugCapture(captured)}'
+          : _formatResultForOverlay(result),
+      isSearching: false,
+      displayMode: config.displayMode,
+    );
+  }
+
   /// 初始化自动搜题监听（接收无障碍服务捕获的题目）
   static Future<void> initAutoSearch() async {
-    if (_autoSearchInitialized) return;
-    _autoSearchInitialized = true;
-
+    // 允许重复设置 handler，避免 FlutterEngine 重建后因旧标记导致通道失效。
     _channel.setMethodCallHandler((call) async {
-      if (call.method == 'onQuestionCaptured') {
-        final question = (call.arguments as Map<String, dynamic>?)?['question'] as String? ?? '';
-        if (question.isEmpty) return null;
+      if (call.method == 'onQuestionCaptured' || call.method == 'manualSearch') {
+        final args = call.arguments;
+        final question = args is Map ? (args['question']?.toString() ?? '') : '';
         try {
-          final config = await loadConfig();
-          if (config.autoSearch) {
-            final engine = _engineForAutoSearch ??= QuizEngine(config: config);
-            final result = await engine.search(question);
-            await updateOverlayContent(
-              question: question,
-              answers: result.answers.map((a) => a.text).join('\n'),
-              isSearching: false,
-            );
-          }
+          await _handleCapturedQuestion(question, call.method);
         } catch (_) {
           // 自动搜题失败不影响主流程
         }
@@ -187,9 +230,10 @@ class QuizPluginEntry {
 
     if (result != null && context.mounted) {
       await saveConfig(result!);
+      await initAutoSearch();
       try {
         if (result!.enabled) {
-          await setOverlayVisible(true);
+          await setOverlayVisible(true, displayMode: result!.displayMode);
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('已启用悬浮窗，请查看屏幕'), duration: Duration(seconds: 2)),
@@ -459,9 +503,62 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
             ),
             SwitchListTile(
               title: const Text('收到题目自动搜题'),
-              subtitle: const Text('关闭后仅展示悬浮窗手动搜题'),
+              subtitle: const Text('关闭后仅展示当前捕获内容，手动触发搜题'),
               value: _cfg.autoSearch,
               onChanged: (v) => setState(() => _cfg = _cfg.copyWith(autoSearch: v)),
+            ),
+            SwitchListTile(
+              title: const Text('调试捕获文本'),
+              subtitle: const Text('开启后会把无障碍捕获到的屏幕文本先显示到通知/悬浮窗，用来判断是捕获问题还是题库匹配问题'),
+              value: _cfg.debugCapture,
+              onChanged: (v) => setState(() => _cfg = _cfg.copyWith(debugCapture: v)),
+            ),
+            SwitchListTile(
+              title: const Text('过滤无关文本'),
+              subtitle: const Text('过滤设置、广告、上一题/下一题等界面噪声；调试时可临时关闭'),
+              value: _cfg.filterNoise,
+              onChanged: (v) => setState(() => _cfg = _cfg.copyWith(filterNoise: v)),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('最大捕获行数'),
+              subtitle: Slider(
+                min: 1,
+                max: 20,
+                divisions: 19,
+                label: '${_cfg.maxCaptureLines} 行',
+                value: _cfg.maxCaptureLines.clamp(1, 20).toDouble(),
+                onChanged: (v) => setState(
+                  () => _cfg = _cfg.copyWith(maxCaptureLines: v.round()),
+                ),
+              ),
+              trailing: Text('${_cfg.maxCaptureLines.clamp(1, 20)} 行'),
+            ),
+            SwitchListTile(
+              title: const Text('允许外部网络搜题'),
+              subtitle: const Text('默认关闭：关闭时只查本地题库，避免把题目发送到第三方 API'),
+              value: _cfg.allowExternalApi,
+              onChanged: (v) => setState(() => _cfg = _cfg.copyWith(allowExternalApi: v)),
+            ),
+            const SizedBox(height: AppTokens.spaceMd),
+            Text('显示模式', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 8),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'notification', label: Text('通知'), icon: Icon(Icons.notifications)),
+                ButtonSegment(value: 'accessibility_overlay', label: Text('无障碍悬浮'), icon: Icon(Icons.accessibility_new)),
+                ButtonSegment(value: 'overlay', label: Text('悬浮窗'), icon: Icon(Icons.layers)),
+                ButtonSegment(value: 'manual', label: Text('手动'), icon: Icon(Icons.edit_note)),
+              ],
+              selected: {_cfg.displayMode},
+              onSelectionChanged: (values) {
+                setState(() => _cfg = _cfg.copyWith(displayMode: values.first));
+              },
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _displayModeHint(_cfg.displayMode),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppTokens.textSecondary),
             ),
             const SizedBox(height: AppTokens.spaceMd),
             Text('主题色', style: Theme.of(context).textTheme.titleSmall),
@@ -497,8 +594,11 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
             Text('API 地址', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
             TextField(
+              enabled: _cfg.allowExternalApi,
               decoration: const InputDecoration(
-                  hintText: 'https://example.com/search', border: OutlineInputBorder()),
+                  hintText: 'https://example.com/search',
+                  helperText: '需先开启“允许外部网络搜题”',
+                  border: OutlineInputBorder()),
               controller: TextEditingController(text: _cfg.apiUrl)
                 ..selection = TextSelection.fromPosition(
                     TextPosition(offset: _cfg.apiUrl.length)),
@@ -506,6 +606,7 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
             ),
             const SizedBox(height: AppTokens.spaceMd),
             TextField(
+              enabled: _cfg.allowExternalApi,
               decoration: const InputDecoration(
                   hintText: 'API Key', border: OutlineInputBorder()),
               obscureText: true,
@@ -541,6 +642,9 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                         ? null
                         : () async {
                             await QuizPluginEntry.saveConfig(_cfg);
+                            if (_cfg.displayMode == 'notification') {
+                              await QuizPluginEntry.requestNotificationPermission();
+                            }
                             if (mounted) {
                               Navigator.pop(context);
                               widget.onResult(_cfg);
@@ -562,6 +666,19 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
 // ================================================
 // 识别区域调节 Page
 // ================================================
+
+String _displayModeHint(String mode) {
+  switch (mode) {
+    case 'accessibility_overlay':
+      return '由无障碍服务创建 TYPE_ACCESSIBILITY_OVERLAY；需要先开启无障碍服务，失败时降级为通知栏。';
+    case 'overlay':
+      return '优先使用普通系统悬浮窗；不可用时自动降级为通知栏提示。';
+    case 'manual':
+      return '不主动弹出悬浮窗或通知，只保留应用内手动搜题。';
+    default:
+      return '推荐：用通知栏显示结果，稳定性更好、对其他应用干扰更少。';
+  }
+}
 
 class _RegionSheetPage extends StatefulWidget {
   const _RegionSheetPage();

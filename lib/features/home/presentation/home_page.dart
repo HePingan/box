@@ -74,15 +74,23 @@ class _HomePageState extends State<HomePage>
     setState(() => _isLoadingNews = true);
 
     try {
-      // 同时拉取今日和昨日热点，混合后随机选4条
-      final today = DateTime.now();
+      // 同时拉取今日和昨日热点，混合后随机选4条。
+      final yesterday = DateTime.now().subtract(const Duration(days: 1));
       final yesterdayStr =
-          '${today.year}${today.month.toString().padLeft(2, '0')}${(today.day - 1).toString().padLeft(2, '0')}';
+          '${yesterday.year}${yesterday.month.toString().padLeft(2, '0')}${yesterday.day.toString().padLeft(2, '0')}';
+      const newsTimeout = Duration(seconds: 10);
 
       final results = await Future.wait([
-        http.get(Uri.parse('https://news-at.zhihu.com/api/4/news/latest')),
-        http.get(Uri.parse(
-            'https://news-at.zhihu.com/api/4/news/before/$yesterdayStr')),
+        http
+            .get(Uri.parse('https://news-at.zhihu.com/api/4/news/latest'))
+            .timeout(newsTimeout),
+        http
+            .get(
+              Uri.parse(
+                'https://news-at.zhihu.com/api/4/news/before/$yesterdayStr',
+              ),
+            )
+            .timeout(newsTimeout),
       ]);
 
       final allItems = <_NewsItem>[];

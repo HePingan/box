@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../../config/video_proxy_config.dart';
 import '../../models/video_source.dart';
 import '../../models/vod_item.dart';
 import 'package:box/utils/app_logger.dart';
@@ -28,7 +29,7 @@ const List<String> kHomeNsfwKeywords = [
 const bool kEnableHomeMediaProxy = true;
 
 /// 你的图片代理前缀
-const String kHomeMediaProxyPrefix = 'https://proxy.shuabu.eu.org/?url=';
+const String kHomeMediaProxyPrefix = kDefaultVideoProxyPrefix;
 
 final RegExp _nsfwRegex = RegExp(
   kHomeNsfwKeywords.map(RegExp.escape).join('|'),
@@ -57,7 +58,10 @@ bool _isProxyUrl(String url) {
   if (trimmed.startsWith(kHomeMediaProxyPrefix)) return true;
 
   final uri = Uri.tryParse(trimmed);
-  return uri != null && uri.host == 'proxy.shuabu.eu.org';
+  final proxyUri = Uri.tryParse(kHomeMediaProxyPrefix);
+  return uri != null &&
+      proxyUri != null &&
+      uri.host.toLowerCase() == proxyUri.host.toLowerCase();
 }
 
 String _wrapWithProxy(String url) {
