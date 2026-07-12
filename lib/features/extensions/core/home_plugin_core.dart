@@ -127,6 +127,92 @@ extension HomePluginActionTypeX on HomePluginActionType {
   }
 }
 
+class HomePluginActionContext {
+  final String pluginId;
+  final String title;
+  final String payload;
+  final Map<String, dynamic> extra;
+
+  const HomePluginActionContext({
+    required this.pluginId,
+    required this.title,
+    this.payload = '',
+    this.extra = const {},
+  });
+}
+
+typedef HomePluginActionHandler =
+    Future<void> Function(
+      BuildContext? context,
+      HomePluginActionContext actionContext,
+    );
+
+class HomePluginActionRegistry {
+  HomePluginActionRegistry._();
+
+  static final Map<String, HomePluginActionHandler> _handlers = {
+    HomePluginActionType.toast.name: (context, actionContext) async {
+      if (context == null) return;
+      await _showSnack(
+        context,
+        actionContext.payload.trim().isEmpty
+            ? '点击了 ${actionContext.title}'
+            : actionContext.payload.trim(),
+      );
+    },
+    HomePluginActionType.openDailyNews.name: (context, actionContext) async {
+      if (context == null) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const DailyNewsPage()),
+      );
+    },
+    HomePluginActionType.openNovelList.name: (context, actionContext) async {
+      if (context == null) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
+      );
+    },
+    HomePluginActionType.openVideoList.name: (context, actionContext) async {
+      if (context == null) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const VideoListPage()),
+      );
+    },
+    HomePluginActionType.openImageGenerator.name:
+        (context, actionContext) async {
+          if (context == null) return;
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ImageGeneratorPage()),
+          );
+        },
+  };
+
+  static bool contains(String actionCode) {
+    return _handlers.containsKey(actionCode.trim());
+  }
+
+  static void register(String actionCode, HomePluginActionHandler handler) {
+    final code = actionCode.trim();
+    if (code.isEmpty) return;
+    _handlers[code] = handler;
+  }
+
+  static Future<bool> run(
+    String actionCode,
+    BuildContext? context,
+    HomePluginActionContext actionContext,
+  ) async {
+    final handler = _handlers[actionCode.trim()];
+    if (handler == null) return false;
+    await handler(context, actionContext);
+    return true;
+  }
+}
+
 HomePluginArea _areaFromName(String name) {
   for (final value in HomePluginArea.values) {
     if (value.name == name) {
@@ -157,6 +243,7 @@ class HomeCustomPluginConfig {
   final int colorValue;
   final HomePluginArea area;
   final HomePluginActionType actionType;
+  final String actionCode;
   final String payload;
   final bool enabled;
   final int sort;
@@ -172,6 +259,7 @@ class HomeCustomPluginConfig {
     required this.colorValue,
     required this.area,
     required this.actionType,
+    this.actionCode = '',
     this.payload = '',
     this.enabled = true,
     this.sort = 9999,
@@ -179,6 +267,11 @@ class HomeCustomPluginConfig {
   });
 
   bool get isValid => id.trim().isNotEmpty && title.trim().isNotEmpty;
+
+  String get effectiveActionCode {
+    final code = actionCode.trim();
+    return code.isEmpty ? actionType.name : code;
+  }
 
   IconData get iconData {
     // Dynamic custom plugin icons are restored from persisted user config.
@@ -201,6 +294,7 @@ class HomeCustomPluginConfig {
     int? colorValue,
     HomePluginArea? area,
     HomePluginActionType? actionType,
+    String? actionCode,
     String? payload,
     bool? enabled,
     int? sort,
@@ -216,6 +310,7 @@ class HomeCustomPluginConfig {
       colorValue: colorValue ?? this.colorValue,
       area: area ?? this.area,
       actionType: actionType ?? this.actionType,
+      actionCode: actionCode ?? this.actionCode,
       payload: payload ?? this.payload,
       enabled: enabled ?? this.enabled,
       sort: sort ?? this.sort,
@@ -234,6 +329,7 @@ class HomeCustomPluginConfig {
       'colorValue': colorValue,
       'area': area.name,
       'actionType': actionType.name,
+      'actionCode': effectiveActionCode,
       'payload': payload,
       'enabled': enabled,
       'sort': sort,
@@ -242,6 +338,10 @@ class HomeCustomPluginConfig {
   }
 
   factory HomeCustomPluginConfig.fromJson(Map<String, dynamic> json) {
+    final rawActionCode = _asString(json['actionCode']);
+    final fallbackActionName = rawActionCode.isEmpty
+        ? HomePluginActionType.toast.name
+        : rawActionCode;
     return HomeCustomPluginConfig(
       id: _asString(json['id']),
       title: _asString(json['title']),
@@ -256,8 +356,9 @@ class HomeCustomPluginConfig {
         _asString(json['area'], HomePluginArea.recommend.name),
       ),
       actionType: _actionFromName(
-        _asString(json['actionType'], HomePluginActionType.toast.name),
+        _asString(json['actionType'], fallbackActionName),
       ),
+      actionCode: rawActionCode,
       payload: _asString(json['payload']),
       enabled: _asBool(json['enabled'], true),
       sort: _asInt(json['sort'], 9999),
@@ -704,6 +805,9 @@ class HomePluginHost {
       colorValue: plugin.color.toARGB32(),
       area: plugin.area,
       actionType: HomePluginActionType.toast,
+      actionCode:
+          plugin.customConfig?.effectiveActionCode ??
+          HomePluginActionType.toast.name,
       payload: plugin.subtitle,
       enabled: plugin.enabled,
       sort: plugin.sort,
@@ -724,41 +828,17 @@ class HomePluginHost {
       sort: config.sort,
       customConfig: config,
       onTap: (context) async {
-        switch (config.actionType) {
-          case HomePluginActionType.toast:
-            await _showSnack(
-              context,
-              config.payload.trim().isEmpty
-                  ? '点击了 ${config.title}'
-                  : config.payload.trim(),
-            );
-            return;
-          case HomePluginActionType.openDailyNews:
-            await Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const DailyNewsPage()),
-            );
-            return;
-          case HomePluginActionType.openNovelList:
-            await Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => const NovelListPageWithProvider(),
-              ),
-            );
-            return;
-          case HomePluginActionType.openVideoList:
-            await Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const VideoListPage()),
-            );
-            return;
-          case HomePluginActionType.openImageGenerator:
-            await Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const ImageGeneratorPage()),
-            );
-            return;
+        final ran = await HomePluginActionRegistry.run(
+          config.effectiveActionCode,
+          context,
+          HomePluginActionContext(
+            pluginId: config.id,
+            title: config.title,
+            payload: config.payload,
+          ),
+        );
+        if (!ran && context.mounted) {
+          await _showSnack(context, '插件动作未注册：${config.effectiveActionCode}');
         }
       },
     );
