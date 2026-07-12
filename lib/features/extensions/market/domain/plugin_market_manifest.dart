@@ -562,6 +562,28 @@ class MarketPluginTemplate {
   ];
 }
 
+class PluginPermissionChecker {
+  const PluginPermissionChecker._();
+
+  static Future<bool> check(
+    MarketPluginTemplate template,
+    PluginPermission permission,
+  ) async {
+    if (permission == PluginPermission.none) return true;
+    return template.requiresPermission(permission);
+  }
+
+  static Future<bool> checkAll(
+    MarketPluginTemplate template,
+    Iterable<PluginPermission> permissions,
+  ) async {
+    for (final permission in permissions) {
+      if (!await check(template, permission)) return false;
+    }
+    return true;
+  }
+}
+
 class PluginMarketManifest {
   final int version;
   final List<MarketPluginTemplate> templates;

@@ -85,5 +85,25 @@ void main() {
       ]);
       expect(template.requiresPermission(PluginPermission.storage), isFalse);
     });
+    test('checks declared permissions before plugin execution', () async {
+      final template = MarketPluginTemplate.tryFromJson({
+        'id': 'permission_runtime_plugin',
+        'title': '运行时权限插件',
+        'permissions': ['network', 'clipboard'],
+      });
+
+      expect(template, isNotNull);
+      expect(
+        await PluginPermissionChecker.check(
+          template!,
+          PluginPermission.network,
+        ),
+        isTrue,
+      );
+      expect(
+        await PluginPermissionChecker.check(template, PluginPermission.storage),
+        isFalse,
+      );
+    });
   });
 }
