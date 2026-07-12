@@ -420,14 +420,17 @@ class HomePlugin {
 }
 
 class HomePluginHost {
-  HomePluginHost._();
+  HomePluginHost({HomePluginPersistence? persistence})
+    : _persistence = persistence ?? HomePluginPersistence();
+
+  HomePluginHost._() : _persistence = HomePluginPersistence();
 
   static final HomePluginHost instance = HomePluginHost._();
 
   final ValueNotifier<List<HomePlugin>> _notifier =
       ValueNotifier<List<HomePlugin>>(<HomePlugin>[]);
 
-  final HomePluginPersistence _persistence = HomePluginPersistence();
+  final HomePluginPersistence _persistence;
 
   Future<void>? _bootFuture;
   bool _bootstrapped = false;
@@ -435,6 +438,13 @@ class HomePluginHost {
   ValueListenable<List<HomePlugin>> get listenable => _notifier;
 
   List<HomePlugin> get allPlugins => _sorted(_notifier.value);
+
+  HomePlugin? findById(String id) {
+    for (final plugin in _notifier.value) {
+      if (plugin.id == id) return plugin;
+    }
+    return null;
+  }
 
   Future<void> bootstrap() {
     if (_bootstrapped) return Future.value();
@@ -522,7 +532,11 @@ class HomePluginHost {
     await _persist();
   }
 
-  Future<void> reorderPlugin(HomePluginArea area, int oldIndex, int newIndex) async {
+  Future<void> reorderPlugin(
+    HomePluginArea area,
+    int oldIndex,
+    int newIndex,
+  ) async {
     await bootstrap();
     final inArea = List<HomePlugin>.from(
       _notifier.value.where((p) => p.area == area),
@@ -729,7 +743,9 @@ class HomePluginHost {
           case HomePluginActionType.openNovelList:
             await Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
+              MaterialPageRoute(
+                builder: (_) => const NovelListPageWithProvider(),
+              ),
             );
             return;
           case HomePluginActionType.openVideoList:
@@ -875,7 +891,7 @@ class HomePluginHost {
         onTap: (context) async {
           await Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => QuizEntryPage()),
+            MaterialPageRoute(builder: (_) => const QuizEntryPage()),
           );
         },
       ),
@@ -927,11 +943,16 @@ class HomePluginHost {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.collections_bookmark_outlined,
-                          size: 64, color: Colors.grey),
+                      Icon(
+                        Icons.collections_bookmark_outlined,
+                        size: 64,
+                        color: Colors.grey,
+                      ),
                       SizedBox(height: 16),
-                      Text('漫画功能将在后续版本上线',
-                          style: TextStyle(color: Colors.grey)),
+                      Text(
+                        '漫画功能将在后续版本上线',
+                        style: TextStyle(color: Colors.grey),
+                      ),
                     ],
                   ),
                 ),
@@ -952,7 +973,9 @@ class HomePluginHost {
         onTap: (context) async {
           await Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
+            MaterialPageRoute(
+              builder: (_) => const NovelListPageWithProvider(),
+            ),
           );
         },
       ),

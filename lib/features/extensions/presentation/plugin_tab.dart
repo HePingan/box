@@ -157,19 +157,20 @@ class _PluginTabState extends State<PluginTab>
 
   Future<void> _batchToggleEnabled(bool enabled) async {
     final ids = _selectedPluginIds.toList();
+    var changedCount = 0;
     for (final id in ids) {
-      final plugin = _pluginHost.listenable.value.firstWhere(
-        (p) => p.id == id,
-        orElse: () => _pluginHost.listenable.value.first,
-      );
+      final plugin = _pluginHost.findById(id);
+      if (plugin == null) continue;
       // 跳过已经处于目标状态的插件
       if (plugin.enabled == enabled) continue;
       await _togglePluginEnabled(plugin, enabled);
+      changedCount++;
     }
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          enabled ? '已启用 ${ids.length} 个插件' : '已禁用 ${ids.length} 个插件',
+          enabled ? '已启用 $changedCount 个插件' : '已禁用 $changedCount 个插件',
         ),
       ),
     );
@@ -180,10 +181,8 @@ class _PluginTabState extends State<PluginTab>
     final ids = _selectedPluginIds.toList();
     // 过滤掉内置插件
     final uninstallIds = ids.where((id) {
-      final plugin = _pluginHost.listenable.value.firstWhere(
-        (p) => p.id == id,
-        orElse: () => _pluginHost.listenable.value.first,
-      );
+      final plugin = _pluginHost.findById(id);
+      if (plugin == null) return false;
       return !plugin.builtIn;
     }).toList();
 
@@ -214,12 +213,11 @@ class _PluginTabState extends State<PluginTab>
     if (confirm != true) return;
 
     for (final id in uninstallIds) {
-      final plugin = _pluginHost.listenable.value.firstWhere(
-        (p) => p.id == id,
-        orElse: () => _pluginHost.listenable.value.first,
-      );
+      final plugin = _pluginHost.findById(id);
+      if (plugin == null) continue;
       await _uninstallPlugin(plugin);
     }
+    if (!mounted) return;
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('已卸载 ${uninstallIds.length} 个插件')));
@@ -242,7 +240,7 @@ class _PluginTabState extends State<PluginTab>
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 2),
             itemCount: _marketTemplates.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            separatorBuilder: (_, _) => const SizedBox(width: 10),
             itemBuilder: (context, index) {
               final tpl = _marketTemplates[index];
               final areaColor = _colorForAreaCode(tpl.areaCode);
@@ -550,6 +548,7 @@ class _PluginTabState extends State<PluginTab>
           FilledButton.icon(
             onPressed: () async {
               await Clipboard.setData(ClipboardData(text: jsonText));
+              if (!dialogCtx.mounted) return;
               ScaffoldMessenger.of(
                 dialogCtx,
               ).showSnackBar(const SnackBar(content: Text('已复制到剪贴板')));
@@ -620,6 +619,7 @@ class _PluginTabState extends State<PluginTab>
                                 );
                                 final text = data?.text ?? '';
                                 if (text.trim().isEmpty) {
+                                  if (!ctx.mounted) return;
                                   ScaffoldMessenger.of(ctx).showSnackBar(
                                     const SnackBar(content: Text('剪贴板为空')),
                                   );
@@ -1364,10 +1364,7 @@ class _PluginStatusSectionState extends State<_PluginStatusSection> {
 
 /// 入场错开动画 — 淡入 + 上滑
 class _StaggeredItem extends StatefulWidget {
-  const _StaggeredItem({
-    required this.index,
-    required this.child,
-  });
+  const _StaggeredItem({required this.index, required this.child});
 
   final int index;
   final Widget child;
@@ -1393,16 +1390,10 @@ class _StaggeredItemState extends State<_StaggeredItem>
     _slide = Tween<Offset>(
       begin: const Offset(0, 0.08),
       end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _ctrl,
-      curve: Curves.easeOut,
-    ));
-    Future.delayed(
-      Duration(milliseconds: widget.index * 50),
-      () {
-        if (mounted) _ctrl.forward();
-      },
-    );
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
+    Future.delayed(Duration(milliseconds: widget.index * 50), () {
+      if (mounted) _ctrl.forward();
+    });
   }
 
   @override
@@ -1415,10 +1406,7 @@ class _StaggeredItemState extends State<_StaggeredItem>
   Widget build(BuildContext context) {
     return FadeTransition(
       opacity: _opacity,
-      child: SlideTransition(
-        position: _slide,
-        child: widget.child,
-      ),
+      child: SlideTransition(position: _slide, child: widget.child),
     );
   }
 }
