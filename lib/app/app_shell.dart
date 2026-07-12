@@ -38,34 +38,34 @@ class _MainAppShellState extends State<MainAppShell> {
       icon: Icons.home_rounded,
       widget: HomePage(onSwitchTab: _onItemTapped),
     ),
-    _TabItem(
+    const _TabItem(
       title: '工具',
       icon: Icons.grid_view_rounded,
-      widget: const ToolPage(),
+      widget: ToolPage(),
     ),
-    _TabItem(
+    const _TabItem(
       title: '内容',
       icon: Icons.collections_bookmark_rounded,
-      widget: const WarehouseTab(),
+      widget: WarehouseTab(),
     ),
-    _TabItem(
+    const _TabItem(
       title: '扩展',
       icon: Icons.extension_rounded,
-      widget: const PluginTab(),
+      widget: PluginTab(),
     ),
   ];
 
   /// 快捷键绑定
   Map<ShortcutActivator, VoidCallback> get _shortcuts {
     return {
-      const SingleActivator(LogicalKeyboardKey.digit1, control: true):
-          () => _onItemTapped(0),
-      const SingleActivator(LogicalKeyboardKey.digit2, control: true):
-          () => _onItemTapped(1),
-      const SingleActivator(LogicalKeyboardKey.digit3, control: true):
-          () => _onItemTapped(2),
-      const SingleActivator(LogicalKeyboardKey.digit4, control: true):
-          () => _onItemTapped(3),
+      const SingleActivator(LogicalKeyboardKey.digit1, control: true): () =>
+          _onItemTapped(0),
+      const SingleActivator(LogicalKeyboardKey.digit2, control: true): () =>
+          _onItemTapped(1),
+      const SingleActivator(LogicalKeyboardKey.digit3, control: true): () =>
+          _onItemTapped(2),
+      const SingleActivator(LogicalKeyboardKey.digit4, control: true): () =>
+          _onItemTapped(3),
     };
   }
 
@@ -97,11 +97,15 @@ class _MainAppShellState extends State<MainAppShell> {
   void _onItemTapped(int index) {
     if (_currentIndex == index) return;
     setState(() => _currentIndex = index);
-    _pageController.animateToPage(
-      index,
-      duration: const Duration(milliseconds: 350),
-      curve: Curves.decelerate,
-    );
+
+    // Top-level tab changes can jump multiple heavy sections (首页 → 扩展).
+    // Animating a PageView across every intermediate page forces Tool/Content/
+    // Plugin pages to build during the transition, which causes visible jank.
+    // Use an instant page switch; each tab still preserves its state via
+    // AutomaticKeepAliveClientMixin.
+    if (_pageController.hasClients) {
+      _pageController.jumpToPage(index);
+    }
   }
 
   Future<void> _maybePromptNovelSourceConfig() async {
@@ -442,15 +446,12 @@ class _DesktopNavItem extends StatelessWidget {
                         )
                       : null,
                   color: selected ? null : const Color(0xFFF1F5F9),
-                  borderRadius:
-                      BorderRadius.circular(AppTokens.radiusPill),
+                  borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                 ),
                 child: Icon(
                   icon,
                   size: selected ? 18 : 16,
-                  color: selected
-                      ? Colors.white
-                      : const Color(0xFF64748B),
+                  color: selected ? Colors.white : const Color(0xFF64748B),
                 ),
               ),
               const SizedBox(height: 1),
@@ -463,8 +464,7 @@ class _DesktopNavItem extends StatelessWidget {
                       ? const Color(0xFF2563EB)
                       : const Color(0xFF64748B),
                   fontSize: 9.5,
-                  fontWeight:
-                      selected ? FontWeight.w900 : FontWeight.w600,
+                  fontWeight: selected ? FontWeight.w900 : FontWeight.w600,
                 ),
               ),
             ],
