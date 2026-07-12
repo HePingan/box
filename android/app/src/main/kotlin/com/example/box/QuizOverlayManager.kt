@@ -11,19 +11,30 @@ import android.os.Build
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
-import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
-import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 
 private const val TAG = "QuizOverlayManager"
 
+/**
+ * 答题插件显示协调器（P0 重构后）。
+ *
+ * 显示层策略：
+ *  - 答案展示统一走无障碍悬浮窗（QuizAccessibilityService，TYPE_ACCESSIBILITY_OVERLAY），
+ *    可绕过驾考宝典等 App 的悬浮窗屏蔽；不可用时降级为通知栏。
+ *  - 普通系统悬浮窗（TYPE_APPLICATION_OVERLAY）仅保留给「识别区域选择器」这类临时
+ *    应用内交互，不再用于展示答案。
+ *
+ * displayMode:
+ *  - accessibility：无障碍悬浮（默认，抗屏蔽）
+ *  - notification：通知栏兜底
+ *  - manual：仅应用内手动
+ */
 class QuizOverlayManager(private val context: Context) {
 
     companion object {
@@ -33,14 +44,15 @@ class QuizOverlayManager(private val context: Context) {
         private const val NOTIFICATION_ID = 0x2024_11_07
     }
 
-    private var overlayView: View? = null
+    // 区域选择器专用的临时普通悬浮窗
+    private var regionOverlayView: View? = null
     private var windowManager: WindowManager? = null
-    private var params: WindowManager.LayoutParams? = null
-    private var isVisible = false
+    private var regionParams: WindowManager.LayoutParams? = null
+
     private var channel: MethodChannel? = null
     private var currentQuestion = ""
     private var currentAnswers = ""
-    private var displayMode = "overlay"
+    private var displayMode = "accessibility"
 
     init {
         try {
@@ -56,13 +68,18 @@ class QuizOverlayManager(private val context: Context) {
         }
     }
 
-    fun isVisible(): Boolean = isVisible
+    /** 无障碍悬浮窗或区域选择器任一在显示即视为可见。 */
+    fun isVisible(): Boolean = QuizAccessibilityService.isRunning() && regionOverlayView == null
 
     fun setDisplayMode(mode: String?) {
-        displayMode = when (mode) {
-            "notification", "manual", "overlay", "accessibility_overlay" -> mode
-            else -> "overlay"
-        }
+        displayMode = normalizeMode(mode)
+    }
+
+    private fun normalizeMode(mode: String?): String = when (mode) {
+        "notification", "manual", "accessibility" -> mode
+        // 兼容旧配置值
+        "accessibility_overlay", "overlay" -> "accessibility"
+        else -> "accessibility"
     }
 
     fun setVisible(visible: Boolean) {
@@ -79,14 +96,16 @@ class QuizOverlayManager(private val context: Context) {
         }
         currentQuestion = question
         if (answers != null) currentAnswers = answers
-        updateView()
-        if (displayMode == "accessibility_overlay") {
-            if (!showAccessibilityOverlay()) {
-                showNotificationFallback()
+
+        when (displayMode) {
+            "manual" -> { /* 手动模式不主动弹出 */ }
+            "notification" -> showNotificationFallback()
+            else -> {
+                // accessibility：优先无障碍悬浮，失败降级通知栏
+                if (!QuizAccessibilityService.showOverlayIfRunning(currentQuestion, currentAnswers)) {
+                    showNotificationFallback()
+                }
             }
-        }
-        if (isSearching == true) {
-            Toast.makeText(context.applicationContext, "正在搜题...", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -94,146 +113,103 @@ class QuizOverlayManager(private val context: Context) {
         when (displayMode) {
             "manual" -> {
                 hide()
-                Toast.makeText(context.applicationContext, "已启用手动模式：请在应用内手动搜题", Toast.LENGTH_SHORT).show()
             }
             "notification" -> {
-                hideOverlayViewOnly()
+                QuizAccessibilityService.hideOverlayIfRunning()
                 showNotificationFallback()
-                Toast.makeText(context.applicationContext, "已切换到通知栏提示模式", Toast.LENGTH_SHORT).show()
             }
-            "accessibility_overlay" -> {
-                hideOverlayViewOnly()
-                if (!showAccessibilityOverlay()) {
+            else -> {
+                // accessibility
+                val shown = QuizAccessibilityService.showOverlayIfRunning(currentQuestion, currentAnswers)
+                if (!shown) {
                     showNotificationFallback()
-                    Toast.makeText(context.applicationContext, "无障碍悬浮不可用，已改用通知栏提示", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        context.applicationContext,
+                        "请先开启无障碍服务，已暂用通知栏提示",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             }
-            else -> showWithFallback()
         }
     }
 
-    fun showWithFallback() {
-        if (isVisible) {
-            bringToFront()
-            Toast.makeText(context.applicationContext, "悬浮窗已在显示中", Toast.LENGTH_SHORT).show()
-            return
-        }
+    // ── 识别区域选择器（临时普通悬浮窗，仅用于设置区域）──
 
-        val success = runCatching { show() }.getOrElse { false }
-        if (!success) {
-            Log.w(TAG, "overlay failed; fallback to notification")
-            showNotificationFallback()
-            Toast.makeText(context.applicationContext, "悬浮窗不可用，已改用通知栏提示", Toast.LENGTH_LONG).show()
+    fun openRegionSelector(): Boolean {
+        if (regionOverlayView != null) return true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            !android.provider.Settings.canDrawOverlays(context)
+        ) {
+            return false
         }
-    }
-
-    private fun show(): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val hasPermission = try {
-                android.provider.Settings.canDrawOverlays(context)
-            } catch (_: Exception) {
-                false
-            }
-            if (!hasPermission) {
-                Toast.makeText(context.applicationContext, "请先允许悬浮窗权限：设置 > 应用 > box > 悬浮窗", Toast.LENGTH_LONG).show()
-                return false
-            }
-        }
-
+        val wm = windowManager ?: return false
         val inflater = context.getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
-        overlayView = inflater.inflate(R.layout.quiz_overlay, null)
-        Toast.makeText(context.applicationContext, "正在创建悬浮窗视图...", Toast.LENGTH_SHORT).show()
+        val view = inflater.inflate(R.layout.quiz_overlay, null)
+        // 区域选择器只显示区域相关控件
+        view.findViewById<View>(R.id.answer_container)?.visibility = View.GONE
+        view.findViewById<View>(R.id.btn_search)?.visibility = View.GONE
 
-        val width = (context.resources.displayMetrics.widthPixels * 0.86f).toInt()
-        val layoutFlag: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
         }
-
-        params = WindowManager.LayoutParams(
-            width,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             layoutFlag,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             android.graphics.PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 50
-            y = 200
         }
 
-        overlayView?.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_OUTSIDE) {
-                return@setOnTouchListener true
-            }
-            params?.let { p ->
-                if (event.action == MotionEvent.ACTION_MOVE) {
-                    p.x = (event.rawX - (overlayView?.width ?: 0) / 2).toInt()
-                    p.y = (event.rawY - (overlayView?.height ?: 0) / 2).toInt()
-                    try { windowManager?.updateViewLayout(overlayView, p) } catch (_: Exception) {}
-                    return@setOnTouchListener true
-                }
-            }
+        view.findViewById<View>(R.id.btn_close)?.setOnClickListener { closeRegionSelector() }
+
+        return try {
+            wm.addView(view, params)
+            regionOverlayView = view
+            regionParams = params
+            toggleRegionMode()
+            true
+        } catch (e: Throwable) {
+            Log.w(TAG, "open region selector failed", e)
+            regionOverlayView = null
+            regionParams = null
             false
         }
+    }
 
-        overlayView?.findViewById<View>(R.id.btn_area)?.setOnClickListener {
-            toggleRegionMode()
-        }
-        overlayView?.findViewById<View>(R.id.btn_search)?.setOnClickListener {
-            channel?.invokeMethod("manualSearch", mapOf("question" to currentQuestion))
-        }
-        overlayView?.findViewById<View>(R.id.btn_close)?.setOnClickListener {
-            hide()
-        }
-
-        updateView()
-
-        try {
-            windowManager?.addView(overlayView, params)
-            isVisible = true
-            Toast.makeText(context.applicationContext, "悬浮窗创建成功", Toast.LENGTH_SHORT).show()
-            return true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            Toast.makeText(context.applicationContext, "悬浮窗创建失败(${e.javaClass.simpleName})：${e.message}", Toast.LENGTH_LONG).show()
-        }
-
-        return false
+    private fun closeRegionSelector() {
+        val view = regionOverlayView ?: return
+        try { windowManager?.removeView(view) } catch (_: Throwable) {}
+        regionOverlayView = null
+        regionParams = null
     }
 
     fun toggleRegionMode() {
-        val root = overlayView ?: return
+        val root = regionOverlayView ?: return
         val selector = root.findViewById<View>(R.id.region_selector) ?: return
         val toolbar = root.findViewById<View>(R.id.region_toolbar)
-        val show = selector.visibility != View.VISIBLE
-        selector.visibility = if (show) View.VISIBLE else View.GONE
-        toolbar?.visibility = if (show) View.VISIBLE else View.GONE
-        root.findViewById<View>(R.id.answer_container)?.visibility = if (show) View.GONE else View.VISIBLE
-        if (show) {
-            (selector.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
-                lp.width = FrameLayout.LayoutParams.MATCH_PARENT
-                lp.height = 420
-                selector.layoutParams = lp
-            }
-            (toolbar?.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
-                lp.width = FrameLayout.LayoutParams.MATCH_PARENT
-                lp.height = 48
-                toolbar.layoutParams = lp
-            }
+        selector.visibility = View.VISIBLE
+        toolbar?.visibility = View.VISIBLE
+        (selector.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+            lp.width = FrameLayout.LayoutParams.MATCH_PARENT
+            lp.height = 420
+            selector.layoutParams = lp
+        }
+        (toolbar?.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+            lp.width = FrameLayout.LayoutParams.MATCH_PARENT
+            lp.height = 48
+            toolbar.layoutParams = lp
         }
         val regionSelector = selector as? RegionSelectorView
-        if (show) {
-            loadRegion()?.let { regionSelector?.setRegion(screenToSelectorRegion(it, selector)) }
-            regionSelector?.setOnRegionConfirmedListener {
-                saveSelectorRegion(selector, closeAfterSave = true)
-            }
+        loadRegion()?.let { regionSelector?.setRegion(screenToSelectorRegion(it, selector)) }
+        regionSelector?.setOnRegionConfirmedListener {
+            saveSelectorRegion(selector, closeAfterSave = true)
         }
-        root.findViewById<View>(R.id.btn_region_cancel)?.setOnClickListener { toggleRegionMode() }
+        root.findViewById<View>(R.id.btn_region_cancel)?.setOnClickListener { closeRegionSelector() }
         root.findViewById<View>(R.id.btn_region_save)?.setOnClickListener {
             saveSelectorRegion(selector, closeAfterSave = true)
         }
@@ -244,7 +220,7 @@ class QuizOverlayManager(private val context: Context) {
         val screenRegion = selectorToScreenRegion(selector.getRegion(), selectorView)
         saveRegion(screenRegion)
         Toast.makeText(context.applicationContext, "识别区域已保存", Toast.LENGTH_SHORT).show()
-        if (closeAfterSave) toggleRegionMode()
+        if (closeAfterSave) closeRegionSelector()
     }
 
     private fun selectorToScreenRegion(region: RectF, selectorView: View): RectF {
@@ -297,29 +273,7 @@ class QuizOverlayManager(private val context: Context) {
         return RectF(parts[0], parts[1], parts[2], parts[3])
     }
 
-    private fun showAccessibilityOverlay(): Boolean {
-        if (!QuizAccessibilityService.isRunning()) return false
-        val intent = Intent(QuizAccessibilityService.ACTION_SHOW_ACCESSIBILITY_OVERLAY).apply {
-            setPackage(context.packageName)
-            putExtra(QuizAccessibilityService.EXTRA_QUESTION, currentQuestion)
-            putExtra(QuizAccessibilityService.EXTRA_ANSWERS, currentAnswers)
-        }
-        return try {
-            context.sendBroadcast(intent)
-            true
-        } catch (e: Throwable) {
-            Log.w(TAG, "send accessibility overlay command failed", e)
-            false
-        }
-    }
-
-    private fun hideAccessibilityOverlay() {
-        if (!QuizAccessibilityService.isRunning()) return
-        val intent = Intent(QuizAccessibilityService.ACTION_HIDE_ACCESSIBILITY_OVERLAY).setPackage(context.packageName)
-        try {
-            context.sendBroadcast(intent)
-        } catch (_: Throwable) {}
-    }
+    // ── 通知栏兜底 ──
 
     private fun showNotificationFallback() {
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -363,38 +317,12 @@ class QuizOverlayManager(private val context: Context) {
         } catch (_: Throwable) {}
     }
 
-    private fun bringToFront() {
-        val view = overlayView ?: return
-        val lp = params ?: return
-        val wm = windowManager ?: return
-        try {
-            wm.removeView(view)
-            wm.addView(view, lp)
-            isVisible = true
-        } catch (e: Exception) {
-            Log.w(TAG, "bring overlay to front failed", e)
-            try { wm.updateViewLayout(view, lp) } catch (_: Exception) {}
-        }
-    }
-
     fun hide() {
-        hideOverlayViewOnly()
-        hideAccessibilityOverlay()
+        QuizAccessibilityService.hideOverlayIfRunning()
+        closeRegionSelector()
         try {
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             nm?.cancel(NOTIFICATION_ID)
-        } catch (_: Exception) {}
-    }
-
-    private fun hideOverlayViewOnly() {
-        if (!isVisible && overlayView == null) return
-        try { windowManager?.removeView(overlayView) } catch (_: Exception) {}
-        overlayView = null
-        isVisible = false
-    }
-
-    private fun updateView() {
-        overlayView?.findViewById<TextView>(R.id.tv_question)?.text = currentQuestion.ifEmpty { "等待捕获题目…" }
-        overlayView?.findViewById<TextView>(R.id.tv_answer)?.text = currentAnswers.ifEmpty { "等待搜题结果…" }
+        } catch (_: Throwable) {}
     }
 }

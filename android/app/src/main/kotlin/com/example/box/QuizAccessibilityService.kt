@@ -10,18 +10,33 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.TextView
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.widget.Toast
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
+import kotlin.math.hypot
 
+/**
+ * 答题插件无障碍服务。
+ *
+ * 职责（P0 重构后）：
+ *  1. 捕获：通过 AccessibilityNodeInfo 读取目标 App 屏幕文本（不受 FLAG_SECURE 影响）。
+ *  2. 显示：唯一使用 TYPE_ACCESSIBILITY_OVERLAY 承载答案悬浮窗。该窗口类型属于系统
+ *     无障碍层，不计入普通悬浮窗检测，不需要 SYSTEM_ALERT_WINDOW 权限，可绕过
+ *     驾考宝典等 App 的悬浮窗屏蔽 / 考试模式限制。
+ *  3. 与 MainActivity 的交互改为直接静态方法调用（持有 runningService 单例），
+ *     不再依赖易丢失/有延迟的广播来驱动显示。
+ */
 class QuizAccessibilityService : AccessibilityService() {
 
     companion object {
@@ -32,10 +47,6 @@ class QuizAccessibilityService : AccessibilityService() {
         private const val CONFIG_PREFS_NAME = "FlutterSharedPreferences"
         private const val CONFIG_KEY = "flutter.quiz_plugin_config"
         const val ACTION_UPDATE_REGION = "com.example.box.UPDATE_QUIZ_REGION"
-        const val ACTION_SHOW_ACCESSIBILITY_OVERLAY = "com.example.box.SHOW_ACCESSIBILITY_OVERLAY"
-        const val ACTION_HIDE_ACCESSIBILITY_OVERLAY = "com.example.box.HIDE_ACCESSIBILITY_OVERLAY"
-        const val EXTRA_QUESTION = "question"
-        const val EXTRA_ANSWERS = "answers"
 
         private val NOISE_LINES = setOf(
             "设置", "返回", "取消", "确定", "确认", "保存", "删除",
@@ -58,13 +69,29 @@ class QuizAccessibilityService : AccessibilityService() {
             "?", "？", "___", "____"
         )
 
+        private const val MAX_TREE_DEPTH = 40
+
         private var lastSendTime = 0L
         private var lastQuestion = ""
         @Volatile private var runningService: QuizAccessibilityService? = null
 
         fun isRunning(): Boolean = runningService != null
+
+        /** 显示 / 更新无障碍悬浮窗。返回 false 表示服务未运行（调用方应降级为通知栏）。 */
+        fun showOverlayIfRunning(question: String, answers: String): Boolean {
+            val svc = runningService ?: return false
+            svc.mainHandler.post { svc.showOrUpdateAccessibilityOverlay(question, answers) }
+            return true
+        }
+
+        /** 隐藏无障碍悬浮窗。 */
+        fun hideOverlayIfRunning() {
+            val svc = runningService ?: return
+            svc.mainHandler.post { svc.hideAccessibilityOverlay() }
+        }
     }
 
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var channel: MethodChannel? = null
     private var isActive = false
     private var screenRegion: RectF? = null
@@ -94,7 +121,6 @@ class QuizAccessibilityService : AccessibilityService() {
         registerCommandReceiver()
         runningService = this
         isActive = true
-        Toast.makeText(applicationContext, "无障碍服务已连接", Toast.LENGTH_SHORT).show()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -108,7 +134,9 @@ class QuizAccessibilityService : AccessibilityService() {
                 extractAndSend(event.source)
                 lastSendTime = now
             }
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                // 内容变化 / 滚动更频繁，用更长节流避免频繁遍历节点树。
                 val now = System.currentTimeMillis()
                 if (now - lastSendTime < 1800) return
                 extractAndSend(event.source)
@@ -140,10 +168,9 @@ class QuizAccessibilityService : AccessibilityService() {
                 handleCommand(intent)
             }
         }
+        // 仅识别区域更新仍走广播（低频、非关键路径）；显示/隐藏改为直接静态调用。
         val filter = IntentFilter().apply {
             addAction(ACTION_UPDATE_REGION)
-            addAction(ACTION_SHOW_ACCESSIBILITY_OVERLAY)
-            addAction(ACTION_HIDE_ACCESSIBILITY_OVERLAY)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(commandReceiver, filter, RECEIVER_NOT_EXPORTED)
@@ -172,15 +199,8 @@ class QuizAccessibilityService : AccessibilityService() {
                     val region = RectF(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
                     saveRegion(region)
                     screenRegion = region
-                    Toast.makeText(applicationContext, "识别区域已更新", Toast.LENGTH_SHORT).show()
                 }
             }
-            ACTION_SHOW_ACCESSIBILITY_OVERLAY -> {
-                val question = intent.getStringExtra(EXTRA_QUESTION).orEmpty()
-                val answers = intent.getStringExtra(EXTRA_ANSWERS).orEmpty()
-                showOrUpdateAccessibilityOverlay(question, answers)
-            }
-            ACTION_HIDE_ACCESSIBILITY_OVERLAY -> hideAccessibilityOverlay()
         }
     }
 
@@ -198,9 +218,12 @@ class QuizAccessibilityService : AccessibilityService() {
     }
 
     private fun createAccessibilityOverlay(): Boolean {
-        val wm = windowManager ?: (getSystemService(Context.WINDOW_SERVICE) as? WindowManager).also { windowManager = it } ?: return false
+        val wm = windowManager
+            ?: (getSystemService(Context.WINDOW_SERVICE) as? WindowManager).also { windowManager = it }
+            ?: return false
         val inflater = getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
         val view = inflater.inflate(R.layout.quiz_overlay, null)
+        // 无障碍悬浮窗中不提供区域选择（区域设置走应用内 + 临时普通悬浮）。
         view.findViewById<View>(R.id.btn_area)?.visibility = View.GONE
         view.findViewById<View>(R.id.btn_search)?.setOnClickListener {
             resolveChannel()?.invokeMethod("manualSearch", mapOf("question" to overlayQuestion))
@@ -228,6 +251,8 @@ class QuizAccessibilityService : AccessibilityService() {
             y = 200
         }
 
+        attachDragHandler(view, params, wm)
+
         return try {
             wm.addView(view, params)
             accessibilityOverlayView = view
@@ -238,6 +263,49 @@ class QuizAccessibilityService : AccessibilityService() {
             accessibilityOverlayView = null
             overlayParams = null
             false
+        }
+    }
+
+    /**
+     * 给悬浮窗加拖动：记录 DOWN 时窗口坐标与触点偏移，MOVE 用增量，避免旧实现里
+     * 把窗口中心直接怼到手指坐标导致的跳变。仅当移动超过 touch slop 才判定为拖动，
+     * 从而不影响关闭/搜题按钮的点击。
+     */
+    private fun attachDragHandler(view: View, params: WindowManager.LayoutParams, wm: WindowManager) {
+        val slop = ViewConfiguration.get(this).scaledTouchSlop
+        var initialX = 0
+        var initialY = 0
+        var touchX = 0f
+        var touchY = 0f
+        var dragging = false
+        view.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = params.x
+                    initialY = params.y
+                    touchX = event.rawX
+                    touchY = event.rawY
+                    dragging = false
+                    false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - touchX
+                    val dy = event.rawY - touchY
+                    if (!dragging && hypot(dx, dy) > slop) dragging = true
+                    if (dragging) {
+                        params.x = initialX + dx.toInt()
+                        params.y = initialY + dy.toInt()
+                        try { wm.updateViewLayout(view, params) } catch (_: Throwable) {}
+                    }
+                    dragging
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    val wasDragging = dragging
+                    dragging = false
+                    wasDragging
+                }
+                else -> false
+            }
         }
     }
 
@@ -261,11 +329,11 @@ class QuizAccessibilityService : AccessibilityService() {
         if (root == null) return
         val candidates = mutableListOf<String>()
         screenRegion = screenRegion ?: loadRegion()
-        collectText(root, candidates)
+        collectText(root, candidates, 0)
 
         val config = readCaptureConfig()
         val cleaned = normalizeQuizText(candidates, config)
-        val debugCapture = isDebugCaptureEnabled()
+        val debugCapture = config.debugCapture
         val payload = if (debugCapture) buildDebugPayload(candidates, cleaned) else cleaned
 
         if (payload.isBlank()) return
@@ -282,7 +350,6 @@ class QuizAccessibilityService : AccessibilityService() {
         Log.d(TAG, "捕获题目: $payload")
         activeChannel.invokeMethod("onQuestionCaptured", mapOf("question" to payload))
     }
-
 
     private fun resolveChannel(): MethodChannel? {
         val engine = FlutterEngineCache.getInstance().get("quiz_engine") ?: return null
@@ -338,10 +405,6 @@ class QuizAccessibilityService : AccessibilityService() {
         ).joinToString("\n")
     }
 
-    private fun isDebugCaptureEnabled(): Boolean {
-        return readCaptureConfig().debugCapture
-    }
-
     private fun readCaptureConfig(): CaptureConfig {
         val raw = getSharedPreferences(CONFIG_PREFS_NAME, Context.MODE_PRIVATE)
             .getString(CONFIG_KEY, null)
@@ -365,7 +428,8 @@ class QuizAccessibilityService : AccessibilityService() {
         return match.groupValues[1].toIntOrNull() ?: fallback
     }
 
-    private fun collectText(node: AccessibilityNodeInfo, out: MutableList<String>) {
+    private fun collectText(node: AccessibilityNodeInfo, out: MutableList<String>, depth: Int) {
+        if (depth > MAX_TREE_DEPTH) return
         if (!node.isVisibleToUser) return
 
         val bounds = Rect()
@@ -379,7 +443,7 @@ class QuizAccessibilityService : AccessibilityService() {
 
         for (i in 0 until node.childCount) {
             node.getChild(i)?.let { child ->
-                collectText(child, out)
+                collectText(child, out, depth + 1)
             }
         }
     }

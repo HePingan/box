@@ -4,7 +4,6 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.widget.Toast
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
@@ -48,38 +47,18 @@ class MainActivity : FlutterActivity() {
                 "setOverlayVisible" -> {
                     val visible = call.argument<Boolean>("visible") ?: false
                     val mode = call.argument<String>("displayMode")
+                    if (overlayManager == null) overlayManager = QuizOverlayManager(this)
                     overlayManager?.setDisplayMode(mode)
                     try {
                         if (visible) {
-                            if (overlayManager == null) {
-                                Toast.makeText(this, "悬浮窗管理器为空，尝试重建...", Toast.LENGTH_SHORT).show()
-                                overlayManager = QuizOverlayManager(this)
-                            }
-                            if (overlayManager == null) {
-                                Toast.makeText(this, "悬浮窗管理器初始化失败，请重启应用", Toast.LENGTH_LONG).show()
-                                result.success(false)
-                                return@setMethodCallHandler
-                            }
-                            if (mode == "notification" || mode == "manual" || mode == "accessibility_overlay" || hasOverlayPermission()) {
-                                if (mode == "notification" || mode == "accessibility_overlay") {
-                                    requestNotificationPermission()
-                                }
-                                if (mode == "overlay") {
-                                    Toast.makeText(this, "正在尝试显示悬浮窗...", Toast.LENGTH_SHORT).show()
-                                }
-                                overlayManager?.setVisible(true)
-                                result.success(true)
-                            } else {
-                                Toast.makeText(this, "悬浮窗权限未开启，请先授权，或切换为通知/手动模式", Toast.LENGTH_LONG).show()
-                                requestOverlayPermission()
-                                result.success(false)
-                            }
+                            // 无障碍/通知模式都可能用到通知栏兜底，提前请求通知权限
+                            requestNotificationPermission()
+                            overlayManager?.setVisible(true)
                         } else {
                             overlayManager?.setVisible(false)
-                            result.success(true)
                         }
+                        result.success(true)
                     } catch (e: Throwable) {
-                        Toast.makeText(this, "悬浮窗控制异常: ${e.javaClass.simpleName} ${e.message}", Toast.LENGTH_LONG).show()
                         result.success(false)
                     }
                 }
@@ -94,11 +73,9 @@ class MainActivity : FlutterActivity() {
                     val answers = call.argument<String>("answers")
                     val isSearching = call.argument<Boolean>("isSearching")
                     val mode = call.argument<String>("displayMode")
+                    if (overlayManager == null) overlayManager = QuizOverlayManager(this)
                     overlayManager?.setDisplayMode(mode)
                     overlayManager?.updateContent(question, answers, isSearching)
-                    if (mode == "notification" || (mode != "accessibility_overlay" && overlayManager?.isVisible() != true)) {
-                        overlayManager?.showNotificationOnly()
-                    }
                     result.success(true)
                 }
                 "onQuestionCaptured" -> {
@@ -132,19 +109,13 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "openRegionSelector" -> {
-                    if (overlayManager?.isVisible() != true) {
-                        if (hasOverlayPermission()) {
-                            overlayManager?.setDisplayMode("overlay")
-                            overlayManager?.setVisible(true)
-                        } else {
-                            requestOverlayPermission()
-                            result.success(false)
-                            return@setMethodCallHandler
-                        }
+                    if (overlayManager == null) overlayManager = QuizOverlayManager(this)
+                    val opened = overlayManager?.openRegionSelector() ?: false
+                    if (!opened) {
+                        requestOverlayPermission()
+                        result.success(false)
+                        return@setMethodCallHandler
                     }
-                    try {
-                        overlayManager?.toggleRegionMode()
-                    } catch (_: Exception) {}
                     result.success(true)
                 }
                 else -> result.notImplemented()
@@ -161,9 +132,9 @@ class MainActivity : FlutterActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_OVERLAY_PERMISSION) {
+            // 悬浮窗权限仅用于「识别区域选择器」，答案展示走无障碍悬浮，无需在此自动显示。
             if (hasOverlayPermission()) {
-                overlayManager?.setDisplayMode("overlay")
-                overlayManager?.setVisible(true)
+                overlayManager?.openRegionSelector()
             }
         }
     }

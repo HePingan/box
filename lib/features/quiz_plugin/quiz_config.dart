@@ -7,7 +7,7 @@ class QuizConfig {
     this.apiUrl = '',
     this.apiKey = '',
     this.autoSearch = true,
-    this.displayMode = 'notification',
+    this.displayMode = 'accessibility',
     this.filterNoise = true,
     this.debugCapture = false,
     this.maxCaptureLines = 8,
@@ -26,9 +26,11 @@ class QuizConfig {
   final String apiUrl;
   final String apiKey;
   final bool autoSearch;
-  /// 显示模式：overlay=普通悬浮窗，accessibility_overlay=无障碍悬浮，notification=通知栏，manual=手动。
+
+  /// 显示模式：accessibility=无障碍悬浮（默认，抗屏蔽），notification=通知栏，manual=手动。
   final String displayMode;
   final bool filterNoise;
+
   /// 调试捕获：显示无障碍原始/清洗后的屏幕文本，便于定位捕获或匹配问题。
   final bool debugCapture;
   final int maxCaptureLines;
@@ -48,6 +50,7 @@ class QuizConfig {
   final bool bankEnabled;
   final bool bankPriority;
   final int bankMaxMatches;
+
   /// 是否允许把题目发送到第三方/自定义网络 API；默认关闭，仅使用本地题库。
   final bool allowExternalApi;
 
@@ -133,13 +136,16 @@ class QuizConfig {
 
   static String _parseDisplayMode(String? value) {
     switch (value) {
-      case 'overlay':
+      case 'accessibility':
       case 'notification':
-      case 'accessibility_overlay':
       case 'manual':
         return value!;
+      // 兼容旧配置值
+      case 'accessibility_overlay':
+      case 'overlay':
+        return 'accessibility';
       default:
-        return 'notification';
+        return 'accessibility';
     }
   }
 }

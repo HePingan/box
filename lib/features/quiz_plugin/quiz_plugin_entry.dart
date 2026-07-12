@@ -72,7 +72,10 @@ class QuizPluginEntry {
     } catch (_) {}
   }
 
-  static Future<void> setOverlayVisible(bool visible, {String displayMode = 'overlay'}) async {
+  static Future<void> setOverlayVisible(
+    bool visible, {
+    String displayMode = 'overlay',
+  }) async {
     try {
       await _channel.invokeMethod('setOverlayVisible', {
         'visible': visible,
@@ -91,7 +94,8 @@ class QuizPluginEntry {
 
   static Future<bool> hasOverlayPermission() async {
     try {
-      return await _channel.invokeMethod('hasOverlayPermission') as bool? ?? false;
+      return await _channel.invokeMethod('hasOverlayPermission') as bool? ??
+          false;
     } catch (_) {
       return false;
     }
@@ -113,7 +117,6 @@ class QuizPluginEntry {
     } catch (_) {}
   }
 
-
   static Future<void> openRegionSelector() async {
     try {
       await _channel.invokeMethod('openRegionSelector');
@@ -133,7 +136,10 @@ class QuizPluginEntry {
 
   static String _formatResultForOverlay(QuizResult result) {
     if (result.isSuccess) {
-      return result.answers.map((answer) => answer.text).where((text) => text.trim().isNotEmpty).join('\n\n');
+      return result.answers
+          .map((answer) => answer.text)
+          .where((text) => text.trim().isNotEmpty)
+          .join('\n\n');
     }
     return result.error?.isNotEmpty == true ? result.error! : '未找到答案';
   }
@@ -151,7 +157,10 @@ class QuizPluginEntry {
         '$preview';
   }
 
-  static Future<void> _handleCapturedQuestion(String question, String method) async {
+  static Future<void> _handleCapturedQuestion(
+    String question,
+    String method,
+  ) async {
     final captured = question.trim();
     if (captured.isEmpty) return;
     final config = await loadConfig();
@@ -180,11 +189,16 @@ class QuizPluginEntry {
     engine.config = config;
     await updateOverlayContent(
       question: config.debugCapture ? '调试捕获：正在用下方文本搜题' : captured,
-      answers: config.debugCapture ? '${_formatDebugCapture(captured)}\n\n正在搜题...' : '正在搜题...',
+      answers: config.debugCapture
+          ? '${_formatDebugCapture(captured)}\n\n正在搜题...'
+          : '正在搜题...',
       isSearching: true,
       displayMode: config.displayMode,
     );
-    final result = await engine.search(captured, forceExternalSearch: method == 'manualSearch');
+    final result = await engine.search(
+      captured,
+      forceExternalSearch: method == 'manualSearch',
+    );
     await updateOverlayContent(
       question: captured,
       answers: config.debugCapture
@@ -199,9 +213,12 @@ class QuizPluginEntry {
   static Future<void> initAutoSearch() async {
     // 允许重复设置 handler，避免 FlutterEngine 重建后因旧标记导致通道失效。
     _channel.setMethodCallHandler((call) async {
-      if (call.method == 'onQuestionCaptured' || call.method == 'manualSearch') {
+      if (call.method == 'onQuestionCaptured' ||
+          call.method == 'manualSearch') {
         final args = call.arguments;
-        final question = args is Map ? (args['question']?.toString() ?? '') : '';
+        final question = args is Map
+            ? (args['question']?.toString() ?? '')
+            : '';
         try {
           await _handleCapturedQuestion(question, call.method);
         } catch (_) {
@@ -222,10 +239,8 @@ class QuizPluginEntry {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (ctx) => _QuizConfigSheet(
-        initial: config,
-        onResult: (c) => result = c,
-      ),
+      builder: (ctx) =>
+          _QuizConfigSheet(initial: config, onResult: (c) => result = c),
     );
 
     if (result != null && context.mounted) {
@@ -236,21 +251,30 @@ class QuizPluginEntry {
           await setOverlayVisible(true, displayMode: result!.displayMode);
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('已启用悬浮窗，请查看屏幕'), duration: Duration(seconds: 2)),
+              const SnackBar(
+                content: Text('已启用悬浮窗，请查看屏幕'),
+                duration: Duration(seconds: 2),
+              ),
             );
           }
         } else {
           await setOverlayVisible(false);
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('已关闭悬浮窗'), duration: Duration(seconds: 2)),
+              const SnackBar(
+                content: Text('已关闭悬浮窗'),
+                duration: Duration(seconds: 2),
+              ),
             );
           }
         }
       } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('悬浮窗控制失败：$e'), duration: const Duration(seconds: 3)),
+            SnackBar(
+              content: Text('悬浮窗控制失败：$e'),
+              duration: const Duration(seconds: 3),
+            ),
           );
         }
       }
@@ -259,9 +283,9 @@ class QuizPluginEntry {
 
   // 识别区域调节页入口
   static Future<void> showRegionSheet(BuildContext context) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const _RegionSheetPage()),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const _RegionSheetPage()));
   }
 }
 
@@ -275,7 +299,8 @@ class _AccessibilityStatusCard extends StatefulWidget {
   const _AccessibilityStatusCard({required this.onRequestAccessibility});
 
   @override
-  State<_AccessibilityStatusCard> createState() => _AccessibilityStatusCardState();
+  State<_AccessibilityStatusCard> createState() =>
+      _AccessibilityStatusCardState();
 }
 
 class _AccessibilityStatusCardState extends State<_AccessibilityStatusCard> {
@@ -304,25 +329,25 @@ class _AccessibilityStatusCardState extends State<_AccessibilityStatusCard> {
     final label = _checking
         ? '正在检测无障碍权限...'
         : _enabled
-            ? '无障碍服务已启用'
-            : '无障碍服务未启用';
+        ? '无障碍服务已启用'
+        : '无障碍服务未启用';
     final color = _checking
         ? Colors.grey
         : _enabled
-            ? AppTokens.success
-            : AppTokens.danger;
+        ? AppTokens.success
+        : AppTokens.danger;
     final action = _checking
         ? null
         : _enabled
-            ? null
-            : TextButton.icon(
-                onPressed: () async {
-                  await widget.onRequestAccessibility();
-                  await _refresh();
-                },
-                icon: const Icon(Icons.open_in_new, size: 16),
-                label: const Text('去开启'),
-              );
+        ? null
+        : TextButton.icon(
+            onPressed: () async {
+              await widget.onRequestAccessibility();
+              await _refresh();
+            },
+            icon: const Icon(Icons.open_in_new, size: 16),
+            label: const Text('去开启'),
+          );
 
     return Container(
       padding: const EdgeInsets.all(AppTokens.spaceLg),
@@ -334,103 +359,6 @@ class _AccessibilityStatusCardState extends State<_AccessibilityStatusCard> {
       child: Row(
         children: [
           Icon(Icons.support_agent_rounded, color: color, size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
-          ),
-          if (action != null) action,
-        ],
-      ),
-    );
-  }
-}
-
-class _OverlayStatusCard extends StatefulWidget {
-  final Future<void> Function() onRequestOverlay;
-
-  const _OverlayStatusCard({required this.onRequestOverlay});
-
-  @override
-  State<_OverlayStatusCard> createState() => _OverlayStatusCardState();
-}
-
-class _OverlayStatusCardState extends State<_OverlayStatusCard> {
-  bool _hasPermission = false;
-  bool _isVisible = false;
-  bool _checking = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _refresh();
-  }
-
-  @override
-  void didUpdateWidget(covariant _OverlayStatusCard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _refresh();
-  }
-
-  Future<void> _refresh() async {
-    final hasPermission = await QuizPluginEntry.hasOverlayPermission();
-    final isVisible = await QuizPluginEntry.isOverlayVisible();
-    if (mounted) {
-      setState(() {
-        _hasPermission = hasPermission;
-        _isVisible = isVisible;
-        _checking = false;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final label = _checking
-        ? '正在检测悬浮窗状态...'
-        : !_hasPermission
-            ? '悬浮窗权限未开启'
-            : _isVisible
-                ? '悬浮窗已显示'
-                : '悬浮窗未显示';
-    final color = _checking
-        ? Colors.grey
-        : !_hasPermission
-            ? AppTokens.danger
-            : _isVisible
-                ? AppTokens.success
-                : AppTokens.warning;
-    final action = _checking
-        ? null
-        : !_hasPermission
-            ? TextButton.icon(
-                onPressed: () async {
-                  await widget.onRequestOverlay();
-                  await _refresh();
-                },
-                icon: const Icon(Icons.open_in_new, size: 16),
-                label: const Text('去开启'),
-              )
-            : _isVisible
-                ? null
-                : TextButton.icon(
-                    onPressed: () async {
-                      await QuizPluginEntry.setOverlayVisible(true);
-                      await _refresh();
-                    },
-                    icon: const Icon(Icons.visibility, size: 16),
-                    label: const Text('显示'),
-                  );
-
-    return Container(
-      padding: const EdgeInsets.all(AppTokens.spaceLg),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(AppTokens.radiusSm),
-        border: Border.all(color: AppTokens.divider),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.layers_rounded, color: color, size: 20),
           const SizedBox(width: 12),
           Expanded(
             child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
@@ -476,7 +404,9 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
 
     return SafeArea(
       child: SingleChildScrollView(
-        padding: MediaQuery.of(context).viewInsets + const EdgeInsets.all(AppTokens.spaceXl),
+        padding:
+            MediaQuery.of(context).viewInsets +
+            const EdgeInsets.all(AppTokens.spaceXl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -485,39 +415,47 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text('答题助手设置', style: Theme.of(context).textTheme.titleMedium),
-                IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close))
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
+                ),
               ],
             ),
             const SizedBox(height: AppTokens.spaceLg),
             _AccessibilityStatusCard(
-                onRequestAccessibility: () => QuizPluginEntry.requestAccessibility()),
-            const SizedBox(height: AppTokens.spaceLg),
-            _OverlayStatusCard(
-                onRequestOverlay: () => QuizPluginEntry.requestOverlayPermission()),
+              onRequestAccessibility: () =>
+                  QuizPluginEntry.requestAccessibility(),
+            ),
             const SizedBox(height: AppTokens.spaceLg),
             SwitchListTile(
               title: const Text('启用自动搜题'),
               subtitle: const Text('只在无障碍服务授权后生效'),
               value: _cfg.enabled,
-              onChanged: (v) => setState(() => _cfg = _cfg.copyWith(enabled: v)),
+              onChanged: (v) =>
+                  setState(() => _cfg = _cfg.copyWith(enabled: v)),
             ),
             SwitchListTile(
               title: const Text('收到题目自动搜题'),
               subtitle: const Text('关闭后仅展示当前捕获内容，手动触发搜题'),
               value: _cfg.autoSearch,
-              onChanged: (v) => setState(() => _cfg = _cfg.copyWith(autoSearch: v)),
+              onChanged: (v) =>
+                  setState(() => _cfg = _cfg.copyWith(autoSearch: v)),
             ),
             SwitchListTile(
               title: const Text('调试捕获文本'),
-              subtitle: const Text('开启后会把无障碍捕获到的屏幕文本先显示到通知/悬浮窗，用来判断是捕获问题还是题库匹配问题'),
+              subtitle: const Text(
+                '开启后会把无障碍捕获到的屏幕文本先显示到通知/悬浮窗，用来判断是捕获问题还是题库匹配问题',
+              ),
               value: _cfg.debugCapture,
-              onChanged: (v) => setState(() => _cfg = _cfg.copyWith(debugCapture: v)),
+              onChanged: (v) =>
+                  setState(() => _cfg = _cfg.copyWith(debugCapture: v)),
             ),
             SwitchListTile(
               title: const Text('过滤无关文本'),
               subtitle: const Text('过滤设置、广告、上一题/下一题等界面噪声；调试时可临时关闭'),
               value: _cfg.filterNoise,
-              onChanged: (v) => setState(() => _cfg = _cfg.copyWith(filterNoise: v)),
+              onChanged: (v) =>
+                  setState(() => _cfg = _cfg.copyWith(filterNoise: v)),
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -538,17 +476,29 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
               title: const Text('允许外部网络搜题'),
               subtitle: const Text('默认关闭：关闭时只查本地题库，避免把题目发送到第三方 API'),
               value: _cfg.allowExternalApi,
-              onChanged: (v) => setState(() => _cfg = _cfg.copyWith(allowExternalApi: v)),
+              onChanged: (v) =>
+                  setState(() => _cfg = _cfg.copyWith(allowExternalApi: v)),
             ),
             const SizedBox(height: AppTokens.spaceMd),
             Text('显示模式', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
             SegmentedButton<String>(
               segments: const [
-                ButtonSegment(value: 'notification', label: Text('通知'), icon: Icon(Icons.notifications)),
-                ButtonSegment(value: 'accessibility_overlay', label: Text('无障碍悬浮'), icon: Icon(Icons.accessibility_new)),
-                ButtonSegment(value: 'overlay', label: Text('悬浮窗'), icon: Icon(Icons.layers)),
-                ButtonSegment(value: 'manual', label: Text('手动'), icon: Icon(Icons.edit_note)),
+                ButtonSegment(
+                  value: 'accessibility',
+                  label: Text('无障碍悬浮'),
+                  icon: Icon(Icons.accessibility_new),
+                ),
+                ButtonSegment(
+                  value: 'notification',
+                  label: Text('通知'),
+                  icon: Icon(Icons.notifications),
+                ),
+                ButtonSegment(
+                  value: 'manual',
+                  label: Text('手动'),
+                  icon: Icon(Icons.edit_note),
+                ),
               ],
               selected: {_cfg.displayMode},
               onSelectionChanged: (values) {
@@ -558,7 +508,9 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
             const SizedBox(height: 6),
             Text(
               _displayModeHint(_cfg.displayMode),
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppTokens.textSecondary),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppTokens.textSecondary),
             ),
             const SizedBox(height: AppTokens.spaceMd),
             Text('主题色', style: Theme.of(context).textTheme.titleSmall),
@@ -570,11 +522,15 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                 itemCount: colorOptions.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 12),
                 itemBuilder: (_, i) {
-                  final selected = themeColors.isNotEmpty &&
-                      themeColors[_cfg.themeColorIndex % themeColors.length].value ==
+                  final selected =
+                      themeColors.isNotEmpty &&
+                      themeColors[_cfg.themeColorIndex % themeColors.length]
+                              .value ==
                           colorOptions[i].value;
                   return GestureDetector(
-                    onTap: () => setState(() => _cfg = _cfg.copyWith(themeColorIndex: i)),
+                    onTap: () => setState(
+                      () => _cfg = _cfg.copyWith(themeColorIndex: i),
+                    ),
                     child: Container(
                       width: 48,
                       height: 48,
@@ -582,8 +538,11 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                         color: colorOptions[i],
                         shape: BoxShape.circle,
                         border: Border.all(
-                            color: selected ? AppTokens.textPrimary : Colors.transparent,
-                            width: 3),
+                          color: selected
+                              ? AppTokens.textPrimary
+                              : Colors.transparent,
+                          width: 3,
+                        ),
                       ),
                     ),
                   );
@@ -596,23 +555,28 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
             TextField(
               enabled: _cfg.allowExternalApi,
               decoration: const InputDecoration(
-                  hintText: 'https://example.com/search',
-                  helperText: '需先开启“允许外部网络搜题”',
-                  border: OutlineInputBorder()),
+                hintText: 'https://example.com/search',
+                helperText: '需先开启“允许外部网络搜题”',
+                border: OutlineInputBorder(),
+              ),
               controller: TextEditingController(text: _cfg.apiUrl)
                 ..selection = TextSelection.fromPosition(
-                    TextPosition(offset: _cfg.apiUrl.length)),
+                  TextPosition(offset: _cfg.apiUrl.length),
+                ),
               onChanged: (v) => _cfg = _cfg.copyWith(apiUrl: v),
             ),
             const SizedBox(height: AppTokens.spaceMd),
             TextField(
               enabled: _cfg.allowExternalApi,
               decoration: const InputDecoration(
-                  hintText: 'API Key', border: OutlineInputBorder()),
+                hintText: 'API Key',
+                border: OutlineInputBorder(),
+              ),
               obscureText: true,
               controller: TextEditingController(text: _cfg.apiKey)
                 ..selection = TextSelection.fromPosition(
-                    TextPosition(offset: _cfg.apiKey.length)),
+                  TextPosition(offset: _cfg.apiKey.length),
+                ),
               onChanged: (v) => _cfg = _cfg.copyWith(apiKey: v),
             ),
             const SizedBox(height: AppTokens.spaceXl),
@@ -669,14 +633,12 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
 
 String _displayModeHint(String mode) {
   switch (mode) {
-    case 'accessibility_overlay':
-      return '由无障碍服务创建 TYPE_ACCESSIBILITY_OVERLAY；需要先开启无障碍服务，失败时降级为通知栏。';
-    case 'overlay':
-      return '优先使用普通系统悬浮窗；不可用时自动降级为通知栏提示。';
+    case 'accessibility':
+      return '推荐：由无障碍服务创建系统级悬浮窗展示答案，可绕过驾考宝典等 App 的悬浮窗屏蔽/考试模式限制；无需单独的悬浮窗权限，只要开启无障碍服务即可。无障碍未开启时自动降级为通知栏。';
     case 'manual':
       return '不主动弹出悬浮窗或通知，只保留应用内手动搜题。';
     default:
-      return '推荐：用通知栏显示结果，稳定性更好、对其他应用干扰更少。';
+      return '用通知栏显示结果，稳定但需要下拉查看；适合无法开启无障碍服务时使用。';
   }
 }
 
@@ -719,14 +681,14 @@ class _RegionSheetPageState extends State<_RegionSheetPage> {
             onPressed: () async {
               await _syncToNative();
               if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('已同步到原生悬浮窗')),
-                );
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('已同步到原生悬浮窗')));
               }
             },
             icon: const Icon(Icons.check),
             tooltip: '同步',
-          )
+          ),
         ],
       ),
       body: Column(
@@ -756,7 +718,7 @@ class _RegionSheetPageState extends State<_RegionSheetPage> {
                 BoxShadow(
                   blurRadius: 12,
                   color: Theme.of(context).shadowColor.withOpacity(0.1),
-                )
+                ),
               ],
             ),
             child: SafeArea(
@@ -769,8 +731,14 @@ class _RegionSheetPageState extends State<_RegionSheetPage> {
                           label: 'Left',
                           value: _region.left.toInt(),
                           onChanged: (v) {
-                            setState(() => _region = Rect.fromLTWH(
-                                v.toDouble(), _region.top, _region.width, _region.height));
+                            setState(
+                              () => _region = Rect.fromLTWH(
+                                v.toDouble(),
+                                _region.top,
+                                _region.width,
+                                _region.height,
+                              ),
+                            );
                             _syncToNative();
                           },
                         ),
@@ -781,8 +749,14 @@ class _RegionSheetPageState extends State<_RegionSheetPage> {
                           label: 'Top',
                           value: _region.top.toInt(),
                           onChanged: (v) {
-                            setState(() => _region = Rect.fromLTWH(
-                                _region.left, v.toDouble(), _region.width, _region.height));
+                            setState(
+                              () => _region = Rect.fromLTWH(
+                                _region.left,
+                                v.toDouble(),
+                                _region.width,
+                                _region.height,
+                              ),
+                            );
                             _syncToNative();
                           },
                         ),
@@ -797,8 +771,14 @@ class _RegionSheetPageState extends State<_RegionSheetPage> {
                           label: 'Width',
                           value: _region.width.toInt(),
                           onChanged: (v) {
-                            setState(() => _region =
-                                Rect.fromLTWH(_region.left, _region.top, v.toDouble(), _region.height));
+                            setState(
+                              () => _region = Rect.fromLTWH(
+                                _region.left,
+                                _region.top,
+                                v.toDouble(),
+                                _region.height,
+                              ),
+                            );
                             _syncToNative();
                           },
                         ),
@@ -809,8 +789,14 @@ class _RegionSheetPageState extends State<_RegionSheetPage> {
                           label: 'Height',
                           value: _region.height.toInt(),
                           onChanged: (v) {
-                            setState(() => _region = Rect.fromLTWH(
-                                _region.left, _region.top, _region.width, v.toDouble()));
+                            setState(
+                              () => _region = Rect.fromLTWH(
+                                _region.left,
+                                _region.top,
+                                _region.width,
+                                v.toDouble(),
+                              ),
+                            );
                             _syncToNative();
                           },
                         ),
@@ -822,8 +808,14 @@ class _RegionSheetPageState extends State<_RegionSheetPage> {
                     onPressed: () async {
                       final next = _region.translate(0, -10);
                       final top = next.top >= 0 ? next.top : _region.top;
-                      setState(() => _region = Rect.fromLTWH(
-                          _region.left, top, _region.width, _region.height));
+                      setState(
+                        () => _region = Rect.fromLTWH(
+                          _region.left,
+                          top,
+                          _region.width,
+                          _region.height,
+                        ),
+                      );
                       await _syncToNative();
                     },
                     icon: const Icon(Icons.arrow_upward),
@@ -862,23 +854,35 @@ class _RegionPainter extends CustomPainter {
     final texts = [
       '识别区域',
       'x: ${region.left.toInt()}, y: ${region.top.toInt()}',
-      'w: ${region.width.toInt()}, h: ${region.height.toInt()}'
+      'w: ${region.width.toInt()}, h: ${region.height.toInt()}',
     ];
     final hintPaint = Paint()
-      ..shader = LinearGradient(colors: [Colors.black, Colors.transparent]).createShader(region)
+      ..shader = LinearGradient(
+        colors: [Colors.black, Colors.transparent],
+      ).createShader(region)
       ..style = PaintingStyle.fill;
     final textPaint = TextPainter(
-      text: const TextSpan(text: '', style: TextStyle(color: Colors.white, fontSize: 13)),
+      text: const TextSpan(
+        text: '',
+        style: TextStyle(color: Colors.white, fontSize: 13),
+      ),
       textDirection: TextDirection.ltr,
     );
 
     canvas.drawRect(
-        Rect.fromLTWH(region.left, region.top, region.width, 48), hintPaint);
+      Rect.fromLTWH(region.left, region.top, region.width, 48),
+      hintPaint,
+    );
     texts.asMap().forEach((i, line) {
-      textPaint.text = TextSpan(text: line, style: const TextStyle(color: Colors.white, fontSize: 13));
+      textPaint.text = TextSpan(
+        text: line,
+        style: const TextStyle(color: Colors.white, fontSize: 13),
+      );
       textPaint.layout();
       textPaint.paint(
-          canvas, Offset(region.left + 12, region.top + 8 + i * 18));
+        canvas,
+        Offset(region.left + 12, region.top + 8 + i * 18),
+      );
     });
   }
 
@@ -891,7 +895,11 @@ class _Field extends StatelessWidget {
   final int value;
   final ValueChanged<int> onChanged;
 
-  const _Field({required this.label, required this.value, required this.onChanged});
+  const _Field({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -903,7 +911,9 @@ class _Field extends StatelessWidget {
         isDense: true,
       ),
       controller: TextEditingController(text: value.toString())
-        ..selection = TextSelection.fromPosition(TextPosition(offset: value.toString().length)),
+        ..selection = TextSelection.fromPosition(
+          TextPosition(offset: value.toString().length),
+        ),
       onChanged: (v) {
         final n = int.tryParse(v);
         if (n != null) onChanged(n);
