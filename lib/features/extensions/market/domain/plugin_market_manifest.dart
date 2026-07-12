@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/home_plugin_core.dart';
 import '../../../../plugin_market/models/plugin_market_security.dart';
 
 String safeMarketString(dynamic value, [String fallback = '']) {
@@ -173,6 +174,131 @@ PluginPermission? _pluginPermissionFromCode(String code) {
     if (value.name == normalized) return value;
   }
   return null;
+}
+
+enum PluginCompatibilityIssueSeverity { warning, blocking }
+
+class PluginCompatibilityIssue {
+  final String code;
+  final PluginCompatibilityIssueSeverity severity;
+  final String message;
+
+  const PluginCompatibilityIssue({
+    required this.code,
+    required this.severity,
+    required this.message,
+  });
+}
+
+class PluginCompatibilityResult {
+  final List<PluginCompatibilityIssue> issues;
+
+  const PluginCompatibilityResult(this.issues);
+
+  bool get canInstall => blockingIssues.isEmpty;
+
+  List<PluginCompatibilityIssue> get blockingIssues => issues
+      .where(
+        (issue) => issue.severity == PluginCompatibilityIssueSeverity.blocking,
+      )
+      .toList(growable: false);
+
+  List<PluginCompatibilityIssue> get warningIssues => issues
+      .where(
+        (issue) => issue.severity == PluginCompatibilityIssueSeverity.warning,
+      )
+      .toList(growable: false);
+}
+
+typedef PluginActionExists = bool Function(String actionCode);
+typedef PluginPermissionSupported = bool Function(PluginPermission permission);
+
+class PluginCompatibilityChecker {
+  PluginCompatibilityChecker._();
+
+  static PluginCompatibilityResult check(
+    MarketPluginTemplate template, {
+    required String currentAppVersion,
+    PluginActionExists actionExists = HomePluginActionRegistry.contains,
+    PluginPermissionSupported permissionSupported = _defaultPermissionSupported,
+  }) {
+    final issues = <PluginCompatibilityIssue>[];
+
+    if (!actionExists(template.actionCode)) {
+      issues.add(
+        PluginCompatibilityIssue(
+          code: 'action_unavailable',
+          severity: PluginCompatibilityIssueSeverity.blocking,
+          message: '当前版本未注册动作：${template.actionCode}',
+        ),
+      );
+    }
+
+    if (_compareVersions(currentAppVersion, template.minAppVersion) < 0) {
+      issues.add(
+        PluginCompatibilityIssue(
+          code: 'app_version_unsupported',
+          severity: PluginCompatibilityIssueSeverity.blocking,
+          message: '需要 App 版本 ${template.minAppVersion} 或更高',
+        ),
+      );
+    }
+
+    for (final permission in template.typedPermissions) {
+      if (permission == PluginPermission.none) continue;
+      if (!permissionSupported(permission)) {
+        issues.add(
+          PluginCompatibilityIssue(
+            code: 'permission_unsupported',
+            severity: PluginCompatibilityIssueSeverity.blocking,
+            message: '当前版本不支持权限：${permission.name}',
+          ),
+        );
+      }
+    }
+
+    if (template.deprecated) {
+      issues.add(
+        const PluginCompatibilityIssue(
+          code: 'plugin_deprecated',
+          severity: PluginCompatibilityIssueSeverity.warning,
+          message: '该插件已废弃，建议谨慎安装',
+        ),
+      );
+    }
+
+    return PluginCompatibilityResult(issues);
+  }
+
+  static bool _defaultPermissionSupported(PluginPermission permission) => true;
+}
+
+int _compareVersions(String current, String minimum) {
+  final min = minimum.trim();
+  if (min.isEmpty) return 0;
+
+  final currentParts = _versionParts(current);
+  final minParts = _versionParts(min);
+  final maxLength = currentParts.length > minParts.length
+      ? currentParts.length
+      : minParts.length;
+
+  for (var i = 0; i < maxLength; i++) {
+    final left = i < currentParts.length ? currentParts[i] : 0;
+    final right = i < minParts.length ? minParts[i] : 0;
+    if (left != right) return left.compareTo(right);
+  }
+  return 0;
+}
+
+List<int> _versionParts(String value) {
+  return value
+      .trim()
+      .split('.')
+      .map(
+        (part) => int.tryParse(part.replaceAll(RegExp(r'[^0-9].*$'), '')) ?? 0,
+      )
+      .toList(growable: false);
 }
 
 enum MarketParseSeverity { warning, error }
