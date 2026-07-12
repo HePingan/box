@@ -24,6 +24,19 @@ bool safeMarketBool(dynamic value, [bool fallback = false]) {
   return fallback;
 }
 
+List<String> safeMarketStringList(dynamic value) {
+  if (value is! List) return const [];
+  return value
+      .map((item) => safeMarketString(item))
+      .where((item) => item.isNotEmpty)
+      .toList(growable: false);
+}
+
+Map<String, dynamic> safeMarketMap(dynamic value) {
+  if (value is! Map) return const {};
+  return Map<String, dynamic>.from(value);
+}
+
 DateTime? tryParseMarketDate(dynamic value) {
   if (value == null) return null;
   if (value is DateTime) return value;
@@ -189,9 +202,17 @@ class MarketPluginTemplate {
   final String areaCode;
   final String actionCode;
   final String payload;
+  final Map<String, dynamic> payloadData;
   final IconData icon;
   final Color color;
   final int sort;
+  final String version;
+  final String minAppVersion;
+  final String author;
+  final List<String> tags;
+  final List<String> permissions;
+  final bool deprecated;
+  final String changelog;
 
   const MarketPluginTemplate({
     required this.id,
@@ -200,9 +221,17 @@ class MarketPluginTemplate {
     required this.areaCode,
     required this.actionCode,
     required this.payload,
+    this.payloadData = const {},
     required this.icon,
     required this.color,
     this.sort = 9999,
+    this.version = '1.0.0',
+    this.minAppVersion = '',
+    this.author = '',
+    this.tags = const [],
+    this.permissions = const [],
+    this.deprecated = false,
+    this.changelog = '',
   });
 
   bool get isValid => id.trim().isNotEmpty && title.trim().isNotEmpty;
@@ -214,12 +243,19 @@ class MarketPluginTemplate {
       'subtitle': subtitle,
       'areaCode': areaCode,
       'actionCode': actionCode,
-      'payload': payload,
+      'payload': payloadData.isEmpty ? payload : payloadData,
       'iconCodePoint': icon.codePoint,
       'iconFontFamily': icon.fontFamily,
       'iconFontPackage': icon.fontPackage,
       'colorValue': color.toARGB32(),
       'sort': sort,
+      'version': version,
+      'minAppVersion': minAppVersion,
+      'author': author,
+      'tags': tags,
+      'permissions': permissions,
+      'deprecated': deprecated,
+      'changelog': changelog,
     };
   }
 
@@ -244,8 +280,17 @@ class MarketPluginTemplate {
         safeMarketString(json['action'], 'toast'),
       ),
     );
-    final payload = safeMarketString(json['payload']);
+    final rawPayload = json['payload'];
+    final payload = rawPayload is Map ? '' : safeMarketString(rawPayload);
+    final payloadData = safeMarketMap(rawPayload);
     final sort = safeMarketInt(json['sort'], 9999);
+    final version = safeMarketString(json['version'], '1.0.0');
+    final minAppVersion = safeMarketString(json['minAppVersion']);
+    final author = safeMarketString(json['author']);
+    final tags = safeMarketStringList(json['tags']);
+    final permissions = safeMarketStringList(json['permissions']);
+    final deprecated = safeMarketBool(json['deprecated'], false);
+    final changelog = safeMarketString(json['changelog']);
 
     IconData icon;
     if (json['iconCodePoint'] != null) {
@@ -285,9 +330,17 @@ class MarketPluginTemplate {
       areaCode: areaCode,
       actionCode: actionCode,
       payload: payload,
+      payloadData: payloadData,
       icon: icon,
       color: color,
       sort: sort,
+      version: version,
+      minAppVersion: minAppVersion,
+      author: author,
+      tags: tags,
+      permissions: permissions,
+      deprecated: deprecated,
+      changelog: changelog,
     );
   }
 
