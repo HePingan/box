@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_bottom_sheet.dart';
@@ -233,11 +234,125 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     }
   }
 
+  Future<PluginCompatibilityResult> _checkCompatibility(
+    MarketPluginTemplate item,
+  ) async {
+    final packageInfo = await PackageInfo.fromPlatform();
+    return PluginCompatibilityChecker.check(
+      item,
+      currentAppVersion: packageInfo.version,
+    );
+  }
+
+  Future<bool> _confirmInstallCompatibility(MarketPluginTemplate item) async {
+    final result = await _checkCompatibility(item);
+    if (!mounted) return false;
+
+    if (!result.canInstall) {
+      await _showCompatibilityIssues(
+        title: '无法安装插件',
+        item: item,
+        issues: result.blockingIssues,
+        blocking: true,
+      );
+      return false;
+    }
+
+    if (result.warningIssues.isNotEmpty) {
+      return _showCompatibilityIssues(
+        title: '安装前确认',
+        item: item,
+        issues: result.warningIssues,
+        blocking: false,
+      );
+    }
+
+    return true;
+  }
+
+  Future<bool> _showCompatibilityIssues({
+    required String title,
+    required MarketPluginTemplate item,
+    required List<PluginCompatibilityIssue> issues,
+    required bool blocking,
+  }) async {
+    final result = await showAppModalBottomSheet<bool>(
+      context: context,
+      builder: (dialogContext) => AppBottomSheetFrame(
+        title: title,
+        subtitle: item.title,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: blocking
+                    ? AppTokens.rose.withValues(alpha: 0.08)
+                    : const Color(0xFFFFF7ED),
+                borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+                border: Border.all(
+                  color: blocking
+                      ? AppTokens.rose.withValues(alpha: 0.18)
+                      : const Color(0xFFFED7AA),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final issue in issues) ...[
+                    Text(
+                      '• ${issue.message}',
+                      style: TextStyle(
+                        color: blocking
+                            ? AppTokens.rose
+                            : const Color(0xFF92400E),
+                        fontSize: 13,
+                        height: 1.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: Text(blocking ? '知道了' : '取消'),
+                  ),
+                ),
+                if (!blocking) ...[
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(dialogContext, true),
+                      child: const Text('继续安装'),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+    return result ?? false;
+  }
+
   Future<void> _install(MarketPluginTemplate item) async {
     if (_loadingIds.contains(item.id) || _bulkRunning) return;
 
     setState(() => _loadingIds.add(item.id));
     try {
+      final canInstall = await _confirmInstallCompatibility(item);
+      if (!canInstall) return;
       await widget.onInstall(item);
       if (!mounted) return;
       setState(() => _installedIds.add(item.id));
@@ -288,7 +403,18 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     setState(() => _bulkRunning = true);
 
     var success = 0;
+    var skipped = 0;
+    final packageInfo = await PackageInfo.fromPlatform();
     for (final item in target) {
+      final compatibility = PluginCompatibilityChecker.check(
+        item,
+        currentAppVersion: packageInfo.version,
+      );
+      if (!compatibility.canInstall || compatibility.warningIssues.isNotEmpty) {
+        skipped++;
+        continue;
+      }
+
       try {
         await widget.onInstall(item);
         _installedIds.add(item.id);
@@ -298,7 +424,8 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
 
     if (!mounted) return;
     setState(() => _bulkRunning = false);
-    _showSnack('批量安装完成：$success / ${target.length}');
+    final skippedText = skipped > 0 ? '，已跳过 $skipped 个不兼容/需确认插件' : '';
+    _showSnack('批量安装完成：$success / ${target.length}$skippedText');
   }
 
   Future<void> _removeVisible() async {
