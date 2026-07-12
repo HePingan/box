@@ -108,24 +108,10 @@ const Set<String> _allowedAreaCodes = {
   'novel',
 };
 
-const Set<String> _allowedActionCodes = {
-  'toast',
-  'openDailyNews',
-  'openNovelList',
-  'openVideoList',
-  'openImageGenerator',
-};
-
 String _normalizeAreaCode(String areaCode) {
   final code = areaCode.trim();
   if (_allowedAreaCodes.contains(code)) return code;
   return 'recommend';
-}
-
-String _normalizeActionCode(String actionCode) {
-  final code = actionCode.trim();
-  if (_allowedActionCodes.contains(code)) return code;
-  return 'toast';
 }
 
 IconData _defaultIconForArea(String areaCode) {
@@ -367,12 +353,10 @@ class MarketPluginTemplate {
         safeMarketString(json['area'], 'recommend'),
       ),
     );
-    final actionCode = _normalizeActionCode(
-      safeMarketString(
-        json['actionCode'],
-        safeMarketString(json['action'], 'toast'),
-      ),
-    );
+    final actionCode = safeMarketString(
+      json['actionCode'],
+      safeMarketString(json['action'], 'toast'),
+    ).trim();
     final rawPayload = json['payload'];
     final payload = rawPayload is Map ? '' : safeMarketString(rawPayload);
     final payloadData = safeMarketMap(rawPayload);

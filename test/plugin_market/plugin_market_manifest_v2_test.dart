@@ -28,6 +28,7 @@ void main() {
       expect(template.permissions, ['openPage', 'network']);
       expect(template.deprecated, isTrue);
       expect(template.changelog, '支持 Manifest v2');
+      expect(template.actionCode, 'custom.route');
       expect(template.payload, isEmpty);
       expect(template.payloadData, {
         'route': '/novel/list',
