@@ -6,12 +6,15 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Bitmap
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.PixelFormat
+import android.hardware.HardwareBuffer
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import java.io.ByteArrayOutputStream
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -88,6 +91,17 @@ class QuizAccessibilityService : AccessibilityService() {
         fun hideOverlayIfRunning() {
             val svc = runningService ?: return
             svc.mainHandler.post { svc.hideAccessibilityOverlay() }
+        }
+
+        /**
+         * 截取当前屏幕并裁剪到识别区域，回调返回 PNG 字节（失败返回 null）。
+         * 依赖 AccessibilityService.takeScreenshot（API 30+）。对设了 FLAG_SECURE 的
+         * 页面截屏会是黑屏/失败，属预期限制。
+         */
+        fun captureRegionIfRunning(callback: (ByteArray?) -> Unit): Boolean {
+            val svc = runningService ?: return false
+            svc.captureRegionScreenshot(callback)
+            return true
         }
     }
 
@@ -323,6 +337,67 @@ class QuizAccessibilityService : AccessibilityService() {
         } catch (_: Throwable) {}
         accessibilityOverlayView = null
         overlayParams = null
+    }
+
+    /**
+     * 截屏并裁剪到识别区域，PNG 编码后回调返回字节。
+     * 需要 API 30+（takeScreenshot）；低版本或失败回调 null。
+     */
+    fun captureRegionScreenshot(callback: (ByteArray?) -> Unit) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            callback(null)
+            return
+        }
+        screenRegion = screenRegion ?: loadRegion()
+        try {
+            takeScreenshot(
+                android.view.Display.DEFAULT_DISPLAY,
+                { it.run() },
+                object : AccessibilityService.TakeScreenshotCallback {
+                    override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
+                        val bytes = runCatching { encodeCroppedPng(screenshot) }.getOrNull()
+                        try {
+                            screenshot.hardwareBuffer.close()
+                        } catch (_: Throwable) {}
+                        callback(bytes)
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        Log.w(TAG, "takeScreenshot failed code=$errorCode")
+                        callback(null)
+                    }
+                }
+            )
+        } catch (e: Throwable) {
+            Log.w(TAG, "takeScreenshot exception", e)
+            callback(null)
+        }
+    }
+
+    private fun encodeCroppedPng(screenshot: ScreenshotResult): ByteArray? {
+        val buffer: HardwareBuffer = screenshot.hardwareBuffer
+        val colorSpace = screenshot.colorSpace
+        val full = Bitmap.wrapHardwareBuffer(buffer, colorSpace) ?: return null
+        // 转成可裁剪的软件位图
+        val software = full.copy(Bitmap.Config.ARGB_8888, false) ?: return null
+        full.recycle()
+
+        val region = screenRegion
+        val cropped = if (region != null && !region.isEmpty) {
+            val left = region.left.toInt().coerceIn(0, software.width - 1)
+            val top = region.top.toInt().coerceIn(0, software.height - 1)
+            val right = region.right.toInt().coerceIn(left + 1, software.width)
+            val bottom = region.bottom.toInt().coerceIn(top + 1, software.height)
+            Bitmap.createBitmap(software, left, top, right - left, bottom - top)
+        } else {
+            software
+        }
+
+        val out = ByteArrayOutputStream()
+        cropped.compress(Bitmap.CompressFormat.PNG, 100, out)
+        if (cropped !== software) cropped.recycle()
+        software.recycle()
+        return out.toByteArray()
     }
 
     private fun extractAndSend(root: AccessibilityNodeInfo?) {

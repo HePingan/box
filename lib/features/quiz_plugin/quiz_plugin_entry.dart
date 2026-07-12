@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../design_system/app_tokens.dart';
 import 'quiz_config.dart';
 import 'quiz_engine.dart';
+import 'quiz_ocr_client.dart';
 
 /// 答题插件 - MethodChannel 名称
 const String _kChannel = 'com.example.box/quiz_plugin';
@@ -123,6 +125,18 @@ class QuizPluginEntry {
     } catch (_) {}
   }
 
+  /// 请无障碍服务截屏识别区域，返回 PNG 字节（失败返回 null）。
+  static Future<Uint8List?> captureRegionScreenshot() async {
+    try {
+      final bytes = await _channel.invokeMethod('captureRegionScreenshot');
+      if (bytes is Uint8List) return bytes;
+      if (bytes is List<int>) return Uint8List.fromList(bytes);
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<void> updateRegion(Rect region) async {
     try {
       await _channel.invokeMethod('updateRegion', {
@@ -199,6 +213,21 @@ class QuizPluginEntry {
       captured,
       forceExternalSearch: method == 'manualSearch',
     );
+
+    // 图片题 OCR 兜底：文本搜题失败且开启 OCR 时，截屏识别区域→OCR→再搜一次。
+    if (!result.isSuccess && config.ocrEnabled) {
+      final ocrResult = await _tryOcrFallback(config, engine);
+      if (ocrResult != null && ocrResult.isSuccess) {
+        await updateOverlayContent(
+          question: ocrResult.question,
+          answers: _formatResultForOverlay(ocrResult),
+          isSearching: false,
+          displayMode: config.displayMode,
+        );
+        return;
+      }
+    }
+
     await updateOverlayContent(
       question: captured,
       answers: config.debugCapture
@@ -206,6 +235,53 @@ class QuizPluginEntry {
           : _formatResultForOverlay(result),
       isSearching: false,
       displayMode: config.displayMode,
+    );
+  }
+
+  /// 截屏识别区域 → OCR → 用识别文本再搜一次。返回 null 表示 OCR 链路未产出。
+  static Future<QuizResult?> _tryOcrFallback(
+    QuizConfig config,
+    QuizEngine engine,
+  ) async {
+    await updateOverlayContent(
+      question: '未读到文本，尝试截图识别…',
+      answers: '正在 OCR 识别图片题…',
+      isSearching: true,
+      displayMode: config.displayMode,
+    );
+
+    final bytes = await captureRegionScreenshot();
+    if (bytes == null || bytes.isEmpty) {
+      return null;
+    }
+
+    final client = QuizOcrClient(
+      endpoint: config.ocrEndpoint,
+      token: config.ocrToken,
+    );
+    final ocr = await client.recognizeBytes(bytes);
+    if (!ocr.isSuccess) {
+      await updateOverlayContent(
+        question: 'OCR 识别失败',
+        answers: ocr.error ?? 'OCR 未识别到文本',
+        isSearching: false,
+        displayMode: config.displayMode,
+      );
+      return null;
+    }
+
+    final ocrText = ocr.fullText.trim();
+    await updateOverlayContent(
+      question: 'OCR 识别：$ocrText',
+      answers: '正在用 OCR 文本搜题…',
+      isSearching: true,
+      displayMode: config.displayMode,
+    );
+
+    final result = await engine.search(ocrText, forceExternalSearch: true);
+    return result.copyWith(
+      question: ocrText,
+      source: result.source.isEmpty ? 'OCR' : '${result.source}·OCR',
     );
   }
 
@@ -479,6 +555,46 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
               onChanged: (v) =>
                   setState(() => _cfg = _cfg.copyWith(allowExternalApi: v)),
             ),
+            SwitchListTile(
+              title: const Text('图片题 OCR 兜底'),
+              subtitle: const Text(
+                '无障碍读不到文本时，截取识别区域上传 OCR 服务再搜题（需开启无障碍，仅 Android 11+；对加密/防截屏页面无效）',
+              ),
+              value: _cfg.ocrEnabled,
+              onChanged: (v) =>
+                  setState(() => _cfg = _cfg.copyWith(ocrEnabled: v)),
+            ),
+            if (_cfg.ocrEnabled) ...[
+              const SizedBox(height: AppTokens.spaceSm),
+              TextField(
+                decoration: const InputDecoration(
+                  labelText: 'OCR 服务地址',
+                  hintText: 'https://ocr.hpa888.top',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                controller: TextEditingController(text: _cfg.ocrEndpoint)
+                  ..selection = TextSelection.fromPosition(
+                    TextPosition(offset: _cfg.ocrEndpoint.length),
+                  ),
+                onChanged: (v) => _cfg = _cfg.copyWith(ocrEndpoint: v),
+              ),
+              const SizedBox(height: AppTokens.spaceSm),
+              TextField(
+                decoration: const InputDecoration(
+                  labelText: 'OCR Token（可选）',
+                  hintText: '留空则免密',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                obscureText: true,
+                controller: TextEditingController(text: _cfg.ocrToken)
+                  ..selection = TextSelection.fromPosition(
+                    TextPosition(offset: _cfg.ocrToken.length),
+                  ),
+                onChanged: (v) => _cfg = _cfg.copyWith(ocrToken: v),
+              ),
+            ],
             const SizedBox(height: AppTokens.spaceMd),
             Text('显示模式', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),

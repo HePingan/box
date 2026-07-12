@@ -118,6 +118,14 @@ class MainActivity : FlutterActivity() {
                     }
                     result.success(true)
                 }
+                "captureRegionScreenshot" -> {
+                    val started = QuizAccessibilityService.captureRegionIfRunning { bytes ->
+                        runOnUiThread { result.success(bytes) }
+                    }
+                    if (!started) {
+                        result.success(null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }

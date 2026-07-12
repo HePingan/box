@@ -20,6 +20,9 @@ class QuizConfig {
     this.bankPriority = true,
     this.bankMaxMatches = 3,
     this.allowExternalApi = false,
+    this.ocrEnabled = false,
+    this.ocrEndpoint = 'https://ocr.hpa888.top',
+    this.ocrToken = '',
   });
 
   final bool enabled;
@@ -54,6 +57,15 @@ class QuizConfig {
   /// 是否允许把题目发送到第三方/自定义网络 API；默认关闭，仅使用本地题库。
   final bool allowExternalApi;
 
+  /// 图片题 OCR 兜底：无障碍读不到文本时截屏识别区域走 OCR。默认关闭。
+  final bool ocrEnabled;
+
+  /// OCR 服务地址（自建服务，POST /api/ocr/upload 上传 multipart file）。
+  final String ocrEndpoint;
+
+  /// OCR 服务 Bearer token（可选，留空则免密）。
+  final String ocrToken;
+
   QuizConfig copyWith({
     bool? enabled,
     String? apiUrl,
@@ -72,6 +84,9 @@ class QuizConfig {
     bool? bankPriority,
     int? bankMaxMatches,
     bool? allowExternalApi,
+    bool? ocrEnabled,
+    String? ocrEndpoint,
+    String? ocrToken,
   }) {
     return QuizConfig(
       enabled: enabled ?? this.enabled,
@@ -91,6 +106,9 @@ class QuizConfig {
       bankPriority: bankPriority ?? this.bankPriority,
       bankMaxMatches: bankMaxMatches ?? this.bankMaxMatches,
       allowExternalApi: allowExternalApi ?? this.allowExternalApi,
+      ocrEnabled: ocrEnabled ?? this.ocrEnabled,
+      ocrEndpoint: ocrEndpoint ?? this.ocrEndpoint,
+      ocrToken: ocrToken ?? this.ocrToken,
     );
   }
 
@@ -112,6 +130,9 @@ class QuizConfig {
     'bankPriority': bankPriority,
     'bankMaxMatches': bankMaxMatches,
     'allowExternalApi': allowExternalApi,
+    'ocrEnabled': ocrEnabled,
+    'ocrEndpoint': ocrEndpoint,
+    'ocrToken': ocrToken,
   };
 
   factory QuizConfig.fromJson(Map<String, dynamic> json) => QuizConfig(
@@ -132,6 +153,11 @@ class QuizConfig {
     bankPriority: (json['bankPriority'] as bool?) ?? true,
     bankMaxMatches: (json['bankMaxMatches'] as num?)?.toInt() ?? 3,
     allowExternalApi: (json['allowExternalApi'] as bool?) ?? false,
+    ocrEnabled: (json['ocrEnabled'] as bool?) ?? false,
+    ocrEndpoint: (json['ocrEndpoint'] as String?)?.trim().isNotEmpty == true
+        ? (json['ocrEndpoint'] as String).trim()
+        : 'https://ocr.hpa888.top',
+    ocrToken: (json['ocrToken'] as String?) ?? '',
   );
 
   static String _parseDisplayMode(String? value) {
