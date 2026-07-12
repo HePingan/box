@@ -15,7 +15,7 @@ typedef MarketInstallHandler =
 typedef MarketUninstallHandler = Future<void> Function(String pluginId);
 
 class PluginMarketPage extends StatefulWidget {
-  const PluginMarketPage({
+  PluginMarketPage({
     super.key,
     required this.initialInstalledIds,
     required this.onInstall,
@@ -24,12 +24,15 @@ class PluginMarketPage extends StatefulWidget {
     this.remoteConfigUrl,
     this.initialChannel = PluginMarketChannel.stable,
     this.securityConfig = const PluginMarketSecurityConfig(),
-  });
+    PluginMarketManifestRepository? manifestRepository,
+  }) : manifestRepository =
+           manifestRepository ?? PluginMarketManifestRepository.instance;
 
   final Set<String> initialInstalledIds;
   final MarketInstallHandler onInstall;
   final MarketUninstallHandler onUninstall;
   final List<MarketPluginTemplate> templates;
+  final PluginMarketManifestRepository manifestRepository;
 
   /// 远程清单 URL
   final String? remoteConfigUrl;
@@ -98,14 +101,13 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
           ? MarketPluginTemplate.defaults
           : widget.templates;
 
-      final manifest = await PluginMarketManifestRepository.instance
-          .loadManifest(
-            fallbackTemplates: fallback,
-            channel: _currentChannel,
-            security: widget.securityConfig,
-            remoteConfigUrl: widget.remoteConfigUrl,
-            forceRefresh: forceRefresh,
-          );
+      final manifest = await widget.manifestRepository.loadManifest(
+        fallbackTemplates: fallback,
+        channel: _currentChannel,
+        security: widget.securityConfig,
+        remoteConfigUrl: widget.remoteConfigUrl,
+        forceRefresh: forceRefresh,
+      );
 
       if (!mounted) return;
 
@@ -593,6 +595,15 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                       MarketTagChip(text: _areaLabel(item.areaCode)),
                       MarketTagChip(text: _actionLabel(item.actionCode)),
                       MarketTagChip(text: _currentChannel.label),
+                      if (item.version.trim().isNotEmpty)
+                        MarketTagChip(text: 'v${item.version}'),
+                      if (item.author.trim().isNotEmpty)
+                        MarketTagChip(text: '作者：${item.author}'),
+                      if (item.permissions.isNotEmpty)
+                        MarketTagChip(text: '权限：${item.permissions.join('、')}'),
+                      if (item.deprecated) const MarketTagChip(text: '已废弃'),
+                      for (final tag in item.tags.take(3))
+                        MarketTagChip(text: tag),
                     ],
                   ),
                 ],
