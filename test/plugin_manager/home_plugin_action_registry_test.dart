@@ -1,4 +1,5 @@
 import 'package:box/plugin_manager.dart';
+import 'package:box/plugin_market_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -52,6 +53,28 @@ void main() {
       expect(config.effectiveActionCode, 'plugin.customFutureAction');
       expect(config.toJson()['actionCode'], 'plugin.customFutureAction');
     });
+
+    test(
+      'market install config preserves action code and structured payload',
+      () {
+        final template = MarketPluginTemplate.tryFromJson({
+          'id': 'market_route_plugin',
+          'title': '路由插件',
+          'actionCode': 'custom.route',
+          'payload': {'route': 'test_route'},
+        })!;
+
+        final config = HomeCustomPluginConfig.fromMarketTemplateForTest(
+          template,
+          createdAt: 42,
+        );
+
+        expect(config.actionCode, 'custom.route');
+        expect(config.effectiveActionCode, 'custom.route');
+        expect(config.payload, '{"route":"test_route"}');
+        expect(config.toJson()['actionCode'], 'custom.route');
+      },
+    );
 
     testWidgets('navigate action resolves registered route builders', (
       tester,

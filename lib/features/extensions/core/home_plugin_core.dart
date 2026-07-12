@@ -10,6 +10,7 @@ import '../../../novel/core/cache_store.dart';
 import '../../../novel/pages/novel_list_page.dart';
 import '../../../video_module.dart';
 import '../../image_generator/presentation/image_generator_page.dart';
+import '../market/domain/plugin_market_manifest.dart';
 import '../../quiz_plugin/quiz_entry_page.dart';
 import '../../quiz_plugin/quiz_plugin_entry.dart';
 import '../plugins/plugin_toolbox.dart';
@@ -322,6 +323,37 @@ class HomeCustomPluginConfig {
     this.sort = 9999,
     required this.createdAt,
   });
+
+  factory HomeCustomPluginConfig.fromMarketTemplate(
+    MarketPluginTemplate template, {
+    int? createdAt,
+  }) {
+    final payload = template.payloadData.isEmpty
+        ? template.payload
+        : jsonEncode(template.payloadData);
+    return HomeCustomPluginConfig(
+      id: template.id,
+      title: template.title,
+      subtitle: template.subtitle,
+      iconCodePoint: template.icon.codePoint,
+      iconFontFamily: template.icon.fontFamily ?? 'MaterialIcons',
+      iconFontPackage: template.icon.fontPackage,
+      colorValue: template.color.toARGB32(),
+      area: _areaFromName(template.areaCode),
+      actionType: _actionFromName(template.actionCode),
+      actionCode: template.actionCode,
+      payload: payload,
+      enabled: true,
+      sort: template.sort,
+      createdAt: createdAt ?? DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  @visibleForTesting
+  factory HomeCustomPluginConfig.fromMarketTemplateForTest(
+    MarketPluginTemplate template, {
+    int? createdAt,
+  }) = HomeCustomPluginConfig.fromMarketTemplate;
 
   bool get isValid => id.trim().isNotEmpty && title.trim().isNotEmpty;
 

@@ -388,38 +388,6 @@ class _PluginTabState extends State<PluginTab>
   int get _enabledPluginCount =>
       _pluginHost.allPlugins.where((p) => p.enabled).length;
 
-  HomePluginArea _areaFromCode(String code) {
-    switch (code.trim()) {
-      case 'music':
-        return HomePluginArea.music;
-      case 'video':
-        return HomePluginArea.video;
-      case 'comic':
-        return HomePluginArea.comic;
-      case 'novel':
-        return HomePluginArea.novel;
-      case 'recommend':
-      default:
-        return HomePluginArea.recommend;
-    }
-  }
-
-  HomePluginActionType _actionFromCode(String code) {
-    switch (code.trim()) {
-      case 'openDailyNews':
-        return HomePluginActionType.openDailyNews;
-      case 'openNovelList':
-        return HomePluginActionType.openNovelList;
-      case 'openVideoList':
-        return HomePluginActionType.openVideoList;
-      case 'openImageGenerator':
-        return HomePluginActionType.openImageGenerator;
-      case 'toast':
-      default:
-        return HomePluginActionType.toast;
-    }
-  }
-
   PluginMarketChannel _marketChannelFromEnv() {
     switch (_marketChannelEnv.trim().toLowerCase()) {
       case 'beta':
@@ -468,21 +436,7 @@ class _PluginTabState extends State<PluginTab>
               allowUnsigned: _marketAllowUnsigned,
             ),
             onInstall: (tpl) async {
-              final config = HomeCustomPluginConfig(
-                id: tpl.id,
-                title: tpl.title,
-                subtitle: tpl.subtitle,
-                iconCodePoint: tpl.icon.codePoint,
-                iconFontFamily: tpl.icon.fontFamily ?? 'MaterialIcons',
-                iconFontPackage: tpl.icon.fontPackage,
-                colorValue: tpl.color.toARGB32(),
-                area: _areaFromCode(tpl.areaCode),
-                actionType: _actionFromCode(tpl.actionCode),
-                payload: tpl.payload,
-                enabled: true,
-                sort: tpl.sort,
-                createdAt: DateTime.now().millisecondsSinceEpoch,
-              );
+              final config = HomeCustomPluginConfig.fromMarketTemplate(tpl);
               await _pluginHost.addCustomPlugin(config);
             },
             onUninstall: (pluginId) async {
