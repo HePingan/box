@@ -30,7 +30,11 @@ class PluginToolbox {
             return SafeArea(
               child: Padding(
                 padding: EdgeInsets.fromLTRB(
-                    16, 8, 16, MediaQuery.of(ctx).viewInsets.bottom + 16),
+                  16,
+                  8,
+                  16,
+                  MediaQuery.of(ctx).viewInsets.bottom + 16,
+                ),
                 child: SizedBox(
                   height: MediaQuery.of(ctx).size.height * 0.75,
                   child: Column(
@@ -38,21 +42,28 @@ class PluginToolbox {
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.data_object_rounded,
-                              color: Colors.orange, size: 24),
+                          const Icon(
+                            Icons.data_object_rounded,
+                            color: Colors.orange,
+                            size: 24,
+                          ),
                           const SizedBox(width: 10),
                           const Expanded(
-                            child: Text('JSON 格式化工具',
-                                style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w900)),
+                            child: Text(
+                              'JSON 格式化工具',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                           ),
                           FilledButton.tonalIcon(
                             onPressed: () {
                               try {
                                 final parsed = jsonDecode(controller.text);
-                                result = const JsonEncoder.withIndent('  ')
-                                    .convert(parsed);
+                                result = const JsonEncoder.withIndent(
+                                  '  ',
+                                ).convert(parsed);
                                 errorMsg = '';
                                 formatted = true;
                               } catch (e) {
@@ -80,54 +91,29 @@ class PluginToolbox {
                             contentPadding: EdgeInsets.all(10),
                           ),
                           style: const TextStyle(
-                              fontFamily: 'monospace', fontSize: 12),
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                          ),
                         ),
                       ),
                       if (errorMsg.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 8),
-                          child: Text(errorMsg,
-                              style: const TextStyle(
-                                  color: Colors.red, fontSize: 12)),
+                          child: Text(
+                            errorMsg,
+                            style: const TextStyle(
+                              color: Colors.red,
+                              fontSize: 12,
+                            ),
+                          ),
                         ),
                       if (formatted) ...[
                         const SizedBox(height: 10),
                         Expanded(
                           flex: 3,
-                          child: Stack(
-                            children: [
-                              Container(
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF6F8FA),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.grey.shade300),
-                                ),
-                                child: SingleChildScrollView(
-                                  padding: const EdgeInsets.all(10),
-                                  child: SelectableText(result,
-                                      style: const TextStyle(
-                                          fontFamily: 'monospace',
-                                          fontSize: 12,
-                                          height: 1.4)),
-                                ),
-                              ),
-                              Positioned(
-                                top: 6,
-                                right: 6,
-                                child: IconButton.filledTonal(
-                                  iconSize: 16,
-                                  onPressed: () {
-                                    Clipboard.setData(
-                                        ClipboardData(text: result));
-                                    ScaffoldMessenger.of(ctx).showSnackBar(
-                                        const SnackBar(
-                                            content: Text('已复制到剪贴板')));
-                                  },
-                                  icon: const Icon(Icons.copy),
-                                ),
-                              ),
-                            ],
+                          child: _ToolOutputArea(
+                            text: result,
+                            copyMessage: '已复制到剪贴板',
                           ),
                         ),
                       ],
@@ -161,7 +147,11 @@ class PluginToolbox {
             return SafeArea(
               child: Padding(
                 padding: EdgeInsets.fromLTRB(
-                    16, 8, 16, MediaQuery.of(ctx).viewInsets.bottom + 16),
+                  16,
+                  8,
+                  16,
+                  MediaQuery.of(ctx).viewInsets.bottom + 16,
+                ),
                 child: SizedBox(
                   height: MediaQuery.of(ctx).size.height * 0.7,
                   child: Column(
@@ -169,20 +159,27 @@ class PluginToolbox {
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.lock_outline,
-                              color: Colors.teal, size: 24),
+                          const Icon(
+                            Icons.lock_outline,
+                            color: Colors.teal,
+                            size: 24,
+                          ),
                           const SizedBox(width: 10),
                           const Expanded(
-                            child: Text('Base64 编解码',
-                                style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w900)),
+                            child: Text(
+                              'Base64 编解码',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                           ),
                           FilledButton.tonalIcon(
                             onPressed: () {
                               try {
                                 result = base64Encode(
-                                    utf8.encode(controller.text));
+                                  utf8.encode(controller.text),
+                                );
                               } catch (_) {
                                 result = '编码失败';
                               }
@@ -223,50 +220,14 @@ class PluginToolbox {
                             contentPadding: EdgeInsets.all(10),
                           ),
                           style: const TextStyle(
-                              fontFamily: 'monospace', fontSize: 12),
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                          ),
                         ),
                       ),
                       if (result.isNotEmpty) ...[
                         const SizedBox(height: 10),
-                        Expanded(
-                          flex: 2,
-                          child: Stack(
-                            children: [
-                              Container(
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF6F8FA),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                      color: Colors.grey.shade300),
-                                ),
-                                child: SingleChildScrollView(
-                                  padding: const EdgeInsets.all(10),
-                                  child: SelectableText(result,
-                                      style: const TextStyle(
-                                          fontFamily: 'monospace',
-                                          fontSize: 12,
-                                          height: 1.4)),
-                                ),
-                              ),
-                              Positioned(
-                                top: 6,
-                                right: 6,
-                                child: IconButton.filledTonal(
-                                  iconSize: 16,
-                                  onPressed: () {
-                                    Clipboard.setData(
-                                        ClipboardData(text: result));
-                                    ScaffoldMessenger.of(ctx).showSnackBar(
-                                        const SnackBar(
-                                            content: Text('已复制')));
-                                  },
-                                  icon: const Icon(Icons.copy),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                        Expanded(flex: 2, child: _ToolOutputArea(text: result)),
                       ],
                     ],
                   ),
@@ -289,7 +250,7 @@ class PluginToolbox {
     bool upper = true, lower = true, digits = true, symbols = true;
     String generated = '';
 
-    String _generate() {
+    String generatePassword() {
       final rng = Random.secure();
       final chars = <String>[];
       if (upper) chars.addAll('ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split(''));
@@ -298,11 +259,13 @@ class PluginToolbox {
       if (symbols) chars.addAll('!@#\$%^&*()_+-=[]{}|;:,.<>?'.split(''));
       if (chars.isEmpty) return '请选择至少一种字符类型';
       return List.generate(
-          length, (_) => chars[rng.nextInt(chars.length)]).join();
+        length,
+        (_) => chars[rng.nextInt(chars.length)],
+      ).join();
     }
 
-    void _regenerate(StateSetter setSheetState) {
-      generated = _generate();
+    void regeneratePassword(StateSetter setSheetState) {
+      generated = generatePassword();
       setSheetState(() {});
     }
 
@@ -313,7 +276,7 @@ class PluginToolbox {
         return StatefulBuilder(
           builder: (ctx, setSheetState) {
             if (generated.isEmpty) {
-              generated = _generate();
+              generated = generatePassword();
             }
             return SafeArea(
               child: Padding(
@@ -322,9 +285,13 @@ class PluginToolbox {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('密码生成器',
-                        style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.w900)),
+                    const Text(
+                      '密码生成器',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                     const SizedBox(height: 14),
                     Container(
                       width: double.infinity,
@@ -337,26 +304,28 @@ class PluginToolbox {
                       child: Row(
                         children: [
                           Expanded(
-                            child: SelectableText(generated,
-                                style: const TextStyle(
-                                    fontFamily: 'monospace',
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 1.5)),
+                            child: SelectableText(
+                              generated,
+                              style: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1.5,
+                              ),
+                            ),
                           ),
                           const SizedBox(width: 8),
                           IconButton(
-                            onPressed: () => _regenerate(setSheetState),
+                            onPressed: () => regeneratePassword(setSheetState),
                             icon: const Icon(Icons.refresh),
                             tooltip: '重新生成',
                           ),
                           IconButton(
                             onPressed: () {
-                              Clipboard.setData(
-                                  ClipboardData(text: generated));
+                              Clipboard.setData(ClipboardData(text: generated));
                               ScaffoldMessenger.of(ctx).showSnackBar(
-                                  const SnackBar(
-                                      content: Text('已复制到剪贴板')));
+                                const SnackBar(content: Text('已复制到剪贴板')),
+                              );
                             },
                             icon: const Icon(Icons.copy),
                             tooltip: '复制',
@@ -377,11 +346,14 @@ class PluginToolbox {
                             label: '$length',
                             onChanged: (v) {
                               length = v.round();
-                              _regenerate(setSheetState);
+                              regeneratePassword(setSheetState);
                             },
                           ),
                         ),
-                        Text('$length', style: const TextStyle(fontWeight: FontWeight.w700)),
+                        Text(
+                          '$length',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
                       ],
                     ),
                     Wrap(
@@ -389,19 +361,19 @@ class PluginToolbox {
                       children: [
                         _buildToggle(setSheetState, '大写', upper, (v) {
                           upper = v;
-                          _regenerate(setSheetState);
+                          regeneratePassword(setSheetState);
                         }),
                         _buildToggle(setSheetState, '小写', lower, (v) {
                           lower = v;
-                          _regenerate(setSheetState);
+                          regeneratePassword(setSheetState);
                         }),
                         _buildToggle(setSheetState, '数字', digits, (v) {
                           digits = v;
-                          _regenerate(setSheetState);
+                          regeneratePassword(setSheetState);
                         }),
                         _buildToggle(setSheetState, '符号', symbols, (v) {
                           symbols = v;
-                          _regenerate(setSheetState);
+                          regeneratePassword(setSheetState);
                         }),
                       ],
                     ),
@@ -412,7 +384,8 @@ class PluginToolbox {
                         onPressed: () {
                           Clipboard.setData(ClipboardData(text: generated));
                           ScaffoldMessenger.of(ctx).showSnackBar(
-                              const SnackBar(content: Text('密码已复制')));
+                            const SnackBar(content: Text('密码已复制')),
+                          );
                           Navigator.pop(ctx);
                         },
                         icon: const Icon(Icons.check, size: 16),
@@ -429,8 +402,12 @@ class PluginToolbox {
     );
   }
 
-  static Widget _buildToggle(StateSetter setSheetState,
-      String label, bool value, ValueChanged<bool> onChanged) {
+  static Widget _buildToggle(
+    StateSetter setSheetState,
+    String label,
+    bool value,
+    ValueChanged<bool> onChanged,
+  ) {
     return FilterChip(
       label: Text(label),
       selected: value,
@@ -450,7 +427,7 @@ class PluginToolbox {
     final now = DateTime.now();
     controller.text = '${now.millisecondsSinceEpoch ~/ 1000}';
 
-    void _convertToDate(StateSetter setSheetState) {
+    void convertToDate(StateSetter setSheetState) {
       final text = controller.text.trim();
       if (text.isEmpty) return;
       try {
@@ -458,7 +435,8 @@ class PluginToolbox {
         // 10位=秒, 13位=毫秒
         final ms = ts > 9999999999 ? ts : ts * 1000;
         final dt = DateTime.fromMillisecondsSinceEpoch(ms);
-        result = '本地时间: ${dt.toLocal().toString().substring(0, 19)}\n'
+        result =
+            '本地时间: ${dt.toLocal().toString().substring(0, 19)}\n'
             'UTC 时间: ${dt.toUtc().toString().substring(0, 19)}\n'
             '星期: ${_weekday(dt.weekday)}\n'
             '毫秒戳: $ms\n'
@@ -471,10 +449,10 @@ class PluginToolbox {
       }
     }
 
-    void _convertNow(StateSetter setSheetState) {
+    void convertNow(StateSetter setSheetState) {
       final now = DateTime.now();
       controller.text = '${now.millisecondsSinceEpoch ~/ 1000}';
-      _convertToDate(setSheetState);
+      convertToDate(setSheetState);
     }
 
     await showModalBottomSheet(
@@ -486,8 +464,12 @@ class PluginToolbox {
           builder: (ctx, setSheetState) {
             return SafeArea(
               child: Padding(
-                padding: EdgeInsets.fromLTRB(16, 8, 16,
-                    MediaQuery.of(ctx).viewInsets.bottom + 16),
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  8,
+                  16,
+                  MediaQuery.of(ctx).viewInsets.bottom + 16,
+                ),
                 child: SizedBox(
                   height: MediaQuery.of(ctx).size.height * 0.65,
                   child: Column(
@@ -495,21 +477,27 @@ class PluginToolbox {
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.schedule_rounded,
-                              color: Colors.deepPurple, size: 24),
+                          const Icon(
+                            Icons.schedule_rounded,
+                            color: Colors.deepPurple,
+                            size: 24,
+                          ),
                           const SizedBox(width: 10),
                           const Expanded(
-                            child: Text('时间戳转换',
-                                style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w900)),
+                            child: Text(
+                              '时间戳转换',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                           ),
                           TextButton(
-                            onPressed: () => _convertNow(setSheetState),
+                            onPressed: () => convertNow(setSheetState),
                             child: const Text('当前时间'),
                           ),
                           FilledButton.tonal(
-                            onPressed: () => _convertToDate(setSheetState),
+                            onPressed: () => convertToDate(setSheetState),
                             child: const Text('转换'),
                           ),
                         ],
@@ -523,31 +511,19 @@ class PluginToolbox {
                           hintText: '1700000000',
                           border: OutlineInputBorder(),
                         ),
-                        onSubmitted: (_) => _convertToDate(setSheetState),
+                        onSubmitted: (_) => convertToDate(setSheetState),
                       ),
                       if (error.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 8),
-                          child: Text(error,
-                              style: const TextStyle(color: Colors.red)),
+                          child: Text(
+                            error,
+                            style: const TextStyle(color: Colors.red),
+                          ),
                         ),
                       if (result.isNotEmpty) ...[
                         const SizedBox(height: 14),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF6F8FA),
-                            borderRadius: BorderRadius.circular(12),
-                            border:
-                                Border.all(color: Colors.grey.shade300),
-                          ),
-                          child: SelectableText(result,
-                              style: const TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontSize: 13,
-                                  height: 1.6)),
-                        ),
+                        _ToolResultBox(text: result),
                       ],
                     ],
                   ),
@@ -583,8 +559,12 @@ class PluginToolbox {
           builder: (ctx, setSheetState) {
             return SafeArea(
               child: Padding(
-                padding: EdgeInsets.fromLTRB(16, 8, 16,
-                    MediaQuery.of(ctx).viewInsets.bottom + 16),
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  8,
+                  16,
+                  MediaQuery.of(ctx).viewInsets.bottom + 16,
+                ),
                 child: SizedBox(
                   height: MediaQuery.of(ctx).size.height * 0.65,
                   child: Column(
@@ -592,19 +572,24 @@ class PluginToolbox {
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.link_rounded,
-                              color: Colors.indigo, size: 24),
+                          const Icon(
+                            Icons.link_rounded,
+                            color: Colors.indigo,
+                            size: 24,
+                          ),
                           const SizedBox(width: 10),
                           const Expanded(
-                            child: Text('URL 编解码',
-                                style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w900)),
+                            child: Text(
+                              'URL 编解码',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                           ),
                           OutlinedButton.icon(
                             onPressed: () {
-                              result =
-                                  Uri.encodeComponent(controller.text);
+                              result = Uri.encodeComponent(controller.text);
                               setSheetState(() {});
                             },
                             icon: const Icon(Icons.lock, size: 14),
@@ -613,8 +598,7 @@ class PluginToolbox {
                           const SizedBox(width: 8),
                           FilledButton.tonalIcon(
                             onPressed: () {
-                              result =
-                                  Uri.decodeComponent(controller.text);
+                              result = Uri.decodeComponent(controller.text);
                               setSheetState(() {});
                             },
                             icon: const Icon(Icons.lock_open, size: 14),
@@ -642,42 +626,7 @@ class PluginToolbox {
                         const SizedBox(height: 10),
                         Expanded(
                           flex: 2,
-                          child: Stack(
-                            children: [
-                              Container(
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF6F8FA),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                      color: Colors.grey.shade300),
-                                ),
-                                child: SingleChildScrollView(
-                                  padding: const EdgeInsets.all(10),
-                                  child: SelectableText(result,
-                                      style: const TextStyle(
-                                          fontFamily: 'monospace',
-                                          fontSize: 13,
-                                          height: 1.4)),
-                                ),
-                              ),
-                              Positioned(
-                                top: 6,
-                                right: 6,
-                                child: IconButton.filledTonal(
-                                  iconSize: 16,
-                                  onPressed: () {
-                                    Clipboard.setData(
-                                        ClipboardData(text: result));
-                                    ScaffoldMessenger.of(ctx).showSnackBar(
-                                        const SnackBar(
-                                            content: Text('已复制')));
-                                  },
-                                  icon: const Icon(Icons.copy),
-                                ),
-                              ),
-                            ],
-                          ),
+                          child: _ToolOutputArea(text: result, fontSize: 13),
                         ),
                       ],
                     ],
@@ -700,7 +649,7 @@ class PluginToolbox {
     final controller = TextEditingController();
     String? qrUrl;
 
-    void _generate(StateSetter setSheetState) {
+    void generateQrCode(StateSetter setSheetState) {
       final text = controller.text.trim();
       if (text.isEmpty) return;
       qrUrl =
@@ -717,8 +666,12 @@ class PluginToolbox {
           builder: (ctx, setSheetState) {
             return SafeArea(
               child: Padding(
-                padding: EdgeInsets.fromLTRB(16, 8, 16,
-                    MediaQuery.of(ctx).viewInsets.bottom + 16),
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  8,
+                  16,
+                  MediaQuery.of(ctx).viewInsets.bottom + 16,
+                ),
                 child: SizedBox(
                   height: MediaQuery.of(ctx).size.height * 0.7,
                   child: Column(
@@ -726,14 +679,20 @@ class PluginToolbox {
                     children: [
                       const Row(
                         children: [
-                          Icon(Icons.qr_code_2_rounded,
-                              color: Colors.blueGrey, size: 24),
+                          Icon(
+                            Icons.qr_code_2_rounded,
+                            color: Colors.blueGrey,
+                            size: 24,
+                          ),
                           SizedBox(width: 10),
                           Expanded(
-                            child: Text('二维码生成',
-                                style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w900)),
+                            child: Text(
+                              '二维码生成',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                           ),
                         ],
                       ),
@@ -746,14 +705,14 @@ class PluginToolbox {
                           hintText: 'https://example.com',
                           border: OutlineInputBorder(),
                         ),
-                        onSubmitted: (_) => _generate(setSheetState),
+                        onSubmitted: (_) => generateQrCode(setSheetState),
                       ),
                       const SizedBox(height: 10),
                       Row(
                         children: [
                           Expanded(
                             child: FilledButton.icon(
-                              onPressed: () => _generate(setSheetState),
+                              onPressed: () => generateQrCode(setSheetState),
                               icon: const Icon(Icons.qr_code, size: 16),
                               label: const Text('生成二维码'),
                             ),
@@ -768,8 +727,7 @@ class PluginToolbox {
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                  color: Colors.grey.shade300),
+                              border: Border.all(color: Colors.grey.shade300),
                             ),
                             child: Image.network(
                               qrUrl!,
@@ -795,5 +753,85 @@ class PluginToolbox {
       },
     );
     controller.dispose();
+  }
+}
+
+class _ToolOutputArea extends StatelessWidget {
+  const _ToolOutputArea({
+    required this.text,
+    this.fontSize = 12,
+    this.copyMessage = '已复制',
+  });
+
+  final String text;
+  final double fontSize;
+  final String copyMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF6F8FA),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey.shade300),
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(10),
+            child: SelectableText(
+              text,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: fontSize,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          top: 6,
+          right: 6,
+          child: IconButton.filledTonal(
+            iconSize: 16,
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: text));
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(copyMessage)));
+            },
+            icon: const Icon(Icons.copy),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ToolResultBox extends StatelessWidget {
+  const _ToolResultBox({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F8FA),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: SelectableText(
+        text,
+        style: const TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 13,
+          height: 1.6,
+        ),
+      ),
+    );
   }
 }

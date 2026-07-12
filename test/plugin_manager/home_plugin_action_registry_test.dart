@@ -1,4 +1,5 @@
 import 'package:box/plugin_manager.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -50,6 +51,42 @@ void main() {
       expect(config.actionCode, 'plugin.customFutureAction');
       expect(config.effectiveActionCode, 'plugin.customFutureAction');
       expect(config.toJson()['actionCode'], 'plugin.customFutureAction');
+    });
+
+    testWidgets('navigate action resolves registered route builders', (
+      tester,
+    ) async {
+      HomePluginRouteRegistry.register(
+        'test_route_registry_page',
+        (_) =>
+            const Text('Route Registry Page', textDirection: TextDirection.ltr),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async {
+                await HomePluginActionRegistry.run(
+                  'navigate',
+                  context,
+                  const HomePluginActionContext(
+                    pluginId: 'route_plugin',
+                    title: 'Route Plugin',
+                    payload: '{"route":"test_route_registry_page"}',
+                  ),
+                );
+              },
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Route Registry Page'), findsOneWidget);
     });
   });
 }

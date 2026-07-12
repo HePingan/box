@@ -179,20 +179,102 @@ List<MarketPluginTemplate> dedupMarketPluginTemplates(
   return list;
 }
 
-List<MarketPluginTemplate> parseMarketPluginTemplates(dynamic raw) {
-  if (raw is! List) return const [];
+enum PluginPermission { network, storage, clipboard, camera, none }
+
+PluginPermission? _pluginPermissionFromCode(String code) {
+  final normalized = code.trim();
+  for (final value in PluginPermission.values) {
+    if (value.name == normalized) return value;
+  }
+  return null;
+}
+
+enum MarketParseSeverity { warning, error }
+
+class MarketParseError {
+  final String field;
+  final MarketParseSeverity severity;
+  final String message;
+  final dynamic rawValue;
+
+  const MarketParseError({
+    required this.field,
+    required this.severity,
+    required this.message,
+    this.rawValue,
+  });
+}
+
+class MarketPluginTemplateParseResult {
+  final List<MarketPluginTemplate> templates;
+  final List<MarketParseError> errors;
+
+  const MarketPluginTemplateParseResult({
+    required this.templates,
+    required this.errors,
+  });
+
+  bool get isValid =>
+      errors.every((error) => error.severity != MarketParseSeverity.error);
+
+  bool get hasWarnings =>
+      errors.any((error) => error.severity == MarketParseSeverity.warning);
+}
+
+MarketPluginTemplateParseResult parseMarketPluginTemplatesWithReport(
+  dynamic raw,
+) {
+  if (raw is! List) {
+    return MarketPluginTemplateParseResult(
+      templates: const [],
+      errors: [
+        MarketParseError(
+          field: 'plugins',
+          severity: MarketParseSeverity.error,
+          message: '插件清单必须是数组',
+          rawValue: raw,
+        ),
+      ],
+    );
+  }
 
   final list = <MarketPluginTemplate>[];
+  final errors = <MarketParseError>[];
   for (final item in raw) {
     if (item is Map) {
-      final tpl = MarketPluginTemplate.tryFromJson(
-        Map<String, dynamic>.from(item),
-      );
+      final json = Map<String, dynamic>.from(item);
+      final tpl = MarketPluginTemplate.tryFromJson(json);
       if (tpl != null) list.add(tpl);
+      if (tpl == null) {
+        errors.add(
+          MarketParseError(
+            field: safeMarketString(json['id']).isEmpty ? 'id' : 'item',
+            severity: MarketParseSeverity.error,
+            message: '插件模板缺少必要字段或格式无效',
+            rawValue: json,
+          ),
+        );
+      }
+    } else {
+      errors.add(
+        MarketParseError(
+          field: 'item',
+          severity: MarketParseSeverity.error,
+          message: '插件模板必须是对象',
+          rawValue: item,
+        ),
+      );
     }
   }
 
-  return dedupMarketPluginTemplates(list);
+  return MarketPluginTemplateParseResult(
+    templates: dedupMarketPluginTemplates(list),
+    errors: errors,
+  );
+}
+
+List<MarketPluginTemplate> parseMarketPluginTemplates(dynamic raw) {
+  return parseMarketPluginTemplatesWithReport(raw).templates;
 }
 
 class MarketPluginTemplate {
@@ -235,6 +317,17 @@ class MarketPluginTemplate {
   });
 
   bool get isValid => id.trim().isNotEmpty && title.trim().isNotEmpty;
+
+  List<PluginPermission> get typedPermissions {
+    return permissions
+        .map(_pluginPermissionFromCode)
+        .whereType<PluginPermission>()
+        .toList(growable: false);
+  }
+
+  bool requiresPermission(PluginPermission permission) {
+    return typedPermissions.contains(permission);
+  }
 
   Map<String, dynamic> toJson() {
     return {

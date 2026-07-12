@@ -147,6 +147,55 @@ typedef HomePluginActionHandler =
       HomePluginActionContext actionContext,
     );
 
+class HomePluginRouteRegistry {
+  HomePluginRouteRegistry._();
+
+  static final Map<String, WidgetBuilder> _routes = {};
+
+  static void register(String routeCode, WidgetBuilder builder) {
+    final code = routeCode.trim();
+    if (code.isEmpty) return;
+    _routes[code] = builder;
+  }
+
+  static bool contains(String routeCode) {
+    return _routes.containsKey(routeCode.trim());
+  }
+
+  static WidgetBuilder? lookup(String routeCode) {
+    return _routes[routeCode.trim()];
+  }
+
+  static void registerDefaults() {
+    register('daily_news', (_) => const DailyNewsPage());
+    register('openDailyNews', (_) => const DailyNewsPage());
+    register('novel_list', (_) => const NovelListPageWithProvider());
+    register('openNovelList', (_) => const NovelListPageWithProvider());
+    register('video_list', (_) => const VideoListPage());
+    register('openVideoList', (_) => const VideoListPage());
+    register('image_generator', (_) => const ImageGeneratorPage());
+    register('openImageGenerator', (_) => const ImageGeneratorPage());
+  }
+}
+
+String _payloadRouteCode(HomePluginActionContext actionContext) {
+  final payload = actionContext.payload.trim();
+  if (payload.isEmpty) {
+    return actionContext.extra['route']?.toString().trim() ?? '';
+  }
+
+  try {
+    final decoded = jsonDecode(payload);
+    if (decoded is Map) {
+      final route = decoded['route'] ?? decoded['routeCode'] ?? decoded['page'];
+      final text = route?.toString().trim() ?? '';
+      if (text.isNotEmpty) return text;
+    }
+  } catch (_) {}
+
+  return payload;
+}
+
 class HomePluginActionRegistry {
   HomePluginActionRegistry._();
 
@@ -160,34 +209,42 @@ class HomePluginActionRegistry {
             : actionContext.payload.trim(),
       );
     },
+    'navigate': (context, actionContext) async {
+      if (context == null) return;
+      HomePluginRouteRegistry.registerDefaults();
+      final routeCode = _payloadRouteCode(actionContext);
+      final builder = HomePluginRouteRegistry.lookup(routeCode);
+      if (builder == null) return;
+      await Navigator.push(context, MaterialPageRoute(builder: builder));
+    },
     HomePluginActionType.openDailyNews.name: (context, actionContext) async {
       if (context == null) return;
-      await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const DailyNewsPage()),
-      );
+      HomePluginRouteRegistry.registerDefaults();
+      final builder = HomePluginRouteRegistry.lookup('openDailyNews');
+      if (builder == null) return;
+      await Navigator.push(context, MaterialPageRoute(builder: builder));
     },
     HomePluginActionType.openNovelList.name: (context, actionContext) async {
       if (context == null) return;
-      await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
-      );
+      HomePluginRouteRegistry.registerDefaults();
+      final builder = HomePluginRouteRegistry.lookup('openNovelList');
+      if (builder == null) return;
+      await Navigator.push(context, MaterialPageRoute(builder: builder));
     },
     HomePluginActionType.openVideoList.name: (context, actionContext) async {
       if (context == null) return;
-      await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const VideoListPage()),
-      );
+      HomePluginRouteRegistry.registerDefaults();
+      final builder = HomePluginRouteRegistry.lookup('openVideoList');
+      if (builder == null) return;
+      await Navigator.push(context, MaterialPageRoute(builder: builder));
     },
     HomePluginActionType.openImageGenerator.name:
         (context, actionContext) async {
           if (context == null) return;
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const ImageGeneratorPage()),
-          );
+          HomePluginRouteRegistry.registerDefaults();
+          final builder = HomePluginRouteRegistry.lookup('openImageGenerator');
+          if (builder == null) return;
+          await Navigator.push(context, MaterialPageRoute(builder: builder));
         },
   };
 
@@ -519,11 +576,76 @@ class HomePlugin {
   }
 }
 
-class HomePluginHost {
-  HomePluginHost({HomePluginPersistence? persistence})
-    : _persistence = persistence ?? HomePluginPersistence();
+abstract class HomePluginLifecycle {
+  Future<void> onInitialize(HomePlugin plugin);
 
-  HomePluginHost._() : _persistence = HomePluginPersistence();
+  Future<void> onEnabled(HomePlugin plugin);
+
+  Future<void> onDisabled(HomePlugin plugin);
+
+  Future<void> onUninstall(HomePlugin plugin);
+
+  Future<bool> validate(HomePlugin plugin);
+}
+
+class NoopHomePluginLifecycle implements HomePluginLifecycle {
+  const NoopHomePluginLifecycle();
+
+  @override
+  Future<void> onInitialize(HomePlugin plugin) async {}
+
+  @override
+  Future<void> onEnabled(HomePlugin plugin) async {}
+
+  @override
+  Future<void> onDisabled(HomePlugin plugin) async {}
+
+  @override
+  Future<void> onUninstall(HomePlugin plugin) async {}
+
+  @override
+  Future<bool> validate(HomePlugin plugin) async => true;
+}
+
+class PluginEventBus {
+  PluginEventBus();
+
+  static final PluginEventBus instance = PluginEventBus();
+
+  final Map<String, List<void Function(dynamic data)>> _listeners = {};
+
+  void subscribe(String event, void Function(dynamic data) handler) {
+    final name = event.trim();
+    if (name.isEmpty) return;
+    _listeners
+        .putIfAbsent(name, () => <void Function(dynamic data)>[])
+        .add(handler);
+  }
+
+  void unsubscribe(String event, void Function(dynamic data) handler) {
+    _listeners[event.trim()]?.remove(handler);
+  }
+
+  void emit(String event, [dynamic data]) {
+    final handlers = List<void Function(dynamic data)>.from(
+      _listeners[event.trim()] ?? const [],
+    );
+    for (final handler in handlers) {
+      handler(data);
+    }
+  }
+}
+
+class HomePluginHost {
+  HomePluginHost({
+    HomePluginPersistence? persistence,
+    HomePluginLifecycle? lifecycle,
+  }) : _persistence = persistence ?? HomePluginPersistence(),
+       _lifecycle = lifecycle ?? const NoopHomePluginLifecycle();
+
+  HomePluginHost._()
+    : _persistence = HomePluginPersistence(),
+      _lifecycle = const NoopHomePluginLifecycle();
 
   static final HomePluginHost instance = HomePluginHost._();
 
@@ -531,6 +653,7 @@ class HomePluginHost {
       ValueNotifier<List<HomePlugin>>(<HomePlugin>[]);
 
   final HomePluginPersistence _persistence;
+  final HomePluginLifecycle _lifecycle;
 
   Future<void>? _bootFuture;
   bool _bootstrapped = false;
@@ -580,8 +703,10 @@ class HomePluginHost {
     await bootstrap();
 
     final normalized = _normalizeForRegister(plugin);
+    if (!await _lifecycle.validate(normalized)) return;
     final list = List<HomePlugin>.from(_notifier.value);
     final index = list.indexWhere((item) => item.id == normalized.id);
+    final isNew = index < 0;
 
     if (index >= 0) {
       if (replace) {
@@ -595,6 +720,9 @@ class HomePluginHost {
 
     _notifier.value = _sorted(list);
     await _persist();
+    if (isNew) {
+      await _lifecycle.onInitialize(normalized);
+    }
   }
 
   Future<void> addCustomPlugin(HomeCustomPluginConfig config) async {
@@ -610,9 +738,10 @@ class HomePluginHost {
     if (index < 0) return;
     if (list[index].builtIn) return;
 
-    list.removeAt(index);
+    final removed = list.removeAt(index);
     _notifier.value = _sorted(list);
     await _persist();
+    await _lifecycle.onUninstall(removed);
   }
 
   Future<void> toggleEnabled(String id, bool enabled) async {
@@ -623,13 +752,19 @@ class HomePluginHost {
     if (index < 0) return;
 
     final current = list[index];
-    list[index] = current.copyWith(
+    final updated = current.copyWith(
       enabled: enabled,
       customConfig: current.customConfig?.copyWith(enabled: enabled),
     );
+    list[index] = updated;
 
     _notifier.value = _sorted(list);
     await _persist();
+    if (enabled) {
+      await _lifecycle.onEnabled(updated);
+    } else {
+      await _lifecycle.onDisabled(updated);
+    }
   }
 
   Future<void> reorderPlugin(

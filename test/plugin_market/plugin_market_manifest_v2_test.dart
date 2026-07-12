@@ -58,5 +58,32 @@ void main() {
       expect(template.payloadData, isEmpty);
       expect(template.toJson()['payload'], 'legacy-payload');
     });
+
+    test('collects parse errors without dropping valid templates', () {
+      final result = parseMarketPluginTemplatesWithReport([
+        {'id': 'valid_plugin', 'title': '有效插件'},
+        {'title': '缺少 ID'},
+        'not-a-map',
+      ]);
+
+      expect(result.templates.map((e) => e.id), ['valid_plugin']);
+      expect(result.errors, hasLength(2));
+      expect(result.errors.map((e) => e.field), containsAll(['id', 'item']));
+    });
+
+    test('normalizes typed permissions from manifest strings', () {
+      final template = MarketPluginTemplate.tryFromJson({
+        'id': 'permission_plugin',
+        'title': '权限插件',
+        'permissions': ['network', 'clipboard', 'unknown'],
+      });
+
+      expect(template, isNotNull);
+      expect(template!.typedPermissions, [
+        PluginPermission.network,
+        PluginPermission.clipboard,
+      ]);
+      expect(template.requiresPermission(PluginPermission.storage), isFalse);
+    });
   });
 }
