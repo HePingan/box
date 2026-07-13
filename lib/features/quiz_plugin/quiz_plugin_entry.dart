@@ -220,25 +220,76 @@ class QuizPluginEntry {
       return;
     }
 
-    final engine = _engineForAutoSearch ??= QuizEngine(config: config);
-    engine.config = config;
-    await updateOverlayContent(
-      question: config.debugCapture ? '调试捕获：正在用下方文本搜题' : captured,
-      answers: config.debugCapture
-          ? '${_formatDebugCapture(captured)}\n\n正在搜题...'
-          : '正在搜题...',
-      isSearching: true,
-      displayMode: config.displayMode,
-    );
-    final result = await engine.search(
-      captured,
-      forceExternalSearch: method == 'manualSearch',
-    );
+    await _runSearch(question: captured, config: config, method: method);
+  }
 
-    // 图片题 OCR 兜底：文本搜题失败且开启 OCR 时，截屏识别区域→OCR→再搜一次。
-    if (!result.isSuccess && config.ocrEnabled) {
-      final ocrResult = await _tryOcrFallback(config, engine);
-      if (ocrResult != null && ocrResult.isSuccess) {
+  /// 真正的搜题执行：按开关路由（无障碍文本 / OCR 截图），二者可并存。
+  static Future<void> _runSearch({
+    required String question,
+    required QuizConfig config,
+    required String method,
+    bool fromOcr = false,
+  }) async {
+    final captured = question.trim();
+    if (captured.isEmpty) return;
+
+    if (!fromOcr) {
+      // 无障碍文本链路（开关开启时走）
+      if (config.accessibilityCapture) {
+        await updateOverlayContent(
+          question: config.debugCapture ? '调试捕获：正在用下方文本搜题' : captured,
+          answers: config.debugCapture
+              ? '${_formatDebugCapture(captured)}\n\n正在搜题...'
+              : '正在搜题...',
+          isSearching: true,
+          displayMode: config.displayMode,
+        );
+        final engine = _engineForAutoSearch ??= QuizEngine(config: config);
+        engine.config = config;
+        final result = await engine.search(
+          captured,
+          forceExternalSearch: false,
+        );
+        if (result.isSuccess) {
+          await updateOverlayContent(
+            question: captured,
+            answers: config.debugCapture
+                ? '${_formatResultForOverlay(result)}\n\n--- 调试捕获文本 ---\n${_formatDebugCapture(captured)}'
+                : _formatResultForOverlay(result),
+            isSearching: false,
+            displayMode: config.displayMode,
+          );
+          return;
+        }
+        // 文本未命中：若 OCR 开启则继续走 OCR，否则直接展示失败
+        if (!config.ocrSearch) {
+          await updateOverlayContent(
+            question: captured,
+            answers: _formatResultForOverlay(result),
+            isSearching: false,
+            displayMode: config.displayMode,
+          );
+          return;
+        }
+      } else if (!config.ocrSearch) {
+        // 两种都关，理论上不会启用；兜底提示
+        await updateOverlayContent(
+          question: captured,
+          answers: '未开启任何搜题方式',
+          isSearching: false,
+          displayMode: config.displayMode,
+        );
+        return;
+      }
+    }
+
+    // OCR 截图链路
+    if (config.ocrSearch) {
+      final ocrResult = await _tryOcrFallback(
+        config,
+        _engineForAutoSearch ??= QuizEngine(config: config),
+      );
+      if (ocrResult != null) {
         await updateOverlayContent(
           question: ocrResult.question,
           answers: _formatResultForOverlay(ocrResult),
@@ -247,15 +298,25 @@ class QuizPluginEntry {
         );
         return;
       }
+      if (!config.accessibilityCapture) {
+        await updateOverlayContent(
+          question: captured,
+          answers: 'OCR 识别失败，且未开启无障碍读屏搜题',
+          isSearching: false,
+          displayMode: config.displayMode,
+        );
+        return;
+      }
     }
+  }
 
-    await updateOverlayContent(
-      question: captured,
-      answers: config.debugCapture
-          ? '${_formatResultForOverlay(result)}\n\n--- 调试捕获文本 ---\n${_formatDebugCapture(captured)}'
-          : _formatResultForOverlay(result),
-      isSearching: false,
-      displayMode: config.displayMode,
+  /// 手动搜索（悬浮窗搜索按钮）：把题目带回 Dart 真正执行搜题。
+  static Future<void> manualSearch(String question) async {
+    final config = await loadConfig();
+    await _runSearch(
+      question: question,
+      config: config,
+      method: 'manualSearch',
     );
   }
 
@@ -299,7 +360,7 @@ class QuizPluginEntry {
       displayMode: config.displayMode,
     );
 
-    final result = await engine.search(ocrText, forceExternalSearch: true);
+    final result = await engine.search(ocrText, forceExternalSearch: false);
     return result.copyWith(
       question: ocrText,
       source: result.source.isEmpty ? 'OCR' : '${result.source}·OCR',
@@ -317,7 +378,11 @@ class QuizPluginEntry {
             ? (args['question']?.toString() ?? '')
             : '';
         try {
-          await _handleCapturedQuestion(question, call.method);
+          if (call.method == 'manualSearch') {
+            await manualSearch(question);
+          } else {
+            await _handleCapturedQuestion(question, call.method);
+          }
         } catch (_) {
           // 自动搜题失败不影响主流程
         }
@@ -540,11 +605,15 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
             ),
             const SizedBox(height: AppTokens.spaceLg),
             SwitchListTile(
-              title: const Text('启用自动搜题'),
-              subtitle: const Text('只在无障碍服务授权后生效'),
+              title: const Text('启用答题助手'),
+              subtitle: const Text('开启至少一种搜题方式即生效'),
               value: _cfg.enabled,
-              onChanged: (v) =>
-                  setState(() => _cfg = _cfg.copyWith(enabled: v)),
+              onChanged: (v) => setState(
+                () => _cfg = _cfg.copyWith(
+                  enabled: v,
+                  accessibilityCapture: v ? true : _cfg.accessibilityCapture,
+                ),
+              ),
             ),
             SwitchListTile(
               title: const Text('收到题目自动搜题'),
@@ -592,15 +661,30 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                   setState(() => _cfg = _cfg.copyWith(allowExternalApi: v)),
             ),
             SwitchListTile(
-              title: const Text('图片题 OCR 兜底'),
-              subtitle: const Text(
-                '无障碍读不到文本时，截取识别区域上传 OCR 服务再搜题（需开启无障碍，仅 Android 11+；对加密/防截屏页面无效）',
+              title: const Text('无障碍读屏搜题'),
+              subtitle: const Text('由无障碍服务读取屏幕题目文本后搜题（抗屏蔽，推荐）。关闭后改用 OCR 截图搜题。'),
+              value: _cfg.accessibilityCapture,
+              onChanged: (v) => setState(
+                () => _cfg = _cfg.copyWith(
+                  accessibilityCapture: v,
+                  enabled: v || _cfg.ocrSearch,
+                ),
               ),
-              value: _cfg.ocrEnabled,
-              onChanged: (v) =>
-                  setState(() => _cfg = _cfg.copyWith(ocrEnabled: v)),
             ),
-            if (_cfg.ocrEnabled) ...[
+            SwitchListTile(
+              title: const Text('OCR 截图搜题'),
+              subtitle: const Text(
+                '截屏识别区域→OCR→搜题，不依赖读屏文本，有些人觉得更快。需 Android 11+，对加密/防截屏页面无效。',
+              ),
+              value: _cfg.ocrSearch,
+              onChanged: (v) => setState(
+                () => _cfg = _cfg.copyWith(
+                  ocrSearch: v,
+                  enabled: v || _cfg.accessibilityCapture,
+                ),
+              ),
+            ),
+            if (_cfg.ocrSearch) ...[
               const SizedBox(height: AppTokens.spaceSm),
               TextField(
                 decoration: const InputDecoration(

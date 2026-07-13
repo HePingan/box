@@ -20,7 +20,9 @@ class QuizConfig {
     this.bankPriority = true,
     this.bankMaxMatches = 3,
     this.allowExternalApi = false,
-    this.ocrEnabled = false,
+    // 搜题方式开关：无障碍读屏 / OCR 截图，二者独立，任一开启即可工作
+    this.accessibilityCapture = true,
+    this.ocrSearch = true,
     this.ocrEndpoint = 'https://ocr.hpa888.top',
     this.ocrToken = '',
     this.overlayOpacity = 1.0,
@@ -58,8 +60,11 @@ class QuizConfig {
   /// 是否允许把题目发送到第三方/自定义网络 API；默认关闭，仅使用本地题库。
   final bool allowExternalApi;
 
-  /// 图片题 OCR 兜底：无障碍读不到文本时截屏识别区域走 OCR。默认关闭。
-  final bool ocrEnabled;
+  /// 无障碍读屏搜题：由无障碍服务读取屏幕文本后搜题。默认开启。
+  final bool accessibilityCapture;
+
+  /// OCR 截图搜题：截屏识别区域→OCR→搜题，不依赖读屏文本。默认开启。
+  final bool ocrSearch;
 
   /// OCR 服务地址（自建服务，POST /api/ocr/upload 上传 multipart file）。
   final String ocrEndpoint;
@@ -88,7 +93,8 @@ class QuizConfig {
     bool? bankPriority,
     int? bankMaxMatches,
     bool? allowExternalApi,
-    bool? ocrEnabled,
+    bool? accessibilityCapture,
+    bool? ocrSearch,
     String? ocrEndpoint,
     String? ocrToken,
     double? overlayOpacity,
@@ -111,7 +117,8 @@ class QuizConfig {
       bankPriority: bankPriority ?? this.bankPriority,
       bankMaxMatches: bankMaxMatches ?? this.bankMaxMatches,
       allowExternalApi: allowExternalApi ?? this.allowExternalApi,
-      ocrEnabled: ocrEnabled ?? this.ocrEnabled,
+      accessibilityCapture: accessibilityCapture ?? this.accessibilityCapture,
+      ocrSearch: ocrSearch ?? this.ocrSearch,
       ocrEndpoint: ocrEndpoint ?? this.ocrEndpoint,
       ocrToken: ocrToken ?? this.ocrToken,
       overlayOpacity: overlayOpacity ?? this.overlayOpacity,
@@ -136,40 +143,45 @@ class QuizConfig {
     'bankPriority': bankPriority,
     'bankMaxMatches': bankMaxMatches,
     'allowExternalApi': allowExternalApi,
-    'ocrEnabled': ocrEnabled,
+    'accessibilityCapture': accessibilityCapture,
+    'ocrSearch': ocrSearch,
     'ocrEndpoint': ocrEndpoint,
     'ocrToken': ocrToken,
     'overlayOpacity': overlayOpacity,
   };
 
-  factory QuizConfig.fromJson(Map<String, dynamic> json) => QuizConfig(
-    enabled: (json['enabled'] as bool?) ?? false,
-    apiUrl: (json['apiUrl'] as String?) ?? '',
-    apiKey: (json['apiKey'] as String?) ?? '',
-    autoSearch: (json['autoSearch'] as bool?) ?? true,
-    displayMode: _parseDisplayMode(json['displayMode'] as String?),
-    filterNoise: (json['filterNoise'] as bool?) ?? true,
-    debugCapture: (json['debugCapture'] as bool?) ?? false,
-    maxCaptureLines: (json['maxCaptureLines'] as num?)?.toInt() ?? 8,
-    overlayX: (json['overlayX'] as num?)?.toDouble() ?? 0.0,
-    overlayY: (json['overlayY'] as num?)?.toDouble() ?? 0.0,
-    overlayWidth: (json['overlayWidth'] as num?)?.toDouble() ?? 320.0,
-    overlayHeight: (json['overlayHeight'] as num?)?.toDouble() ?? 400.0,
-    themeColorIndex: (json['themeColorIndex'] as num?)?.toInt() ?? 0,
-    bankEnabled: (json['bankEnabled'] as bool?) ?? true,
-    bankPriority: (json['bankPriority'] as bool?) ?? true,
-    bankMaxMatches: (json['bankMaxMatches'] as num?)?.toInt() ?? 3,
-    allowExternalApi: (json['allowExternalApi'] as bool?) ?? false,
-    ocrEnabled: (json['ocrEnabled'] as bool?) ?? false,
-    ocrEndpoint: (json['ocrEndpoint'] as String?)?.trim().isNotEmpty == true
-        ? (json['ocrEndpoint'] as String).trim()
-        : 'https://ocr.hpa888.top',
-    ocrToken: (json['ocrToken'] as String?) ?? '',
-    overlayOpacity: ((json['overlayOpacity'] as num?)?.toDouble() ?? 1.0).clamp(
-      0.3,
-      1.0,
-    ),
-  );
+  factory QuizConfig.fromJson(Map<String, dynamic> json) {
+    // 兼容旧字段：ocrEnabled -> ocrSearch
+    final bool ocrSearch =
+        (json['ocrSearch'] as bool?) ?? (json['ocrEnabled'] as bool?) ?? true;
+    return QuizConfig(
+      enabled: (json['enabled'] as bool?) ?? false,
+      apiUrl: (json['apiUrl'] as String?) ?? '',
+      apiKey: (json['apiKey'] as String?) ?? '',
+      autoSearch: (json['autoSearch'] as bool?) ?? true,
+      displayMode: _parseDisplayMode(json['displayMode'] as String?),
+      filterNoise: (json['filterNoise'] as bool?) ?? true,
+      debugCapture: (json['debugCapture'] as bool?) ?? false,
+      maxCaptureLines: (json['maxCaptureLines'] as num?)?.toInt() ?? 8,
+      overlayX: (json['overlayX'] as num?)?.toDouble() ?? 0.0,
+      overlayY: (json['overlayY'] as num?)?.toDouble() ?? 0.0,
+      overlayWidth: (json['overlayWidth'] as num?)?.toDouble() ?? 320.0,
+      overlayHeight: (json['overlayHeight'] as num?)?.toDouble() ?? 400.0,
+      themeColorIndex: (json['themeColorIndex'] as num?)?.toInt() ?? 0,
+      bankEnabled: (json['bankEnabled'] as bool?) ?? true,
+      bankPriority: (json['bankPriority'] as bool?) ?? true,
+      bankMaxMatches: (json['bankMaxMatches'] as num?)?.toInt() ?? 3,
+      allowExternalApi: (json['allowExternalApi'] as bool?) ?? false,
+      accessibilityCapture: (json['accessibilityCapture'] as bool?) ?? true,
+      ocrSearch: ocrSearch,
+      ocrEndpoint: (json['ocrEndpoint'] as String?)?.trim().isNotEmpty == true
+          ? (json['ocrEndpoint'] as String).trim()
+          : 'https://ocr.hpa888.top',
+      ocrToken: (json['ocrToken'] as String?) ?? '',
+      overlayOpacity: ((json['overlayOpacity'] as num?)?.toDouble() ?? 1.0)
+          .clamp(0.3, 1.0),
+    );
+  }
 
   static String _parseDisplayMode(String? value) {
     switch (value) {
