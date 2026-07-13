@@ -33,6 +33,28 @@
                 android:textStyle="bold" />
 
             <ImageButton
+                android:id="@+id/btn_font"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@android:drawable/ic_menu_add"
+                android:background="@null"
+                android:scaleType="center"
+                android:tint="#FFFFFF"
+                android:alpha="0.8"
+                android:contentDescription="字号" />
+
+            <ImageButton
+                android:id="@+id/btn_collapse"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@android:drawable/arrow_up_float"
+                android:background="@null"
+                android:scaleType="center"
+                android:tint="#FFFFFF"
+                android:alpha="0.8"
+                android:contentDescription="折叠" />
+
+            <ImageButton
                 android:id="@+id/btn_area"
                 android:layout_width="32dp"
                 android:layout_height="32dp"
@@ -97,6 +119,20 @@
             android:ellipsize="end"
             android:lineSpacingExtra="3dp" />
     </LinearLayout>
+
+    <!-- 右下角缩放手柄（拖动改变悬浮窗大小） -->
+    <ImageView
+        android:id="@+id/resize_handle"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:layout_gravity="bottom|end"
+        android:padding="4dp"
+        android:src="@android:drawable/ic_menu_crop"
+        android:tint="#4F46E5"
+        android:background="#FFFFFF"
+        android:alpha="0.9"
+        android:scaleType="fitCenter"
+        android:contentDescription="缩放" />
 
     <!-- 识别区域调节层（默认隐藏） -->
     <com.example.box.RegionSelectorView

@@ -125,6 +125,15 @@ class QuizPluginEntry {
     } catch (_) {}
   }
 
+  /// 设置答案悬浮窗透明度（0.3~1.0）。
+  static Future<void> setOverlayOpacity(double opacity) async {
+    try {
+      await _channel.invokeMethod('setOverlayOpacity', {
+        'opacity': opacity.clamp(0.3, 1.0),
+      });
+    } catch (_) {}
+  }
+
   /// 请无障碍服务截屏识别区域，返回 PNG 字节（失败返回 null）。
   static Future<Uint8List?> captureRegionScreenshot() async {
     try {
@@ -664,6 +673,43 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                   );
                 },
               ),
+            ),
+            const SizedBox(height: AppTokens.spaceLg),
+            Text('悬浮窗外观', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.opacity, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Slider(
+                    value: _cfg.overlayOpacity,
+                    min: 0.3,
+                    max: 1.0,
+                    divisions: 14,
+                    label: '${(_cfg.overlayOpacity * 100).round()}%',
+                    onChanged: (v) {
+                      setState(() => _cfg = _cfg.copyWith(overlayOpacity: v));
+                      QuizPluginEntry.setOverlayOpacity(v);
+                    },
+                  ),
+                ),
+                SizedBox(
+                  width: 48,
+                  child: Text(
+                    '${(_cfg.overlayOpacity * 100).round()}%',
+                    textAlign: TextAlign.end,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppTokens.spaceSm),
+            Text(
+              '位置/大小/字号：长按悬浮窗标题栏可拖动，右下角手柄缩放，标题栏「+」循环字号，「∧」折叠；设置会自动记忆。',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppTokens.textSecondary),
             ),
             const SizedBox(height: AppTokens.spaceLg),
             Text('API 地址', style: Theme.of(context).textTheme.titleSmall),

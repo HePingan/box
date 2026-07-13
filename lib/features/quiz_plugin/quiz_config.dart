@@ -23,6 +23,7 @@ class QuizConfig {
     this.ocrEnabled = false,
     this.ocrEndpoint = 'https://ocr.hpa888.top',
     this.ocrToken = '',
+    this.overlayOpacity = 1.0,
   });
 
   final bool enabled;
@@ -66,6 +67,9 @@ class QuizConfig {
   /// OCR 服务 Bearer token（可选，留空则免密）。
   final String ocrToken;
 
+  /// 答案悬浮窗整体透明度（0.3~1.0）。
+  final double overlayOpacity;
+
   QuizConfig copyWith({
     bool? enabled,
     String? apiUrl,
@@ -87,6 +91,7 @@ class QuizConfig {
     bool? ocrEnabled,
     String? ocrEndpoint,
     String? ocrToken,
+    double? overlayOpacity,
   }) {
     return QuizConfig(
       enabled: enabled ?? this.enabled,
@@ -109,6 +114,7 @@ class QuizConfig {
       ocrEnabled: ocrEnabled ?? this.ocrEnabled,
       ocrEndpoint: ocrEndpoint ?? this.ocrEndpoint,
       ocrToken: ocrToken ?? this.ocrToken,
+      overlayOpacity: overlayOpacity ?? this.overlayOpacity,
     );
   }
 
@@ -133,6 +139,7 @@ class QuizConfig {
     'ocrEnabled': ocrEnabled,
     'ocrEndpoint': ocrEndpoint,
     'ocrToken': ocrToken,
+    'overlayOpacity': overlayOpacity,
   };
 
   factory QuizConfig.fromJson(Map<String, dynamic> json) => QuizConfig(
@@ -158,6 +165,10 @@ class QuizConfig {
         ? (json['ocrEndpoint'] as String).trim()
         : 'https://ocr.hpa888.top',
     ocrToken: (json['ocrToken'] as String?) ?? '',
+    overlayOpacity: ((json['overlayOpacity'] as num?)?.toDouble() ?? 1.0).clamp(
+      0.3,
+      1.0,
+    ),
   );
 
   static String _parseDisplayMode(String? value) {

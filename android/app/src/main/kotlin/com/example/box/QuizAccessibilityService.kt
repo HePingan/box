@@ -47,9 +47,17 @@ class QuizAccessibilityService : AccessibilityService() {
         private const val TAG = "QuizAccessibility"
         private const val PREFS_NAME = "quiz_plugin_prefs"
         private const val KEY_REGION = "quiz_region"
+        private const val KEY_OVERLAY_GEOMETRY = "quiz_overlay_geometry"
+        private const val KEY_OVERLAY_OPACITY = "quiz_overlay_opacity"
+        private const val KEY_OVERLAY_FONT_SCALE = "quiz_overlay_font_scale"
         private const val CONFIG_PREFS_NAME = "FlutterSharedPreferences"
         private const val CONFIG_KEY = "flutter.quiz_plugin_config"
         const val ACTION_UPDATE_REGION = "com.example.box.UPDATE_QUIZ_REGION"
+
+        // 悬浮窗尺寸/字号约束
+        private const val OVERLAY_MIN_WIDTH_DP = 180
+        private const val OVERLAY_MIN_HEIGHT_DP = 120
+        private val FONT_SCALE_STEPS = floatArrayOf(0.85f, 1.0f, 1.2f, 1.45f)
 
         private val NOISE_LINES = setOf(
             "设置", "返回", "取消", "确定", "确认", "保存", "删除",
@@ -94,13 +102,21 @@ class QuizAccessibilityService : AccessibilityService() {
         }
 
         /**
-         * 截取当前屏幕并裁剪到识别区域，回调返回 PNG 字节（失败返回 null）。
-         * 依赖 AccessibilityService.takeScreenshot（API 30+）。对设了 FLAG_SECURE 的
-         * 页面截屏会是黑屏/失败，属预期限制。
+         * 截屏并裁剪到识别区域，回调返回 PNG 字节（失败返回 null）。
+         * 依赖 AccessibilityService.takeScreenshot（API 30+）。
          */
         fun captureRegionIfRunning(callback: (ByteArray?) -> Unit): Boolean {
             val svc = runningService ?: return false
             svc.captureRegionScreenshot(callback)
+            return true
+        }
+
+        /**
+         * 设置无障碍悬浮窗整体透明度（0.3~1.0）。
+         */
+        fun setOverlayOpacityIfRunning(opacity: Float): Boolean {
+            val svc = runningService ?: return false
+            svc.mainHandler.post { svc.setOverlayOpacity(opacity) }
             return true
         }
     }
@@ -115,6 +131,11 @@ class QuizAccessibilityService : AccessibilityService() {
     private var overlayQuestion = ""
     private var overlayAnswers = ""
     private var commandReceiver: BroadcastReceiver? = null
+
+    // 悬浮窗几何 / 外观状态
+    private var overlayFontScaleIndex = 1 // 默认中号（FONT_SCALE_STEPS[1] = 1.0）
+    private var overlayCollapsed = false
+    private var overlayExpandedHeight = 0 // 展开时的窗口高度（px），折叠时暂存
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -243,8 +264,15 @@ class QuizAccessibilityService : AccessibilityService() {
             resolveChannel()?.invokeMethod("manualSearch", mapOf("question" to overlayQuestion))
         }
         view.findViewById<View>(R.id.btn_close)?.setOnClickListener { hideAccessibilityOverlay() }
+        view.findViewById<View>(R.id.btn_font)?.setOnClickListener { cycleFontScale(view) }
+        view.findViewById<View>(R.id.btn_collapse)?.setOnClickListener { toggleCollapse(view) }
+        view.findViewById<View>(R.id.resize_handle)?.setOnTouchListener { _, event ->
+            resizeHandleTouch(view, event)
+        }
 
-        val width = (resources.displayMetrics.widthPixels * 0.86f).toInt()
+        val (x, y) = loadOverlayPosition()
+        val (w, h) = loadOverlaySize()
+        overlayFontScaleIndex = loadFontScaleIndex()
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
         } else {
@@ -252,8 +280,8 @@ class QuizAccessibilityService : AccessibilityService() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
         val params = WindowManager.LayoutParams(
-            width,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            w,
+            h,
             type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -261,9 +289,12 @@ class QuizAccessibilityService : AccessibilityService() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 50
-            y = 200
+            this.x = x
+            this.y = y
         }
+
+        applyFontScale(view, fontScale())
+        view.findViewById<View>(R.id.answer_container)?.alpha = loadOverlayOpacity()
 
         attachDragHandler(view, params, wm)
 
@@ -280,10 +311,87 @@ class QuizAccessibilityService : AccessibilityService() {
         }
     }
 
+    // ---- 悬浮窗可调外观 ----
+
+    private fun fontScale(): Float = FONT_SCALE_STEPS.getOrElse(overlayFontScaleIndex) { 1.0f }
+
+    private fun applyFontScale(view: View, scale: Float) {
+        val q = view.findViewById<TextView>(R.id.tv_question)
+        val a = view.findViewById<TextView>(R.id.tv_answer)
+        val baseQ = 14f
+        val baseA = 13f
+        q?.textSize = baseQ * scale
+        a?.textSize = baseA * scale
+    }
+
+    private fun cycleFontScale(view: View) {
+        overlayFontScaleIndex = (overlayFontScaleIndex + 1) % FONT_SCALE_STEPS.size
+        saveFontScaleIndex(overlayFontScaleIndex)
+        applyFontScale(view, fontScale())
+    }
+
+    private fun toggleCollapse(view: View) {
+        val wm = windowManager ?: return
+        val params = overlayParams ?: return
+        overlayCollapsed = !overlayCollapsed
+        val body = view.findViewById<View>(R.id.tv_question)?.parent as? View ?: return
+        if (overlayCollapsed) {
+            overlayExpandedHeight = params.height
+            body.visibility = View.GONE
+            params.height = WindowManager.LayoutParams.WRAP_CONTENT
+            view.findViewById<View>(R.id.btn_collapse)
+                ?.setBackgroundResource(android.R.drawable.arrow_down_float)
+        } else {
+            params.height = overlayExpandedHeight
+            body.visibility = View.VISIBLE
+            view.findViewById<View>(R.id.btn_collapse)
+                ?.setBackgroundResource(android.R.drawable.arrow_up_float)
+        }
+        try { wm.updateViewLayout(view, params) } catch (_: Throwable) {}
+    }
+
+    private fun resizeHandleTouch(view: View, event: MotionEvent): Boolean {
+        val wm = windowManager ?: return false
+        val params = overlayParams ?: return false
+        val dm = resources.displayMetrics
+        val minW = (OVERLAY_MIN_WIDTH_DP * dm.density).toInt()
+        val minH = (OVERLAY_MIN_HEIGHT_DP * dm.density).toInt()
+        val maxW = dm.widthPixels
+        val maxH = dm.heightPixels
+        return when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                resizeStartW = params.width
+                resizeStartH = params.height
+                resizeStartX = event.rawX
+                resizeStartY = event.rawY
+                true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val nw = (resizeStartW + (event.rawX - resizeStartX)).toInt().coerceIn(minW, maxW)
+                val nh = (resizeStartH + (event.rawY - resizeStartY)).toInt().coerceIn(minH, maxH)
+                params.width = nw
+                params.height = nh
+                overlayExpandedHeight = nh
+                try { wm.updateViewLayout(view, params) } catch (_: Throwable) {}
+                true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                saveOverlaySize(params.width, params.height)
+                false
+            }
+            else -> false
+        }
+    }
+
+    private var resizeStartW = 0
+    private var resizeStartH = 0
+    private var resizeStartX = 0f
+    private var resizeStartY = 0f
+
     /**
      * 给悬浮窗加拖动：记录 DOWN 时窗口坐标与触点偏移，MOVE 用增量，避免旧实现里
      * 把窗口中心直接怼到手指坐标导致的跳变。仅当移动超过 touch slop 才判定为拖动，
-     * 从而不影响关闭/搜题按钮的点击。
+     * 从而不影响关闭/搜题按钮的点击。拖动结束保存位置。
      */
     private fun attachDragHandler(view: View, params: WindowManager.LayoutParams, wm: WindowManager) {
         val slop = ViewConfiguration.get(this).scaledTouchSlop
@@ -315,12 +423,87 @@ class QuizAccessibilityService : AccessibilityService() {
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     val wasDragging = dragging
+                    if (wasDragging) saveOverlayPosition(params.x, params.y)
                     dragging = false
                     wasDragging
                 }
                 else -> false
             }
         }
+    }
+
+    // ---- 持久化 ----
+
+    private fun loadOverlayPosition(): Pair<Int, Int> {
+        val dm = resources.displayMetrics
+        val raw = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(KEY_OVERLAY_GEOMETRY, null)
+        if (raw != null) {
+            val p = raw.split(',').mapNotNull { it.toIntOrNull() }
+            if (p.size >= 2) {
+                val x = p[0].coerceIn(0, (dm.widthPixels * 0.9).toInt())
+                val y = p[1].coerceIn(0, (dm.heightPixels * 0.9).toInt())
+                return x to y
+            }
+        }
+        return (dm.widthPixels * 0.07f).toInt() to (dm.heightPixels * 0.12f).toInt()
+    }
+
+    private fun saveOverlayPosition(x: Int, y: Int) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString(KEY_OVERLAY_GEOMETRY, "$x,$y")
+            .apply()
+    }
+
+    private fun loadOverlaySize(): Pair<Int, Int> {
+        val dm = resources.displayMetrics
+        val w = (dm.widthPixels * 0.86f).toInt()
+        val h = (dm.heightPixels * 0.42f).toInt()
+        val raw = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("${KEY_OVERLAY_GEOMETRY}_size", null)
+        if (raw != null) {
+            val p = raw.split(',').mapNotNull { it.toIntOrNull() }
+            if (p.size >= 2) {
+                val minW = (OVERLAY_MIN_WIDTH_DP * dm.density).toInt()
+                val minH = (OVERLAY_MIN_HEIGHT_DP * dm.density).toInt()
+                return p[0].coerceIn(minW, dm.widthPixels) to p[1].coerceIn(minH, dm.heightPixels)
+            }
+        }
+        return w to h
+    }
+
+    private fun saveOverlaySize(w: Int, h: Int) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString("${KEY_OVERLAY_GEOMETRY}_size", "$w,$h")
+            .apply()
+    }
+
+    private fun loadFontScaleIndex(): Int {
+        val v = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt(KEY_OVERLAY_FONT_SCALE, 1)
+        return v.coerceIn(0, FONT_SCALE_STEPS.size - 1)
+    }
+
+    private fun saveFontScaleIndex(i: Int) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_OVERLAY_FONT_SCALE, i)
+            .apply()
+    }
+
+    private fun loadOverlayOpacity(): Float {
+        val v = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getFloat(KEY_OVERLAY_OPACITY, 1.0f)
+        return v.coerceIn(0.3f, 1.0f)
+    }
+
+    private fun saveOverlayOpacity(o: Float) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putFloat(KEY_OVERLAY_OPACITY, o)
+            .apply()
+    }
+
+    private fun setOverlayOpacity(opacity: Float) {
+        val view = accessibilityOverlayView ?: return
+        val clamped = opacity.coerceIn(0.3f, 1.0f)
+        view.findViewById<View>(R.id.answer_container)?.alpha = clamped
+        saveOverlayOpacity(clamped)
     }
 
     private fun updateAccessibilityOverlayView() {

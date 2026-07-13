@@ -126,6 +126,12 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                 }
+                "setOverlayOpacity" -> {
+                    val opacity = (call.argument<Double>("opacity") ?: 1.0).toFloat()
+                        .coerceIn(0.3f, 1.0f)
+                    QuizAccessibilityService.setOverlayOpacityIfRunning(opacity)
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         }
