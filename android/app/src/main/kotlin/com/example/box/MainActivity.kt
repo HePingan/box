@@ -170,22 +170,24 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun openAccessibilitySettings() {
-        // 先尝试直接跳到本应用辅助功能详情页，再回退通用页
-        val intent = Intent().apply {
-            setClassName("com.android.settings", "com.android.settings.Settings\$AccessibilityApplicationsSettingsActivity")
+        // 直接打开系统无障碍设置页（最稳，全 ROM 通用）。附带跳转到本服务的深链参数，
+        // 部分 AOSP/原生 ROM 会直接定位到“答题助手”开关；不支持的 ROM 也只是停在列表页。
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
             putExtra(":settings:fragment_args_key", "com.example.box/.QuizAccessibilityService")
             putExtra(":settings:fragment_package", "com.example.box")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        if (intent.resolveActivity(packageManager) != null) {
-            try { startActivity(intent); return } catch (_: Exception) {}
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+            // 极端兜底：仅打开无障碍总页
+            try {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+            } catch (_: Exception) {
+            }
         }
-        val fallback = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-            putExtra(":settings:fragment_args_key", "com.example.box/.QuizAccessibilityService")
-            putExtra(":settings:fragment_package", "com.example.box")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        startActivity(fallback)
     }
 
     private fun hasOverlayPermission(): Boolean {
