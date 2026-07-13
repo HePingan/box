@@ -157,6 +157,18 @@ class QuizPluginEntry {
     } catch (_) {}
   }
 
+  /// 应用识别区域预设（比例 0~1）。
+  static Future<void> applyRegionPreset(Rect rectF) async {
+    try {
+      await _channel.invokeMethod('applyRegionPreset', {
+        'left': rectF.left,
+        'top': rectF.top,
+        'right': rectF.right,
+        'bottom': rectF.bottom,
+      });
+    } catch (_) {}
+  }
+
   static String _formatResultForOverlay(QuizResult result) {
     if (result.isSuccess) {
       return result.answers
@@ -309,10 +321,25 @@ class QuizPluginEntry {
         } catch (_) {
           // 自动搜题失败不影响主流程
         }
+      } else if (call.method == 'onRegionPreview') {
+        final a = call.arguments;
+        if (a is Map) {
+          final r = Rect.fromLTRB(
+            (a['left'] as num?)?.toDouble() ?? 0,
+            (a['top'] as num?)?.toDouble() ?? 0,
+            (a['right'] as num?)?.toDouble() ?? 0,
+            (a['bottom'] as num?)?.toDouble() ?? 0,
+          );
+          _regionPreviewNotifier.value = r;
+        }
       }
       return null;
     });
   }
+
+  /// 原生框选拖动时的实时区域回传（屏幕坐标），供应用内数字联动。
+  static final ValueNotifier<Rect?> _regionPreviewNotifier =
+      ValueNotifier<Rect?>(null);
 
   // 配置页
   static Future<void> showConfigSheet(BuildContext context) async {
@@ -818,6 +845,21 @@ class _RegionSheetPageState extends State<_RegionSheetPage> {
   void initState() {
     super.initState();
     _syncToNative();
+    QuizPluginEntry._regionPreviewNotifier.addListener(_onPreview);
+  }
+
+  @override
+  void dispose() {
+    QuizPluginEntry._regionPreviewNotifier.removeListener(_onPreview);
+    super.dispose();
+  }
+
+  void _onPreview() {
+    final r = QuizPluginEntry._regionPreviewNotifier.value;
+    if (r != null && mounted) {
+      // 原生框选拖动时实时联动数字（仅在没有正在编辑文本时覆盖）
+      setState(() => _region = r);
+    }
   }
 
   Future<void> _syncToNative() async {
@@ -827,6 +869,22 @@ class _RegionSheetPageState extends State<_RegionSheetPage> {
   Future<void> _openNativeSelector() async {
     await QuizPluginEntry.openRegionSelector();
   }
+
+  void _applyPreset(Rect rectF) {
+    setState(
+      () => _region = Rect.fromLTWH(
+        rectF.left * _screenW,
+        rectF.top * _screenH,
+        (rectF.right - rectF.left) * _screenW,
+        (rectF.bottom - rectF.top) * _screenH,
+      ),
+    );
+    QuizPluginEntry.applyRegionPreset(rectF);
+    _syncToNative();
+  }
+
+  double get _screenW => MediaQuery.of(context).size.width;
+  double get _screenH => MediaQuery.of(context).size.height;
 
   @override
   Widget build(BuildContext context) {
@@ -860,11 +918,20 @@ class _RegionSheetPageState extends State<_RegionSheetPage> {
               builder: (context, constraints) {
                 final width = constraints.maxWidth;
                 final height = constraints.maxHeight;
+                // 预览按屏幕真实比例映射，所见即所得
+                final scaleX = width / _screenW;
+                final scaleY = height / _screenH;
+                final previewRect = Rect.fromLTRB(
+                  _region.left * scaleX,
+                  _region.top * scaleY,
+                  _region.right * scaleX,
+                  _region.bottom * scaleY,
+                );
                 return RepaintBoundary(
                   child: CustomPaint(
                     size: Size(width, height),
                     painter: _RegionPainter(
-                      region: _region,
+                      region: previewRect,
                       maxSize: Size(width, height),
                     ),
                   ),
@@ -886,6 +953,31 @@ class _RegionSheetPageState extends State<_RegionSheetPage> {
             child: SafeArea(
               child: Column(
                 children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.tonal(
+                        onPressed: () => _applyPreset(
+                          const Rect.fromLTRB(0.04, 0.06, 0.96, 0.5),
+                        ),
+                        child: const Text('上半屏'),
+                      ),
+                      FilledButton.tonal(
+                        onPressed: () => _applyPreset(
+                          const Rect.fromLTRB(0.04, 0.3, 0.96, 0.7),
+                        ),
+                        child: const Text('中部'),
+                      ),
+                      FilledButton.tonal(
+                        onPressed: () => _applyPreset(
+                          const Rect.fromLTRB(0.02, 0.04, 0.98, 0.96),
+                        ),
+                        child: const Text('全屏'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppTokens.spaceMd),
                   Row(
                     children: [
                       Expanded(
@@ -964,24 +1056,6 @@ class _RegionSheetPageState extends State<_RegionSheetPage> {
                         ),
                       ),
                     ],
-                  ),
-                  const SizedBox(height: AppTokens.spaceMd),
-                  FilledButton.icon(
-                    onPressed: () async {
-                      final next = _region.translate(0, -10);
-                      final top = next.top >= 0 ? next.top : _region.top;
-                      setState(
-                        () => _region = Rect.fromLTWH(
-                          _region.left,
-                          top,
-                          _region.width,
-                          _region.height,
-                        ),
-                      );
-                      await _syncToNative();
-                    },
-                    icon: const Icon(Icons.arrow_upward),
-                    label: const Text('上移'),
                   ),
                 ],
               ),

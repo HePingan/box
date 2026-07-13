@@ -137,9 +137,9 @@ class QuizOverlayManager(private val context: Context) {
 
     fun openRegionSelector(): Boolean {
         if (regionOverlayView != null) return true
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            !android.provider.Settings.canDrawOverlays(context)
-        ) {
+        // 区域选择器复用无障碍悬浮层（TYPE_ACCESSIBILITY_OVERLAY），不依赖普通悬浮窗权限，
+        // 与 P0 抗屏蔽同一机制；仅当无障碍服务在运行时可用。
+        if (!QuizAccessibilityService.isRunning()) {
             return false
         }
         val wm = windowManager ?: return false
@@ -149,8 +149,8 @@ class QuizOverlayManager(private val context: Context) {
         view.findViewById<View>(R.id.answer_container)?.visibility = View.GONE
         view.findViewById<View>(R.id.btn_search)?.visibility = View.GONE
 
-        val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
         } else {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
@@ -158,7 +158,7 @@ class QuizOverlayManager(private val context: Context) {
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
-            layoutFlag,
+            type,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             android.graphics.PixelFormat.TRANSLUCENT
         ).apply {
@@ -206,6 +206,19 @@ class QuizOverlayManager(private val context: Context) {
         }
         val regionSelector = selector as? RegionSelectorView
         loadRegion()?.let { regionSelector?.setRegion(screenToSelectorRegion(it, selector)) }
+        regionSelector?.setOnRegionChangedListener { rectF ->
+            // 拖拽框选时实时回传，用于应用内数字联动
+            val screen = selectorToScreenRegion(rectF, selector)
+            channel?.invokeMethod(
+                "onRegionPreview",
+                mapOf(
+                    "left" to screen.left.toDouble(),
+                    "top" to screen.top.toDouble(),
+                    "right" to screen.right.toDouble(),
+                    "bottom" to screen.bottom.toDouble(),
+                ),
+            )
+        }
         regionSelector?.setOnRegionConfirmedListener {
             saveSelectorRegion(selector, closeAfterSave = true)
         }
@@ -213,6 +226,24 @@ class QuizOverlayManager(private val context: Context) {
         root.findViewById<View>(R.id.btn_region_save)?.setOnClickListener {
             saveSelectorRegion(selector, closeAfterSave = true)
         }
+        root.findViewById<View>(R.id.btn_preset_top)?.setOnClickListener {
+            regionSelector?.applyPreset(0.04f, 0.06f, 0.96f, 0.5f)
+        }
+        root.findViewById<View>(R.id.btn_preset_mid)?.setOnClickListener {
+            regionSelector?.applyPreset(0.04f, 0.3f, 0.96f, 0.7f)
+        }
+        root.findViewById<View>(R.id.btn_preset_full)?.setOnClickListener {
+            regionSelector?.applyPreset(0.02f, 0.04f, 0.98f, 0.96f)
+        }
+        // 暴露给 Dart 预设调用
+        regionSelectorViewRef = regionSelector
+    }
+
+    private var regionSelectorViewRef: RegionSelectorView? = null
+
+    /** 供 Dart 侧调用，应用预设（比例）。 */
+    fun applyRegionPreset(leftF: Float, topF: Float, rightF: Float, bottomF: Float) {
+        regionSelectorViewRef?.applyPreset(leftF, topF, rightF, bottomF)
     }
 
     private fun saveSelectorRegion(selectorView: View, closeAfterSave: Boolean) {

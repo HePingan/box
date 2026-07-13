@@ -165,6 +165,42 @@
             android:textStyle="bold" />
 
         <Button
+            android:id="@+id/btn_preset_top"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="上半屏"
+            android:textColor="#FFFFFF"
+            android:background="?android:attr/selectableItemBackground"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"/>
+
+        <Button
+            android:id="@+id/btn_preset_mid"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="中部"
+            android:textColor="#FFFFFF"
+            android:background="?android:attr/selectableItemBackground"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"/>
+
+        <Button
+            android:id="@+id/btn_preset_full"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="全屏"
+            android:textColor="#FFFFFF"
+            android:background="?android:attr/selectableItemBackground"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"/>
+
+        <Button
             android:id="@+id/btn_region_cancel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

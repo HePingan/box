@@ -80,6 +80,20 @@ class RegionSelectorView @JvmOverloads constructor(
         onRegionChanged = listener
     }
 
+    /** 应用预设：relative 为相对父容器（全屏）的比例。 */
+    fun applyPreset(leftF: Float, topF: Float, rightF: Float, bottomF: Float) {
+        if (width <= 0 || height <= 0) return
+        region.set(
+            leftF * width,
+            topF * height,
+            rightF * width,
+            bottomF * height,
+        )
+        clampRegionToBounds()
+        invalidate()
+        onRegionChanged?.invoke(getRegion())
+    }
+
     fun setOnRegionConfirmedListener(listener: () -> Unit) {
         onRegionConfirmed = listener
     }

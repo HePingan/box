@@ -132,6 +132,15 @@ class MainActivity : FlutterActivity() {
                     QuizAccessibilityService.setOverlayOpacityIfRunning(opacity)
                     result.success(true)
                 }
+                "applyRegionPreset" -> {
+                    if (overlayManager == null) overlayManager = QuizOverlayManager(this)
+                    val l = (call.argument<Double>("left") ?: 0.0).toFloat()
+                    val t = (call.argument<Double>("top") ?: 0.0).toFloat()
+                    val r = (call.argument<Double>("right") ?: 1.0).toFloat()
+                    val b = (call.argument<Double>("bottom") ?: 1.0).toFloat()
+                    overlayManager?.applyRegionPreset(l, t, r, b)
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         }
