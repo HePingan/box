@@ -109,14 +109,8 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "openRegionSelector" -> {
-                    if (overlayManager == null) overlayManager = QuizOverlayManager(this)
-                    val opened = overlayManager?.openRegionSelector() ?: false
-                    if (!opened) {
-                        requestOverlayPermission()
-                        result.success(false)
-                        return@setMethodCallHandler
-                    }
-                    result.success(true)
+                    val opened = QuizAccessibilityService.enterRegionModeIfRunning()
+                    result.success(opened)
                 }
                 "captureRegionScreenshot" -> {
                     val started = QuizAccessibilityService.captureRegionIfRunning { bytes ->

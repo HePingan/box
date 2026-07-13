@@ -97,7 +97,7 @@
             android:text="等待捕获题目…"
             android:textColor="#101828"
             android:textSize="14sp"
-            android:maxLines="6"
+            android:maxLines="12"
             android:ellipsize="end"
             android:lineSpacingExtra="4dp" />
 
@@ -116,7 +116,7 @@
             android:text="等待搜题结果…"
             android:textColor="#667085"
             android:textSize="13sp"
-            android:maxLines="8"
+            android:maxLines="14"
             android:ellipsize="end"
             android:lineSpacingExtra="3dp" />
     </LinearLayout>

@@ -54,9 +54,9 @@ class QuizAccessibilityService : AccessibilityService() {
         private const val CONFIG_KEY = "flutter.quiz_plugin_config"
         const val ACTION_UPDATE_REGION = "com.example.box.UPDATE_QUIZ_REGION"
 
-        // 悬浮窗尺寸/字号约束
-        private const val OVERLAY_MIN_WIDTH_DP = 180
-        private const val OVERLAY_MIN_HEIGHT_DP = 120
+        // 悬浮窗尺寸/字号约束（默认更宽，避免标题按钮挤压与文字被截断）
+        private const val OVERLAY_MIN_WIDTH_DP = 240
+        private const val OVERLAY_MIN_HEIGHT_DP = 140
         private val FONT_SCALE_STEPS = floatArrayOf(0.85f, 1.0f, 1.2f, 1.45f)
 
         private val NOISE_LINES = setOf(
@@ -123,6 +123,20 @@ class QuizAccessibilityService : AccessibilityService() {
         fun setOverlayOpacityIfRunning(opacity: Float): Boolean {
             val svc = runningService ?: return false
             svc.mainHandler.post { svc.setOverlayOpacity(opacity) }
+            return true
+        }
+
+        /** 进入识别区域调节（服务自建全屏无障碍浮层，有权限）。 */
+        fun enterRegionModeIfRunning(): Boolean {
+            val svc = runningService ?: return false
+            svc.mainHandler.post { svc.enterRegionMode() }
+            return true
+        }
+
+        /** 退出识别区域调节，恢复答案悬浮窗。 */
+        fun exitRegionModeIfRunning(): Boolean {
+            val svc = runningService ?: return false
+            svc.mainHandler.post { svc.exitRegionMode() }
             return true
         }
     }
@@ -267,12 +281,8 @@ class QuizAccessibilityService : AccessibilityService() {
         // 无障碍悬浮窗中不提供区域选择（区域设置走应用内 + 临时普通悬浮）。
         view.findViewById<View>(R.id.btn_area)?.visibility = View.VISIBLE
         view.findViewById<View>(R.id.btn_area)?.setOnClickListener {
-            // 直接在屏幕上叠加全屏无障碍浮层做拖拽框选（P3 已切到 TYPE_ACCESSIBILITY_OVERLAY）
-            try {
-                QuizOverlayManager(applicationContext).openRegionSelector()
-            } catch (e: Throwable) {
-                Log.w(TAG, "open region selector failed", e)
-            }
+            // 进入识别区域调节：服务自建全屏无障碍浮层拖拽框选（有权限，无需悬浮窗权限）
+            QuizAccessibilityService.enterRegionModeIfRunning()
         }
         view.findViewById<View>(R.id.btn_search)?.setOnClickListener {
             resolveChannel()?.invokeMethod("manualSearch", mapOf("question" to overlayQuestion))
@@ -455,6 +465,104 @@ class QuizAccessibilityService : AccessibilityService() {
         }
     }
 
+    // ---- 识别区域调节（服务自建全屏无障碍浮层）----
+
+    private var regionWindowView: View? = null
+    private var regionWindowParams: WindowManager.LayoutParams? = null
+
+    private fun enterRegionMode() {
+        if (regionWindowView != null) return
+        val wm = windowManager ?: return
+        // 进入调节时收起答案小窗，调节完恢复
+        hideAccessibilityOverlay()
+        val inflater = getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
+        val view = inflater.inflate(R.layout.quiz_overlay, null)
+        // 区域调节只用选择器 + 工具栏，隐藏答案内容与缩放手柄
+        view.findViewById<View>(R.id.answer_container)?.visibility = View.GONE
+        view.findViewById<View>(R.id.resize_handle)?.visibility = View.GONE
+
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+        }
+
+        val selector = view.findViewById<View>(R.id.region_selector) as? RegionSelectorView
+        val toolbar = view.findViewById<View>(R.id.region_toolbar)
+        selector?.visibility = View.VISIBLE
+        toolbar?.visibility = View.VISIBLE
+
+        loadRegion()?.let { selector?.setRegion(it) }
+        selector?.setOnRegionChangedListener { rectF ->
+            // 拖拽时实时回传，供应用内数字联动
+            resolveChannel()?.invokeMethod(
+                "onRegionPreview",
+                mapOf(
+                    "left" to rectF.left.toDouble(),
+                    "top" to rectF.top.toDouble(),
+                    "right" to rectF.right.toDouble(),
+                    "bottom" to rectF.bottom.toDouble(),
+                ),
+            )
+        }
+        selector?.setOnRegionConfirmedListener {
+            saveRegionFromSelector(selector)
+            exitRegionMode()
+        }
+        view.findViewById<View>(R.id.btn_region_cancel)?.setOnClickListener { exitRegionMode() }
+        view.findViewById<View>(R.id.btn_region_save)?.setOnClickListener {
+            saveRegionFromSelector(selector)
+            exitRegionMode()
+        }
+        view.findViewById<View>(R.id.btn_preset_top)?.setOnClickListener {
+            selector?.applyPreset(0.04f, 0.06f, 0.96f, 0.5f)
+        }
+        view.findViewById<View>(R.id.btn_preset_mid)?.setOnClickListener {
+            selector?.applyPreset(0.04f, 0.3f, 0.96f, 0.7f)
+        }
+        view.findViewById<View>(R.id.btn_preset_full)?.setOnClickListener {
+            selector?.applyPreset(0.02f, 0.04f, 0.98f, 0.96f)
+        }
+
+        try {
+            wm.addView(view, params)
+            regionWindowView = view
+            regionWindowParams = params
+        } catch (e: Throwable) {
+            Log.w(TAG, "add region window failed", e)
+            regionWindowView = null
+            regionWindowParams = null
+            // 失败则恢复答案窗
+            showOrUpdateAccessibilityOverlay("", "")
+        }
+    }
+
+    private fun exitRegionMode() {
+        val view = regionWindowView ?: return
+        try { windowManager?.removeView(view) } catch (_: Throwable) {}
+        regionWindowView = null
+        regionWindowParams = null
+        // 恢复答案悬浮窗
+        showOrUpdateAccessibilityOverlay("", "")
+    }
+
+    private fun saveRegionFromSelector(selector: RegionSelectorView?) {
+        val region = selector?.getRegion() ?: return
+        saveRegion(region)
+    }
+
     // ---- 持久化 ----
 
     private fun loadOverlayPosition(): Pair<Int, Int> {
@@ -469,6 +577,13 @@ class QuizAccessibilityService : AccessibilityService() {
             }
         }
         return (dm.widthPixels * 0.07f).toInt() to (dm.heightPixels * 0.12f).toInt()
+    }
+
+    private fun defaultOverlaySize(): Pair<Int, Int> {
+        val dm = resources.displayMetrics
+        val w = (dm.widthPixels * 0.45f).toInt().coerceIn(320, 460)
+        val h = (dm.heightPixels * 0.32f).toInt().coerceIn(220, 420)
+        return w to h
     }
 
     private fun saveOverlayPosition(x: Int, y: Int) {
