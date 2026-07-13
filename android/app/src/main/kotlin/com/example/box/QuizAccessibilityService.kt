@@ -101,6 +101,12 @@ class QuizAccessibilityService : AccessibilityService() {
             svc.mainHandler.post { svc.hideAccessibilityOverlay() }
         }
 
+        /** 重新显示无障碍悬浮窗（用服务内缓存的题目/答案）。 */
+        fun restoreOverlayIfRunning() {
+            val svc = runningService ?: return
+            svc.mainHandler.post { svc.showOrUpdateAccessibilityOverlay("", "") }
+        }
+
         /**
          * 截屏并裁剪到识别区域，回调返回 PNG 字节（失败返回 null）。
          * 依赖 AccessibilityService.takeScreenshot（API 30+）。
@@ -259,7 +265,15 @@ class QuizAccessibilityService : AccessibilityService() {
         val inflater = getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
         val view = inflater.inflate(R.layout.quiz_overlay, null)
         // 无障碍悬浮窗中不提供区域选择（区域设置走应用内 + 临时普通悬浮）。
-        view.findViewById<View>(R.id.btn_area)?.visibility = View.GONE
+        view.findViewById<View>(R.id.btn_area)?.visibility = View.VISIBLE
+        view.findViewById<View>(R.id.btn_area)?.setOnClickListener {
+            // 直接在屏幕上叠加全屏无障碍浮层做拖拽框选（P3 已切到 TYPE_ACCESSIBILITY_OVERLAY）
+            try {
+                QuizOverlayManager(applicationContext).openRegionSelector()
+            } catch (e: Throwable) {
+                Log.w(TAG, "open region selector failed", e)
+            }
+        }
         view.findViewById<View>(R.id.btn_search)?.setOnClickListener {
             resolveChannel()?.invokeMethod("manualSearch", mapOf("question" to overlayQuestion))
         }
@@ -334,16 +348,25 @@ class QuizAccessibilityService : AccessibilityService() {
         val wm = windowManager ?: return
         val params = overlayParams ?: return
         overlayCollapsed = !overlayCollapsed
-        val body = view.findViewById<View>(R.id.tv_question)?.parent as? View ?: return
+        val q = view.findViewById<TextView>(R.id.tv_question)
+        val a = view.findViewById<TextView>(R.id.tv_answer)
+        val resizeHandle = view.findViewById<View>(R.id.resize_handle)
+        val divider = view.findViewById<View>(R.id.answer_divider)
         if (overlayCollapsed) {
             overlayExpandedHeight = params.height
-            body.visibility = View.GONE
+            q?.visibility = View.GONE
+            a?.visibility = View.GONE
+            divider?.visibility = View.GONE
+            resizeHandle?.visibility = View.GONE
             params.height = WindowManager.LayoutParams.WRAP_CONTENT
             view.findViewById<View>(R.id.btn_collapse)
                 ?.setBackgroundResource(android.R.drawable.arrow_down_float)
         } else {
             params.height = overlayExpandedHeight
-            body.visibility = View.VISIBLE
+            q?.visibility = View.VISIBLE
+            a?.visibility = View.VISIBLE
+            divider?.visibility = View.VISIBLE
+            resizeHandle?.visibility = View.VISIBLE
             view.findViewById<View>(R.id.btn_collapse)
                 ?.setBackgroundResource(android.R.drawable.arrow_up_float)
         }

@@ -142,6 +142,8 @@ class QuizOverlayManager(private val context: Context) {
         if (!QuizAccessibilityService.isRunning()) {
             return false
         }
+        // 进入区域调节时先收起答案小窗，调节完再恢复，体验上是一套悬浮窗。
+        QuizAccessibilityService.hideOverlayIfRunning()
         val wm = windowManager ?: return false
         val inflater = context.getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
         val view = inflater.inflate(R.layout.quiz_overlay, null)
@@ -186,6 +188,9 @@ class QuizOverlayManager(private val context: Context) {
         try { windowManager?.removeView(view) } catch (_: Throwable) {}
         regionOverlayView = null
         regionParams = null
+        regionSelectorViewRef = null
+        // 恢复答案小窗
+        QuizAccessibilityService.restoreOverlayIfRunning()
     }
 
     fun toggleRegionMode() {
