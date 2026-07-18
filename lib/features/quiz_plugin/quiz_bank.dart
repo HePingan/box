@@ -58,26 +58,37 @@ class QuizBankItem {
     final rawOptions = json['options'] ?? json['answers'];
     final List<String> options;
     if (rawOptions is List) {
-      options = rawOptions.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).toList();
+      options = rawOptions
+          .map((e) => e.toString())
+          .where((e) => e.trim().isNotEmpty)
+          .toList();
     } else if (rawOptions is String) {
-      options = rawOptions.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+      options = rawOptions
+          .split('\n')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
     } else {
       options = const [];
     }
 
-    final correctAnswer = (json['correctAnswer'] ?? json['answer'] ?? '').toString();
+    final correctAnswer = (json['correctAnswer'] ?? json['answer'] ?? '')
+        .toString();
     final analysis = (json['analysis'] ?? json['解析'] ?? '').toString();
     final question = (json['question'] ?? '').toString();
 
     return QuizBankItem(
-      id: (json['id'] ?? UniqueQuizKeyGenerator.key(question)).toString(),
+      id: (json['id'] ?? UniqueQuizKeyGenerator.key(question, options: options))
+          .toString(),
       question: question,
       type: type,
       options: options,
       correctAnswer: correctAnswer,
       analysis: analysis.isEmpty ? null : analysis,
       source: (json['source'] ?? '录入').toString(),
-      createdAt: json['createdAt'] == null ? null : DateTime.tryParse(json['createdAt'].toString()),
+      createdAt: json['createdAt'] == null
+          ? null
+          : DateTime.tryParse(json['createdAt'].toString()),
     );
   }
 
@@ -90,9 +101,13 @@ class QuizBankItem {
           : QuizQuestionType.singleChoice,
       options: _decodeOptions(row['options']?.toString()),
       correctAnswer: row['correctAnswer']?.toString() ?? '',
-      analysis: (row['analysis']?.toString() ?? '').trim().isEmpty ? null : row['analysis']?.toString(),
+      analysis: (row['analysis']?.toString() ?? '').trim().isEmpty
+          ? null
+          : row['analysis']?.toString(),
       source: row['source']?.toString() ?? '录入',
-      createdAt: row['createdAt'] == null ? null : DateTime.tryParse(row['createdAt'].toString()),
+      createdAt: row['createdAt'] == null
+          ? null
+          : DateTime.tryParse(row['createdAt'].toString()),
     );
   }
 
@@ -101,41 +116,63 @@ class QuizBankItem {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is List) {
-        return decoded.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).toList();
+        return decoded
+            .map((e) => e.toString())
+            .where((e) => e.trim().isNotEmpty)
+            .toList();
       }
     } catch (_) {}
-    return raw.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    return raw
+        .split('\n')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'question': question,
-        'type': type == QuizQuestionType.trueFalse ? 'true_false' : 'single_choice',
-        'options': options,
-        'correctAnswer': correctAnswer,
-        if (analysis != null && analysis!.isNotEmpty) 'analysis': analysis,
-        'source': source,
-        if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
-      };
+    'id': id,
+    'question': question,
+    'type': type == QuizQuestionType.trueFalse ? 'true_false' : 'single_choice',
+    'options': options,
+    'correctAnswer': correctAnswer,
+    if (analysis != null && analysis!.isNotEmpty) 'analysis': analysis,
+    'source': source,
+    if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
+  };
 
   Map<String, Object?> toDb() => {
-        'id': id,
-        'question': question,
-        'type': type == QuizQuestionType.trueFalse ? 'true_false' : 'single_choice',
-        'options': jsonEncode(options),
-        'correctAnswer': correctAnswer,
-        'analysis': analysis,
-        'source': source,
-        'createdAt': createdAt?.toIso8601String(),
-        'updatedAt': DateTime.now().toIso8601String(),
-      };
+    'id': id,
+    'question': question,
+    'type': type == QuizQuestionType.trueFalse ? 'true_false' : 'single_choice',
+    'options': jsonEncode(options),
+    'correctAnswer': correctAnswer,
+    'analysis': analysis,
+    'source': source,
+    'createdAt': createdAt?.toIso8601String(),
+    'updatedAt': DateTime.now().toIso8601String(),
+  };
 }
 
 class UniqueQuizKeyGenerator {
-  static String key(String question) {
-    final normalized = question.replaceAll(RegExp(r'\s+'), '').trim();
-    final digest = _fnv1a32(normalized).toRadixString(16).padLeft(8, '0');
-    return 'quiz_${normalized.length.toString().padLeft(4, '0')}$digest';
+  /// 题目标识：题干 + 规范化选项。同题干不同选项视为不同题。
+  static String key(String question, {List<String> options = const []}) {
+    final q = _compact(question);
+    final opts = options.map(_compact).where((e) => e.isNotEmpty).toList()
+      ..sort(); // 顺序无关：A/B 互换仍算同一题（内容相同）
+    final payload = opts.isEmpty ? q : '$q|${opts.join('|')}';
+    final digest = _fnv1a32(payload).toRadixString(16).padLeft(8, '0');
+    return 'quiz_${payload.length.toString().padLeft(4, '0')}$digest';
+  }
+
+  static String keyFromItem(QuizBankItem item) =>
+      key(item.question, options: item.options);
+
+  static String _compact(String text) {
+    return text
+        .replaceAll(RegExp(r'\s+'), '')
+        .replaceFirst(RegExp(r'^[A-DＡ-Ｄ]\s*[.、．:：)）]\s*'), '')
+        .trim()
+        .toLowerCase();
   }
 
   static int _fnv1a32(String text) {
@@ -148,12 +185,153 @@ class UniqueQuizKeyGenerator {
   }
 }
 
+class QuizBankImportNormalization {
+  const QuizBankImportNormalization({
+    required this.items,
+    required this.skipped,
+  });
+
+  final List<QuizBankItem> items;
+  final int skipped;
+}
+
+enum QuizBankWriteStatus { inserted, duplicateSkipped }
+
+class QuizBankWriteDecision {
+  const QuizBankWriteDecision({required this.status, required this.items});
+
+  final QuizBankWriteStatus status;
+  final List<QuizBankItem> items;
+}
+
+/// One identity rule for every entry point: a duplicate must never overwrite
+/// an already-stored question. Explicit editing uses [replaceItem] instead.
+class QuizBankWritePolicy {
+  QuizBankWritePolicy._();
+
+  static QuizBankWriteDecision insertIfAbsent({
+    required List<QuizBankItem> existing,
+    required QuizBankItem incoming,
+  }) {
+    final canonical = incoming.copyWith(
+      id: UniqueQuizKeyGenerator.keyFromItem(incoming),
+    );
+    final existingCanonicalIds = existing
+        .map(UniqueQuizKeyGenerator.keyFromItem)
+        .toSet();
+    if (existingCanonicalIds.contains(canonical.id)) {
+      return QuizBankWriteDecision(
+        status: QuizBankWriteStatus.duplicateSkipped,
+        items: List.unmodifiable(existing),
+      );
+    }
+    return QuizBankWriteDecision(
+      status: QuizBankWriteStatus.inserted,
+      items: List.unmodifiable([...existing, canonical]),
+    );
+  }
+}
+
+class QuizBankDeduplicateResult {
+  const QuizBankDeduplicateResult({
+    required this.items,
+    required this.removed,
+    required this.duplicateGroups,
+  });
+
+  final List<QuizBankItem> items;
+  final int removed;
+  final int duplicateGroups;
+}
+
+/// Repairs legacy/corrupted records that share a canonical identity.
+/// Prefer a complete answer, then analysis, option count, and earlier entry.
+class QuizBankDeduplicator {
+  QuizBankDeduplicator._();
+
+  static QuizBankDeduplicateResult deduplicate(List<QuizBankItem> source) {
+    final winners = <String, QuizBankItem>{};
+    final countedGroups = <String>{};
+    var removed = 0;
+    for (final raw in source) {
+      if (raw.question.trim().isEmpty) {
+        removed++;
+        continue;
+      }
+      final canonical = raw.copyWith(
+        id: UniqueQuizKeyGenerator.keyFromItem(raw),
+      );
+      final previous = winners[canonical.id];
+      if (previous == null) {
+        winners[canonical.id] = canonical;
+        continue;
+      }
+      if (countedGroups.add(canonical.id)) {
+        // A group counts once even if it contains more than two legacy rows.
+      }
+      removed++;
+      if (_isBetter(canonical, previous)) winners[canonical.id] = canonical;
+    }
+    return QuizBankDeduplicateResult(
+      items: List.unmodifiable(winners.values),
+      removed: removed,
+      duplicateGroups: countedGroups.length,
+    );
+  }
+
+  static bool _isBetter(QuizBankItem candidate, QuizBankItem current) {
+    int score(QuizBankItem item) =>
+        (item.correctAnswer.trim().isNotEmpty ? 100 : 0) +
+        ((item.analysis?.trim().isNotEmpty ?? false) ? 10 : 0) +
+        item.options.where((option) => option.trim().isNotEmpty).length;
+    final candidateScore = score(candidate);
+    final currentScore = score(current);
+    if (candidateScore != currentScore) return candidateScore > currentScore;
+    final candidateAt = candidate.createdAt;
+    final currentAt = current.createdAt;
+    if (candidateAt == null) return false;
+    if (currentAt == null) return true;
+    return candidateAt.isBefore(currentAt);
+  }
+}
+
+/// Converts every imported record to the v2 identity (question + options).
+/// The last occurrence wins when a file contains duplicate canonical questions.
+class QuizBankImportNormalizer {
+  QuizBankImportNormalizer._();
+
+  static QuizBankImportNormalization canonicalize(List<QuizBankItem> source) {
+    final byId = <String, QuizBankItem>{};
+    var skipped = 0;
+    for (final item in source) {
+      if (item.question.trim().isEmpty) {
+        skipped++;
+        continue;
+      }
+      final id = UniqueQuizKeyGenerator.keyFromItem(item);
+      if (byId.containsKey(id)) skipped++;
+      byId[id] = item.id == id ? item : item.copyWith(id: id);
+    }
+    return QuizBankImportNormalization(
+      items: List.unmodifiable(byId.values),
+      skipped: skipped,
+    );
+  }
+}
+
 class QuizBankCache {
   QuizBankCache._();
+
+  factory QuizBankCache.forTesting(List<QuizBankItem> items) {
+    final cache = QuizBankCache._();
+    cache.assign(items);
+    return cache;
+  }
 
   static final QuizBankCache instance = QuizBankCache._();
   List<QuizBankItem> _items = const [];
   Map<String, List<QuizBankItem>> _index = const {};
+  Map<String, List<QuizBankItem>> _exactIndex = const {};
   bool _loaded = false;
 
   List<QuizBankItem> get items => _items;
@@ -170,26 +348,67 @@ class QuizBankCache {
   void assign(List<QuizBankItem> items) {
     _items = List.unmodifiable(items);
     _index = _buildIndex(_items);
+    _exactIndex = _buildExactIndex(_items);
     _loaded = true;
   }
 
   List<QuizBankItem> candidatesFor(String normalizedQuestion) {
-    if (normalizedQuestion.length < 2) return _items;
+    if (normalizedQuestion.length < 2) return const [];
+    // 完整题干优先走精确索引：不会受 token 分词策略、候选上限影响。
+    final exact = _exactIndex[normalizedQuestion];
+    if (exact != null && exact.isNotEmpty) return exact;
     final tokens = _tokens(normalizedQuestion).take(8).toList();
-    if (tokens.isEmpty) return _items;
+    if (tokens.isEmpty) return const [];
     final merged = <String, QuizBankItem>{};
     for (final token in tokens) {
       for (final item in _index[token] ?? const <QuizBankItem>[]) {
         merged[item.id] = item;
       }
     }
-    return merged.isEmpty ? _items : merged.values.toList(growable: false);
+    // 索引未命中时不能按录入顺序截断，否则后排题永远没有机会匹配。
+    // 先做 O(n) 的字符重叠预筛选（不跑 LCS），再仅返回 Top 80 给搜索引擎精算。
+    if (merged.isEmpty) {
+      final queryChars = normalizedQuestion.split('').toSet();
+      final ranked =
+          _items
+              .map((item) {
+                final target = QuizBankTextNormalizer.cleanForMatch(
+                  item.question,
+                );
+                final targetChars = target.split('').toSet();
+                final overlap = queryChars.intersection(targetChars).length;
+                final denominator = queryChars.length + targetChars.length;
+                final score = denominator == 0
+                    ? 0
+                    : overlap * 200 ~/ denominator;
+                return (item: item, score: score);
+              })
+              .where((entry) => entry.score > 0)
+              .toList()
+            ..sort((a, b) => b.score.compareTo(a.score));
+      return ranked.take(80).map((entry) => entry.item).toList(growable: false);
+    }
+    return merged.values.take(160).toList(growable: false);
   }
 
   void reset() {
     _items = const [];
     _index = const {};
+    _exactIndex = const {};
     _loaded = false;
+  }
+
+  static Map<String, List<QuizBankItem>> _buildExactIndex(
+    List<QuizBankItem> items,
+  ) {
+    final index = <String, List<QuizBankItem>>{};
+    for (final item in items) {
+      final normalized = QuizBankTextNormalizer.cleanForMatch(item.question);
+      if (normalized.isNotEmpty) {
+        (index[normalized] ??= <QuizBankItem>[]).add(item);
+      }
+    }
+    return index;
   }
 
   static Map<String, List<QuizBankItem>> _buildIndex(List<QuizBankItem> items) {
@@ -205,7 +424,9 @@ class QuizBankCache {
 
   static Iterable<String> _tokens(String text) sync* {
     final compact = text.replaceAll(RegExp(r'\s+'), '');
-    final words = RegExp(r'[\u4e00-\u9fa5]{2,}|[a-zA-Z0-9]{2,}').allMatches(compact);
+    final words = RegExp(
+      r'[\u4e00-\u9fa5]{2,}|[a-zA-Z0-9]{2,}',
+    ).allMatches(compact);
     for (final match in words) {
       final word = match.group(0)!;
       if (word.length <= 6) {
@@ -224,7 +445,12 @@ class QuizBankTextNormalizer {
 
   static String stripQuestionPrefix(String text) {
     var t = text.replaceAll(RegExp(r'\s+'), '').toLowerCase();
-    t = t.replaceAll(RegExp(r'^(\[单选题\]|\[多选题\]|\[判断题\]|\[选择题\]|\[问答题\]|【单选题】|【多选题】|【判断题】|【选择题】|\[单选\]|\[判断\]|单选题|多选题|判断题|选择题)'), '');
+    t = t.replaceAll(
+      RegExp(
+        r'^(\[单选题\]|\[多选题\]|\[判断题\]|\[选择题\]|\[问答题\]|【单选题】|【多选题】|【判断题】|【选择题】|\[单选\]|\[判断\]|单选题|多选题|判断题|选择题)',
+      ),
+      '',
+    );
     t = t.replaceAll(RegExp(r'(\([^)]*\)|（[^）]*）|【[^】]*】)'), '');
     t = t.replaceAll(RegExp(r'^第?\d+[题.、．、]'), '');
     return t.trim();
@@ -238,8 +464,25 @@ class QuizBankTextNormalizer {
   }
 
   static bool isNoiseLine(String line) {
-    const labels = ['正确答案', '我的答案', '解析', '答案', '查看解析', '上一题', '下一题', '收藏', '交卷'];
+    const labels = [
+      '正确答案',
+      '我的答案',
+      '解析',
+      '答案',
+      '查看解析',
+      '上一题',
+      '下一题',
+      '收藏',
+      '交卷',
+    ];
     return labels.any(line.contains);
+  }
+
+  /// 选项规范化：去空白、去 A./B. 前缀，小写，便于选项集合比对。
+  static String normalizeOption(String text) {
+    var t = text.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+    t = t.replaceFirst(RegExp(r'^[a-dａ-ｄ][.、．:：)）]'), '');
+    return t.trim();
   }
 
   static String cleanForMatch(String text) {
@@ -249,9 +492,11 @@ class QuizBankTextNormalizer {
         .where((line) => line.isNotEmpty)
         .where((line) => !isOptionLine(line))
         .where((line) => !isNoiseLine(line))
-        .map((line) => stripQuestionPrefix(line)
-            .replaceAll(RegExp(r'^(问题|题目|试题|第\d+题|\d+/\d+|\d+题)[:：]?'), '')
-            .trim())
+        .map(
+          (line) => stripQuestionPrefix(line)
+              .replaceAll(RegExp(r'^(问题|题目|试题|第\d+题|\d+/\d+|\d+题)[:：]?'), '')
+              .trim(),
+        )
         .where((line) => line.isNotEmpty)
         .toList();
     final joined = usefulLines.isEmpty ? text : usefulLines.take(2).join('');
@@ -288,7 +533,9 @@ CREATE TABLE $_table (
   updatedAt TEXT
 )
 ''');
-        await database.execute('CREATE INDEX idx_quiz_bank_question ON $_table(question)');
+        await database.execute(
+          'CREATE INDEX idx_quiz_bank_question ON $_table(question)',
+        );
       },
     );
     _db = db;
@@ -307,9 +554,18 @@ CREATE TABLE $_table (
           final batch = db.batch();
           for (final entry in decoded) {
             if (entry is Map) {
-              final item = QuizBankItem.fromJson(Map<String, dynamic>.from(entry));
+              final parsed = QuizBankItem.fromJson(
+                Map<String, dynamic>.from(entry),
+              );
+              final item = parsed.copyWith(
+                id: UniqueQuizKeyGenerator.keyFromItem(parsed),
+              );
               if (item.question.trim().isNotEmpty) {
-                batch.insert(_table, item.toDb(), conflictAlgorithm: ConflictAlgorithm.replace);
+                batch.insert(
+                  _table,
+                  item.toDb(),
+                  conflictAlgorithm: ConflictAlgorithm.replace,
+                );
               }
             }
           }
@@ -322,33 +578,195 @@ CREATE TABLE $_table (
 
   static Future<List<QuizBankItem>> loadAll() async {
     final db = await _database();
-    final rows = await db.query(_table, orderBy: 'createdAt DESC, question ASC');
+    final rows = await db.query(
+      _table,
+      orderBy: 'createdAt DESC, question ASC',
+    );
     return rows.map(QuizBankItem.fromDb).toList(growable: false);
   }
 
   static Future<void> saveAll(List<QuizBankItem> items) async {
     final db = await _database();
-    final batch = db.batch();
-    batch.delete(_table);
-    for (final item in items) {
-      batch.insert(_table, item.toDb(), conflictAlgorithm: ConflictAlgorithm.replace);
-    }
-    await batch.commit(noResult: true);
-    QuizBankCache.instance.assign(items);
+    final normalized = QuizBankImportNormalizer.canonicalize(items).items;
+    // 清表和重建必须同一事务，失败时保留旧题库。
+    await db.transaction((txn) async {
+      await txn.delete(_table);
+      for (final item in normalized) {
+        await txn.insert(_table, item.toDb());
+      }
+    });
+    QuizBankCache.instance.assign(await loadAll());
   }
 
-  static Future<List<QuizBankItem>> importItems(List<QuizBankItem> items) async {
+  /// Writes a new question only when its canonical identity is absent.
+  /// Unlike import/legacy behavior, this never replaces an existing question.
+  static Future<QuizBankWriteStatus> insertIfAbsent(QuizBankItem item) async {
     final db = await _database();
-    final batch = db.batch();
-    for (final item in items) {
-      if (item.question.trim().isNotEmpty) {
-        batch.insert(_table, item.toDb(), conflictAlgorithm: ConflictAlgorithm.replace);
-      }
+    final canonical = item.copyWith(
+      id: UniqueQuizKeyGenerator.keyFromItem(item),
+    );
+    var inserted = false;
+    await db.transaction((txn) async {
+      final existing = await txn.query(
+        _table,
+        columns: const ['id'],
+        where: 'id = ?',
+        whereArgs: [canonical.id],
+        limit: 1,
+      );
+      if (existing.isNotEmpty) return;
+      await txn.insert(_table, canonical.toDb());
+      inserted = true;
+    });
+    if (!inserted) return QuizBankWriteStatus.duplicateSkipped;
+    QuizBankCache.instance.assign(await loadAll());
+    return QuizBankWriteStatus.inserted;
+  }
+
+  /// Merges import records without replacing questions already in the bank.
+  static Future<List<QuizBankItem>> importItems(
+    List<QuizBankItem> items,
+  ) async {
+    final db = await _database();
+    final normalized = QuizBankImportNormalizer.canonicalize(items).items;
+    final existingIds = (await loadAll())
+        .map(UniqueQuizKeyGenerator.keyFromItem)
+        .toSet();
+    final newItems = normalized
+        .where((item) => !existingIds.contains(item.id))
+        .toList(growable: false);
+    if (newItems.isNotEmpty) {
+      await db.transaction((txn) async {
+        for (final item in newItems) {
+          await txn.insert(_table, item.toDb());
+        }
+      });
     }
-    await batch.commit(noResult: true);
     final result = await loadAll();
     QuizBankCache.instance.assign(result);
     return result;
+  }
+
+  /// 按 id 更新；不存在则插入（同题已存在时保持原记录）。
+  static Future<List<QuizBankItem>> upsertItem(QuizBankItem item) async {
+    return importItems([item]);
+  }
+
+  /// Atomically writes the replacement before removing the old identity.
+  /// If the insert fails, the transaction rolls back and keeps [oldId].
+  static Future<List<QuizBankItem>> replaceItem(
+    String oldId,
+    QuizBankItem newItem,
+  ) async {
+    final db = await _database();
+    final canonical = newItem.copyWith(
+      id: UniqueQuizKeyGenerator.keyFromItem(newItem),
+    );
+    await db.transaction((txn) async {
+      await txn.insert(
+        _table,
+        canonical.toDb(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      if (oldId != canonical.id) {
+        await txn.delete(_table, where: 'id = ?', whereArgs: [oldId]);
+      }
+    });
+    final result = await loadAll();
+    QuizBankCache.instance.assign(result);
+    return result;
+  }
+
+  static Future<List<QuizBankItem>> deleteById(String id) async {
+    final db = await _database();
+    await db.delete(_table, where: 'id = ?', whereArgs: [id]);
+    final result = await loadAll();
+    QuizBankCache.instance.assign(result);
+    return result;
+  }
+
+  /// Removes legacy duplicates in one atomic rewrite and refreshes the cache.
+  static Future<QuizBankDeduplicateResult> deduplicateAll() async {
+    final current = await loadAll();
+    final result = QuizBankDeduplicator.deduplicate(current);
+    if (result.removed == 0) return result;
+    await saveAll(result.items);
+    return result;
+  }
+
+  /// 导出为 JSON 字符串（UTF-8 文本）。
+  static Future<String> exportJsonString() async {
+    final items = await loadAll();
+    return const JsonEncoder.withIndent('  ').convert({
+      'version': 2,
+      'exportedAt': DateTime.now().toIso8601String(),
+      'count': items.length,
+      'items': items.map((e) => e.toJson()).toList(),
+    });
+  }
+
+  /// 从 JSON 导入。merge=true 合并（同 id 覆盖）；false 整库替换。
+  /// [imported] and [total] are retained for older callers. The extra counters
+  /// describe v2 canonical-ID migration and duplicate handling.
+  static Future<
+    ({int imported, int total, int added, int overwritten, int skipped})
+  >
+  importFromJsonString(String raw, {bool merge = true}) async {
+    final decoded = jsonDecode(raw);
+    List list;
+    if (decoded is Map && decoded['items'] is List) {
+      list = decoded['items'] as List;
+    } else if (decoded is List) {
+      list = decoded;
+    } else {
+      throw const FormatException('无法识别的题库 JSON 格式');
+    }
+    final parsedItems = <QuizBankItem>[];
+    var invalidRecords = 0;
+    for (final entry in list) {
+      if (entry is Map) {
+        final item = QuizBankItem.fromJson(Map<String, dynamic>.from(entry));
+        parsedItems.add(item);
+      } else {
+        invalidRecords++;
+      }
+    }
+    final normalized = QuizBankImportNormalizer.canonicalize(parsedItems);
+    final items = normalized.items;
+    final skipped = normalized.skipped + invalidRecords;
+    if (!merge) {
+      final db = await _database();
+      await db.transaction((txn) async {
+        await txn.delete(_table);
+        for (final item in items) {
+          await txn.insert(_table, item.toDb());
+        }
+      });
+      QuizBankCache.instance.assign(items);
+      return (
+        imported: items.length,
+        total: items.length,
+        added: items.length,
+        overwritten: 0,
+        skipped: skipped,
+      );
+    }
+    final existingItems = await loadAll();
+    final existingIds = existingItems
+        .map(UniqueQuizKeyGenerator.keyFromItem)
+        .toSet();
+    final duplicateInBank = items
+        .where((item) => existingIds.contains(item.id))
+        .length;
+    final added = items.length - duplicateInBank;
+    final merged = await importItems(items);
+    return (
+      imported: added,
+      total: merged.length,
+      added: added,
+      overwritten: 0,
+      skipped: skipped + duplicateInBank,
+    );
   }
 
   static Future<void> clearAll() async {
