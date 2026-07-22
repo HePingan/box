@@ -5,16 +5,34 @@ import '../models/video_source.dart';
 import '../models/vod_item.dart';
 import '../services/video_api_service.dart';
 
+/// Real playback-chain stages. The ordered list is safe to render in admin UI.
+enum SourceHealthStage {
+  source,
+  category,
+  list,
+  detail,
+  play,
+  exception;
+
+  static const List<SourceHealthStage> ordered = [
+    SourceHealthStage.category,
+    SourceHealthStage.list,
+    SourceHealthStage.detail,
+    SourceHealthStage.play,
+  ];
+}
+
 /// 单个视频源的健康检测结果
 class SourceCheckResult {
   final VideoSource source;
   final bool success;
-  final String stage;
+  final SourceHealthStage stage;
   final String message;
   final String? playableUrl;
   final int categoryCount;
   final int videoCount;
   final DateTime checkedAt;
+  final Duration elapsed;
 
   const SourceCheckResult({
     required this.source,
@@ -22,6 +40,7 @@ class SourceCheckResult {
     required this.stage,
     required this.message,
     required this.checkedAt,
+    this.elapsed = Duration.zero,
     this.playableUrl,
     this.categoryCount = 0,
     this.videoCount = 0,
@@ -116,21 +135,23 @@ class SourceHealthService {
       return SourceCheckResult(
         source: source,
         success: false,
-        stage: 'source',
+        stage: SourceHealthStage.source,
         message: '源地址为空',
         checkedAt: now,
+        elapsed: DateTime.now().difference(now),
       );
     }
 
     try {
-      final categories = await _fetchCategories(source);
+      final categories = await fetchCategoriesForHealthCheck(source);
       if (categories.isEmpty) {
         return SourceCheckResult(
           source: source,
           success: false,
-          stage: 'categories',
+          stage: SourceHealthStage.category,
           message: '分类为空',
           checkedAt: now,
+          elapsed: DateTime.now().difference(now),
         );
       }
 
@@ -139,10 +160,11 @@ class SourceHealthService {
         return SourceCheckResult(
           source: source,
           success: false,
-          stage: 'list',
+          stage: SourceHealthStage.list,
           message: '视频列表为空',
           categoryCount: categories.length,
           checkedAt: now,
+          elapsed: DateTime.now().difference(now),
         );
       }
 
@@ -154,11 +176,12 @@ class SourceHealthService {
         return SourceCheckResult(
           source: source,
           success: false,
-          stage: 'detail',
+          stage: SourceHealthStage.detail,
           message: '详情为空',
           categoryCount: categories.length,
           videoCount: videos.length,
           checkedAt: now,
+          elapsed: DateTime.now().difference(now),
         );
       }
 
@@ -167,11 +190,12 @@ class SourceHealthService {
         return SourceCheckResult(
           source: source,
           success: false,
-          stage: 'detail',
+          stage: SourceHealthStage.detail,
           message: '未解析到播放地址',
           categoryCount: categories.length,
           videoCount: videos.length,
           checkedAt: now,
+          elapsed: DateTime.now().difference(now),
         );
       }
 
@@ -185,34 +209,44 @@ class SourceHealthService {
         return SourceCheckResult(
           source: source,
           success: false,
-          stage: 'play',
+          stage: SourceHealthStage.play,
           message: '播放地址不可用',
           playableUrl: playableUrl,
           categoryCount: categories.length,
           videoCount: videos.length,
           checkedAt: now,
+          elapsed: DateTime.now().difference(now),
         );
       }
 
       return SourceCheckResult(
         source: source,
         success: true,
-        stage: 'ok',
+        stage: SourceHealthStage.play,
         message: '可用',
         playableUrl: playableUrl,
         categoryCount: categories.length,
         videoCount: videos.length,
         checkedAt: now,
+        elapsed: DateTime.now().difference(now),
       );
-    } catch (e) {
+    } catch (_) {
       return SourceCheckResult(
         source: source,
         success: false,
-        stage: 'exception',
-        message: e.toString(),
+        stage: SourceHealthStage.exception,
+        message: '健康检查请求失败，请稍后重试',
         checkedAt: now,
+        elapsed: DateTime.now().difference(now),
       );
     }
+  }
+
+  /// Override in tests to provide a deterministic category endpoint.
+  Future<List<VideoCategory>> fetchCategoriesForHealthCheck(
+    VideoSource source,
+  ) {
+    return _fetchCategories(source);
   }
 
   Future<List<VideoCategory>> _fetchCategories(VideoSource source) async {
@@ -363,13 +397,17 @@ class SourceHealthService {
 
       final getReq = await client.getUrl(uri);
       headers.forEach((k, v) => getReq.headers.set(k, v));
-      if (!isM3u8) getReq.headers.set('Range', 'bytes=0-1023');
+      if (isM3u8) {
+        getReq.headers.set('Range', 'bytes=0-1023');
+      } else {
+        getReq.headers.set('Range', 'bytes=0-0');
+      }
 
       final resp = await getReq.close().timeout(timeout);
       if (resp.statusCode < 200 || resp.statusCode >= 400) return false;
       if (!isM3u8) return true;
 
-      final body = await utf8.decodeStream(resp);
+      final body = await utf8.decodeStream(resp.take(1024));
       return body.contains('#EXTM3U') || body.contains('#EXT-X');
     } catch (_) {
       return false;

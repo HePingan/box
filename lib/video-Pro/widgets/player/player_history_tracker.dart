@@ -17,6 +17,7 @@ class PlayerHistoryTracker {
   Timer? _timer;
   bool _isPlaying = false;
   int _lastSavedPositionMs = -1;
+  Future<void> _pendingSave = Future<void>.value();
 
   void attach(VideoPlayerController controller) {
     _controller = controller;
@@ -43,47 +44,45 @@ class PlayerHistoryTracker {
     });
   }
 
-  Future<void> saveNow({bool force = false}) async {
-    final controller = _controller;
-    if (controller == null) return;
-    if (!controller.value.isInitialized) return;
+  Future<void> saveNow({bool force = false}) {
+    _pendingSave = _pendingSave.catchError((_) {}).then((_) async {
+      final controller = _controller;
+      if (controller == null) return;
+      if (!controller.value.isInitialized) return;
 
-    final posMs = controller.value.position.inMilliseconds;
-    final durMs = controller.value.duration.inMilliseconds;
+      final posMs = controller.value.position.inMilliseconds;
+      final durMs = controller.value.duration.inMilliseconds;
 
-    if (posMs <= 0 || durMs <= 0 || args.vodId.trim().isEmpty) return;
-
-    if (!force && _lastSavedPositionMs >= 0) {
-      final delta = (posMs - _lastSavedPositionMs).abs();
-      if (delta < 3000) {
-        return;
+      if (posMs <= 0 || durMs <= 0 || args.vodId.trim().isEmpty) return;
+      if (!force && _lastSavedPositionMs >= 0) {
+        final delta = (posMs - _lastSavedPositionMs).abs();
+        if (delta < 3000) return;
       }
-    }
 
-    _lastSavedPositionMs = posMs;
-
-    try {
-      if (kDebugMode || args.showDebugInfo) {
-        AppLogger.instance.log(
-          '保存历史: vodId=${args.vodId}, pos=$posMs, dur=$durMs, episode=${args.episodeName}',
-          tag: 'HISTORY',
+      _lastSavedPositionMs = posMs;
+      try {
+        if (kDebugMode || args.showDebugInfo) {
+          AppLogger.instance.log(
+            '保存历史: vodId=${args.vodId}, pos=$posMs, dur=$durMs, episode=${args.episodeName}',
+            tag: 'HISTORY',
+          );
+        }
+        await historyController.saveProgress(
+          vodId: args.vodId,
+          vodName: args.title,
+          vodPic: args.vodPic,
+          sourceId: args.sourceId,
+          sourceName: args.sourceName,
+          episodeName: args.episodeName,
+          episodeUrl: args.url,
+          position: posMs,
+          duration: durMs,
         );
+      } catch (e, st) {
+        AppLogger.instance.logError(e, st, 'HISTORY');
       }
-
-      await historyController.saveProgress(
-        vodId: args.vodId,
-        vodName: args.title,
-        vodPic: args.vodPic,
-        sourceId: args.sourceId,
-        sourceName: args.sourceName,
-        episodeName: args.episodeName,
-        episodeUrl: args.url,
-        position: posMs,
-        duration: durMs,
-      );
-    } catch (e, st) {
-      AppLogger.instance.logError(e, st, 'HISTORY');
-    }
+    });
+    return _pendingSave;
   }
 
   void stop() {

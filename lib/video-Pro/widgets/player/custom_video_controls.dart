@@ -6,6 +6,69 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../../../design_system/app_tokens.dart';
 
+/// Serializes seek commands while coalescing requests made in the same UI turn.
+///
+/// A scrub records whether playback was active before it started, so only a
+/// scrub that began during playback resumes it after its final seek completes.
+class LatestSeekCommandQueue {
+  LatestSeekCommandQueue({
+    required FutureOr<void> Function(Duration target) seekTo,
+    required FutureOr<void> Function() resume,
+  }) : _seekTo = seekTo,
+       _resume = resume;
+
+  final FutureOr<void> Function(Duration target) _seekTo;
+  final FutureOr<void> Function() _resume;
+  Duration? _pendingTarget;
+  bool _pendingResume = false;
+  bool _scheduled = false;
+  bool _running = false;
+  final List<Completer<void>> _waiters = [];
+
+  Future<void> submit(Duration target, {required bool resumePlayback}) {
+    _pendingTarget = target;
+    _pendingResume = resumePlayback;
+    final completer = Completer<void>();
+    _waiters.add(completer);
+    if (!_scheduled && !_running) {
+      _scheduled = true;
+      scheduleMicrotask(_drain);
+    }
+    return completer.future;
+  }
+
+  Future<void> _drain() async {
+    _scheduled = false;
+    _running = true;
+    final target = _pendingTarget;
+    final resumePlayback = _pendingResume;
+    _pendingTarget = null;
+    _pendingResume = false;
+    final waiters = List<Completer<void>>.from(_waiters);
+    _waiters.clear();
+
+    try {
+      if (target != null) {
+        await _seekTo(target);
+        if (resumePlayback && _pendingTarget == null) await _resume();
+      }
+      for (final waiter in waiters) {
+        waiter.complete();
+      }
+    } catch (error, stackTrace) {
+      for (final waiter in waiters) {
+        waiter.completeError(error, stackTrace);
+      }
+    } finally {
+      _running = false;
+      if (_pendingTarget != null && !_scheduled) {
+        _scheduled = true;
+        scheduleMicrotask(_drain);
+      }
+    }
+  }
+}
+
 class CustomVideoControls extends StatefulWidget {
   final String title;
   final String episodeName;
@@ -38,6 +101,7 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
   bool _isReallyScrubbing = false;
   bool _isScrubbing = false;
   bool _wasPlayingBeforeScrub = false;
+  LatestSeekCommandQueue? _seekQueue;
 
   int _lastTapTime = 0;
   Timer? _singleTapTimer;
@@ -62,6 +126,10 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
 
     _chewieController = chewie;
     _videoController = chewie.videoPlayerController;
+    _seekQueue = LatestSeekCommandQueue(
+      seekTo: _videoController!.seekTo,
+      resume: _videoController!.play,
+    );
     _bound = true;
 
     _videoController!.addListener(_onVideoTick);
@@ -218,11 +286,16 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     }
   }
 
-  void _onHorizontalDragEnd(DragEndDetails? details) {
-    if (_isReallyScrubbing && _videoController != null) {
-      _videoController!.seekTo(_scrubCurrentPosition);
-      if (_wasPlayingBeforeScrub) _videoController!.play();
+  Future<void> _onHorizontalDragEnd(DragEndDetails? details) async {
+    final seekQueue = _seekQueue;
+    final shouldResume = _wasPlayingBeforeScrub;
+    if (_isReallyScrubbing && seekQueue != null) {
+      await seekQueue.submit(
+        _scrubCurrentPosition,
+        resumePlayback: shouldResume,
+      );
     }
+    if (!mounted) return;
     setState(() {
       _isScrubbing = false;
       _isReallyScrubbing = false;

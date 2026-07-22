@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/video_source.dart';
@@ -6,6 +8,8 @@ import '../pages/detail/detail_models.dart';
 import '../pages/detail/detail_play_parser.dart';
 import '../services/video_api_service.dart';
 import '../../utils/app_logger.dart';
+
+typedef DetailFetcher = Future<VodItem?> Function();
 
 class VideoDetailController extends ChangeNotifier {
   final VideoSource source;
@@ -27,6 +31,8 @@ class VideoDetailController extends ChangeNotifier {
   bool _resumeApplied = false;
   String? resumeMessage; // 用于通知 UI 弹出 Snackbar
 
+  final DetailFetcher? _detailFetcher;
+  int _loadGeneration = 0;
   bool _disposed = false;
 
   VideoDetailController({
@@ -34,7 +40,8 @@ class VideoDetailController extends ChangeNotifier {
     required this.vodId,
     this.initialEpisodeUrl,
     this.initialPosition = 0,
-  }) {
+    DetailFetcher? detailFetcher,
+  }) : _detailFetcher = detailFetcher {
     loadDetail();
   }
 
@@ -43,6 +50,7 @@ class VideoDetailController extends ChangeNotifier {
   }
 
   Future<void> loadDetail() async {
+    final generation = ++_loadGeneration;
     isLoading = true;
     errorMessage = null;
     notifyListeners();
@@ -51,12 +59,12 @@ class VideoDetailController extends ChangeNotifier {
       final detailUrl = source.detailUrl.trim().isNotEmpty
           ? source.detailUrl
           : source.url;
-      _log('开始加载详情，vodId=$vodId, detailUrl=$detailUrl');
+      _log('开始加载详情，vodId=$vodId');
 
-      // 获取详情数据
-      final detail = await VideoApiService.fetchDetail(detailUrl, vodId);
-
-      if (_disposed) return;
+      final detail =
+          await (_detailFetcher?.call() ??
+              VideoApiService.fetchDetail(detailUrl, vodId));
+      if (_disposed || generation != _loadGeneration) return;
 
       if (detail == null) {
         isLoading = false;
@@ -67,38 +75,33 @@ class VideoDetailController extends ChangeNotifier {
 
       fullDetail = detail;
       playLines = DetailPlayParser.buildPlayLines(detail, source);
-
-      // 这里改成：优先选择 m3u8 线路
       final defaultSelection = _pickDefaultSelection(
         playLines,
         initialEpisodeUrl: initialEpisodeUrl,
       );
-
       selectedLineIndex = defaultSelection.lineIndex;
       selectedEpisodeIndex = defaultSelection.episodeIndex;
       currentEpisodeUrl = defaultSelection.url;
       currentEpisodeName = defaultSelection.name;
-
       _resumeApplied = false;
 
-      // 检查是否命中了历史续播
       final initialUrl = initialEpisodeUrl?.trim();
       if (initialPosition > 0 &&
           initialUrl != null &&
           initialUrl.isNotEmpty &&
-          currentEpisodeUrl != null) {
-        if (DetailPlayParser.sameUrl(currentEpisodeUrl!, initialUrl)) {
-          resumeMessage =
-              '已为你恢复到上次播放位置：${DetailPlayParser.formatPosition(initialPosition)}';
-        }
+          currentEpisodeUrl != null &&
+          DetailPlayParser.sameUrl(currentEpisodeUrl!, initialUrl)) {
+        resumeMessage =
+            '已为你恢复到上次播放位置：${DetailPlayParser.formatPosition(initialPosition)}';
       }
 
       isLoading = false;
       notifyListeners();
-    } catch (e) {
-      if (_disposed) return;
+    } catch (e, st) {
+      _log('加载详情失败: $e\n$st');
+      if (_disposed || generation != _loadGeneration) return;
       isLoading = false;
-      errorMessage = '加载失败：$e';
+      errorMessage = '视频详情加载失败，请稍后重试';
       notifyListeners();
     }
   }

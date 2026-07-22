@@ -14,6 +14,40 @@ String normalizePlayableUrl(String raw) {
   return url;
 }
 
+bool isAllowedRemoteMediaUri(Uri uri) {
+  if (uri.scheme.toLowerCase() != 'https' || uri.host.isEmpty) return false;
+
+  final host = uri.host.trim().toLowerCase();
+  if (host == 'localhost' ||
+      host.endsWith('.localhost') ||
+      host.endsWith('.local')) {
+    return false;
+  }
+  if (host == '::1' ||
+      host.startsWith('fe80:') ||
+      host.startsWith('fc') ||
+      host.startsWith('fd')) {
+    return false;
+  }
+
+  final ipv4 = RegExp(
+    r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$',
+  ).firstMatch(host);
+  if (ipv4 == null) return true;
+  final parts = List<int>.generate(4, (i) => int.parse(ipv4.group(i + 1)!));
+  if (parts.any((part) => part > 255)) return false;
+
+  final a = parts[0];
+  final b = parts[1];
+  return !(a == 0 ||
+      a == 10 ||
+      a == 127 ||
+      (a == 169 && b == 254) ||
+      (a == 172 && b >= 16 && b <= 31) ||
+      (a == 192 && b == 168) ||
+      a >= 224);
+}
+
 bool isInvalidWebPageUrl(Uri uri) {
   final path = uri.path.toLowerCase();
   final host = uri.host.toLowerCase();
@@ -47,7 +81,10 @@ class PlayerStreamResolver {
     Uri uri, {
     required Map<String, String> headers,
   }) async {
-    if (!uri.path.toLowerCase().contains('.m3u8')) return uri;
+    if (!isAllowedRemoteMediaUri(uri) ||
+        !uri.path.toLowerCase().contains('.m3u8')) {
+      return uri;
+    }
 
     Uri currentUri = uri;
     final client = http.Client();
@@ -59,6 +96,7 @@ class PlayerStreamResolver {
             .timeout(masterResolveTimeout);
 
         final finalUrl = res.request?.url ?? currentUri;
+        if (!isAllowedRemoteMediaUri(finalUrl)) return currentUri;
         AppLogger.instance.log(
           'HLS检查: code=${res.statusCode}, final=$finalUrl, ct=${res.headers['content-type']}',
           tag: 'PLAYER',
@@ -95,7 +133,7 @@ class PlayerStreamResolver {
         }
 
         final nextUri = finalUrl.resolve(childPath);
-        if (nextUri == currentUri) {
+        if (!isAllowedRemoteMediaUri(nextUri) || nextUri == currentUri) {
           return finalUrl;
         }
 
@@ -306,8 +344,18 @@ class PlayerStreamResolver {
     Uri uri, {
     required Map<String, String> headers,
     Duration? timeout,
-  }) {
-    return client.get(uri, headers: headers).timeout(timeout ?? probeTimeout);
+  }) async {
+    if (!isAllowedRemoteMediaUri(uri)) {
+      throw ArgumentError.value(uri, 'uri', 'Unsafe remote media URI');
+    }
+    final response = await client
+        .get(uri, headers: headers)
+        .timeout(timeout ?? probeTimeout);
+    final finalUri = response.request?.url ?? uri;
+    if (!isAllowedRemoteMediaUri(finalUri)) {
+      throw ArgumentError.value(finalUri, 'finalUri', 'Unsafe redirect target');
+    }
+    return response;
   }
 
   List<String> _playlistLines(String text) {

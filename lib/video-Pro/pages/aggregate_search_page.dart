@@ -29,6 +29,8 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
   bool _isLoading = false;
   bool _hasSearched = false;
   String? _errorMessage;
+  int _searchGeneration = 0;
+  int _failedSourceCount = 0;
 
   @override
   void dispose() {
@@ -39,6 +41,7 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
   Future<void> _performAggregateSearch() async {
     final keyword = _searchController.text.trim();
     if (keyword.isEmpty) return;
+    final generation = ++_searchGeneration;
     FocusScope.of(context).unfocus();
 
     setState(() {
@@ -46,12 +49,17 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
       _hasSearched = true;
       _results = [];
       _errorMessage = null;
+      _failedSourceCount = 0;
     });
 
     try {
-      final sources = context.read<VideoController>().sources;
+      final sources = context
+          .read<VideoController>()
+          .sources
+          .where((source) => source.isAvailable)
+          .toList(growable: false);
       if (sources.isEmpty) {
-        if (!mounted) return;
+        if (!mounted || generation != _searchGeneration) return;
         setState(() {
           _isLoading = false;
           _errorMessage = '暂无可用视频源';
@@ -59,36 +67,62 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
         return;
       }
 
-      final futures = sources.map<Future<List<AggregateResult>>>((
-        source,
-      ) async {
-        try {
-          final items = await VideoApiService.searchVideo(source.url, keyword);
-          return items
-              .map((video) => AggregateResult(source: source, video: video))
-              .toList(growable: false);
-        } catch (e) {
-          return const <AggregateResult>[];
+      const concurrency = 4;
+      var cursor = 0;
+      var failed = 0;
+      final responses = <List<AggregateResult>>[];
+
+      Future<void> worker() async {
+        while (true) {
+          final index = cursor++;
+          if (index >= sources.length) return;
+          final source = sources[index];
+          try {
+            final items = await VideoApiService.searchVideo(
+              source.url,
+              keyword,
+            ).timeout(const Duration(seconds: 12));
+            responses.add(
+              items
+                  .map((video) => AggregateResult(source: source, video: video))
+                  .toList(growable: false),
+            );
+          } catch (_) {
+            failed++;
+          }
         }
-      }).toList();
+      }
 
-      final responses = await Future.wait(futures);
-      if (!mounted) return;
+      await Future.wait(
+        List.generate(
+          sources.length < concurrency ? sources.length : concurrency,
+          (_) => worker(),
+        ),
+      );
+      if (!mounted || generation != _searchGeneration) return;
 
+      final results = responses
+          .expand((items) => items)
+          .toList(growable: false);
       setState(() {
-        _results = responses.expand((e) => e).toList(growable: false);
+        _results = results;
+        _failedSourceCount = failed;
         _isLoading = false;
+        if (failed == sources.length) {
+          _errorMessage = '所有视频源暂时不可用，请稍后重试';
+        }
       });
-    } catch (e) {
-      if (!mounted) return;
+    } catch (_) {
+      if (!mounted || generation != _searchGeneration) return;
       setState(() {
         _isLoading = false;
-        _errorMessage = '搜索失败：$e';
+        _errorMessage = '搜索请求失败，请检查网络后重试';
       });
     }
   }
 
   void _clearSearch() {
+    _searchGeneration++;
     _searchController.clear();
     setState(() {
       _results = [];
@@ -269,6 +303,12 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
             icon: Icons.source_rounded,
             color: AppTokens.primaryBlue,
           ),
+          if (_failedSourceCount > 0 && !_isLoading)
+            AppStatusPill(
+              label: '$_failedSourceCount 个源不可用',
+              icon: Icons.warning_amber_rounded,
+              color: AppTokens.orange,
+            ),
           if (_searchController.text.trim().isNotEmpty)
             AppStatusPill(
               label: _searchController.text.trim(),

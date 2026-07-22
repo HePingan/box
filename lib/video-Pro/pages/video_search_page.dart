@@ -29,6 +29,7 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
   bool _isLoading = false;
   bool _hasSearched = false;
   String? _errorMessage;
+  int _searchGeneration = 0;
 
   @override
   void dispose() {
@@ -40,6 +41,7 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
     final keyword = _searchController.text.trim();
     if (keyword.isEmpty) return;
 
+    final generation = ++_searchGeneration;
     FocusScope.of(context).unfocus();
 
     setState(() {
@@ -55,14 +57,14 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
         keyword,
       );
 
-      if (!mounted) return;
+      if (!mounted || generation != _searchGeneration) return;
 
       setState(() {
         _results = res;
         _isLoading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _searchGeneration) return;
       setState(() {
         _results = [];
         _isLoading = false;
@@ -72,6 +74,7 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
   }
 
   void _clearSearch() {
+    _searchGeneration++;
     _searchController.clear();
     setState(() {
       _results = [];

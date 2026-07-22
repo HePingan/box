@@ -100,7 +100,13 @@ class HistoryController extends ChangeNotifier {
     final box = await _ensureBox();
     try {
       await box.put(key, item.toMap());
-      // 兼容旧 schema 清理
+      // 兼容旧 schema 清理（旧版按 sourceId|vodId 合并剧集）。
+      final legacyKey = sourceId.trim().isEmpty
+          ? vodId
+          : '${sourceId.trim()}|$vodId';
+      if (key != legacyKey && box.containsKey(legacyKey)) {
+        await box.delete(legacyKey);
+      }
       if (key != vodId && box.containsKey(vodId)) await box.delete(vodId);
 
       _upsertLocal(item);
@@ -112,11 +118,7 @@ class HistoryController extends ChangeNotifier {
     await box.delete(item.storageKey);
     if (item.storageKey != item.vodId) await box.delete(item.vodId);
 
-    _historyList.removeWhere(
-      (e) =>
-          e.storageKey == item.storageKey ||
-          (e.vodId == item.vodId && e.sourceId == item.sourceId),
-    );
+    _historyList.removeWhere((e) => e.storageKey == item.storageKey);
     notifyListeners();
   }
 

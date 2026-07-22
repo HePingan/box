@@ -9,6 +9,7 @@ import '../models/video_category.dart';
 import '../models/video_source.dart';
 import '../models/vod_item.dart';
 import '../utils/isolate_parser.dart';
+import 'request_policy.dart';
 
 class VideoApiService {
   static const Duration _defaultTimeout = Duration(seconds: 25);
@@ -144,9 +145,15 @@ class VideoApiService {
     _log('[GET] url=$url');
 
     try {
-      final response = await http
-          .get(Uri.parse(url), headers: mergedHeaders)
-          .timeout(timeout);
+      final response = await const VideoGetRequestPolicy().execute(() async {
+        final response = await http
+            .get(Uri.parse(url), headers: mergedHeaders)
+            .timeout(timeout);
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw VideoHttpException(response.statusCode);
+        }
+        return response;
+      });
 
       final body = utf8.decode(response.bodyBytes, allowMalformed: true).trim();
 
@@ -162,7 +169,7 @@ class VideoApiService {
       }
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception('HTTP ${response.statusCode}');
+        throw VideoHttpException(response.statusCode);
       }
       if (body.isEmpty) throw Exception('Empty body');
 

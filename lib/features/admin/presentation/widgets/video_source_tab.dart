@@ -53,18 +53,26 @@ class VideoSourceResourceProvider implements ResourceProvider<ResourceData> {
     String? serverUrl,
     String? token,
   }) {
-    return const _VideoSourceTab();
+    return const VideoSourceTab();
   }
 }
 
-class _VideoSourceTab extends StatefulWidget {
-  const _VideoSourceTab();
+class VideoSourceTab extends StatefulWidget {
+  const VideoSourceTab({
+    super.key,
+    http.Client? httpClient,
+    Future<String?> Function()? resolveCatalogUrl,
+  }) : _httpClient = httpClient,
+       _resolveCatalogUrl = resolveCatalogUrl;
+
+  final http.Client? _httpClient;
+  final Future<String?> Function()? _resolveCatalogUrl;
 
   @override
-  State<_VideoSourceTab> createState() => _VideoSourceTabState();
+  State<VideoSourceTab> createState() => _VideoSourceTabState();
 }
 
-class _VideoSourceTabState extends State<_VideoSourceTab> {
+class _VideoSourceTabState extends State<VideoSourceTab> {
   // 展开详情跟踪
   final Set<String> _expandedSources = {};
 
@@ -106,20 +114,25 @@ class _VideoSourceTabState extends State<_VideoSourceTab> {
           if (sources.isEmpty)
             _buildEmptyState()
           else
-            ...sources.map((s) => _buildSourceCard(s, s.id == currentSource?.id, controller)),
+            ...sources.map(
+              (s) => _buildSourceCard(s, s.id == currentSource?.id, controller),
+            ),
         ],
       ),
     );
   }
 
   Future<void> _refreshSources(VideoController controller) async {
-    final catalogUrl = await VideoModule.resolveWorkingCatalogUrl();
+    final catalogUrl =
+        await (widget._resolveCatalogUrl?.call() ??
+            VideoModule.resolveWorkingCatalogUrl());
     if (catalogUrl == null) {
       _showSnack('未配置采集站');
       return;
     }
     await controller.initSources(catalogUrl);
-    _showSnack('刷新完成');
+    final error = controller.errorMessage;
+    _showSnack(error == null ? '刷新完成' : '刷新失败：$error');
   }
 
   Future<void> _testSource(String sourceId, String url) async {
@@ -129,19 +142,22 @@ class _VideoSourceTabState extends State<_VideoSourceTab> {
     });
     try {
       final start = DateTime.now();
-      final response = await http
+      final response = await (widget._httpClient ?? http.Client())
           .get(Uri.parse(url))
           .timeout(const Duration(seconds: 8));
       final elapsed = DateTime.now().difference(start).inMilliseconds;
+      final result = response.statusCode >= 200 && response.statusCode < 300
+          ? '可达（${response.statusCode}，${elapsed}ms）'
+          : '不可达（HTTP ${response.statusCode}）';
       if (mounted) {
         setState(() {
-          _testResults[sourceId] = '${response.statusCode} (${elapsed}ms)';
+          _testResults[sourceId] = result;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _testResults[sourceId] = '不可达 ($e)';
+          _testResults[sourceId] = '不可达（${_connectivityErrorMessage(e)}）';
         });
       }
     } finally {
@@ -149,6 +165,12 @@ class _VideoSourceTabState extends State<_VideoSourceTab> {
         setState(() => _testingSources[sourceId] = false);
       }
     }
+  }
+
+  String _connectivityErrorMessage(Object error) {
+    if (error is TimeoutException) return '连接超时';
+    if (error is FormatException) return '地址无效';
+    return '连接失败';
   }
 
   Future<void> _toggleSourceVisibility(VideoSource source) async {
@@ -178,7 +200,10 @@ class _VideoSourceTabState extends State<_VideoSourceTab> {
                 color: Colors.deepPurple.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Icon(Icons.live_tv_rounded, color: Colors.deepPurple),
+              child: const Icon(
+                Icons.live_tv_rounded,
+                color: Colors.deepPurple,
+              ),
             ),
             const SizedBox(width: 16),
             Expanded(
@@ -217,7 +242,11 @@ class _VideoSourceTabState extends State<_VideoSourceTab> {
       ),
       child: Row(
         children: [
-          const Icon(Icons.play_circle_fill_rounded, color: Colors.indigo, size: 24),
+          const Icon(
+            Icons.play_circle_fill_rounded,
+            color: Colors.indigo,
+            size: 24,
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -256,7 +285,7 @@ class _VideoSourceTabState extends State<_VideoSourceTab> {
           ),
         ),
         const Spacer(),
-        if (trailing != null) trailing,
+        ?trailing,
       ],
     );
   }
@@ -275,13 +304,14 @@ class _VideoSourceTabState extends State<_VideoSourceTab> {
                 color: Colors.deepPurple.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: const Icon(Icons.videocam_off_rounded, size: 32, color: Colors.deepPurple),
+              child: const Icon(
+                Icons.videocam_off_rounded,
+                size: 32,
+                color: Colors.deepPurple,
+              ),
             ),
             const SizedBox(height: 16),
-            const Text(
-              '暂无可用片源',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
+            const Text('暂无可用片源', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             const Text(
               '片源通过采集站自动加载',
@@ -299,7 +329,11 @@ class _VideoSourceTabState extends State<_VideoSourceTab> {
     );
   }
 
-  Widget _buildSourceCard(VideoSource source, bool isActive, VideoController controller) {
+  Widget _buildSourceCard(
+    VideoSource source,
+    bool isActive,
+    VideoController controller,
+  ) {
     final isExpanded = _expandedSources.contains(source.id);
     final manualHidden = VideoModule.isSourceManuallyHidden(source);
     final isTesting = _testingSources[source.id] ?? false;
@@ -339,7 +373,9 @@ class _VideoSourceTabState extends State<_VideoSourceTab> {
                     height: 10,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: source.isAvailable ? Colors.green : Colors.grey.shade300,
+                      color: source.isAvailable
+                          ? Colors.green
+                          : Colors.grey.shade300,
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -354,7 +390,8 @@ class _VideoSourceTabState extends State<_VideoSourceTab> {
                             fontSize: 14,
                           ),
                         ),
-                        if (!source.isAvailable && source.hiddenReason.isNotEmpty)
+                        if (!source.isAvailable &&
+                            source.hiddenReason.isNotEmpty)
                           Text(
                             '已隐藏（${source.hiddenReason}）',
                             style: const TextStyle(
@@ -365,7 +402,10 @@ class _VideoSourceTabState extends State<_VideoSourceTab> {
                         if (manualHidden)
                           const Text(
                             '手动隐藏',
-                            style: TextStyle(fontSize: 12, color: Colors.orange),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.orange,
+                            ),
                           ),
                       ],
                     ),
@@ -373,10 +413,14 @@ class _VideoSourceTabState extends State<_VideoSourceTab> {
                   // 隐藏/显示按钮
                   IconButton(
                     icon: Icon(
-                      manualHidden ? Icons.visibility_rounded : Icons.visibility_off_rounded,
+                      manualHidden
+                          ? Icons.visibility_rounded
+                          : Icons.visibility_off_rounded,
                       size: 18,
                     ),
-                    color: manualHidden ? AppTokens.emerald : AppTokens.textTertiary,
+                    color: manualHidden
+                        ? AppTokens.emerald
+                        : AppTokens.textTertiary,
                     onPressed: () => _toggleSourceVisibility(source),
                     tooltip: manualHidden ? '显示源' : '隐藏源',
                     visualDensity: VisualDensity.compact,
@@ -407,8 +451,7 @@ class _VideoSourceTabState extends State<_VideoSourceTab> {
                 _buildDetailRow('失败次数', '${source.failCount}'),
                 if (source.lastFailAt != null)
                   _buildDetailRow('上次失败', source.lastFailAt.toString()),
-                if (testResult != null)
-                  _buildDetailRow('连通性测试', testResult),
+                if (testResult != null) _buildDetailRow('连通性测试', testResult),
                 const SizedBox(height: 8),
                 Row(
                   children: [
@@ -420,9 +463,13 @@ class _VideoSourceTabState extends State<_VideoSourceTab> {
                       )
                     else
                       const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
                         child: SizedBox(
-                          width: 16, height: 16,
+                          width: 16,
+                          height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                       ),

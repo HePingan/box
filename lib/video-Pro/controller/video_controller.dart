@@ -27,6 +27,7 @@ class VideoController extends ChangeNotifier {
   ];
 
   static Future<SharedPreferences>? _prefsFuture;
+  static const int _maxTentativeFullPages = 2;
 
   final List<VideoSource> _sources = <VideoSource>[];
   final List<VideoCategory> _categories = <VideoCategory>[];
@@ -48,6 +49,7 @@ class VideoController extends ChangeNotifier {
   String? _errorMessage;
 
   int _requestToken = 0;
+  int _consecutiveTentativeFullPages = 0;
   bool _disposed = false;
 
   bool _coverPrefetchRunning = false;
@@ -376,7 +378,7 @@ class VideoController extends ChangeNotifier {
       _currentSource = source;
       _currentTypeId = effectiveTypeId;
       _currentPage = page;
-      _hasMore = videos.length >= _repository.pageSize;
+      _hasMore = _resolveHasMore(videos.length, resetSequence: !append);
       _errorMessage = null;
 
       _scheduleCoverPrefetch(
@@ -396,6 +398,19 @@ class VideoController extends ChangeNotifier {
         _notify();
       }
     }
+  }
+
+  bool _resolveHasMore(int itemCount, {required bool resetSequence}) {
+    if (resetSequence) {
+      _consecutiveTentativeFullPages = 0;
+    }
+    if (itemCount < _repository.pageSize) {
+      _consecutiveTentativeFullPages = 0;
+      return false;
+    }
+
+    _consecutiveTentativeFullPages++;
+    return _consecutiveTentativeFullPages < _maxTentativeFullPages;
   }
 
   /// 先按分类加载；如果第一页分类没数据，自动回退到“全部”
@@ -574,8 +589,13 @@ class VideoController extends ChangeNotifier {
   }
 
   Future<String?> _loadLastSourceKey() async {
-    final prefs = await _sharedPrefs();
-    return prefs.getString(_prefLastSourceKey);
+    try {
+      final prefs = await _sharedPrefs();
+      return prefs.getString(_prefLastSourceKey);
+    } catch (e, st) {
+      AppLogger.instance.logError(e, st, 'VIDEO_CONTROLLER');
+      return null;
+    }
   }
 
   Future<void> _saveLastSourceKey(String key) async {

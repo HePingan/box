@@ -23,12 +23,13 @@ class HistoryItem {
     required this.updateTime,
   });
 
-  /// 统一存储 key，避免不同源同 vodId 覆盖
+  /// 统一存储 key，避免不同源、同视频不同剧集相互覆盖。
   String get storageKey {
     final sid = sourceId.trim();
     final vid = vodId.trim();
-    if (sid.isEmpty) return vid;
-    return '$sid|$vid';
+    final episode = episodeUrl.trim();
+    if (episode.isEmpty) return sid.isEmpty ? vid : '$sid|$vid';
+    return sid.isEmpty ? '$vid|$episode' : '$sid|$vid|$episode';
   }
 
   double get progressPercentage {

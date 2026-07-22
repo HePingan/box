@@ -15,6 +15,34 @@ import 'player/player_request_headers.dart';
 import 'player/player_stream_resolver.dart';
 import 'player/video_play_args.dart';
 
+/// Locks fullscreen requests until Chewie reports the requested state.
+class FullscreenToggleGate {
+  FullscreenToggleGate(this._toggle, {bool initialValue = false})
+    : _actualValue = initialValue;
+
+  final VoidCallback _toggle;
+  bool _actualValue;
+  bool _isLocked = false;
+  bool? _expectedValue;
+
+  bool get isLocked => _isLocked;
+
+  void request() {
+    if (_isLocked) return;
+    _isLocked = true;
+    _expectedValue = !_actualValue;
+    _toggle();
+  }
+
+  void onFullScreenChanged(bool value) {
+    _actualValue = value;
+    if (_isLocked && value == _expectedValue) {
+      _isLocked = false;
+      _expectedValue = null;
+    }
+  }
+}
+
 class VideoPlayContainer extends StatefulWidget {
   final String url;
   final String title;
@@ -70,8 +98,10 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
   bool _isFullScreen = false;
 
   String? _errorMessage;
+  bool _wasPlayingBeforeBackground = false;
+  bool _hasSavedCompletion = false;
   int _initToken = 0;
-  int _fullscreenToggleToken = 0;
+  FullscreenToggleGate? _fullscreenToggleGate;
 
   VideoPlayArgs get _playArgs => VideoPlayArgs(
     url: widget.url,
@@ -105,17 +135,32 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.url != widget.url ||
         oldWidget.initialPosition != widget.initialPosition) {
-      unawaited(_historyTracker?.saveNow(force: true));
-      _initPlayer();
+      unawaited(_saveThenInitialize());
     }
+  }
+
+  Future<void> _saveThenInitialize() async {
+    await _historyTracker?.saveNow(force: true);
+    if (mounted) await _initPlayer();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 🚀 终极修复：彻底不响应 AppLifecycleState！
-    // 理由：Android 全屏下点击屏幕弹出虚拟导航栏会错误触发 AppLifecycleState.inactive。
-    // 为了极致的稳定点播体验，移除这里的 pause 逻辑。
-    return;
+    final controller = _videoPlayerController;
+    if (controller == null) return;
+
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _wasPlayingBeforeBackground = controller.value.isPlaying;
+      if (_wasPlayingBeforeBackground) unawaited(controller.pause());
+      unawaited(_historyTracker?.saveNow(force: true));
+      return;
+    }
+
+    if (state == AppLifecycleState.resumed && _wasPlayingBeforeBackground) {
+      _wasPlayingBeforeBackground = false;
+      unawaited(controller.play());
+    }
   }
 
   void _onPlayerStateChanged() {
@@ -127,6 +172,11 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     if (value.hasError) {
       _failFast(value.errorDescription ?? '视频流已断开或无效');
       return;
+    }
+
+    if (value.isCompleted && !_hasSavedCompletion) {
+      _hasSavedCompletion = true;
+      unawaited(_historyTracker?.saveNow(force: true));
     }
 
     _historyTracker?.setPlaying(value.isPlaying);
@@ -141,24 +191,14 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     if (chewie == null || !mounted) return;
 
     final now = chewie.isFullScreen;
+    _fullscreenToggleGate?.onFullScreenChanged(now);
     if (now != _isFullScreen) {
       setState(() => _isFullScreen = now);
     }
   }
 
-  Future<void> _toggleFullScreenSafely() async {
-    final chewie = _chewieController;
-    if (chewie == null) return;
-
-    final token = ++_fullscreenToggleToken;
-
-    try {
-      chewie.toggleFullScreen();
-    } finally {
-      Future.delayed(const Duration(milliseconds: 1000), () {
-        if (!mounted || token != _fullscreenToggleToken) return;
-      });
-    }
+  void _toggleFullScreenSafely() {
+    _fullscreenToggleGate?.request();
   }
 
   Future<void> _initPlayer() async {
@@ -171,6 +211,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
       _isBuffering = true;
       _errorMessage = null;
       _playbackFailed = false;
+      _hasSavedCompletion = false;
       _isFullScreen = false;
     });
 
@@ -181,8 +222,10 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     }
 
     final uri = Uri.tryParse(rawUrl);
-    if (uri == null || !uri.hasScheme || isInvalidWebPageUrl(uri)) {
-      _failFast('无效的播放地址');
+    if (uri == null ||
+        !isAllowedRemoteMediaUri(uri) ||
+        isInvalidWebPageUrl(uri)) {
+      _failFast('播放地址无效或不安全');
       return;
     }
 
@@ -223,14 +266,16 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
       );
 
-      _videoPlayerController = controller;
       controller.addListener(_onPlayerStateChanged);
       await controller.initialize().timeout(_initTimeout);
 
       if (!mounted || token != _initToken) {
-        _disposePlayer();
+        controller.removeListener(_onPlayerStateChanged);
+        await controller.dispose();
         return;
       }
+
+      _videoPlayerController = controller;
 
       // Seek to history position
       if (widget.initialPosition > 0 &&
@@ -243,15 +288,19 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         );
       }
 
-      _chewieController = ChewieController(
+      if (!mounted || token != _initToken) {
+        controller.removeListener(_onPlayerStateChanged);
+        await controller.dispose();
+        return;
+      }
+
+      final chewie = ChewieController(
         videoPlayerController: controller,
         autoPlay: true,
         looping: false,
         allowMuting: true,
         allowFullScreen: true,
         showControlsOnInitialize: false,
-        // 🚀 核心修复：在此设为 null。
-        // 这样在全屏模式下，视频会自动填充可用空间而不会被比例锁死导致左右黑边过大或画面塌陷。
         aspectRatio: null,
         customControls: CustomVideoControls(
           title: widget.title,
@@ -261,19 +310,26 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
           onToggleFullScreen: _toggleFullScreenSafely,
         ),
       );
+      chewie.addListener(_onChewieStateChanged);
 
-      _chewieController!.addListener(_onChewieStateChanged);
-      _isFullScreen = _chewieController!.isFullScreen;
+      if (!mounted || token != _initToken) {
+        chewie.removeListener(_onChewieStateChanged);
+        chewie.dispose();
+        controller.removeListener(_onPlayerStateChanged);
+        await controller.dispose();
+        return;
+      }
 
+      _chewieController = chewie;
+      _isFullScreen = chewie.isFullScreen;
+      _fullscreenToggleGate = FullscreenToggleGate(
+        chewie.toggleFullScreen,
+        initialValue: _isFullScreen,
+      );
       _historyTracker = PlayerHistoryTracker(
         historyController: historyController,
         args: _playArgs,
       )..attach(controller);
-
-      if (!mounted || token != _initToken) {
-        _disposePlayer();
-        return;
-      }
 
       setState(() {
         _errorMessage = null;

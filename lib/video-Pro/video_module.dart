@@ -191,7 +191,9 @@ class VideoModule {
   }
 
   static bool isSourceVisible(VideoSource source) {
-    return !isSourceHidden(source);
+    return source.isEnabled == true &&
+        source.url.trim().isNotEmpty &&
+        !isSourceHidden(source);
   }
 
   static List<VideoSource> visibleSourcesOf(
