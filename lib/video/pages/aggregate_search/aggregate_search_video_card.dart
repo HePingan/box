@@ -9,11 +9,15 @@ class AggregateSearchVideoCard extends StatelessWidget {
     required this.result,
     required this.coverUrl, // 🚀 优化：直接接收同步字符串
     required this.onTap,
+    this.sourceLabel,
   });
 
   final AggregateResult result;
   final String? coverUrl;
   final VoidCallback? onTap;
+
+  /// 分组视图下用于标注该卡片来自哪个源；为空时回退到备注/源名。
+  final String? sourceLabel;
 
   String? _text(dynamic value) {
     if (value == null) return null;
@@ -25,7 +29,10 @@ class AggregateSearchVideoCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final title = _text(result.video.vodName) ?? '未命名';
-    final subtitle = _text(result.video.vodRemarks) ?? result.source.name;
+    final subtitle =
+        _text(sourceLabel) ??
+        _text(result.video.vodRemarks) ??
+        result.source.name;
 
     return InkWell(
       onTap: onTap,

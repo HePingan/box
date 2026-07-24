@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:box/video-Pro/models/history_item.dart';
+import 'package:box/video/models/history_item.dart';
 
 HistoryItem historyFor(String episodeUrl) => HistoryItem(
   vodId: 'vod-1',

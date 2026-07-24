@@ -1,4 +1,4 @@
-import 'package:box/video-Pro/config/video_proxy_config.dart';
+import 'package:box/video/config/video_proxy_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

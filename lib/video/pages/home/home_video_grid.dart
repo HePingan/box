@@ -20,6 +20,7 @@ class HomeVideoSliverGrid extends StatelessWidget {
     required this.emptyMessage,
     this.emptyActionLabel,
     this.onEmptyAction,
+    this.onItemBuild,
   });
 
   final List<VodItem> videos;
@@ -30,6 +31,9 @@ class HomeVideoSliverGrid extends StatelessWidget {
   final String emptyMessage;
   final String? emptyActionLabel;
   final VoidCallback? onEmptyAction;
+
+  /// 网格构建到第 index 项时回调，用于随滚动分批预取视口附近封面。
+  final ValueChanged<int>? onItemBuild;
 
   @override
   Widget build(BuildContext context) {
@@ -88,6 +92,7 @@ class HomeVideoSliverGrid extends StatelessWidget {
       sliver: SliverGrid(
         delegate: SliverChildBuilderDelegate(
           (context, index) {
+            onItemBuild?.call(index);
             final video = videos[index];
             final coverUrl = coverUrlFor(video);
 

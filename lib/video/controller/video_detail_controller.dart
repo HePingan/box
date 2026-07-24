@@ -7,6 +7,8 @@ import '../models/vod_item.dart';
 import '../pages/detail/detail_models.dart';
 import '../pages/detail/detail_play_parser.dart';
 import '../services/video_api_service.dart';
+import '../services/play_line_memory_repository.dart';
+import '../services/favorites_repository.dart';
 import '../../utils/app_logger.dart';
 
 typedef DetailFetcher = Future<VodItem?> Function();
@@ -32,8 +34,12 @@ class VideoDetailController extends ChangeNotifier {
   String? resumeMessage; // 用于通知 UI 弹出 Snackbar
 
   final DetailFetcher? _detailFetcher;
+  final PlayLineMemoryRepository _lineMemoryRepo;
+  final FavoritesRepository _favoritesRepo;
   int _loadGeneration = 0;
   bool _disposed = false;
+
+  bool isFavorite = false;
 
   VideoDetailController({
     required this.source,
@@ -41,8 +47,44 @@ class VideoDetailController extends ChangeNotifier {
     this.initialEpisodeUrl,
     this.initialPosition = 0,
     DetailFetcher? detailFetcher,
-  }) : _detailFetcher = detailFetcher {
+    PlayLineMemoryRepository? lineMemoryRepo,
+    FavoritesRepository? favoritesRepo,
+  })  : _detailFetcher = detailFetcher,
+        _lineMemoryRepo = lineMemoryRepo ?? PlayLineMemoryRepository(),
+        _favoritesRepo = favoritesRepo ?? FavoritesRepository() {
+    _lineMemoryRepo.init();
+    _initFavorite();
     loadDetail();
+  }
+
+  Future<void> _initFavorite() async {
+    await _favoritesRepo.init();
+    if (_disposed) return;
+    isFavorite = _favoritesRepo.isFavorite(source, vodId);
+    notifyListeners();
+  }
+
+  /// 切换收藏状态。收藏时写入当前影片基本信息，供收藏列表直接渲染。
+  Future<void> toggleFavorite() async {
+    if (isFavorite) {
+      await _favoritesRepo.remove(source, vodId);
+      isFavorite = false;
+    } else {
+      final detail = fullDetail;
+      await _favoritesRepo.add(
+        source,
+        vodId,
+        vodName: detail?.vodName.trim().isNotEmpty == true
+            ? detail!.vodName.trim()
+            : source.name,
+        vodPic: detail?.vodPic,
+        vodRemarks: detail?.vodRemarks,
+        typeName: detail?.typeName,
+      );
+      isFavorite = true;
+    }
+    if (_disposed) return;
+    notifyListeners();
   }
 
   void _log(String message) {
@@ -179,7 +221,20 @@ class VideoDetailController extends ChangeNotifier {
       );
     }
 
-    // 没命中历史地址时，直接优先选择 m3u8 线路
+    // 没命中历史地址时，优先复原用户在本片记住的线路
+    final rememberedLineIndex = _resolveRememberedLineIndex(lines);
+    if (rememberedLineIndex != null) {
+      final line = lines[rememberedLineIndex];
+      final ep = line.episodes.first;
+      return DetailPlaybackSelection(
+        lineIndex: rememberedLineIndex,
+        episodeIndex: 0,
+        url: ep.url,
+        name: ep.name,
+      );
+    }
+
+    // 再优先选择 m3u8 线路
     if (preferredLine.episodes.isNotEmpty) {
       final ep = preferredLine.episodes.first;
       return DetailPlaybackSelection(
@@ -227,6 +282,29 @@ class VideoDetailController extends ChangeNotifier {
     return firstPlayableIndex >= 0 ? firstPlayableIndex : 0;
   }
 
+  /// 根据记忆复原线路：优先按线路名匹配，名字对不上再退回记忆的索引。
+  /// 返回 null 表示没有可用记忆。
+  int? _resolveRememberedLineIndex(List<DetailPlayLine> lines) {
+    final memory = _lineMemoryRepo.getMemory(source, vodId);
+    if (memory == null) return null;
+
+    final name = memory.lineName.trim();
+    if (name.isNotEmpty) {
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].name.trim() == name && lines[i].episodes.isNotEmpty) {
+          return i;
+        }
+      }
+    }
+
+    final idx = memory.lineIndex;
+    if (idx >= 0 && idx < lines.length && lines[idx].episodes.isNotEmpty) {
+      return idx;
+    }
+
+    return null;
+  }
+
   bool _isM3u8Line(DetailPlayLine line) {
     final lineName = line.name.toLowerCase();
 
@@ -254,6 +332,17 @@ class VideoDetailController extends ChangeNotifier {
     currentEpisodeUrl = line.episodes.first.url;
     currentEpisodeName = line.episodes.first.name;
     _resumeApplied = true;
+
+    // 记住用户在本片手动选择的线路，下次打开自动复原
+    unawaited(
+      _lineMemoryRepo.saveMemory(
+        source,
+        vodId,
+        lineName: line.name,
+        lineIndex: index,
+      ),
+    );
+
     notifyListeners();
   }
 

@@ -1,6 +1,6 @@
-import 'package:box/video-Pro/models/video_category.dart';
-import 'package:box/video-Pro/models/video_source.dart';
-import 'package:box/video-Pro/services/source_health_service.dart';
+import 'package:box/video/models/video_category.dart';
+import 'package:box/video/models/video_source.dart';
+import 'package:box/video/services/source_health_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

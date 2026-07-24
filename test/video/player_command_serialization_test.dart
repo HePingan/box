@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:box/video-Pro/widgets/player/custom_video_controls.dart';
-import 'package:box/video-Pro/widgets/video_play_container.dart';
+import 'package:box/video/widgets/player/custom_video_controls.dart';
+import 'package:box/video/widgets/video_play_container.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

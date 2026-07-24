@@ -27,11 +27,13 @@ class VideoController extends ChangeNotifier {
   ];
 
   static Future<SharedPreferences>? _prefsFuture;
-  static const int _maxTentativeFullPages = 2;
 
   final List<VideoSource> _sources = <VideoSource>[];
   final List<VideoCategory> _categories = <VideoCategory>[];
   final List<VodItem> _videoList = <VodItem>[];
+
+  /// 已加载视频的 vodId 去重集合，用于跨页去重与满页判定
+  final Set<int> _seenVodIds = <int>{};
 
   late final UnmodifiableListView<VideoSource> _sourcesView =
       UnmodifiableListView<VideoSource>(_sources);
@@ -49,11 +51,14 @@ class VideoController extends ChangeNotifier {
   String? _errorMessage;
 
   int _requestToken = 0;
-  int _consecutiveTentativeFullPages = 0;
   bool _disposed = false;
 
   bool _coverPrefetchRunning = false;
   bool _coverPrefetchQueued = false;
+
+  /// 队列中待处理的预取窗口起点。滚动时快速刷新，多次请求合并到最新位置。
+  int _queuedPrefetchStart = 0;
+  int _queuedPrefetchLimit = 20;
 
   // =========================
   // 对外 getters
@@ -111,6 +116,7 @@ class VideoController extends ChangeNotifier {
         _sources.clear();
         _categories.clear();
         _videoList.clear();
+        _seenVodIds.clear();
         _currentSource = null;
         _currentTypeId = null;
         _currentPage = 1;
@@ -130,6 +136,7 @@ class VideoController extends ChangeNotifier {
         _currentSource = null;
         _categories.clear();
         _videoList.clear();
+        _seenVodIds.clear();
         _currentTypeId = null;
         _currentPage = 1;
         _hasMore = false;
@@ -361,12 +368,19 @@ class VideoController extends ChangeNotifier {
 
       if (_isStale(token)) return;
 
-      if (append) {
-        _videoList.addAll(videos);
-      } else {
-        _videoList
-          ..clear()
-          ..addAll(videos);
+      if (!append) {
+        _videoList.clear();
+        _seenVodIds.clear();
+      }
+
+      // 跨页去重：CMS 源常在相邻页返回重复条目，重复项既不入列表
+      // 也不计入“本页新增数”，避免污染满页判定。
+      int addedCount = 0;
+      for (final video in videos) {
+        if (_seenVodIds.add(video.vodId)) {
+          _videoList.add(video);
+          addedCount++;
+        }
       }
 
       if (reloadCategories) {
@@ -378,7 +392,10 @@ class VideoController extends ChangeNotifier {
       _currentSource = source;
       _currentTypeId = effectiveTypeId;
       _currentPage = page;
-      _hasMore = _resolveHasMore(videos.length, resetSequence: !append);
+      _hasMore = _resolveHasMore(
+        rawCount: videos.length,
+        addedCount: addedCount,
+      );
       _errorMessage = null;
 
       _scheduleCoverPrefetch(
@@ -400,17 +417,13 @@ class VideoController extends ChangeNotifier {
     }
   }
 
-  bool _resolveHasMore(int itemCount, {required bool resetSequence}) {
-    if (resetSequence) {
-      _consecutiveTentativeFullPages = 0;
-    }
-    if (itemCount < _repository.pageSize) {
-      _consecutiveTentativeFullPages = 0;
-      return false;
-    }
-
-    _consecutiveTentativeFullPages++;
-    return _consecutiveTentativeFullPages < _maxTentativeFullPages;
+  /// 满页判定（基于真实数据，不再人为限制页数）：
+  /// - 原始返回不足一页 → 已到末尾。
+  /// - 满页但全是重复（新增为 0）→ 源在重复回吐旧页，停止避免死循环。
+  /// - 满页且有新增 → 还有更多。
+  bool _resolveHasMore({required int rawCount, required int addedCount}) {
+    if (rawCount < _repository.pageSize) return false;
+    return addedCount > 0;
   }
 
   /// 先按分类加载；如果第一页分类没数据，自动回退到“全部”
@@ -442,12 +455,16 @@ class VideoController extends ChangeNotifier {
     VideoSource source, {
     required int token,
     List<VodItem>? items,
+    int startIndex = 0,
     int limit = 20,
   }) {
     if (_disposed) return;
 
     if (_coverPrefetchRunning) {
+      // 已有任务在跑：记下最新窗口，等当前批次结束后合并处理。
       _coverPrefetchQueued = true;
+      _queuedPrefetchStart = startIndex;
+      _queuedPrefetchLimit = limit;
       return;
     }
 
@@ -456,8 +473,29 @@ class VideoController extends ChangeNotifier {
         source: source,
         token: token,
         items: items,
+        startIndex: startIndex,
         limit: limit,
       ),
+    );
+  }
+
+  /// 滚动驱动的封面预取：只补齐当前视口附近的一段封面，
+  /// 随滚动分批推进，而不是一次性抓完整页。
+  void prefetchCoversAround(int firstVisibleIndex, {int window = 12}) {
+    if (_disposed) return;
+
+    final source = _currentSource;
+    if (source == null || _videoList.isEmpty) return;
+
+    // 视口上方留一点，下方多预取一屏，滚动方向优先。
+    final start = (firstVisibleIndex - 2).clamp(0, _videoList.length - 1);
+
+    _scheduleCoverPrefetch(
+      source,
+      token: _requestToken,
+      items: List<VodItem>.from(_videoList),
+      startIndex: start,
+      limit: window,
     );
   }
 
@@ -470,12 +508,15 @@ class VideoController extends ChangeNotifier {
     required VideoSource source,
     required int token,
     List<VodItem>? items,
+    int startIndex = 0,
     int limit = 20,
   }) async {
     if (_disposed || _isStale(token)) return;
 
     if (_coverPrefetchRunning) {
       _coverPrefetchQueued = true;
+      _queuedPrefetchStart = startIndex;
+      _queuedPrefetchLimit = limit;
       return;
     }
 
@@ -488,10 +529,14 @@ class VideoController extends ChangeNotifier {
         return;
       }
 
+      // 只处理视口附近的一段：从 startIndex 起、跨度 limit 的窗口，
+      // 其中缺封面的条目。随滚动推进窗口，避免一次性抓完整页。
       final snapshot = List<VodItem>.from(items ?? _videoList);
+      final safeStart = startIndex.clamp(0, snapshot.isEmpty ? 0 : snapshot.length - 1);
+      final windowEnd = (safeStart + limit).clamp(0, snapshot.length);
       final targetItems = snapshot
+          .sublist(safeStart, windowEnd)
           .where((v) => !_hasText(v.vodPic))
-          .take(limit)
           .toList(growable: false);
 
       if (targetItems.isEmpty) {
@@ -559,6 +604,8 @@ class VideoController extends ChangeNotifier {
 
       if (_coverPrefetchQueued && !_disposed && !_isStale(token)) {
         _coverPrefetchQueued = false;
+        final queuedStart = _queuedPrefetchStart;
+        final queuedLimit = _queuedPrefetchLimit;
         final currentSource = _currentSource;
         if (currentSource != null) {
           unawaited(
@@ -566,7 +613,8 @@ class VideoController extends ChangeNotifier {
               source: currentSource,
               token: _requestToken,
               items: List<VodItem>.from(_videoList),
-              limit: limit,
+              startIndex: queuedStart,
+              limit: queuedLimit,
             ),
           );
         }

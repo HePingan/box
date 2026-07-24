@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 
+import '../controller/favorites_controller.dart';
 import '../controller/video_detail_controller.dart';
 import '../models/video_source.dart';
 import '../widgets/video_play_container.dart';
@@ -521,6 +522,27 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                 ),
                 const SizedBox(width: 8),
                 _HeroIconButton(
+                  icon: controller.isFavorite
+                      ? Icons.favorite_rounded
+                      : Icons.favorite_border_rounded,
+                  highlight: controller.isFavorite,
+                  onTap: () async {
+                    final messenger = ScaffoldMessenger.of(context);
+                    final favorites = context.read<FavoritesController>();
+                    await controller.toggleFavorite();
+                    await favorites.load();
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          controller.isFavorite ? '已加入追剧' : '已取消追剧',
+                        ),
+                        duration: const Duration(seconds: 1),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(width: 8),
+                _HeroIconButton(
                   icon: Icons.refresh_rounded,
                   onTap: controller.isLoading ? null : controller.loadDetail,
                 ),
@@ -666,15 +688,22 @@ class _PlaybackChip extends StatelessWidget {
 }
 
 class _HeroIconButton extends StatelessWidget {
-  const _HeroIconButton({required this.icon, required this.onTap});
+  const _HeroIconButton({
+    required this.icon,
+    required this.onTap,
+    this.highlight = false,
+  });
 
   final IconData icon;
   final VoidCallback? onTap;
+  final bool highlight;
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white.withValues(alpha: 0.16),
+      color: highlight
+          ? const Color(0xFFFB7185).withValues(alpha: 0.28)
+          : Colors.white.withValues(alpha: 0.16),
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
@@ -682,7 +711,11 @@ class _HeroIconButton extends StatelessWidget {
         child: SizedBox(
           width: 42,
           height: 42,
-          child: Icon(icon, color: Colors.white, size: 20),
+          child: Icon(
+            icon,
+            color: highlight ? const Color(0xFFFFE4E6) : Colors.white,
+            size: 20,
+          ),
         ),
       ),
     );

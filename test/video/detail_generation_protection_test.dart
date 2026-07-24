@@ -1,15 +1,35 @@
 import 'dart:async';
+import 'dart:io';
 
-import 'package:box/video-Pro/controller/video_detail_controller.dart';
-import 'package:box/video-Pro/models/video_source.dart';
-import 'package:box/video-Pro/models/vod_item.dart';
+import 'package:box/video/controller/video_detail_controller.dart';
+import 'package:box/video/models/video_source.dart';
+import 'package:box/video/models/vod_item.dart';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hive/hive.dart';
 
 /// A simple function type for injecting detail-fetching behavior.
 typedef DetailFetcher = Future<VodItem?> Function();
 
 void main() {
+  // VideoDetailController 构造时会 new PlayLineMemoryRepository / FavoritesRepository，
+  // 二者都要打开 Hive box。测试环境用临时目录初始化 Hive，构造才不会抛
+  // HiveError（"You need to initialize Hive..."）。
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late Directory hiveDir;
+
+  setUpAll(() async {
+    hiveDir = await Directory.systemTemp.createTemp('box_video_detail_hive_');
+    Hive.init(hiveDir.path);
+  });
+
+  tearDownAll(() async {
+    await Hive.close();
+    if (hiveDir.existsSync()) {
+      await hiveDir.delete(recursive: true);
+    }
+  });
+
   group('VideoDetailController — generation protection', () {
     test(
       'calling loadDetail twice: faster second result is not overwritten by slower first result',

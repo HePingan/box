@@ -15,6 +15,7 @@ import '../widgets/history_quick_view.dart';
 import '../../design_system/app_tokens.dart';
 import '../../design_system/widgets/app_cards.dart';
 import 'aggregate_search_page.dart';
+import 'favorites_page.dart';
 import 'home/home_category_bar.dart';
 import 'home/home_source_sheet.dart';
 import 'home/home_utils.dart';
@@ -171,6 +172,15 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
     );
   }
 
+  Future<void> _openFavorites() async {
+    if (!mounted) return;
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const FavoritesPage()),
+    );
+  }
+
   String _currentCategoryLabel(VideoController controller) {
     final typeId = controller.currentTypeId;
     if (typeId == null) return '全部';
@@ -268,6 +278,14 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
             color: AppTokens.violet,
           ),
         ),
+        GestureDetector(
+          onTap: _openFavorites,
+          child: const AppStatusPill(
+            label: '追剧',
+            icon: Icons.favorite_rounded,
+            color: AppTokens.rose,
+          ),
+        ),
       ],
       metrics: [
         Expanded(
@@ -305,7 +323,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
 
         return Container(
           color: Colors.transparent,
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          padding: const EdgeInsets.fromLTRB(14, 6, 14, 4),
           child: _buildHeaderCard(
             context,
             controller: controller,
@@ -317,51 +335,12 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
     );
   }
 
-  Widget _buildQuickAccessSection(
-    VideoController controller,
-    double screenWidth,
-  ) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
-        boxShadow: AppTokens.shadowSm(),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _VideoQuickPill(
-              icon: Icons.swap_horiz_rounded,
-              label: '切换片源',
-              color: const Color(0xFF0F766E),
-              onTap: controller.sources.isEmpty
-                  ? null
-                  : () => showHomeSourcePickerSheet(context, controller),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: _VideoQuickPill(
-              icon: Icons.refresh_rounded,
-              label: '刷新推荐',
-              color: const Color(0xFFFF7A45),
-              onTap: _reloadCurrentSource,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildCategorySection(VideoController controller) {
     return SafeAnimatedBuilder(
       animation: controller,
       builder: (context, _) {
         return Padding(
-          padding: const EdgeInsets.only(top: 16.0, bottom: 4.0),
+          padding: const EdgeInsets.only(top: 4.0, bottom: 2.0),
           child: HomeCategoryBar(controller: controller),
         );
       },
@@ -373,13 +352,14 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
       animation: controller,
       builder: (context, _) {
         final source = controller.currentSource;
+        final hasSources = controller.sources.isNotEmpty;
 
         return Container(
-          margin: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-          padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+          margin: const EdgeInsets.fromLTRB(14, 4, 14, 8),
+          padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(16),
             border: Border.all(color: const Color(0xFFE7ECF5)),
             boxShadow: AppTokens.shadowSm(),
           ),
@@ -387,29 +367,47 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
             children: [
               Icon(
                 Icons.video_camera_back_rounded,
-                size: 20,
+                size: 18,
                 color: Theme.of(context).colorScheme.primary,
               ),
               const SizedBox(width: 6),
-              Text(
-                source == null ? '视频推荐' : source.name,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
+              Expanded(
+                child: Text(
+                  source == null ? '视频推荐' : source.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
-              const Spacer(),
               SizedBox(
-                height: 32,
+                height: 30,
                 child: TextButton.icon(
                   style: TextButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
-                  onPressed: controller.sources.isEmpty
-                      ? null
-                      : () => showHomeSourcePickerSheet(context, controller),
-                  icon: const Icon(Icons.swap_horiz_rounded, size: 16),
-                  label: const Text('换源', style: TextStyle(fontSize: 13)),
+                  onPressed: _reloadCurrentSource,
+                  icon: const Icon(Icons.refresh_rounded, size: 15),
+                  label: const Text('刷新', style: TextStyle(fontSize: 12.5)),
+                ),
+              ),
+              SizedBox(
+                height: 30,
+                child: TextButton.icon(
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  onPressed: hasSources
+                      ? () => showHomeSourcePickerSheet(context, controller)
+                      : null,
+                  icon: const Icon(Icons.swap_horiz_rounded, size: 15),
+                  label: const Text('换源', style: TextStyle(fontSize: 12.5)),
                 ),
               ),
             ],
@@ -461,6 +459,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
               ),
             );
           },
+          onItemBuild: (index) => controller.prefetchCoversAround(index),
           emptyMessage: emptyMessage,
           emptyActionLabel: '刷新重试',
           onEmptyAction: _reloadCurrentSource,
@@ -494,9 +493,6 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
               slivers: [
                 SliverToBoxAdapter(
                   child: _buildHeaderSection(videoController, screenWidth),
-                ),
-                SliverToBoxAdapter(
-                  child: _buildQuickAccessSection(videoController, screenWidth),
                 ),
                 if (hasHistory)
                   const SliverToBoxAdapter(
@@ -600,54 +596,4 @@ class _VideoLightMetric extends StatelessWidget {
   }
 }
 
-class _VideoQuickPill extends StatelessWidget {
-  const _VideoQuickPill({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.onTap,
-  });
 
-  final IconData icon;
-  final String label;
-  final Color color;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = onTap != null;
-    return Padding(
-      padding: const EdgeInsets.only(right: 10),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: enabled ? 0.10 : 0.05),
-              borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-              border: Border.all(color: color.withValues(alpha: 0.18)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 18, color: enabled ? color : Colors.grey),
-                const SizedBox(width: 6),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: enabled ? AppTokens.textPrimary : Colors.grey,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}

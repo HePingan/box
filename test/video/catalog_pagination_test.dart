@@ -1,10 +1,10 @@
 import 'dart:async';
 
-import 'package:box/video-Pro/controller/video_catalog_repository.dart';
-import 'package:box/video-Pro/controller/video_controller.dart';
-import 'package:box/video-Pro/models/video_category.dart';
-import 'package:box/video-Pro/models/video_source.dart';
-import 'package:box/video-Pro/models/vod_item.dart';
+import 'package:box/video/controller/video_catalog_repository.dart';
+import 'package:box/video/controller/video_controller.dart';
+import 'package:box/video/models/video_category.dart';
+import 'package:box/video/models/video_source.dart';
+import 'package:box/video/models/vod_item.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -191,18 +191,24 @@ void main() {
     });
 
     test(
-      'consecutive full pages should eventually stop hasMore from being true',
+      'consecutive full pages with new items keep hasMore true; '
+      'a full page of duplicates stops it',
       () async {
-        // This is the critical regression test.
-        // If every page returns exactly pageSize items, the old heuristic
-        // would keep hasMore=true forever.
+        // Current design (see VideoController._resolveHasMore):
+        //   - rawCount < pageSize            → hasMore=false (reached the end)
+        //   - full page but addedCount == 0  → hasMore=false (source is
+        //                                       re-emitting old pages; stop to
+        //                                       avoid an infinite loop)
+        //   - full page with new items       → hasMore=true (there is more)
         //
-        // Our fix: track consecutive full pages. After 2 consecutive full pages,
-        // assume no more data (conservative estimate).
+        // We do NOT cap on a fixed "N consecutive full pages" count anymore —
+        // that would truncate deep catalogs whose API legitimately keeps
+        // returning full pages. The dedup guard is the real infinite-loop
+        // protection.
         const pageSize = 20;
         final repo = TestRepository(pageSize: pageSize);
 
-        // All pages return exactly 20 items.
+        // Page 1: 20 fresh items.
         repo.videos = [
           for (int i = 0; i < pageSize; i++)
             VodItem(vodId: i, vodName: 'video_$i'),
@@ -212,26 +218,32 @@ void main() {
         await controller.initSources('https://catalog.example.com/');
         await Future<void>.delayed(const Duration(milliseconds: 200));
 
-        // Page 1: full → hasMore should be true (tentative)
+        // Page 1 full with new items → still more to load.
         expect(controller.hasMore, isTrue);
 
-        // Page 2: also full → with our fix, after 2 consecutive full pages,
-        // hasMore should become false to prevent infinite loading.
+        // Page 2: another 20 fresh items → still more (deep catalog).
         repo.videos = [
           for (int i = 0; i < pageSize; i++)
             VodItem(vodId: pageSize + i, vodName: 'video_${pageSize + i}'),
         ];
-
         await controller.loadMore();
         await Future<void>.delayed(const Duration(milliseconds: 200));
+        expect(
+          controller.hasMore,
+          isTrue,
+          reason: 'a full page of NEW items means there is genuinely more data',
+        );
 
-        // After 2 consecutive full pages, hasMore should be false.
-        // This prevents infinite loading when the API always returns full pages.
+        // Page 3: a full page but every item is a duplicate of page 2 →
+        // the source is looping; hasMore must drop to false.
+        await controller.loadMore();
+        await Future<void>.delayed(const Duration(milliseconds: 200));
         expect(
           controller.hasMore,
           isFalse,
           reason:
-              'after consecutive full pages, hasMore should be false to prevent infinite loading',
+              'a full page with zero new items means the source is repeating; '
+              'stop to prevent infinite loading',
         );
       },
     );

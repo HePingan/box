@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:box/video-Pro/widgets/player/player_stream_resolver.dart';
+import 'package:box/video/widgets/player/player_stream_resolver.dart';
 
 void main() {
   group('player stream URL safety', () {

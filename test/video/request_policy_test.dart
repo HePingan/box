@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:box/video-Pro/services/request_policy.dart';
+import 'package:box/video/services/request_policy.dart';
 
 void main() {
   group('VideoGetRequestPolicy', () {

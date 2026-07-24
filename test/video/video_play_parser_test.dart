@@ -1,9 +1,9 @@
-import 'package:box/video-Pro/models/video_source.dart';
-import 'package:box/video-Pro/models/vod_item.dart';
-import 'package:box/video-Pro/models/vod_item_play_parser.dart';
-import 'package:box/video-Pro/pages/detail/detail_models.dart';
-import 'package:box/video-Pro/pages/detail/detail_play_parser.dart';
-import 'package:box/video-Pro/widgets/player/player_stream_resolver.dart';
+import 'package:box/video/models/video_source.dart';
+import 'package:box/video/models/vod_item.dart';
+import 'package:box/video/models/vod_item_play_parser.dart';
+import 'package:box/video/pages/detail/detail_models.dart';
+import 'package:box/video/pages/detail/detail_play_parser.dart';
+import 'package:box/video/widgets/player/player_stream_resolver.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

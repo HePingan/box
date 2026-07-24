@@ -10,6 +10,7 @@ import '../controller/video_controller.dart';
 import '../models/history_item.dart';
 import '../models/video_source.dart';
 import '../pages/video_detail_page.dart';
+import '../pages/watch_history_page.dart';
 
 class HistoryQuickView extends StatelessWidget {
   const HistoryQuickView({
@@ -113,19 +114,32 @@ class HistoryQuickView extends StatelessWidget {
         const Spacer(),
         if (itemCount > 0)
           TextButton(
-            onPressed: () => _confirmClear(context, controller),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const WatchHistoryPage()),
+            ),
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               minimumSize: const Size(0, 30),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: const Text(
-              '清空',
-              style: TextStyle(
-                color: Color(0xFFFFE08A),
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-              ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '查看全部',
+                  style: TextStyle(
+                    color: Color(0xFFFFE08A),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 16,
+                  color: Color(0xFFFFE08A),
+                ),
+              ],
             ),
           ),
       ],
@@ -247,20 +261,6 @@ class HistoryQuickView extends StatelessWidget {
       ),
     );
     return result == true;
-  }
-
-  Future<void> _confirmClear(
-    BuildContext context,
-    HistoryController controller,
-  ) async {
-    final confirmed = await _showHistoryConfirmSheet(
-      context,
-      title: '清空历史',
-      message: '确定要清空所有播放历史吗？',
-      confirmLabel: '清空',
-    );
-    if (!confirmed) return;
-    await controller.clearHistory();
   }
 
   Future<void> _confirmDelete(

@@ -3,26 +3,26 @@ import 'package:flutter/material.dart';
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
 
+import '../../models/aggregate_grouped_result.dart';
 import '../../models/aggregate_result.dart';
-import '../../models/video_source.dart';
 import 'aggregate_search_video_card.dart';
 
-class AggregateSearchSourceSection extends StatelessWidget {
-  const AggregateSearchSourceSection({
+/// 按片名归并后的结果组卡片：标题 + 命中源数 + 横滑多源结果。
+class AggregateSearchGroupSection extends StatelessWidget {
+  const AggregateSearchGroupSection({
     super.key,
-    required this.source,
-    required this.results,
+    required this.group,
     required this.coverUrlFor,
     required this.onTapVideo,
   });
 
-  final VideoSource source;
-  final List<AggregateResult> results;
+  final AggregateGroupedResult group;
   final String? Function(AggregateResult result) coverUrlFor;
   final ValueChanged<AggregateResult> onTapVideo;
 
   @override
   Widget build(BuildContext context) {
+    final results = group.results;
     if (results.isEmpty) return const SizedBox.shrink();
 
     return Container(
@@ -38,12 +38,12 @@ class AggregateSearchSourceSection extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
             child: AppSectionHeader(
-              title: source.name,
-              subtitle: '横滑查看该来源命中的资源',
-              icon: Icons.source_rounded,
+              title: group.title,
+              subtitle: '横滑对比不同来源的同名资源',
+              icon: Icons.movie_rounded,
               trailing: AppStatusPill(
-                label: '${results.length} 条',
-                icon: Icons.movie_filter_rounded,
+                label: '命中 ${group.hitCount} 源',
+                icon: Icons.hub_rounded,
                 color: AppTokens.violet,
               ),
             ),
@@ -57,10 +57,10 @@ class AggregateSearchSourceSection extends StatelessWidget {
               separatorBuilder: (_, _) => const SizedBox(width: 12),
               itemBuilder: (context, index) {
                 final result = results[index];
-
                 return AggregateSearchVideoCard(
                   result: result,
                   coverUrl: coverUrlFor(result),
+                  sourceLabel: result.source.name,
                   onTap: () => onTapVideo(result),
                 );
               },
