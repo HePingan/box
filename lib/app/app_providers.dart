@@ -20,6 +20,9 @@ class AppProviders extends StatelessWidget {
         ),
         Provider<VideoController>(create: (_) => VideoController()),
         Provider<HistoryController>(create: (_) => HistoryController()),
+        ChangeNotifierProvider<FavoritesController>(
+          create: (_) => FavoritesController(),
+        ),
       ],
       child: child,
     );

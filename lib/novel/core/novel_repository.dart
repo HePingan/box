@@ -1,4 +1,4 @@
-import 'cache_store.dart';
+import 'package:box/core/storage/cache_store.dart';
 import 'models.dart';
 import 'novel_cache_keys.dart';
 import 'novel_exceptions.dart';

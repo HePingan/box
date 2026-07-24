@@ -8,18 +8,18 @@ import 'package:crypto/crypto.dart';
 
 void main() {
   test('测试 _percentEncodePath 和 URL 构建', () async {
-    final kw = '大奉打更人';
+    const kw = '大奉打更人';
     final searchPath = '/search?keyword=${Uri.encodeComponent(kw)}&page=1';
     print('searchPath: $searchPath');
 
     // 模拟 _request 流程中的 URL 构建
-    final host = 'http://api.longchunbajiao.com';
+    const host = 'http://api.longchunbajiao.com';
     final fullUrl = '$host$searchPath';
     print('fullUrl: $fullUrl');
 
     // 模拟 queryParams 追加
-    final clientDevice = '14e9fb2c5ffe7d51e8d7fe33b19c12ca';
-    final auth = 'Bearer eyJxxx';
+    const clientDevice = '14e9fb2c5ffe7d51e8d7fe33b19c12ca';
+    const auth = 'Bearer eyJxxx';
     final queryParams = 'client-device=${Uri.encodeQueryComponent(clientDevice)}'
         '&Authorization=${Uri.encodeQueryComponent(auth)}';
     
@@ -36,8 +36,8 @@ void main() {
     print('  解析结果: $correctUri');
 
     // 测试无 query 的 URL
-    final detailPath = '/novel/ej8M6z';
-    final detailUrl = '$host$detailPath';
+    const detailPath = '/novel/ej8M6z';
+    const detailUrl = '$host$detailPath';
     final detailWithParams = '$detailUrl?$queryParams';
     print('\n详情 URL（加 query）：$detailWithParams');
     final detailUri = Uri.tryParse(detailWithParams);
@@ -61,8 +61,11 @@ void main() {
     for (final m in authRegex.allMatches('${bookSource['bookSourceComment']}')) {
       aesKeys.add(m.group(1)!);
       var t = m.group(2)!;
-      if (!t.toLowerCase().startsWith('bearer')) t = 'Bearer $t';
-      else t = 'Bearer ${t.substring(6)}';
+      if (!t.toLowerCase().startsWith('bearer')) {
+        t = 'Bearer $t';
+      } else {
+        t = 'Bearer ${t.substring(6)}';
+      }
       authTokens.add(t.trim());
     }
 
@@ -89,7 +92,7 @@ void main() {
     headers.forEach((k, v) => print('  $k: $v'));
 
     // 测试搜索
-    final kw = '大奉打更人';
+    const kw = '大奉打更人';
     final searchPath = '/search?keyword=${Uri.encodeComponent(kw)}&page=1';
     final url = 'http://api.$domain.com$searchPath';
     print('\n请求 URL: $url');

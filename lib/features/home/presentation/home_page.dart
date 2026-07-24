@@ -7,7 +7,7 @@ import 'package:box/daily_news_page.dart';
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import 'package:box/globals.dart';
-import 'package:box/novel/pages/novel_list_page.dart';
+import 'package:box/novel/novel_module.dart';
 import 'package:box/plugin_manager.dart';
 import 'package:box/video_module.dart';
 import 'package:box/features/image_generator/presentation/image_generator_page.dart';
@@ -147,43 +147,35 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  // ── 顶部问候栏 ─────────────────────────────
+  // ── 顶部问候栏（单行紧凑） ─────────────────
   Widget _buildGreetingBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      padding: const EdgeInsets.fromLTRB(10, 8, 14, 6),
       child: Row(
         children: [
           IconButton(
             tooltip: '菜单',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
             icon: const Icon(
               Icons.menu_rounded,
               color: AppTokens.textSecondary,
+              size: 22,
             ),
             onPressed: () => appScaffoldKey.currentState?.openDrawer(),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _todayDateStr,
-                  style: const TextStyle(
-                    color: AppTokens.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                const Text(
-                  'Geek工具箱 · 今日工作台',
-                  style: TextStyle(
-                    color: AppTokens.textSecondary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
+            child: Text(
+              _todayDateStr,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTokens.textPrimary,
+                fontSize: 15.5,
+                fontWeight: FontWeight.w900,
+              ),
             ),
           ),
         ],
@@ -238,14 +230,14 @@ class _HomePageState extends State<HomePage>
     ];
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
       child: GridView.count(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 1.6,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+        childAspectRatio: 2.35,
         children: actions.map((a) => _QuickActionCard(action: a)).toList(),
       ),
     );
@@ -265,26 +257,26 @@ class _HomePageState extends State<HomePage>
         }
 
         return Container(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
                 '已安装插件',
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 14.5,
                   fontWeight: FontWeight.w900,
                   color: AppTokens.textPrimary,
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
               SizedBox(
-                height: 110,
+                height: 92,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   physics: const BouncingScrollPhysics(),
                   itemCount: customPlugins.length,
-                  separatorBuilder: (_, sep) => const SizedBox(width: 10),
+                  separatorBuilder: (_, sep) => const SizedBox(width: 8),
                   itemBuilder: (context, index) {
                     final plugin = customPlugins[index];
                     return _PluginCard(plugin: plugin);
@@ -334,37 +326,30 @@ class _HomePageState extends State<HomePage>
     }
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 0, 0, 12),
+      padding: const EdgeInsets.fromLTRB(14, 0, 0, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Padding(
-            padding: EdgeInsets.only(right: 16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '继续使用',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                      color: AppTokens.textPrimary,
-                    ),
-                  ),
-                ),
-                HomeMiniPill(label: '继续上次'),
-              ],
+            padding: EdgeInsets.only(right: 14),
+            child: Text(
+              '继续使用',
+              style: TextStyle(
+                fontSize: 14.5,
+                fontWeight: FontWeight.w900,
+                color: AppTokens.textPrimary,
+              ),
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           SizedBox(
-            height: 88,
+            height: 72,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.only(right: 16),
+              padding: const EdgeInsets.only(right: 14),
               itemCount: items.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 12),
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
               itemBuilder: (context, index) =>
                   HomeContinueCard(item: items[index]),
             ),
@@ -377,18 +362,18 @@ class _HomePageState extends State<HomePage>
   // ── 每日新闻 ───────────────────────────────
   Widget _buildDailyNewsCard() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
       child: Container(
-        padding: const EdgeInsets.fromLTRB(13, 11, 13, 10),
+        padding: const EdgeInsets.fromLTRB(11, 8, 11, 8),
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: 0.96),
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: const Color(0xFFE9EEF7)),
           boxShadow: [
             BoxShadow(
-              color: AppTokens.ink.withValues(alpha: 0.04),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
+              color: AppTokens.ink.withValues(alpha: 0.035),
+              blurRadius: 12,
+              offset: const Offset(0, 5),
             ),
           ],
         ),
@@ -398,18 +383,18 @@ class _HomePageState extends State<HomePage>
             Row(
               children: [
                 Container(
-                  width: 32,
-                  height: 32,
+                  width: 28,
+                  height: 28,
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(
                       colors: [Color(0xFFFF8A3D), Color(0xFFFFC857)],
                     ),
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: const Icon(
                     Icons.newspaper_rounded,
                     color: Colors.white,
-                    size: 16,
+                    size: 14,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -418,7 +403,7 @@ class _HomePageState extends State<HomePage>
                     '今日热闻',
                     style: TextStyle(
                       color: AppTokens.textPrimary,
-                      fontSize: 15,
+                      fontSize: 14,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
@@ -426,21 +411,29 @@ class _HomePageState extends State<HomePage>
                 IconButton(
                   tooltip: '刷新',
                   visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                   onPressed: _fetchDailyNews,
-                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  icon: const Icon(Icons.refresh_rounded, size: 16),
                 ),
                 TextButton(
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: const Size(0, 32),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
                   onPressed: () {
                     Navigator.push(
                       context,
                       MaterialPageRoute(builder: (_) => const DailyNewsPage()),
                     );
                   },
-                  child: const Text('更多'),
+                  child: const Text('更多', style: TextStyle(fontSize: 12.5)),
                 ),
               ],
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             if (_isLoadingNews)
               const Center(
                 child: Padding(
@@ -504,33 +497,33 @@ class _QuickActionCard extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(14),
         onTap: action.onTap,
         child: Container(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
             gradient: action.gradient,
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(14),
             boxShadow: [
               BoxShadow(
-                color: action.gradient.colors.first.withValues(alpha: 0.25),
-                blurRadius: 14,
-                offset: const Offset(0, 6),
+                color: action.gradient.colors.first.withValues(alpha: 0.20),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
               ),
             ],
           ),
           child: Row(
             children: [
               Container(
-                width: 38,
-                height: 38,
+                width: 30,
+                height: 30,
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.20),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(action.icon, color: Colors.white, size: 20),
+                child: Icon(action.icon, color: Colors.white, size: 16),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -538,28 +531,26 @@ class _QuickActionCard extends StatelessWidget {
                   children: [
                     Text(
                       action.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 15,
+                        fontSize: 13.5,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                    const SizedBox(height: 2),
                     Text(
                       action.subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.78),
-                        fontSize: 11,
+                        fontSize: 10.5,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
                 ),
-              ),
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: Colors.white,
-                size: 20,
               ),
             ],
           ),
@@ -577,23 +568,23 @@ class _PluginCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(14),
       onTap: () => plugin.onTap(context),
       child: Container(
-        width: 140,
-        padding: const EdgeInsets.all(12),
+        width: 124,
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [plugin.color, plugin.color.withValues(alpha: 0.65)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
           boxShadow: [
             BoxShadow(
-              color: plugin.color.withValues(alpha: 0.20),
-              blurRadius: 12,
-              offset: const Offset(0, 5),
+              color: plugin.color.withValues(alpha: 0.18),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
             ),
           ],
         ),
@@ -602,33 +593,32 @@ class _PluginCard extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 34,
-              height: 34,
+              width: 28,
+              height: 28,
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.20),
-                borderRadius: BorderRadius.circular(11),
+                borderRadius: BorderRadius.circular(9),
               ),
-              child: Icon(plugin.icon, color: Colors.white, size: 18),
+              child: Icon(plugin.icon, color: Colors.white, size: 15),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Text(
               plugin.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 13,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w900,
               ),
             ),
-            const SizedBox(height: 2),
             Text(
               plugin.subtitle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.78),
-                fontSize: 10,
+                fontSize: 9.5,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -670,35 +660,35 @@ class HomeContinueCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      borderRadius: BorderRadius.circular(24),
+      borderRadius: BorderRadius.circular(16),
       onTap: item.onTap,
       child: Container(
-        width: 196,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        width: 176,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: const Color(0xFFE7ECF5)),
           boxShadow: [
             BoxShadow(
-              color: item.color.withValues(alpha: 0.10),
-              blurRadius: 14,
-              offset: const Offset(0, 7),
+              color: item.color.withValues(alpha: 0.08),
+              blurRadius: 10,
+              offset: const Offset(0, 5),
             ),
           ],
         ),
         child: Row(
           children: [
             Container(
-              width: 40,
-              height: 40,
+              width: 34,
+              height: 34,
               decoration: BoxDecoration(
                 color: item.color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(15),
+                borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(item.icon, color: item.color, size: 22),
+              child: Icon(item.icon, color: item.color, size: 18),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -710,7 +700,7 @@ class HomeContinueCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: item.color,
-                      fontSize: 10.5,
+                      fontSize: 10,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
@@ -721,7 +711,7 @@ class HomeContinueCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: AppTokens.textPrimary,
-                      fontSize: 14,
+                      fontSize: 13,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
@@ -731,7 +721,7 @@ class HomeContinueCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: AppTokens.textSecondary,
-                      fontSize: 11,
+                      fontSize: 10.5,
                       fontWeight: FontWeight.w600,
                     ),
                   ),

@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:crypto/crypto.dart';
 
 // 导入源码以供测试 — 通过函数调用间接使用 _request
-import '../../../lib/novel/core/maoyan_novel_source.dart';
+import 'package:box/novel/core/maoyan_novel_source.dart';
 
 void main() {
   test('MaoYanNovelSource._request 直接测试', () async {
@@ -19,7 +19,7 @@ void main() {
     final source = MaoYanNovelSource.fromBookSourceJson(bookSource);
 
     // 模拟 searchBooks 的流程：直接使用 _request
-    final kw = '大奉打更人';
+    const kw = '大奉打更人';
     final searchPath = '/search?keyword=${Uri.encodeComponent(kw)}&page=1';
     print('搜索路径: $searchPath');
 

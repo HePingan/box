@@ -6,8 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:crypto/crypto.dart';
 
-import '../../../lib/novel/core/maoyan_novel_source.dart';
-import '../../../lib/novel/core/models.dart';
+import 'package:box/novel/core/maoyan_novel_source.dart';
+import 'package:box/novel/core/models.dart';
 
 void main() {
   test('MaoYan 端到端诊断：search → fetchDetail 章节提取', () async {
@@ -17,7 +17,7 @@ void main() {
     final source = MaoYanNovelSource.fromBookSourceJson(bookSource);
 
     // Step 1: 搜索
-    final kw = '大奉打更人';
+    const kw = '大奉打更人';
     print('=== Step 1: 搜索 "$kw" ===');
     final books = await source.searchBooks(kw);
     print('搜索结果: ${books.length} 本');

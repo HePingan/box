@@ -8,7 +8,7 @@ import '../features/admin/register_providers.dart';
 import '../novel/pages/source_manager/book_source_bootstrap.dart';
 import '../utils/app_logger.dart';
 import '../utils/http_overrides.dart';
-import '../video-Pro/config/video_proxy_config.dart';
+import '../video/config/video_proxy_config.dart';
 import '../video_module.dart';
 
 class AppBootstrapResult {

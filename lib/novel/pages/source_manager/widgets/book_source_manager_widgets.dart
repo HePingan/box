@@ -234,7 +234,7 @@ class BookSourceCard extends StatelessWidget {
                   Switch(
                     value: source.enabled,
                     onChanged: (v) => onToggleEnable(v),
-                    activeColor: AppTokens.emerald,
+                    activeThumbColor: AppTokens.emerald,
                   ),
                   const SizedBox(width: 8),
                   if (isCurrent)
@@ -349,7 +349,7 @@ class BookSourceCard extends StatelessWidget {
                 Switch(
                   value: source.enabled,
                   onChanged: (v) => onToggleEnable(v),
-                  activeColor: AppTokens.emerald,
+                  activeThumbColor: AppTokens.emerald,
                 ),
               ],
             ),

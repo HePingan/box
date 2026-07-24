@@ -27,6 +27,15 @@ class MainActivity : FlutterActivity() {
 
         overlayManager = QuizOverlayManager(this)
 
+        // 尽早请求通知权限，避免 setOverlayVisible 时权限还没授予
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (checkSelfPermission("android.permission.POST_NOTIFICATIONS") !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), REQUEST_NOTIFICATION_PERMISSION)
+            }
+        }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "isAccessibilityEnabled" -> {
@@ -51,19 +60,42 @@ class MainActivity : FlutterActivity() {
                     overlayManager?.setDisplayMode(mode)
                     try {
                         if (visible) {
-                            // 无障碍/通知模式都可能用到通知栏兜底，提前请求通知权限
-                            requestNotificationPermission()
                             overlayManager?.setVisible(true)
                         } else {
                             overlayManager?.setVisible(false)
                         }
-                        result.success(true)
+                        val diag = overlayManager?.diagnose() ?: mapOf(
+                            "visible" to false,
+                            "accessibilityRunning" to false,
+                            "hasOverlayView" to false,
+                            "canDrawOverlays" to false,
+                            "notificationReady" to false,
+                            "reason" to "unknown"
+                        )
+                        // 若悬浮窗未显示出且缺少悬浮窗权限，自动跳转设置页（与通知权限同理）
+                        val reason = diag["reason"] as? String ?: "unknown"
+                        val needOverlay = reason == "need_overlay_or_notification" ||
+                            reason == "need_permission" ||
+                            reason == "a11y_failed_need_overlay"
+                        if (visible && diag["visible"] == false && needOverlay &&
+                            !(diag["canDrawOverlays"] as? Boolean ?: false)
+                        ) {
+                            requestOverlayPermission()
+                        }
+                        result.success(diag)
                     } catch (e: Throwable) {
-                        result.success(false)
+                        result.success(mapOf(
+                            "visible" to false,
+                            "accessibilityRunning" to false,
+                            "hasOverlayView" to false,
+                            "canDrawOverlays" to false,
+                            "notificationReady" to false,
+                            "reason" to "exception:${e.message}"
+                        ))
                     }
                 }
                 "isOverlayVisible" -> {
-                    result.success(overlayManager?.isVisible() ?: false)
+                    result.success(overlayManager?.hasOverlayWindow() ?: false)
                 }
                 "hasOverlayPermission" -> {
                     result.success(hasOverlayPermission())
@@ -73,9 +105,25 @@ class MainActivity : FlutterActivity() {
                     val answers = call.argument<String>("answers")
                     val isSearching = call.argument<Boolean>("isSearching")
                     val mode = call.argument<String>("displayMode")
+                    val status = call.argument<String>("status")
+                    val answerKey = call.argument<String>("answerKey")
+                    val similarity = call.argument<Int>("similarity")
+                    val matchIndex = call.argument<Int>("matchIndex")
+                    val matchCount = call.argument<Int>("matchCount")
+                    @Suppress("UNCHECKED_CAST")
+                    val answersList = call.argument<List<String>>("answersList")
+                        ?: (call.argument<List<*>>("answersList")?.mapNotNull { it?.toString() })
                     if (overlayManager == null) overlayManager = QuizOverlayManager(this)
                     overlayManager?.setDisplayMode(mode)
-                    overlayManager?.updateContent(question, answers, isSearching)
+                    overlayManager?.updateContent(
+                        question, answers, isSearching,
+                        status = status,
+                        answerKey = answerKey,
+                        similarity = similarity,
+                        matchIndex = matchIndex,
+                        matchCount = matchCount,
+                        answersList = answersList,
+                    )
                     result.success(true)
                 }
                 "onQuestionCaptured" -> {
@@ -113,12 +161,26 @@ class MainActivity : FlutterActivity() {
                     result.success(opened)
                 }
                 "captureRegionScreenshot" -> {
-                    val started = QuizAccessibilityService.captureRegionIfRunning { bytes ->
-                        runOnUiThread { result.success(bytes) }
-                    }
-                    if (!started) {
-                        result.success(null)
-                    }
+                    val requestId = call.argument<Int>("requestId") ?: 0
+                    val started = QuizAccessibilityService.captureRegionIfRunningWithRequestId(
+                        requestId = requestId,
+                        callback = { bytes ->
+                            runOnUiThread { result.success(bytes) }
+                        },
+                    )
+                    if (!started) result.success(null)
+                }
+                "getLastScreenshot" -> {
+                    // 兼容旧客户端；新代码不再依赖此全局缓存。
+                    result.success(QuizAccessibilityService.lastScreenshotBytes)
+                }
+                "probeFromSavedRegion" -> {
+                    val ok = QuizAccessibilityService.probeFromSavedRegionIfRunning()
+                    result.success(ok)
+                }
+                "onConfigChanged" -> {
+                    val ok = QuizAccessibilityService.onConfigChangedIfRunning()
+                    result.success(ok)
                 }
                 "setOverlayOpacity" -> {
                     val opacity = (call.argument<Double>("opacity") ?: 1.0).toFloat()
@@ -126,13 +188,54 @@ class MainActivity : FlutterActivity() {
                     QuizAccessibilityService.setOverlayOpacityIfRunning(opacity)
                     result.success(true)
                 }
+                "setOverlaySize" -> {
+                    val widthDp = (call.argument<Double>("widthDp") ?: 320.0).toFloat()
+                    val heightDp = (call.argument<Double>("heightDp") ?: 320.0).toFloat()
+                    result.success(QuizAccessibilityService.setOverlaySizeIfRunning(widthDp, heightDp))
+                }
+                "resetOverlaySize" -> {
+                    result.success(QuizAccessibilityService.resetOverlaySizeIfRunning())
+                }
                 "applyRegionPreset" -> {
-                    if (overlayManager == null) overlayManager = QuizOverlayManager(this)
                     val l = (call.argument<Double>("left") ?: 0.0).toFloat()
                     val t = (call.argument<Double>("top") ?: 0.0).toFloat()
                     val r = (call.argument<Double>("right") ?: 1.0).toFloat()
                     val b = (call.argument<Double>("bottom") ?: 1.0).toFloat()
-                    overlayManager?.applyRegionPreset(l, t, r, b)
+                    // 主路径是 service-owned selector；仅在服务未运行时兼容旧 manager。
+                    val appliedByService = QuizAccessibilityService.applyRegionPresetIfRunning(l, t, r, b)
+                    if (!appliedByService) {
+                        if (overlayManager == null) overlayManager = QuizOverlayManager(this)
+                        overlayManager?.applyRegionPreset(l, t, r, b)
+                    }
+                    result.success(true)
+                }
+                "setRegionProbeResult" -> {
+                    val title = call.argument<String>("title") ?: "预览"
+                    val body = call.argument<String>("body") ?: ""
+                    QuizAccessibilityService.setProbeResultIfRunning(title, body)
+                    result.success(true)
+                }
+                "showOcrEntryOverlay" -> {
+                    val opened = QuizAccessibilityService.showOcrEntryOverlayIfRunning()
+                    result.success(opened)
+                }
+                "hideOcrEntryOverlay" -> {
+                    QuizAccessibilityService.hideOcrEntryOverlay()
+                    result.success(true)
+                }
+                "ocrEntryFill" -> {
+                    val question = call.argument<String>("question") ?: ""
+                    val options = call.argument<String>("options") ?: ""
+                    val answer = call.argument<String>("correctAnswer") ?: ""
+                    val analysis = call.argument<String>("analysis") ?: ""
+                    val raw = call.argument<String>("raw") ?: ""
+                    val status = call.argument<String>("status") ?: "已填充"
+                    QuizOcrEntryOverlay.applyParsed(question, options, answer, analysis, raw, status)
+                    result.success(true)
+                }
+                "ocrEntrySetStatus" -> {
+                    val msg = call.argument<String>("message") ?: ""
+                    QuizOcrEntryOverlay.setStatus(msg)
                     result.success(true)
                 }
                 else -> result.notImplemented()
@@ -141,17 +244,42 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
-        overlayManager?.setVisible(false)
-        FlutterEngineCache.getInstance().remove("quiz_engine")
+        // 关键：只清掉 Activity 持有的普通悬浮窗/区域选择器。
+        // 无障碍答案窗（TYPE_ACCESSIBILITY_OVERLAY）必须跨 Activity 存活——
+        // 用户切到驾考/考试 App 时 MainActivity 常被 destroy，若这里 hide 全部，
+        // 就会出现「启用成功但屏幕上看不到悬浮窗」。
+        overlayManager?.hideActivityOwned()
+        // 仅在 AccessibilityService 已停止时才移除引擎缓存。
+        // 若无障碍服务仍在运行（如用户切到驾考App），quiz_engine 必须保留在缓存中，
+        // 否则 QuizAccessibilityService.resolveChannel() 拿不到 FlutterEngine，
+        // 导致 onQuestionCaptured 等回调静默丢失。
+        try {
+            if (!QuizAccessibilityService.isRunning()) {
+                FlutterEngineCache.getInstance().remove("quiz_engine")
+            }
+        } catch (_: Throwable) {
+        }
         super.onDestroy()
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_OVERLAY_PERMISSION) {
-            // 悬浮窗权限仅用于「识别区域选择器」，答案展示走无障碍悬浮，无需在此自动显示。
             if (hasOverlayPermission()) {
-                overlayManager?.openRegionSelector()
+                // 悬浮窗权限已授予：立即尝试普通悬浮窗展示答案（不再仅限区域选择器）
+                overlayManager?.setVisible(true)
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_NOTIFICATION_PERMISSION) {
+            if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                // 权限已授予，立即触发通知栏兜底
+                overlayManager?.retryShowNotification()
             }
         }
     }

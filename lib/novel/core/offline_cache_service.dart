@@ -3,7 +3,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'cache_store.dart';
+import 'package:box/core/storage/cache_store.dart';
 import 'models.dart';
 import 'novel_cache_keys.dart';
 import 'novel_repository.dart';
@@ -27,7 +27,7 @@ class OfflineCacheService {
   /// 需要仓库引用，以便调用 fetchChapter 触发自动写缓存
   final NovelRepository repository;
 
-  /// 旧版：存储 Set<String> 书 ID
+  /// 旧版：存储 `Set<String>` 书 ID
   static const String _offlineKey = 'offline_cached_books_v2';
 
   /// 新版：存储 List<Map> 元数据（id, title, author, cover, totalChapters）

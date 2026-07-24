@@ -86,213 +86,175 @@ class _ExpandableCategoryCardState extends State<ExpandableCategoryCard> {
   @override
   Widget build(BuildContext context) {
     final previewTools = widget.category.tools.take(3).toList();
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14.0),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Colors.white, Color(0xFFF8FBFF)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(26.0),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
-        boxShadow: [
-          BoxShadow(
-            color: AppTokens.ink.withValues(alpha: 0.045),
-            blurRadius: 18,
-            offset: const Offset(0, 10),
+    final hasAvailable = widget.category.tools.any(_isAvailableTool);
+        return Container(
+          margin: const EdgeInsets.only(bottom: 10.0),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18.0),
+            border: Border.all(color: const Color(0xFFE7ECF5)),
+            boxShadow: [
+              BoxShadow(
+                color: AppTokens.ink.withValues(alpha: 0.035),
+                blurRadius: 12,
+                offset: const Offset(0, 6),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Column(
-        children: [
-          GestureDetector(
-            onTap: () => setState(() => _isExpanded = !_isExpanded),
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16.0,
-                vertical: 12.0,
-              ),
-              decoration: BoxDecoration(
-                color: Colors.transparent,
-                borderRadius: BorderRadius.circular(26.0),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: widget.category.iconBgColor,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      widget.category.icon,
-                      color: Colors.white,
-                      size: 24,
-                    ),
+          child: Column(
+            children: [
+              GestureDetector(
+                onTap: () => setState(() => _isExpanded = !_isExpanded),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12.0,
+                    vertical: 10.0,
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.category.title,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF333333),
-                          ),
+                  decoration: BoxDecoration(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(18.0),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: widget.category.iconBgColor,
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          widget.category.subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.black54,
-                          ),
+                        child: Icon(
+                          widget.category.icon,
+                          color: Colors.white,
+                          size: 20,
                         ),
-                        const SizedBox(height: 6),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _ToolStatusBadge(
-                              label: '${widget.category.tools.length} 个工具',
-                              color: widget.category.iconBgColor,
-                            ),
-                            if (widget.category.tools.any(_isAvailableTool))
-                              const _ToolStatusBadge(
-                                label: '含可用工具',
-                                color: Color(0xFF059669),
-                              )
-                            else
-                              const _ToolStatusBadge(
-                                label: '开发中',
-                                color: Color(0xFF64748B),
+                            Text(
+                              widget.category.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF333333),
                               ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _isExpanded
+                                  ? widget.category.subtitle
+                                  : (previewTools.isNotEmpty
+                                      ? previewTools.join(' / ')
+                                      : widget.category.subtitle),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 11.5,
+                                color: AppTokens.textSecondary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ],
                         ),
-                        if (!_isExpanded && previewTools.isNotEmpty) ...[
-                          const SizedBox(height: 7),
-                          Text(
-                            previewTools.join(' / '),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: AppTokens.textSecondary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
+                      ),
+                      const SizedBox(width: 6),
+                      _ToolStatusBadge(
+                        label: hasAvailable
+                            ? '${widget.category.tools.length}·可用'
+                            : '${widget.category.tools.length}·开发中',
+                        color: hasAvailable
+                            ? const Color(0xFF059669)
+                            : const Color(0xFF64748B),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        _isExpanded
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                        size: 22,
+                        color: const Color(0xFF6B7FA2),
+                      ),
+                    ],
                   ),
-                  _isExpanded
-                      ? const Icon(
-                          Icons.arrow_drop_up,
-                          size: 30,
-                          color: Color(0xFF132D6B),
-                        )
-                      : Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF6B7FA2),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            '${widget.category.tools.length}个功能',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ),
-                ],
+                ),
               ),
-            ),
-          ),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-            child: _isExpanded
-                ? Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Wrap(
-                        spacing: 12.0,
-                        runSpacing: 12.0,
-                        children: widget.category.tools.map((toolName) {
-                          final available = _isAvailableTool(toolName);
-                          return GestureDetector(
-                            onTap: () => _handleToolTap(toolName),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14.0,
-                                vertical: 10.0,
-                              ),
-                              decoration: BoxDecoration(
-                                color:
-                                    (available
+              AnimatedSize(
+                duration: const Duration(milliseconds: 240),
+                curve: Curves.easeInOut,
+                child: _isExpanded
+                    ? Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Wrap(
+                            spacing: 8.0,
+                            runSpacing: 8.0,
+                            children: widget.category.tools.map((toolName) {
+                              final available = _isAvailableTool(toolName);
+                              return GestureDetector(
+                                onTap: () => _handleToolTap(toolName),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 11.0,
+                                    vertical: 8.0,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: (available
                                             ? const Color(0xFF059669)
                                             : widget.category.iconBgColor)
                                         .withValues(alpha: 0.10),
-                                borderRadius: BorderRadius.circular(
-                                  AppTokens.radiusPill,
-                                ),
-                                border: Border.all(
-                                  color:
-                                      (available
+                                    borderRadius: BorderRadius.circular(
+                                      AppTokens.radiusPill,
+                                    ),
+                                    border: Border.all(
+                                      color: (available
                                               ? const Color(0xFF059669)
                                               : widget.category.iconBgColor)
-                                          .withValues(alpha: 0.20),
+                                          .withValues(alpha: 0.18),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        toolName,
+                                        style: TextStyle(
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w800,
+                                          color: available
+                                              ? const Color(0xFF059669)
+                                              : widget.category.iconBgColor,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 5),
+                                      Text(
+                                        available ? '可用' : '开发中',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w700,
+                                          color: available
+                                              ? const Color(0xFF047857)
+                                              : AppTokens.textSecondary,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    toolName,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w800,
-                                      color: available
-                                          ? const Color(0xFF059669)
-                                          : widget.category.iconBgColor,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    available ? '可用 · 外部网页' : '开发中',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w800,
-                                      color: available
-                                          ? const Color(0xFF047857)
-                                          : AppTokens.textSecondary,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                  )
-                : const SizedBox.shrink(),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ],
           ),
-        ],
-      ),
-    );
+        );
   }
 }
 

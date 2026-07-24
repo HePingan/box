@@ -7,9 +7,6 @@ import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import 'package:box/features/api_hub/presentation/api_hub_page.dart';
 import 'package:box/features/content/domain/warehouse_models.dart';
 import 'package:box/novel/novel_module.dart';
-import 'package:box/novel/pages/novel_detail_page.dart';
-import 'package:box/novel/pages/novel_list_page.dart';
-import 'package:box/novel/controllers/novel_detail_controller.dart';
 import 'package:box/video_module.dart';
 
 import 'widgets/warehouse_widgets.dart';
@@ -366,7 +363,7 @@ class _WarehouseTabState extends State<WarehouseTab>
               maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.72,
             ),
             child: SizedBox(
-              width: 420,
+              width: double.infinity, // responsive to dialog width
               child: Form(
                 key: formKey,
                 child: SingleChildScrollView(
@@ -613,9 +610,10 @@ class _WarehouseTabState extends State<WarehouseTab>
                 physics: const AlwaysScrollableScrollPhysics(
                     parent: BouncingScrollPhysics()),
                 padding: EdgeInsets.fromLTRB(
-                  16, 14, 16,
-                  _editMode ? AppTokens.pageBottomPadding + 80
-                      : AppTokens.pageBottomPadding + 32,
+                  14, 10, 14,
+                  _editMode
+                      ? AppTokens.pageBottomPadding + 80
+                      : AppTokens.pageBottomPadding + 28,
                 ),
                 children: [
                   ContentHubTopCard(
@@ -625,7 +623,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                     totalItems: _totalItems,
                     syncLabel: _syncLabel,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 10),
                   ContentEntryGrid(
                     onOpenVideoCenter: _openVideoCenter,
                     onOpenNovelLibrary: _openNovelLibrary,
@@ -634,7 +632,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                     onOpenMusic: _openMusicDialog,
                     onQuickImport: _showQuickImport,
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 10),
                   ContentOverviewCard(
                     totalItems: _totalItems,
                     recentItem: _recentItem,
@@ -642,7 +640,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                     onOpenItem: _openItem,
                     onQuickImport: _showQuickImport,
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 12),
                   // 新用户引导条
                   if (_showOnboarding && _totalItems == 0 && !_loading) ...[
                     ContentOnboardingBanner(
@@ -650,7 +648,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                       onQuickImport: _showQuickImport,
                       onSearchBooks: _openOpenLibrarySearch,
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
                   ],
                   // 搜索栏 + 编辑开关
                   Row(

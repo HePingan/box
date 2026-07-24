@@ -109,6 +109,85 @@ void main() {
     );
   });
 
+  test(
+    'quiz cloud workflow creates, syncs, submits, and approves questions',
+    () async {
+      final fixture = await _startServer();
+      final client = HttpClient();
+      try {
+        final login = await _jsonRequest(
+          client,
+          'POST',
+          fixture.port,
+          '/api/auth/login',
+          body: {'username': 'admin', 'password': 'test-admin-password'},
+        );
+        final token = login['token'] as String;
+        final created = await _jsonRequest(
+          client,
+          'POST',
+          fixture.port,
+          '/admin/quiz/questions',
+          token: token,
+          body: {
+            'question': '云端题库是否支持离线同步？',
+            'type': 'single_choice',
+            'options': ['支持', '不支持'],
+            'correctAnswer': 'A',
+            'category': 'drive_ev',
+          },
+        );
+        expect(created['status'], 'published');
+
+        final sync = await _jsonRequest(
+          client,
+          'GET',
+          fixture.port,
+          '/api/quiz/sync?cursor=0',
+        );
+        final changes = sync['changes'] as List;
+        expect(changes, hasLength(1));
+        expect((changes.single as Map)['operation'], 'upsert');
+
+        final submitted = await _jsonRequest(
+          client,
+          'POST',
+          fixture.port,
+          '/api/quiz/submissions',
+          token: token,
+          body: {
+            'question': '审核题会进入正式题库吗？',
+            'type': 'single_choice',
+            'options': ['会', '不会'],
+            'correctAnswer': 'A',
+            'category': 'drive_ev',
+          },
+        );
+        final submissionId = submitted['id'] as String;
+        expect(submitted['status'], 'pending');
+
+        final approved = await _jsonRequest(
+          client,
+          'POST',
+          fixture.port,
+          '/admin/quiz/submissions/$submissionId/approve',
+          token: token,
+          body: const {},
+        );
+        expect(approved['status'], 'approved');
+        final catalogs = await _jsonRequest(
+          client,
+          'GET',
+          fixture.port,
+          '/api/quiz/catalogs',
+        );
+        expect((catalogs['catalogs'] as List).single, containsPair('count', 2));
+      } finally {
+        client.close(force: true);
+        await fixture.dispose();
+      }
+    },
+  );
   test('slow image generation does not block health requests', () async {
     final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final upstreamDone = upstream.listen((request) async {
@@ -242,6 +321,32 @@ Future<_ServerFixture> _startServer({
     stderrText: stderrText,
     stderrSubscription: stderrSubscription,
   );
+}
+
+Future<Map<String, dynamic>> _jsonRequest(
+  HttpClient client,
+  String method,
+  int port,
+  String path, {
+  String? token,
+  Map<String, dynamic>? body,
+}) async {
+  final request = await client.openUrl(
+    method,
+    Uri.parse('http://127.0.0.1:$port$path'),
+  );
+  if (token != null) {
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+  }
+  if (body != null) {
+    request.headers.contentType = ContentType.json;
+    request.write(jsonEncode(body));
+  }
+  final response = await request.close();
+  final text = await response.transform(utf8.decoder).join();
+  expect(response.statusCode, greaterThanOrEqualTo(HttpStatus.ok));
+  expect(response.statusCode, lessThan(HttpStatus.multipleChoices));
+  return Map<String, dynamic>.from(jsonDecode(text) as Map);
 }
 
 class _ServerFixture {

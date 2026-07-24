@@ -72,3 +72,6 @@ errors.txt
 # Git bundle / transfer temp files
 *.bundle
 *.tar
+
+# Runtime artifacts (quiz image cache, platform state)
+.var/

@@ -54,7 +54,7 @@ void main() {
   });
 
   group('MaoYanNovelSource — 认证信息提取', () {
-    final dummyComment = r'''getHost = i => {
+    const dummyComment = r'''getHost = i => {
     [domain, uType] = $.domains[i];
     [aesKey, Authorization] = [
         ["f041c49714d39908", "beaererXXXXXXXX"],
@@ -169,8 +169,6 @@ var domains = [["longchunbajiao", 0],["xingliangglobal", 1]];
 
 /// 加载内置书源 JSON
 Future<String> _loadTestSourceJson() async {
-  // 测试环境下直接从文件系统读取
-  return await File(
-    'C:\\Users\\Admin\\box-inspect\\assets\\data\\maoyan_book_source.json',
-  ).readAsString();
+  // flutter test 从项目根运行，用相对路径读取仓库内资源，跨平台可用
+  return await File('assets/data/maoyan_book_source.json').readAsString();
 }

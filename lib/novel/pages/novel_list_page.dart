@@ -11,8 +11,6 @@ import '../core/book_deduplicator.dart';
 import '../core/models.dart';
 import '../core/rule_novel_source.dart';
 import '../novel_module.dart';
-import 'source_manager/book_source_bootstrap.dart';
-import 'source_manager/book_source_manager_page.dart';
 import '../core/wtzw_novel_source.dart';
 import 'widgets/novel_book_card.dart';
 import 'widgets/novel_list_views.dart';
@@ -459,7 +457,7 @@ class _NovelListPageState extends State<NovelListPage> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.library_books_rounded,
                     size: 14,
                     color: AppTokens.violet,

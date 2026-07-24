@@ -267,7 +267,7 @@ void main() {
   // ── BookSourceManager.decodeStoredList ──
   group('BookSourceManager.decodeStoredList', () {
     test('decodes valid JSON', () {
-      final json =
+      const json =
           '[{"bookSourceName":"源1","bookSourceUrl":"https://a.com"},{"bookSourceName":"源2","bookSourceUrl":"https://b.com"}]';
       final list = BookSourceManager.decodeStoredList(json);
       expect(list.length, 2);

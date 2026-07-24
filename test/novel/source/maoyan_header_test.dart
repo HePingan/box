@@ -4,8 +4,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import '../../../lib/novel/core/maoyan_novel_source.dart';
-import '../../../lib/novel/core/models.dart';
+import 'package:box/novel/core/maoyan_novel_source.dart';
+import 'package:box/novel/core/models.dart';
 
 void main() {
   test('MaoYanNovelSource 端到端测试', () async {
@@ -16,7 +16,7 @@ void main() {
     final source = MaoYanNovelSource.fromBookSourceJson(bookSource);
 
     print('─── 搜索测试 ───');
-    final kw = '大奉打更人';
+    const kw = '大奉打更人';
     List<NovelBook>? books;
     try {
       books = await source.searchBooks(kw);

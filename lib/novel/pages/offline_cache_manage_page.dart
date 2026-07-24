@@ -8,7 +8,6 @@ import '../core/models.dart';
 import '../core/offline_book_info.dart';
 import '../core/offline_cache_service.dart';
 import '../novel_module.dart';
-import 'novel_detail_page.dart';
 
 /// 离线缓存管理页面
 ///
@@ -120,7 +119,7 @@ class _OfflineCacheManagePageState extends State<OfflineCacheManagePage> {
               onPressed: _loading ? null : _loadData,
             ),
             IconButton(
-              icon: Icon(
+              icon: const Icon(
                 Icons.delete_sweep_rounded,
                 size: 20,
                 color: AppTokens.danger,
@@ -166,7 +165,7 @@ class _OfflineCacheManagePageState extends State<OfflineCacheManagePage> {
           ),
           child: Row(
             children: [
-              Icon(Icons.storage_rounded, size: 18, color: AppTokens.violet),
+              const Icon(Icons.storage_rounded, size: 18, color: AppTokens.violet),
               const SizedBox(width: 8),
               Text(
                 '共 $totalBooks 本',
@@ -178,7 +177,7 @@ class _OfflineCacheManagePageState extends State<OfflineCacheManagePage> {
               const SizedBox(width: 12),
               Text(
                 '缓存 $totalCached 章',
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 12,
                   color: AppTokens.textSecondary,
                 ),
@@ -187,7 +186,7 @@ class _OfflineCacheManagePageState extends State<OfflineCacheManagePage> {
                 const SizedBox(width: 12),
                 Text(
                   _formatSize(totalSize),
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 12,
                     color: AppTokens.textTertiary,
                   ),
@@ -204,7 +203,7 @@ class _OfflineCacheManagePageState extends State<OfflineCacheManagePage> {
             child: ListView.separated(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               itemCount: _books.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              separatorBuilder: (_, _) => const SizedBox(height: 8),
               itemBuilder: (_, index) => _buildBookTile(_books[index]),
             ),
           ),
@@ -223,7 +222,7 @@ class _OfflineCacheManagePageState extends State<OfflineCacheManagePage> {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppTokens.divider),
+        side: const BorderSide(color: AppTokens.divider),
       ),
       color: AppTokens.surface,
       child: InkWell(
@@ -243,7 +242,7 @@ class _OfflineCacheManagePageState extends State<OfflineCacheManagePage> {
                       ? Image.network(
                           book.coverUrl!,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _coverPlaceholder(),
+                          errorBuilder: (_, _, _) => _coverPlaceholder(),
                           loadingBuilder: (_, child, progress) =>
                               progress == null ? child : _coverPlaceholder(),
                         )
@@ -313,11 +312,11 @@ class _OfflineCacheManagePageState extends State<OfflineCacheManagePage> {
     bool isFullyCached,
   ) {
     if (!isCounted) {
-      return Row(
+      return const Row(
         children: [
           Icon(Icons.hourglass_empty_rounded,
               size: 12, color: AppTokens.textTertiary),
-          const SizedBox(width: 4),
+          SizedBox(width: 4),
           Text(
             '加载状态中…',
             style: TextStyle(fontSize: 11, color: AppTokens.textTertiary),
@@ -327,10 +326,10 @@ class _OfflineCacheManagePageState extends State<OfflineCacheManagePage> {
     }
 
     if (book.cachedChapters == 0) {
-      return Row(
+      return const Row(
         children: [
           Icon(Icons.cloud_off_rounded, size: 12, color: AppTokens.amber),
-          const SizedBox(width: 4),
+          SizedBox(width: 4),
           Text(
             '等待缓存…',
             style: TextStyle(fontSize: 11, color: AppTokens.amber),
@@ -359,7 +358,7 @@ class _OfflineCacheManagePageState extends State<OfflineCacheManagePage> {
           const SizedBox(width: 6),
           Text(
             _formatSize(book.estimatedBytes),
-            style: TextStyle(fontSize: 10, color: AppTokens.textTertiary),
+            style: const TextStyle(fontSize: 10, color: AppTokens.textTertiary),
           ),
         ],
       ],
@@ -369,7 +368,7 @@ class _OfflineCacheManagePageState extends State<OfflineCacheManagePage> {
   Widget _coverPlaceholder() {
     return Container(
       color: AppTokens.surfaceMuted,
-      child: Icon(Icons.book_rounded, size: 24, color: AppTokens.textTertiary),
+      child: const Icon(Icons.book_rounded, size: 24, color: AppTokens.textTertiary),
     );
   }
 

@@ -128,9 +128,9 @@ void main() {
     });
 
     test('KuaiYanNovelSource fetchChapter 索引越界', () async {
-      final detail = NovelDetail(
+      const detail = NovelDetail(
         book: NovelBook(id: '1', title: 'T', author: '', intro: '', coverUrl: '', detailUrl: ''),
-        chapters: const [NovelChapter(title: '1', url: '/ch/1')],
+        chapters: [NovelChapter(title: '1', url: '/ch/1')],
       );
 
       final result = await source.fetchChapter(

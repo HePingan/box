@@ -1,9 +1,27 @@
-import 'core/cache_store.dart';
+import 'package:box/core/storage/cache_store.dart';
 import 'core/bookshelf_manager.dart';
 import 'core/models.dart';
 import 'core/novel_repository.dart';
 import 'core/novel_source.dart';
 import 'core/novel_source_factory.dart';
+
+// ===================== Novel 模块公共 API =====================
+// 外部（features/app）只应通过本 barrel 依赖 novel 模块，
+// 不要再深路径 import novel/pages/... 或 novel/controllers/...。
+// 这样 novel 内部页面/控制器可自由重构而不波及调用方。
+export 'core/novel_source_factory.dart' show NovelSourceFactory;
+export 'controllers/novel_detail_controller.dart' show NovelDetailController;
+export 'pages/novel_detail_page.dart' show NovelDetailPage;
+export 'pages/novel_list_page.dart'
+    show NovelListPage, NovelListPageWithProvider;
+export 'pages/source_manager/book_source_bootstrap.dart'
+    show BookSourceBootstrap, BookSourceBootstrapResult;
+export 'pages/source_manager/book_source_manager.dart' show BookSourceManager;
+export 'pages/source_manager/book_source_manager_page.dart'
+    show BookSourceManagerPage;
+export 'pages/source_manager/book_source_diagnostic_page.dart'
+    show BookSourceDiagnosticPage;
+export 'pages/source_manager/book_source_model.dart' show BookSourceModel;
 
 class NovelModule {
   static NovelRepository? _repository;

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:box/novel/core/cache_store.dart';
+import 'package:box/core/storage/cache_store.dart';
 
 enum WarehouseCategory { books, comics, videos, music }
 

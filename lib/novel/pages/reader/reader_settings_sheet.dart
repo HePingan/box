@@ -116,9 +116,9 @@ class ReaderSettingsSheet extends StatelessWidget {
                     final selected = settings.fontSize == size;
                     return Expanded(
                       child: Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 3),
+                        padding: const EdgeInsets.symmetric(horizontal: 3),
                         child: ChoiceChip(
-                          label: Text('${size == 14 ? "小" : size == 18 ? "中" : size == 22 ? "大" : "特大"}', style: TextStyle(fontSize: 11)),
+                          label: Text(size == 14 ? '小' : size == 18 ? '中' : size == 22 ? '大' : '特大', style: const TextStyle(fontSize: 11)),
                           selected: selected,
                           showCheckmark: false,
                           selectedColor: Colors.orange.withValues(alpha: 0.22),
@@ -233,7 +233,7 @@ class ReaderSettingsSheet extends StatelessWidget {
                     style: TextStyle(fontSize: 14, color: textColor.withValues(alpha: 0.8)),
                   ),
                   value: settings.keepScreenOn,
-                  activeColor: Colors.orange,
+                  activeThumbColor: Colors.orange,
                   onChanged: (v) {
                     onSettingsChanged(settings.copyWith(keepScreenOn: v));
                   },
@@ -248,7 +248,7 @@ class ReaderSettingsSheet extends StatelessWidget {
                     style: TextStyle(fontSize: 14, color: textColor.withValues(alpha: 0.8)),
                   ),
                   value: settings.enableHaptic,
-                  activeColor: Colors.orange,
+                  activeThumbColor: Colors.orange,
                   onChanged: (v) {
                     onSettingsChanged(settings.copyWith(enableHaptic: v));
                   },

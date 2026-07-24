@@ -14,6 +14,9 @@ import '../novel/pages/source_manager/book_source_bootstrap.dart';
 import '../novel/pages/source_manager/book_source_manager.dart';
 import '../novel/pages/source_manager/book_source_manager_page.dart';
 import '../video_module.dart';
+import '../features/quiz_plugin/data/quiz_cloud_auto_sync.dart';
+import '../features/policy/plugin_policy.dart';
+import '../features/extensions/market/data/plugin_market_local_sync.dart';
 
 /// 桌面端断点 — ≥800px 切换 NavigationRail
 const double _desktopBreakpoint = 800;
@@ -27,7 +30,7 @@ class MainAppShell extends StatefulWidget {
   State<MainAppShell> createState() => _MainAppShellState();
 }
 
-class _MainAppShellState extends State<MainAppShell> {
+class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver {
   int _currentIndex = 0;
   late final PageController _pageController;
   bool _novelBootstrapPromptShown = false;
@@ -72,7 +75,9 @@ class _MainAppShellState extends State<MainAppShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pageController = PageController(initialPage: _currentIndex);
+    QuizCloudAutoSync.instance.scheduleStartup();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _maybePromptNovelSourceConfig();
@@ -86,12 +91,28 @@ class _MainAppShellState extends State<MainAppShell> {
       if (!mounted) return;
       context.read<HistoryController>().loadHistory();
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      context.read<FavoritesController>().load();
+    });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      QuizCloudAutoSync.instance.onAppResumed();
+      // 回前台刷新插件远程策略（节流在 Store 内）
+      PluginPolicyStore.instance.refresh();
+      // 回前台同步市场插件下架状态并强制禁用
+      PluginMarketLocalSync().syncInstalledStatuses();
+    }
   }
 
   void _onItemTapped(int index) {
@@ -374,7 +395,7 @@ class _AppNavigationRail extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           // 导航项
           ...List.generate(tabs.length, (index) {
             final tab = tabs[index];
@@ -435,8 +456,8 @@ class _DesktopNavItem extends StatelessWidget {
             children: [
               AnimatedContainer(
                 duration: const Duration(milliseconds: 220),
-                width: selected ? 36 : 32,
-                height: selected ? 36 : 32,
+                width: selected ? 40 : 36,
+                height: selected ? 40 : 36,
                 decoration: BoxDecoration(
                   gradient: selected
                       ? const LinearGradient(
@@ -450,11 +471,11 @@ class _DesktopNavItem extends StatelessWidget {
                 ),
                 child: Icon(
                   icon,
-                  size: selected ? 18 : 16,
+                  size: selected ? 20 : 18,
                   color: selected ? Colors.white : const Color(0xFF64748B),
                 ),
               ),
-              const SizedBox(height: 1),
+              const SizedBox(height: 4),
               Text(
                 title,
                 maxLines: 1,
@@ -463,7 +484,7 @@ class _DesktopNavItem extends StatelessWidget {
                   color: selected
                       ? const Color(0xFF2563EB)
                       : const Color(0xFF64748B),
-                  fontSize: 9.5,
+                  fontSize: 10,
                   fontWeight: selected ? FontWeight.w900 : FontWeight.w600,
                 ),
               ),
@@ -508,8 +529,8 @@ class _ShellNavItem extends StatelessWidget {
           children: [
             AnimatedContainer(
               duration: const Duration(milliseconds: 220),
-              width: selected ? 25 : 23,
-              height: selected ? 25 : 23,
+              width: selected ? 28 : 26,
+              height: selected ? 28 : 26,
               decoration: BoxDecoration(
                 gradient: selected
                     ? const LinearGradient(
@@ -523,18 +544,18 @@ class _ShellNavItem extends StatelessWidget {
               ),
               child: Icon(
                 icon,
-                size: selected ? 15 : 14,
+                size: selected ? 17 : 16,
                 color: selected ? Colors.white : const Color(0xFF64748B),
               ),
             ),
-            const SizedBox(height: 0),
+            const SizedBox(height: 2),
             Text(
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: selected ? selectedColor : const Color(0xFF64748B),
-                fontSize: 9.5,
+                fontSize: 11,
                 fontWeight: selected ? FontWeight.w900 : FontWeight.w600,
               ),
             ),

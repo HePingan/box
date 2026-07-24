@@ -26,53 +26,65 @@ class ContentHubTopCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppLightHeroCard(
-      margin: EdgeInsets.zero,
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      eyebrow: '内容聚合中心',
-      title: '内容中心',
-      subtitle: '小说、影视、漫画、音乐统一收纳',
-      badge: 'CONTENT',
-      accentGradient: AppTokens.emeraldGradient,
-      leading: _ContentLightIconButton(
-        icon: Icons.collections_bookmark_rounded,
-        color: AppTokens.emerald,
-        onTap: onRefresh,
+    // 内容页：压扁 Hero 为工具条，指标并入副标题，优先露出入口与收藏库
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE7ECF5)),
+        boxShadow: AppTokens.shadowSm(color: AppTokens.emerald),
       ),
-      actions: [
-        GestureDetector(
-          onTap: onRefresh,
-          child: const AppStatusPill(
-            label: '刷新',
-            icon: Icons.refresh_rounded,
+      child: Row(
+        children: [
+          _ContentLightIconButton(
+            icon: Icons.collections_bookmark_rounded,
             color: AppTokens.emerald,
+            onTap: onRefresh,
           ),
-        ),
-        AppStatusPill(
-          label: '$totalItems 项收藏',
-          icon: Icons.folder_special_rounded,
-          color: AppTokens.primaryBlue,
-        ),
-      ],
-      metrics: [
-        Expanded(
-          child: _ContentLightMetric(
-            value: '$entryCount',
-            label: '内容入口',
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '内容中心',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppTokens.textPrimary,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                    height: 1.1,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '$entryCount 入口 · $sectionCount 分区 · $totalItems 收藏 · $syncLabel',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTokens.textSecondary,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    height: 1.2,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _ContentLightMetric(
-            value: '$sectionCount',
-            label: '收藏分区',
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: onRefresh,
+            child: const AppStatusPill(
+              label: '刷新',
+              icon: Icons.refresh_rounded,
+              color: AppTokens.emerald,
+            ),
           ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _ContentLightMetric(value: syncLabel, label: '自动同步'),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -107,51 +119,6 @@ class _ContentLightIconButton extends StatelessWidget {
   }
 }
 
-class _ContentLightMetric extends StatelessWidget {
-  const _ContentLightMetric({required this.value, required this.label});
-
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF6F8FD),
-        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Flexible(
-            child: Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTokens.textPrimary,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: const TextStyle(
-              color: AppTokens.textSecondary,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // ContentEntryGrid — 3×2 均衡入口网格
 // ═══════════════════════════════════════════════════════════════════
@@ -176,13 +143,12 @@ class ContentEntryGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Row 1: 影视 | 公开搜书 | 小说书架
-    // Row 2: 漫画   | 音乐     | 快速导入
+    // 紧凑 3×2：缩短副标题、减小内边距，避免入口区占半屏
     return Container(
-      padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(24),
+        color: Colors.white.withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE9EEF7)),
       ),
       child: Column(
@@ -190,32 +156,32 @@ class ContentEntryGrid extends StatelessWidget {
         children: [
           const AppSectionHeader(
             title: '内容入口',
-            subtitle: '6 个快捷入口，统一管理你的内容资源',
+            subtitle: '影视 / 小说 / 漫画 / 音乐',
             icon: Icons.dashboard_customize_rounded,
           ),
-          const SizedBox(height: 9),
+          const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
                 child: AppCompactActionCard(
                   title: '影视',
-                  subtitle: '搜索 / 播放',
+                  subtitle: '搜索播放',
                   icon: Icons.smart_display_rounded,
                   color: AppTokens.primaryBlue,
                   onTap: onOpenVideoCenter,
                 ),
               ),
-              const SizedBox(width: 9),
+              const SizedBox(width: 8),
               Expanded(
                 child: AppCompactActionCard(
                   title: '公开搜书',
-                  subtitle: 'Open Library',
+                  subtitle: 'OpenLib',
                   icon: Icons.auto_stories_rounded,
                   color: AppTokens.orange,
                   onTap: onOpenOpenLibrarySearch,
                 ),
               ),
-              const SizedBox(width: 9),
+              const SizedBox(width: 8),
               Expanded(
                 child: AppCompactActionCard(
                   title: '小说书架',
@@ -227,33 +193,33 @@ class ContentEntryGrid extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 9),
+          const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
                 child: AppCompactActionCard(
                   title: '漫画',
-                  subtitle: '收藏 / 导入',
+                  subtitle: '收藏导入',
                   icon: Icons.collections_bookmark_rounded,
                   color: AppTokens.violet,
                   onTap: onOpenComics,
                 ),
               ),
-              const SizedBox(width: 9),
+              const SizedBox(width: 8),
               Expanded(
                 child: AppCompactActionCard(
                   title: '音乐',
-                  subtitle: '歌单 / 历史',
+                  subtitle: '歌单历史',
                   icon: Icons.library_music_rounded,
                   color: AppTokens.emerald,
                   onTap: onOpenMusic,
                 ),
               ),
-              const SizedBox(width: 9),
+              const SizedBox(width: 8),
               Expanded(
                 child: AppCompactActionCard(
                   title: '快速导入',
-                  subtitle: '手动添加资源',
+                  subtitle: '手动添加',
                   icon: Icons.add_link_rounded,
                   color: AppTokens.orange,
                   onTap: onQuickImport,
@@ -427,14 +393,10 @@ class ContentOverviewCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Colors.white, Color(0xFFF8FBFF)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(24),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE7ECF5)),
         boxShadow: AppTokens.shadowSm(color: AppTokens.primaryBlue),
       ),
@@ -448,18 +410,19 @@ class ContentOverviewCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '收藏操作区',
+                      '最近收藏',
                       style: TextStyle(
-                        fontSize: 18,
+                        fontSize: 15,
                         fontWeight: FontWeight.w900,
                         color: AppTokens.textPrimary,
+                        height: 1.15,
                       ),
                     ),
-                    SizedBox(height: 3),
+                    SizedBox(height: 2),
                     Text(
-                      '查看最近收藏 / 快速导入新资源',
+                      '继续上次 / 快速导入',
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 11.5,
                         color: AppTokens.textSecondary,
                         fontWeight: FontWeight.w600,
                       ),
@@ -468,8 +431,8 @@ class ContentOverviewCard extends StatelessWidget {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: AppTokens.emerald.withValues(alpha: 0.10),
                   borderRadius:
@@ -479,17 +442,18 @@ class ContentOverviewCard extends StatelessWidget {
                   isLoading ? '加载中' : '$totalItems 项',
                   style: const TextStyle(
                     color: AppTokens.emerald,
-                    fontSize: 12,
+                    fontSize: 11,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
+                flex: 3,
                 child: Builder(builder: (ctx) {
                   final ri = recentItem;
                   return _RecentCollectionTile(
@@ -501,11 +465,12 @@ class ContentOverviewCard extends StatelessWidget {
                   );
                 }),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               Expanded(
+                flex: 2,
                 child: AppCompactActionCard(
                   title: '快速导入',
-                  subtitle: '选择分类添加资源',
+                  subtitle: '添加资源',
                   icon: Icons.add_link_rounded,
                   color: AppTokens.orange,
                   onTap: onQuickImport,
@@ -534,36 +499,44 @@ class _RecentCollectionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     if (isLoading) {
       return Container(
-        height: 88,
+        height: 72,
         decoration: BoxDecoration(
           color: Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
         ),
-        child: const Center(child: SizedBox(
-            width: 22, height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2))),
+        child: const Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
       );
     }
 
     final i = item;
     if (i == null) {
       return Container(
-        height: 88,
+        height: 72,
         decoration: BoxDecoration(
           color: const Color(0xFFF5F3FF),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: const Color(0xFFE8E0FF)),
         ),
         child: Center(
-          child: Column(
+          child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.inbox_rounded,
-                  size: 28, color: AppTokens.violet.withValues(alpha: 0.5)),
-              const SizedBox(height: 4),
-              Text('还没有收藏',
-                  style: TextStyle(
-                      fontSize: 11, color: Colors.grey.shade500)),
+              Icon(
+                Icons.inbox_rounded,
+                size: 18,
+                color: AppTokens.violet.withValues(alpha: 0.55),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '还没有收藏',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+              ),
             ],
           ),
         ),
@@ -571,37 +544,32 @@ class _RecentCollectionTile extends StatelessWidget {
     }
 
     return InkWell(
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(12),
       onTap: onTap,
       child: Container(
-        height: 88,
-        padding: const EdgeInsets.all(10),
+        height: 72,
+        padding: const EdgeInsets.fromLTRB(8, 8, 10, 8),
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFFF5F3FF), Color(0xFFFDFBFF)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(14),
+          color: const Color(0xFFF8F6FF),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: const Color(0xFFE8E0FF)),
         ),
         child: Row(
           children: [
-            // 封面缩略图
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: i.coverUrl.trim().isNotEmpty
                   ? Image.network(
                       i.coverUrl,
-                      width: 48,
-                      height: 68,
+                      width: 40,
+                      height: 56,
                       fit: BoxFit.cover,
                       errorBuilder: (_, _, _) =>
                           _buildCoverFallback(i.category),
                     )
                   : _buildCoverFallback(i.category),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -613,11 +581,12 @@ class _RecentCollectionTile extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 13,
-                      fontWeight: FontWeight.w700,
+                      fontWeight: FontWeight.w800,
                       color: AppTokens.textPrimary,
+                      height: 1.15,
                     ),
                   ),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 2),
                   Text(
                     i.subtitle.trim().isNotEmpty
                         ? i.subtitle
@@ -625,12 +594,15 @@ class _RecentCollectionTile extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        fontSize: 11, color: Colors.grey.shade600),
+                      fontSize: 11,
+                      color: Colors.grey.shade600,
+                      height: 1.15,
+                    ),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 3),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                     decoration: BoxDecoration(
                       color: i.category.color.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(6),
@@ -655,10 +627,10 @@ class _RecentCollectionTile extends StatelessWidget {
 
   Widget _buildCoverFallback(WarehouseCategory category) {
     return Container(
-      width: 48,
-      height: 68,
+      width: 40,
+      height: 56,
       color: category.color.withValues(alpha: 0.12),
-      child: Icon(category.icon, size: 22, color: category.color),
+      child: Icon(category.icon, size: 18, color: category.color),
     );
   }
 }

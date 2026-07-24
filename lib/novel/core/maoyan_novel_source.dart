@@ -421,8 +421,9 @@ class MaoYanNovelSource implements NovelSource {
           headers: fallbackHeaders,
           timeout: _timeout,
         );
-        if (response.statusCode == 200 && response.body.isNotEmpty)
+        if (response.statusCode == 200 && response.body.isNotEmpty) {
           return response.body;
+        }
       } catch (_) {}
     }
 

@@ -127,7 +127,7 @@ class AppMetricTile extends StatelessWidget {
               color: foreground,
               fontSize: 18,
               fontWeight: FontWeight.w900,
-              fontFeatures: [FontFeature.tabularFigures()],
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
           const SizedBox(height: 4),
@@ -477,16 +477,20 @@ class AppLightHeroCard extends StatelessWidget {
                     if (badge != null) AppStatusPill(label: badge!),
                   ],
                 ),
-                const SizedBox(height: 9),
-                Text(
-                  eyebrow,
-                  style: const TextStyle(
-                    color: AppTokens.textSecondary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
+                // eyebrow 为空时折叠，避免空行占位
+                if (eyebrow.trim().isNotEmpty) ...[
+                  const SizedBox(height: 9),
+                  Text(
+                    eyebrow,
+                    style: const TextStyle(
+                      color: AppTokens.textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 3),
+                  const SizedBox(height: 3),
+                ] else
+                  const SizedBox(height: 8),
                 Text(
                   title,
                   style: const TextStyle(
@@ -589,7 +593,7 @@ class AppCompactActionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final card = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(AppTokens.radiusMd),
@@ -598,23 +602,24 @@ class AppCompactActionCard extends StatelessWidget {
       child: Column(
         children: [
           Container(
-            width: 36,
-            height: 36,
+            width: 32,
+            height: 32,
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.14),
               borderRadius: BorderRadius.circular(AppTokens.radiusSm),
             ),
-            child: Icon(icon, color: color, size: 21),
+            child: Icon(icon, color: color, size: 18),
           ),
-          const SizedBox(height: 7),
+          const SizedBox(height: 5),
           Text(
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: AppTokens.textPrimary,
-              fontSize: 13,
+              fontSize: 12.5,
               fontWeight: FontWeight.w900,
+              height: 1.1,
             ),
           ),
           const SizedBox(height: 1),
@@ -624,8 +629,9 @@ class AppCompactActionCard extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: AppTokens.textSecondary,
-              fontSize: 10,
+              fontSize: 9.5,
               fontWeight: FontWeight.w700,
+              height: 1.1,
             ),
           ),
         ],

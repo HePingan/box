@@ -70,7 +70,7 @@ void main() {
 
     // ─── 3. 测试搜索 API ───
     print('─── 测试搜索 API ───');
-    final kw = '大奉打更人';
+    const kw = '大奉打更人';
     final searchPath = '/search?keyword=${Uri.encodeComponent(kw)}&page=1';
     var success = false;
     String? responseBody;
@@ -250,8 +250,11 @@ void main() {
                   print('  键: ${parsed.keys.join(", ")}');
                   for (final k in parsed.keys) {
                     final v = parsed[k];
-                    if (v is List) print('  $k: List(${v.length})');
-                    else print('  $k: ${v.runtimeType} = ${v.toString().substring(0, v.toString().length > 80 ? 80 : v.toString().length)}');
+                    if (v is List) {
+                      print('  $k: List(${v.length})');
+                    } else {
+                      print('  $k: ${v.runtimeType} = ${v.toString().substring(0, v.toString().length > 80 ? 80 : v.toString().length)}');
+                    }
                   }
                 } else if (parsed is List) {
                   print('  数组长度: ${parsed.length}');

@@ -24,8 +24,11 @@ void main() {
     for (final m in authRegex.allMatches(comment)) {
       aesKeys.add(m.group(1)!);
       var t = m.group(2)!;
-      if (!t.toLowerCase().startsWith('bearer')) t = 'Bearer $t';
-      else t = 'Bearer ${t.substring(6)}';
+      if (!t.toLowerCase().startsWith('bearer')) {
+        t = 'Bearer $t';
+      } else {
+        t = 'Bearer ${t.substring(6)}';
+      }
       authTokens.add(t.trim());
     }
 
@@ -45,7 +48,7 @@ void main() {
     headers['Authorization'] = authToken;
 
     // 搜索 URL
-    final kw = '大奉打更人';
+    const kw = '大奉打更人';
     final searchPath = '/search?keyword=${Uri.encodeComponent(kw)}&page=1';
     final baseUrl = 'http://api.$domain.com$searchPath';
 
@@ -62,8 +65,9 @@ void main() {
       print('HTTP ${resp.statusCode} (${resp.body.length} bytes)');
       final json = jsonDecode(resp.body);
       print('code: ${json['code']}');
-      if (json['data'] is List) print('data length: ${(json['data'] as List).length}');
-      else if (json['data'] is Map) print('data keys: ${(json['data'] as Map).keys}');
+      if (json['data'] is List) {
+        print('data length: ${(json['data'] as List).length}');
+      } else if (json['data'] is Map) print('data keys: ${(json['data'] as Map).keys}');
     } catch (e) {
       print('ERROR: $e');
     }
@@ -78,14 +82,15 @@ void main() {
       print('HTTP ${resp.statusCode} (${resp.body.length} bytes)');
       final json = jsonDecode(resp.body);
       print('code: ${json['code']}');
-      if (json['data'] is List) print('data length: ${(json['data'] as List).length}');
-      else if (json['data'] is Map) print('data keys: ${(json['data'] as Map).keys}');
+      if (json['data'] is List) {
+        print('data length: ${(json['data'] as List).length}');
+      } else if (json['data'] is Map) print('data keys: ${(json['data'] as Map).keys}');
     } catch (e) {
       print('ERROR: $e');
     }
 
     // 测试 C: detail API
-    final detailPath = '/novel/ej8M6z';
+    const detailPath = '/novel/ej8M6z';
     final detailUrl = 'http://api.$domain.com$detailPath';
     print('\n=== 测试 C: Detail API ===');
     print('URL: $detailUrl');
@@ -101,7 +106,7 @@ void main() {
     }
 
     // 测试 D: Chapter API
-    final chapterPath = '/novel/ej8M6z/chapters';
+    const chapterPath = '/novel/ej8M6z/chapters';
     final chapterUrl = 'http://api.$domain.com$chapterPath';
     print('\n=== 测试 D: Chapter API ===');
     print('URL: $chapterUrl');

@@ -6,11 +6,18 @@ import 'app/app.dart';
 import 'app/app_bootstrap.dart';
 import 'app/app_providers.dart';
 import 'features/account/data/account_store.dart';
+import 'features/policy/plugin_policy.dart';
 
 void main() {
   // Step 0: 尽早加载登录态，这样 AppDrawer 打开时无需等待
   BoxAccountStore().loadSession().then((session) {
     globalSessionNotifier.value = session;
+    // 登录态就绪后拉一次插件远程策略
+    PluginPolicyStore.instance.refresh(force: true);
+  });
+  // 无登录也先加载缓存并尝试拉全局策略
+  PluginPolicyStore.instance.ensureLoaded().then((_) {
+    PluginPolicyStore.instance.refresh();
   });
 
   // Step 1: Disable Flutter's red error screen for assertions entirely.

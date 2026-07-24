@@ -209,7 +209,7 @@ class BookSourceDiagnosticRunner {
             }
           }
         } else {
-          steps.add(RuntimeDiagnosticStep(
+          steps.add(const RuntimeDiagnosticStep(
             title: '正文测试',
             state: RuntimeDiagnosticStepState.skipped,
             summary: '跳过：章节列表为空',
@@ -218,14 +218,14 @@ class BookSourceDiagnosticRunner {
           ));
         }
       } else {
-        steps.add(RuntimeDiagnosticStep(
+        steps.add(const RuntimeDiagnosticStep(
           title: '详情页测试',
           state: RuntimeDiagnosticStepState.skipped,
           summary: '跳过：搜索未返回有效结果',
           detail: '搜索步骤未能获取到有效书籍信息，跳过详情测试。',
           durationMs: 0,
         ));
-        steps.add(RuntimeDiagnosticStep(
+        steps.add(const RuntimeDiagnosticStep(
           title: '正文测试',
           state: RuntimeDiagnosticStepState.skipped,
           summary: '跳过：搜索未返回有效结果',

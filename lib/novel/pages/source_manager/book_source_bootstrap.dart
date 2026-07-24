@@ -5,8 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../novel_module.dart';
-import 'book_source_manager.dart';
-import 'book_source_model.dart';
 
 /// 内置书源 JSON 路径（首次启动时自动导入）
 const String _bundledSource = 'assets/data/maoyan_book_source.json';

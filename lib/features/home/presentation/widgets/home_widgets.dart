@@ -40,31 +40,31 @@ class HomeNewsLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF7F9FD),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.fiber_manual_record_rounded,
-            color: Color(0xFF3D7CFF),
-            size: 10,
+          margin: const EdgeInsets.only(bottom: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF7F9FD),
+            borderRadius: BorderRadius.circular(12),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.fiber_manual_record_rounded,
+                color: Color(0xFF3D7CFF),
+                size: 8,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
-    );
+        );
   }
 }
 

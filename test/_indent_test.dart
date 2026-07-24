@@ -1,8 +1,8 @@
-import '../lib/novel/core/text_cleaner.dart';
+import 'package:box/novel/core/text_cleaner.dart';
 
 void main() {
   // Simulate typical chapter content
-  final raw = '第一章 测试\n'
+  const raw = '第一章 测试\n'
       '\n'
       '阳光明媚的早晨，小明走在路上。\n'
       '\n'

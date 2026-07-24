@@ -9,12 +9,7 @@ import '../../../design_system/widgets/app_page_scaffold.dart';
 
 import '../../core/novel_source_capability.dart';
 import '../../core/novel_source_capability_detector.dart';
-import '../../core/novel_source_factory.dart';
 import '../../novel_module.dart';
-import '../novel_list_page.dart';
-import 'book_source_diagnostic_page.dart';
-import 'book_source_manager.dart';
-import 'book_source_model.dart';
 import 'widgets/book_source_manager_hero.dart';
 import 'widgets/book_source_manager_widgets.dart';
 

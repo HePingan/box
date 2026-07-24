@@ -200,7 +200,7 @@ class _ReaderPageState extends State<ReaderPage> {
                 await _controller.removeBookmark(
                   _controller.bookmarks.first.id,
                 );
-                if (!mounted) return;
+                if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: const Text('已移除书签'),
@@ -209,7 +209,7 @@ class _ReaderPageState extends State<ReaderPage> {
                 );
               } else {
                 await _controller.addBookmark();
-                if (!mounted) return;
+                if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: const Text('已添加书签'),
@@ -1058,7 +1058,7 @@ class _ReaderPageState extends State<ReaderPage> {
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                         color: _textColor.withValues(alpha: 0.85),
-                        fontFeatures: [FontFeature.tabularFigures()],
+                        fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
                     if (totalPages > 1) ...[
@@ -1068,7 +1068,7 @@ class _ReaderPageState extends State<ReaderPage> {
                         style: TextStyle(
                           fontSize: 11,
                           color: _textColor.withValues(alpha: 0.50),
-                          fontFeatures: [FontFeature.tabularFigures()],
+                          fontFeatures: const [FontFeature.tabularFigures()],
                         ),
                       ),
                     ],
@@ -1120,7 +1120,7 @@ class _ReaderPageState extends State<ReaderPage> {
                       style: TextStyle(
                         fontSize: 11,
                         color: _textColor.withValues(alpha: 0.45),
-                        fontFeatures: [FontFeature.tabularFigures()],
+                        fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
                   ),

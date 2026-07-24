@@ -1,4 +1,4 @@
-import 'package:box/novel/core/cache_store.dart';
+import 'package:box/core/storage/cache_store.dart';
 import 'package:box/novel/core/models.dart';
 import 'package:box/novel/core/novel_repository.dart';
 import 'package:box/novel/core/novel_source.dart';
@@ -59,6 +59,7 @@ class _FakeCache implements CacheStore {
       : map = Map<String, dynamic>.from(map ?? const {});
 
   final Map<String, dynamic> map;
+  @override
   final String namespace;
   @override final bool webMode = false;
   final Map<String, dynamic> written = {};
@@ -80,7 +81,7 @@ class _FakeCache implements CacheStore {
 void main() {
   group('NovelRepository', () {
     test('searchBooks caches result', () async {
-      final source = _FakeSource(books: [NovelBook(id: '1', title: 't1', author: '', intro: '', coverUrl: '', detailUrl: '')]);
+      final source = _FakeSource(books: [const NovelBook(id: '1', title: 't1', author: '', intro: '', coverUrl: '', detailUrl: '')]);
       final cache = _FakeCache(namespace: 'test');
       final repo = NovelRepository(source: source, cache: cache);
 
@@ -94,7 +95,7 @@ void main() {
     });
 
     test('searchBooks forceRefresh bypasses cache', () async {
-      final source = _FakeSource(books: [NovelBook(id: '1', title: 't1', author: '', intro: '', coverUrl: '', detailUrl: '')]);
+      final source = _FakeSource(books: [const NovelBook(id: '1', title: 't1', author: '', intro: '', coverUrl: '', detailUrl: '')]);
       final cache = _FakeCache(map: {'search:a:1': [{'id': 'cached'}]}, namespace: 'test');
       final repo = NovelRepository(source: source, cache: cache);
 

@@ -42,9 +42,7 @@ class DictionaryManager {
   void register(DictionarySource source) {
     _sources.removeWhere((s) => s.id == source.id);
     _sources.add(source);
-    if (_activeSource == null) {
-      _activeSource = source;
-    }
+    _activeSource ??= source;
   }
 
   /// 移除词典源
@@ -61,7 +59,7 @@ class DictionaryManager {
   Future<DictionaryDefinition> lookup(String word) async {
     final trimmed = word.trim();
     if (trimmed.isEmpty) {
-      return DictionaryDefinition(word: '', source: '');
+      return const DictionaryDefinition(word: '', source: '');
     }
     // 缓存命中
     final cached = _cache[trimmed];

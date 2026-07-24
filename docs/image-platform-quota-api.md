@@ -408,7 +408,110 @@ Content-Type: application/json
 参考图：额外 1 点
 ```
 
-## 真实平台额度代理服务
+## 题库云端管理与离线同步
+
+题库沿用同一账号体系，但答题过程始终优先使用本地 SQLite，不会因为网络请求阻塞悬浮窗。
+
+```text
+管理员 CRUD/审核 → 云端 published 题库 → /api/quiz/sync 游标增量 → 客户端离线镜像
+OCR/手工录入 → /api/quiz/submissions → pending 候选池 → 管理员 approve/reject
+```
+
+### 公开同步接口
+
+```text
+GET  /api/quiz/catalogs
+GET  /api/quiz/sync?cursor=0&category=drive_ev
+POST /api/quiz/submissions        # 需要登录
+```
+
+`/api/quiz/sync` 返回 `cursor` 与 `changes`。客户端只在本地空闲时拉取增量，并把成功应用后的 cursor 持久化；`upsert` 写入云端镜像记录，`delete` 仅删除云端镜像，不能删除用户本机私有 OCR 题。
+
+### 管理员接口
+
+```text
+GET    /admin/quiz/questions?q=<keyword>&status=published
+POST   /admin/quiz/questions
+PATCH  /admin/quiz/questions/<id>
+DELETE /admin/quiz/questions/<id>   # 软下架并下发 delete change
+POST   /admin/quiz/questions/bulk   # 正式题批量 set_image / set_category
+POST   /admin/quiz/categories/bulk  # 正式题批量设分类（兼容）
+GET    /admin/quiz/incomplete?filter=missing_answer&q=关键词
+POST   /admin/quiz/incomplete/bulk  # discard / set_category / publish
+PATCH  /admin/quiz/incomplete/<id>  # 单条补全发布
+POST   /admin/quiz/images/upload    # base64 题图上传
+GET    /admin/quiz/submissions?status=pending
+POST   /admin/quiz/submissions/<id>/approve
+POST   /admin/quiz/submissions/<id>/reject
+POST   /admin/quiz/import
+```
+
+#### 待补全批量 `POST /admin/quiz/incomplete/bulk`
+
+```json
+{
+  "action": "publish",
+  "ids": ["qi_xxx", "qi_yyy"],
+  "correctAnswer": "A",
+  "category": "驾驶理论题库-20260719",
+  "answers": { "qi_xxx": "B" }
+}
+```
+
+- `discard`：从队列移除，不进正式库  
+- `set_category`：批量写分类  
+- `publish`：校验后发布；可用统一 `correctAnswer`，或 `answers[id]` 覆盖单题；失败项 `skipped` 并保留队列  
+
+#### 正式题批量 `POST /admin/quiz/questions/bulk`
+
+```json
+{
+  "action": "set_image",
+  "ids": ["q_1", "q_2"],
+  "image": "/api/quiz/images/xxx.png"
+}
+```
+
+支持 `set_image` / `set_category`，成功后对 published 题写增量 change。
+
+题目唯一键由“规范化题干 + 排序后的规范化选项”构成。因此同题干但选项集不同会作为变体保留，不会被错误合并。
+
+### 客户端离线同步策略（摘要）
+
+- 入口：题库页「更新/分类/仅补图/全量重拉」；设置页「云端题库」卡片  
+- 自动增量：启动/回前台，默认间隔 ≥ 6 小时，可关闭  
+- 本地字段：`category`、`origin(local|cloud)`、`image`（优先本地缓存路径）  
+
+### 备份与恢复
+
+状态文件默认：`IMAGE_STATE_PATH`（默认 `.var/image_platform_state.json`）  
+题图目录：`.var/quiz_images/`
+
+推荐定期备份：
+
+```bash
+# 在服务工作目录执行
+bash scripts/backup_quiz_platform.sh
+# 恢复示例
+# bash scripts/backup_quiz_platform.sh restore /path/to/backup_dir
+```
+
+生产机（background）建议 cron 每日拷贝 state + quiz_images 到独立磁盘，并保留近 7 份。
+
+### 题目请求示例
+
+```json
+{
+  "question": "驾驶电动汽车，图中指示灯亮起表示（）。",
+  "type": "single_choice",
+  "options": ["低荷电状态警告", "正在充电", "动力蓄电池故障", "驱动功率限制"],
+  "correctAnswer": "A",
+  "analysis": "……",
+  "category": "drive_ev",
+  "source": "管理员录入"
+}
+```
+
 
 项目还提供一个最小真实代理服务：
 

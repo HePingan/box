@@ -34,7 +34,7 @@ Future<void> main() async {
     });
 
     test('decryptChapterContent returns raw on invalid base64', () {
-      final raw = 'not-valid-base64!!!';
+      const raw = 'not-valid-base64!!!';
       expect(WtzwCrypto.decryptChapterContent(raw), raw);
     });
   });

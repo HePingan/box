@@ -390,7 +390,7 @@ class _ReaderSearchSheetState extends State<ReaderSearchSheet> {
       // 高亮匹配
       spans.add(TextSpan(
         text: snippet.substring(idx, idx + keyword.length),
-        style: TextStyle(
+        style: const TextStyle(
           color: Colors.orange,
           fontWeight: FontWeight.w600,
         ),

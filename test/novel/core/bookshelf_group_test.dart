@@ -12,7 +12,7 @@ void main() {
 
   group('BookshelfGroup', () {
     test('should create with defaults', () {
-      final group = BookshelfGroup(id: 'test', name: '测试');
+      const group = BookshelfGroup(id: 'test', name: '测试');
       expect(group.id, 'test');
       expect(group.name, '测试');
       expect(group.icon, '📚');
@@ -20,7 +20,7 @@ void main() {
     });
 
     test('should serialize and deserialize', () {
-      final group = BookshelfGroup(
+      const group = BookshelfGroup(
         id: 'reading',
         name: '在读',
         icon: '📖',
@@ -35,7 +35,7 @@ void main() {
     });
 
     test('copyWith should preserve unchanged fields', () {
-      final group = BookshelfGroup(id: 'a', name: 'A', icon: '📖', sortOrder: 1);
+      const group = BookshelfGroup(id: 'a', name: 'A', icon: '📖', sortOrder: 1);
       final copied = group.copyWith(name: 'B');
       expect(copied.id, 'a');
       expect(copied.name, 'B');
@@ -44,9 +44,9 @@ void main() {
     });
 
     test('equality should be based on id', () {
-      final a = BookshelfGroup(id: 'x', name: 'X');
-      final b = BookshelfGroup(id: 'x', name: 'Y');
-      final c = BookshelfGroup(id: 'z', name: 'X');
+      const a = BookshelfGroup(id: 'x', name: 'X');
+      const b = BookshelfGroup(id: 'x', name: 'Y');
+      const c = BookshelfGroup(id: 'z', name: 'X');
       expect(a, equals(b));
       expect(a, isNot(equals(c)));
     });

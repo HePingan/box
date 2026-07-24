@@ -20,7 +20,7 @@ void main() {
     });
 
     test('addToBookshelf adds a book', () async {
-      final book = NovelBook(
+      const book = NovelBook(
         id: 'book1',
         title: '测试小说',
         author: '测试作者',
@@ -36,7 +36,7 @@ void main() {
     });
 
     test('addToBookshelf duplicates are deduplicated by id', () async {
-      final book1 = NovelBook(
+      const book1 = NovelBook(
         id: 'dup1',
         title: '第一版',
         author: '作者',
@@ -44,7 +44,7 @@ void main() {
         intro: '',
         detailUrl: '/detail/dup',
       );
-      final book2 = NovelBook(
+      const book2 = NovelBook(
         id: 'dup1',
         title: '第二版（更新）',
         author: '作者',
@@ -63,7 +63,7 @@ void main() {
     });
 
     test('addToBookshelf deduplicates by detailUrl when id is empty', () async {
-      final book1 = NovelBook(
+      const book1 = NovelBook(
         id: '',
         title: '无名1',
         author: '作者',
@@ -71,7 +71,7 @@ void main() {
         intro: '',
         detailUrl: '/detail/no-id',
       );
-      final book2 = NovelBook(
+      const book2 = NovelBook(
         id: '',
         title: '无名2',
         author: '作者',
@@ -89,7 +89,7 @@ void main() {
     });
 
     test('addToBookshelf inserts new book at front', () async {
-      final bookA = NovelBook(
+      const bookA = NovelBook(
         id: 'a',
         title: 'A',
         author: '',
@@ -97,7 +97,7 @@ void main() {
         intro: '',
         detailUrl: '/a',
       );
-      final bookB = NovelBook(
+      const bookB = NovelBook(
         id: 'b',
         title: 'B',
         author: '',
@@ -116,7 +116,7 @@ void main() {
     });
 
     test('removeFromBookshelf removes by id', () async {
-      final book = NovelBook(
+      const book = NovelBook(
         id: 'remove-me',
         title: '待删除',
         author: '',
@@ -133,7 +133,7 @@ void main() {
     });
 
     test('removeFromBookshelf removes by detailUrl', () async {
-      final book = NovelBook(
+      const book = NovelBook(
         id: '',
         title: '按URL删除',
         author: '',
@@ -152,7 +152,7 @@ void main() {
     });
 
     test('isInBookshelf returns correct status', () async {
-      final book = NovelBook(
+      const book = NovelBook(
         id: 'in-shelf',
         title: '在架',
         author: '',
@@ -171,7 +171,7 @@ void main() {
     });
 
     test('clearBookshelf removes all books', () async {
-      final book = NovelBook(
+      const book = NovelBook(
         id: 'c1',
         title: '清除测试',
         author: '',
@@ -188,7 +188,7 @@ void main() {
     });
 
     test('replaceBookshelf replaces entire shelf', () async {
-      final bookOld = NovelBook(
+      const bookOld = NovelBook(
         id: 'old',
         title: '旧书',
         author: '',
@@ -199,7 +199,7 @@ void main() {
       await BookshelfManager.instance.addToBookshelf(bookOld);
 
       final newBooks = <NovelBook>[
-        NovelBook(
+        const NovelBook(
           id: 'n1',
           title: '新书1',
           author: '',
@@ -207,7 +207,7 @@ void main() {
           intro: '',
           detailUrl: '/n1',
         ),
-        NovelBook(
+        const NovelBook(
           id: 'n2',
           title: '新书2',
           author: '',
@@ -230,7 +230,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       await BookshelfManager.instance.clearBookshelf();
 
-      final book = NovelBook(
+      const book = NovelBook(
         id: 'persist',
         title: '持久化测试',
         author: '',

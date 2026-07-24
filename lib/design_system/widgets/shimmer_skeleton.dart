@@ -131,7 +131,7 @@ class DetailPageSkeleton extends StatelessWidget {
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        ShimmerBlock(
+                        const ShimmerBlock(
                           width: 88,
                           height: 124,
                           borderRadius: 14,
@@ -156,14 +156,14 @@ class DetailPageSkeleton extends StatelessWidget {
                                 height: 14,
                               ),
                               const SizedBox(height: 8),
-                              Row(
+                              const Row(
                                 children: [
                                   ShimmerBlock(
                                     width: 40,
                                     height: 22,
                                     borderRadius: 20,
                                   ),
-                                  const SizedBox(width: 6),
+                                  SizedBox(width: 6),
                                   ShimmerBlock(
                                     width: 50,
                                     height: 22,
@@ -178,7 +178,7 @@ class DetailPageSkeleton extends StatelessWidget {
                     ),
                     const SizedBox(height: 20),
                     // 简介区域
-                    ShimmerBlock(
+                    const ShimmerBlock(
                       width: 80,
                       height: 16,
                     ),
@@ -193,20 +193,20 @@ class DetailPageSkeleton extends StatelessWidget {
                     )),
                     const SizedBox(height: 24),
                     // 操作按钮
-                    ShimmerBlock(
+                    const ShimmerBlock(
                       width: double.infinity,
                       height: 48,
                       borderRadius: 14,
                     ),
                     const SizedBox(height: 24),
                     // 章节列表区域
-                    ShimmerBlock(
+                    const ShimmerBlock(
                       width: 60,
                       height: 16,
                     ),
                     const SizedBox(height: 10),
-                    ...List.generate(8, (i) => Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
+                    ...List.generate(8, (i) => const Padding(
+                      padding: EdgeInsets.only(bottom: 10),
                       child: Row(
                         children: [
                           ShimmerBlock(
@@ -214,7 +214,7 @@ class DetailPageSkeleton extends StatelessWidget {
                             height: 18,
                             borderRadius: 4,
                           ),
-                          const SizedBox(width: 10),
+                          SizedBox(width: 10),
                           Expanded(
                             child: ShimmerBlock(
                               height: 12,
@@ -255,24 +255,24 @@ class BookshelfSkeleton extends StatelessWidget {
             color: const Color(0xFFEEEEEE),
             borderRadius: BorderRadius.circular(14),
           ),
-          child: Row(
+          child: const Row(
             children: [
               ShimmerBlock(width: 20, height: 20, borderRadius: 4),
-              const SizedBox(width: 8),
+              SizedBox(width: 8),
               ShimmerBlock(width: 100, height: 18, borderRadius: 4),
-              const Spacer(),
+              Spacer(),
               ShimmerBlock(width: 40, height: 14, borderRadius: 4),
             ],
           ),
         ),
         const SizedBox(height: 14),
         // Tab 骨架
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16),
           child: Row(
             children: [
               ShimmerBlock(width: 40, height: 14, borderRadius: 4),
-              const SizedBox(width: 24),
+              SizedBox(width: 24),
               ShimmerBlock(width: 40, height: 14, borderRadius: 4),
             ],
           ),
@@ -287,7 +287,7 @@ class BookshelfSkeleton extends StatelessWidget {
             child: ListView.separated(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               itemCount: 6,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              separatorBuilder: (_, _) => const SizedBox(height: 8),
               itemBuilder: (_, i) => _BookshelfTileSkeleton(),
             ),
           ),
@@ -306,22 +306,22 @@ class _BookshelfTileSkeleton extends StatelessWidget {
         color: const Color(0xFFEEEEEE),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Row(
+      child: const Row(
         children: [
           ShimmerBlock(width: 48, height: 64, borderRadius: 8),
-          const SizedBox(width: 12),
+          SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 ShimmerBlock(width: 160, height: 16, borderRadius: 4),
-                const SizedBox(height: 6),
+                SizedBox(height: 6),
                 ShimmerBlock(width: 100, height: 12, borderRadius: 4),
-                const SizedBox(height: 6),
+                SizedBox(height: 6),
                 Row(
                   children: [
                     ShimmerBlock(width: 50, height: 18, borderRadius: 8),
-                    const SizedBox(width: 6),
+                    SizedBox(width: 6),
                     ShimmerBlock(width: 40, height: 18, borderRadius: 8),
                   ],
                 ),
@@ -372,7 +372,7 @@ class _BookCardSkeleton extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ShimmerBlock(width: 72, height: 96, borderRadius: 12),
+          const ShimmerBlock(width: 72, height: 96, borderRadius: 12),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

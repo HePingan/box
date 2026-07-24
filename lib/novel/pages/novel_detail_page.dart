@@ -285,7 +285,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                                   ? Icons.keyboard_arrow_up_rounded
                                   : Icons.keyboard_arrow_down_rounded,
                               size: 16,
-                              color: Color(0xFF7C3AED),
+                              color: const Color(0xFF7C3AED),
                             ),
                           ],
                         ),

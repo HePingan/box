@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:box/novel/core/offline_cache_service.dart';
-import 'package:box/novel/core/cache_store.dart';
+import 'package:box/core/storage/cache_store.dart';
 import 'package:box/novel/core/models.dart';
 import 'package:box/novel/core/novel_repository.dart';
 import 'package:box/novel/core/novel_source.dart';
@@ -64,7 +64,7 @@ void main() {
     });
 
     test('markForOffline stores ID in set', () async {
-      final detail = NovelDetail(
+      const detail = NovelDetail(
         book: NovelBook(
           id: 'b1',
           title: 'Test',
@@ -86,7 +86,7 @@ void main() {
     });
 
     test('markForOffline stores metadata', () async {
-      final detail = NovelDetail(
+      const detail = NovelDetail(
         book: NovelBook(
           id: 'b2',
           title: 'The Book',
@@ -113,7 +113,7 @@ void main() {
     });
 
     test('isMarkedOffline returns correct bool', () async {
-      final detail = NovelDetail(
+      const detail = NovelDetail(
         book: NovelBook(
           id: 'b3',
           title: 'Book3',
@@ -134,7 +134,7 @@ void main() {
     });
 
     test('unmarkOffline removes ID and metadata', () async {
-      final detail = NovelDetail(
+      const detail = NovelDetail(
         book: NovelBook(
           id: 'b4',
           title: 'Book4',
@@ -162,7 +162,7 @@ void main() {
     });
 
     test('filterOfflineBooks returns correct subset', () async {
-      final detail = NovelDetail(
+      const detail = NovelDetail(
         book: NovelBook(
           id: 'b5',
           title: 'Book5',
@@ -182,7 +182,7 @@ void main() {
     });
 
     test('getOfflineBookInfos returns infos with metadata', () async {
-      final detail = NovelDetail(
+      const detail = NovelDetail(
         book: NovelBook(
           id: 'b6',
           title: 'Book6',
@@ -202,7 +202,7 @@ void main() {
     });
 
     test('clearAll removes all markers and metadata', () async {
-      final detail = NovelDetail(
+      const detail = NovelDetail(
         book: NovelBook(
           id: 'b7',
           title: 'Book7',
@@ -231,7 +231,7 @@ void main() {
     });
 
     test('metadata survives whole storage round-trip', () async {
-      final detail = NovelDetail(
+      const detail = NovelDetail(
         book: NovelBook(
           id: 'b10',
           title: 'RoundTrip',
@@ -255,14 +255,14 @@ void main() {
 
     test('unmarkMultiple handles multiple books', () async {
       final details = [
-        NovelDetail(
+        const NovelDetail(
           book: NovelBook(
             id: 'm1', title: 'M1', author: 'A',
             intro: '', coverUrl: '', detailUrl: 'm1',
           ),
           chapters: [],
         ),
-        NovelDetail(
+        const NovelDetail(
           book: NovelBook(
             id: 'm2', title: 'M2', author: 'B',
             intro: '', coverUrl: '', detailUrl: 'm2',
