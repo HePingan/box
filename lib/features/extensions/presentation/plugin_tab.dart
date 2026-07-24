@@ -8,18 +8,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
+import 'package:box/features/extensions/market/data/plugin_market_local_sync.dart';
 import 'package:box/features/extensions/market/data/plugin_market_manifest_repository.dart';
-import 'package:box/novel/pages/source_manager/book_source_manager_page.dart';
-import 'package:box/novel/pages/source_manager/book_source_diagnostic_page.dart';
-import 'package:box/novel/pages/source_manager/book_source_model.dart';
+import 'package:box/features/extensions/market/presentation/plugin_submit_page.dart';
+import 'package:box/novel/novel_module.dart';
 import 'package:box/plugin_manager.dart';
 import 'package:box/plugin_market/models/plugin_market_security.dart';
 import 'package:box/plugin_market_page.dart';
 import 'package:box/video_module.dart';
 import 'package:http/http.dart' as http;
 
+import 'package:box/features/policy/plugin_policy.dart';
 import 'widgets/extension_management_widgets.dart';
 import 'widgets/plugin_card.dart';
+
+part 'plugin_tab_widgets.part.dart';
 
 class PluginTab extends StatefulWidget {
   const PluginTab({super.key});
@@ -84,6 +87,9 @@ class _PluginTabState extends State<PluginTab>
   List<MarketPluginTemplate> _marketTemplates = [];
   bool _marketLoading = true;
 
+  // ── 已装风险（下架/待更新/校验失败） ──
+  List<PluginRiskEntry> _pluginRisks = [];
+
   @override
   void initState() {
     super.initState();
@@ -91,6 +97,19 @@ class _PluginTabState extends State<PluginTab>
     _loadSourceCounts();
     _loadPinned();
     _loadMarketRecommendations();
+    // 进入扩展页同步下架状态 + 收集风险
+    _syncInstalledStatuses();
+  }
+
+  Future<void> _syncInstalledStatuses({bool force = false}) async {
+    try {
+      final result =
+          await PluginMarketLocalSync().syncInstalledStatuses(force: force);
+      if (!mounted || result.skipped) return;
+      setState(() => _pluginRisks = result.risks);
+    } catch (_) {
+      // 网络失败静默，保留上次风险状态
+    }
   }
 
   Future<void> _loadMarketRecommendations() async {
@@ -415,10 +434,13 @@ class _PluginTabState extends State<PluginTab>
   // ── Navigation ──
 
   Future<void> _openPluginMarket() async {
-    final installedIds = _pluginHost.allPlugins
-        .where((plugin) => !plugin.builtIn)
-        .map((e) => e.id)
-        .toSet();
+    final custom = _pluginHost.allPlugins.where((plugin) => !plugin.builtIn);
+    final installedIds = custom.map((e) => e.id).toSet();
+    final installedVersions = <String, String>{
+      for (final p in custom)
+        if ((p.customConfig?.marketVersion ?? '').isNotEmpty)
+          p.id: p.customConfig!.marketVersion,
+    };
 
     if (mounted) {
       await Navigator.push(
@@ -426,6 +448,7 @@ class _PluginTabState extends State<PluginTab>
         MaterialPageRoute(
           builder: (_) => PluginMarketPage(
             initialInstalledIds: installedIds,
+            initialInstalledVersions: installedVersions,
             remoteConfigUrl: _marketRemoteUrl.trim().isEmpty
                 ? null
                 : _marketRemoteUrl.trim(),
@@ -435,9 +458,11 @@ class _PluginTabState extends State<PluginTab>
               secret: _marketSignSecret,
               allowUnsigned: _marketAllowUnsigned,
             ),
-            onInstall: (tpl) async {
-              final config = HomeCustomPluginConfig.fromMarketTemplate(tpl);
-              await _pluginHost.addCustomPlugin(config);
+            onInstall: (tpl, {onProgress}) async {
+              await PluginMarketLocalSync().installFromTemplate(
+                tpl,
+                onProgress: onProgress,
+              );
             },
             onUninstall: (pluginId) async {
               final plugin = _pluginHost.allPlugins
@@ -450,6 +475,14 @@ class _PluginTabState extends State<PluginTab>
         ),
       );
     }
+  }
+
+  Future<void> _openPluginSubmit() async {
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const PluginSubmitPage()),
+    );
   }
 
   // ── Export / Import ──
@@ -711,6 +744,19 @@ class _PluginTabState extends State<PluginTab>
 
   Future<void> _runPlugin(BuildContext context, HomePlugin plugin) async {
     try {
+      // 远程策略：内置题库三插件统一闸
+      if (plugin.id == PluginIds.quizAnswer ||
+          plugin.id == PluginIds.quizEntry ||
+          plugin.id == PluginIds.quizBankView) {
+        await PluginPolicyStore.instance.refresh();
+        final denial = await PluginGate.denial(plugin.id, highRisk: false);
+        if (denial != null && plugin.id != PluginIds.quizAnswer) {
+          if (!context.mounted) return;
+          _showSnack(context, denial);
+          return;
+        }
+      }
+      if (!context.mounted) return;
       await plugin.onTap(context);
     } catch (e) {
       if (!context.mounted) return;
@@ -719,6 +765,18 @@ class _PluginTabState extends State<PluginTab>
   }
 
   Future<void> _togglePluginEnabled(HomePlugin plugin, bool enabled) async {
+    if (enabled &&
+        (plugin.customConfig?.marketRisk == true ||
+            plugin.customConfig?.marketStatus == 'yanked')) {
+      if (!mounted) return;
+      _showSnack(
+        context,
+        plugin.customConfig?.marketRiskNote.isNotEmpty == true
+            ? plugin.customConfig!.marketRiskNote
+            : '该插件已下架，无法启用',
+      );
+      return;
+    }
     await _pluginHost.toggleEnabled(plugin.id, enabled);
   }
 
@@ -794,75 +852,220 @@ class _PluginTabState extends State<PluginTab>
 
   // ── Build ──
 
+  ({IconData icon, Color color, String label}) _riskStyle(PluginRiskKind k) {
+    switch (k) {
+      case PluginRiskKind.yanked:
+        return (
+          icon: Icons.block_rounded,
+          color: AppTokens.rose,
+          label: '已下架',
+        );
+      case PluginRiskKind.outdated:
+        return (
+          icon: Icons.system_update_alt_rounded,
+          color: AppTokens.violet,
+          label: '待更新',
+        );
+      case PluginRiskKind.checksumMismatch:
+        return (
+          icon: Icons.gpp_maybe_rounded,
+          color: const Color(0xFFB45309),
+          label: '校验失败',
+        );
+    }
+  }
+
+  HomePlugin? _findInstalled(String pluginId) {
+    return _pluginHost.allPlugins.where((p) => p.id == pluginId).firstOrNull;
+  }
+
+  Widget _buildRiskList() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AppSectionHeader(
+          title: '需要处理',
+          subtitle: '已下架 / 待更新 / 校验失败的已装插件',
+          icon: Icons.warning_amber_rounded,
+          trailing: IconButton(
+            tooltip: '重新检查',
+            icon: const Icon(Icons.refresh_rounded, size: 20),
+            onPressed: () => _syncInstalledStatuses(force: true),
+          ),
+        ),
+        const SizedBox(height: 10),
+        for (final risk in _pluginRisks) _buildRiskCard(risk),
+      ],
+    );
+  }
+
+  Widget _buildRiskCard(PluginRiskEntry risk) {
+    final style = _riskStyle(risk.kind);
+    final version = risk.kind == PluginRiskKind.outdated &&
+            risk.localVersion.isNotEmpty &&
+            risk.latestVersion.isNotEmpty
+        ? 'v${risk.localVersion} → v${risk.latestVersion}'
+        : (risk.localVersion.isNotEmpty ? 'v${risk.localVersion}' : '');
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: style.color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: style.color.withValues(alpha: 0.22)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: style.color.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(style.icon, color: style.color, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        risk.title,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: AppTokens.textPrimary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: style.color.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        style.label,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                          color: style.color,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  version.isEmpty ? risk.note : '${risk.note} · $version',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppTokens.textSecondary,
+                    height: 1.3,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          _buildRiskAction(risk, style.color),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRiskAction(PluginRiskEntry risk, Color color) {
+    if (risk.kind == PluginRiskKind.yanked) {
+      return OutlinedButton(
+        onPressed: () => _handleRiskUninstall(risk),
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          foregroundColor: color,
+          side: BorderSide(color: color.withValues(alpha: 0.4)),
+        ),
+        child: const Text('卸载'),
+      );
+    }
+    // 待更新 / 校验失败：去市场重装
+    return FilledButton(
+      onPressed: _openPluginMarket,
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        backgroundColor: color,
+      ),
+      child: Text(
+        risk.kind == PluginRiskKind.outdated ? '更新' : '重装',
+      ),
+    );
+  }
+
+  Future<void> _handleRiskUninstall(PluginRiskEntry risk) async {
+    final plugin = _findInstalled(risk.pluginId);
+    if (plugin == null) {
+      setState(() =>
+          _pluginRisks = _pluginRisks.where((r) => r.pluginId != risk.pluginId).toList());
+      return;
+    }
+    await _uninstallPlugin(plugin);
+    if (mounted) {
+      setState(() => _pluginRisks =
+          _pluginRisks.where((r) => r.pluginId != risk.pluginId).toList());
+    }
+  }
+
   Widget _buildManagementGrid() {
+    // 方案 B：横向 3 入口，压缩高度，列表更早进入视口
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const AppSectionHeader(
           title: '快捷入口',
-          subtitle: '资源规则管理 · 诊断',
+          subtitle: '书源 · 片源 · 诊断',
           icon: Icons.rocket_launch_rounded,
         ),
-        const SizedBox(height: 10),
-        // 2×2 网格布局
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-          childAspectRatio: 1.05,
+        const SizedBox(height: 8),
+        Row(
           children: [
-            // 书源管理 — 白色卡片
-            ExtensionManagementTile(
-              title: '书源管理',
-              subtitle: '$_bookSourceCount 个规则',
-              icon: Icons.menu_book_rounded,
-              color: AppTokens.amber,
-              count: _bookSourceCount,
-              onTap: _openBookSourceManager,
-            ),
-            // 片源管理 — 白色卡片
-            ExtensionManagementTile(
-              title: '片源管理',
-              subtitle: '影视源 · 播放链路',
-              icon: Icons.live_tv_rounded,
-              color: AppTokens.primaryBlue,
-              onTap: _openVideoSourceCenter,
-            ),
-            // 导入配置 — 渐变卡片
-            ExtensionManagementTile(
-              title: '导入配置',
-              subtitle: 'JSON 粘贴 · URL 拉取',
-              icon: Icons.download_for_offline_rounded,
-              color: AppTokens.emerald,
-              gradient: LinearGradient(
-                colors: [
-                  AppTokens.emerald.withValues(alpha: 0.92),
-                  AppTokens.emerald.withValues(alpha: 0.68),
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+            Expanded(
+              child: ExtensionQuickChip(
+                title: '书源',
+                icon: Icons.menu_book_rounded,
+                color: AppTokens.amber,
+                count: _bookSourceCount,
+                onTap: _openBookSourceManager,
               ),
-              primary: true,
-              onTap: _showImportJsonDialog,
             ),
-            // 运行诊断 — 渐变卡片
-            ExtensionManagementTile(
-              title: '运行诊断',
-              subtitle: '书源检测 · 规则调试',
-              icon: Icons.health_and_safety_outlined,
-              color: AppTokens.rose,
-              gradient: LinearGradient(
-                colors: [
-                  AppTokens.rose.withValues(alpha: 0.92),
-                  AppTokens.rose.withValues(alpha: 0.68),
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+            const SizedBox(width: 8),
+            Expanded(
+              child: ExtensionQuickChip(
+                title: '片源',
+                icon: Icons.live_tv_rounded,
+                color: AppTokens.primaryBlue,
+                count: _videoSourceCount,
+                onTap: _openVideoSourceCenter,
               ),
-              primary: true,
-              onTap: _openDiagnostics,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ExtensionQuickChip(
+                title: '诊断',
+                icon: Icons.health_and_safety_outlined,
+                color: AppTokens.rose,
+                onTap: _openDiagnostics,
+              ),
             ),
           ],
         ),
@@ -927,25 +1130,25 @@ class _PluginTabState extends State<PluginTab>
               AppTokens.pageBottomPadding + 32,
             ),
             children: [
+              // 方案 B：紧凑 Hero → 快捷入口 → 搜索/列表优先；推荐下沉
               ExtensionHeroCard(
                 pluginCount: plugins.length,
                 enabledCount: _enabledPluginCount,
                 bookSourceCount: _bookSourceCount,
                 videoSourceCount: _videoSourceCount,
                 onOpenMarket: _openPluginMarket,
+                onSubmitPlugin: _openPluginSubmit,
                 onImportJson: _showImportJsonDialog,
                 onExportJson: _showExportJsonDialog,
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
+              if (_pluginRisks.isNotEmpty) ...[
+                _buildRiskList(),
+                const SizedBox(height: 10),
+              ],
               _buildManagementGrid(),
-              const SizedBox(height: 20),
-              // ── 市场推荐 ──
-              if (!_selectMode &&
-                  !_marketLoading &&
-                  _marketTemplates.isNotEmpty)
-                _buildMarketRecommendations(),
               const SizedBox(height: 12),
-              // 操作栏：搜索 + 批量按钮
+              // 操作栏：搜索 + 批量按钮（列表优先，市场推荐后置）
               Row(
                 children: [
                   Expanded(
@@ -956,7 +1159,7 @@ class _PluginTabState extends State<PluginTab>
                         onChanged: (v) => setState(() => _pluginQuery = v),
                         style: const TextStyle(fontSize: 13),
                         decoration: InputDecoration(
-                          hintText: '搜索插件名称、描述、区域…',
+                          hintText: '搜索插件…',
                           hintStyle: const TextStyle(
                             color: AppTokens.textSecondary,
                             fontSize: 12.5,
@@ -1171,6 +1374,13 @@ class _PluginTabState extends State<PluginTab>
                   ),
                 ],
               ],
+              // 市场推荐下沉到列表后，避免挤占首屏
+              if (!_selectMode &&
+                  !_marketLoading &&
+                  _marketTemplates.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                _buildMarketRecommendations(),
+              ],
             ],
           );
         },
@@ -1187,231 +1397,3 @@ Future<void> _showSnack(BuildContext context, String text) async {
 // _PluginStatusSection — 按启用/禁用状态分组的可折叠插件列表
 // ═══════════════════════════════════════════════════════════════════
 
-class _PluginStatusSection extends StatefulWidget {
-  const _PluginStatusSection({
-    required this.title,
-    required this.icon,
-    required this.iconColor,
-    required this.plugins,
-    required this.onRunPlugin,
-    required this.onToggleEnabled,
-    required this.onUninstall,
-    required this.totalCount,
-    required this.pinnedPluginIds,
-    required this.onPinToggle,
-    this.selectMode = false,
-    this.selectedPluginIds = const {},
-    this.onSelectToggle,
-  });
-
-  final String title;
-  final IconData icon;
-  final Color iconColor;
-  final List<HomePlugin> plugins;
-  final Future<void> Function(BuildContext context, HomePlugin plugin)
-  onRunPlugin;
-  final Future<void> Function(HomePlugin plugin, bool enabled) onToggleEnabled;
-  final Future<void> Function(HomePlugin plugin) onUninstall;
-  final int totalCount;
-  final Set<String> pinnedPluginIds;
-  final void Function(String pluginId) onPinToggle;
-  final bool selectMode;
-  final Set<String> selectedPluginIds;
-  final void Function(String pluginId)? onSelectToggle;
-
-  @override
-  State<_PluginStatusSection> createState() => _PluginStatusSectionState();
-}
-
-class _PluginStatusSectionState extends State<_PluginStatusSection> {
-  bool _expanded = true;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: () => setState(() => _expanded = !_expanded),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                Icon(widget.icon, size: 20, color: widget.iconColor),
-                const SizedBox(width: 8),
-                Text(
-                  widget.title,
-                  style: const TextStyle(
-                    color: AppTokens.textPrimary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 7,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: widget.iconColor.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-                  ),
-                  child: Text(
-                    '${widget.plugins.length}/${widget.totalCount}',
-                    style: TextStyle(
-                      color: widget.iconColor,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                const Spacer(),
-                AnimatedRotation(
-                  turns: _expanded ? 0 : -0.25,
-                  duration: const Duration(milliseconds: 200),
-                  child: const Icon(
-                    Icons.expand_more_rounded,
-                    color: AppTokens.textSecondary,
-                    size: 22,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        AnimatedCrossFade(
-          firstChild: Column(
-            children: List.generate(widget.plugins.length, (i) {
-              final plugin = widget.plugins[i];
-              return _StaggeredItem(
-                index: i,
-                child: PluginCard(
-                  plugin: plugin,
-                  isPinned: widget.pinnedPluginIds.contains(plugin.id),
-                  onPinToggle: widget.onPinToggle,
-                  selectMode: widget.selectMode,
-                  isSelected: widget.selectedPluginIds.contains(plugin.id),
-                  onSelectToggle: widget.onSelectToggle,
-                  onRunPlugin: widget.onRunPlugin,
-                  onToggleEnabled: widget.onToggleEnabled,
-                  onUninstall: widget.onUninstall,
-                ),
-              );
-            }),
-          ),
-          secondChild: const SizedBox.shrink(),
-          crossFadeState: _expanded
-              ? CrossFadeState.showFirst
-              : CrossFadeState.showSecond,
-          duration: const Duration(milliseconds: 200),
-        ),
-      ],
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// _StaggeredItem — 入场错开动画
-// ═══════════════════════════════════════════════════════════════════
-
-/// 入场错开动画 — 淡入 + 上滑
-class _StaggeredItem extends StatefulWidget {
-  const _StaggeredItem({required this.index, required this.child});
-
-  final int index;
-  final Widget child;
-
-  @override
-  State<_StaggeredItem> createState() => _StaggeredItemState();
-}
-
-class _StaggeredItemState extends State<_StaggeredItem>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  late final Animation<double> _opacity;
-  late final Animation<Offset> _slide;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 350),
-    );
-    _opacity = _ctrl;
-    _slide = Tween<Offset>(
-      begin: const Offset(0, 0.08),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
-    Future.delayed(Duration(milliseconds: widget.index * 50), () {
-      if (mounted) _ctrl.forward();
-    });
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _opacity,
-      child: SlideTransition(position: _slide, child: widget.child),
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// _BatchActionButton — 批量操作小按钮
-// ═══════════════════════════════════════════════════════════════════
-
-class _BatchActionButton extends StatelessWidget {
-  const _BatchActionButton({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 15, color: color),
-              const SizedBox(width: 3),
-              Text(
-                label,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}

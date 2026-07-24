@@ -1,5 +1,5 @@
 import 'package:box/plugin_manager.dart';
-import 'package:box/novel/core/cache_store.dart';
+import 'package:box/core/storage/cache_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -6,13 +6,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../daily_news_page.dart';
-import '../../../novel/core/cache_store.dart';
-import '../../../novel/pages/novel_list_page.dart';
+import 'package:box/core/storage/cache_store.dart';
+import '../../../novel/novel_module.dart';
 import '../../../video_module.dart';
 import '../../image_generator/presentation/image_generator_page.dart';
 import '../market/domain/plugin_market_manifest.dart';
-import '../../quiz_plugin/quiz_entry_page.dart';
-import '../../quiz_plugin/quiz_plugin_entry.dart';
+import '../../quiz_plugin/presentation/quiz_entry_page.dart';
+import '../../quiz_plugin/presentation/quiz_plugin_entry.dart';
+import '../../quiz_plugin/presentation/quiz_bank_view_page.dart';
+import '../../policy/plugin_policy.dart';
 import '../plugins/plugin_toolbox.dart';
 
 String _asString(dynamic value, [String fallback = '']) {
@@ -306,6 +308,15 @@ class HomeCustomPluginConfig {
   final bool enabled;
   final int sort;
   final int createdAt;
+  /// market | local | ''
+  final String origin;
+  final String marketVersion;
+  final String packageSha256;
+  final String author;
+  /// published | yanked | local_cache | ''
+  final String marketStatus;
+  final bool marketRisk;
+  final String marketRiskNote;
 
   const HomeCustomPluginConfig({
     required this.id,
@@ -322,6 +333,13 @@ class HomeCustomPluginConfig {
     this.enabled = true,
     this.sort = 9999,
     required this.createdAt,
+    this.origin = '',
+    this.marketVersion = '',
+    this.packageSha256 = '',
+    this.author = '',
+    this.marketStatus = '',
+    this.marketRisk = false,
+    this.marketRiskNote = '',
   });
 
   factory HomeCustomPluginConfig.fromMarketTemplate(
@@ -331,6 +349,10 @@ class HomeCustomPluginConfig {
     final payload = template.payloadData.isEmpty
         ? template.payload
         : jsonEncode(template.payloadData);
+    final origin = template.tags.contains('用户投稿') ||
+            template.author.trim().isNotEmpty
+        ? 'user_market'
+        : 'market';
     return HomeCustomPluginConfig(
       id: template.id,
       title: template.title,
@@ -346,6 +368,13 @@ class HomeCustomPluginConfig {
       enabled: true,
       sort: template.sort,
       createdAt: createdAt ?? DateTime.now().millisecondsSinceEpoch,
+      origin: origin,
+      marketVersion: template.version,
+      packageSha256: '',
+      author: template.author,
+      marketStatus: origin == 'user_market' ? 'published' : '',
+      marketRisk: false,
+      marketRiskNote: '',
     );
   }
 
@@ -363,12 +392,9 @@ class HomeCustomPluginConfig {
   }
 
   IconData get iconData {
-    // Dynamic custom plugin icons are restored from persisted user config.
-    return IconData(
-      iconCodePoint,
-      fontFamily: iconFontFamily,
-      fontPackage: iconFontPackage,
-    );
+    // 持久化配置里的图标 code point 均来自市场图标常量集合，
+    // 通过反查常量表恢复，避免动态构造 IconData 破坏 release 图标 tree-shaking。
+    return marketIconByCodePoint(iconCodePoint);
   }
 
   Color get color => Color(colorValue);
@@ -388,6 +414,13 @@ class HomeCustomPluginConfig {
     bool? enabled,
     int? sort,
     int? createdAt,
+    String? origin,
+    String? marketVersion,
+    String? packageSha256,
+    String? author,
+    String? marketStatus,
+    bool? marketRisk,
+    String? marketRiskNote,
   }) {
     return HomeCustomPluginConfig(
       id: id ?? this.id,
@@ -404,6 +437,13 @@ class HomeCustomPluginConfig {
       enabled: enabled ?? this.enabled,
       sort: sort ?? this.sort,
       createdAt: createdAt ?? this.createdAt,
+      origin: origin ?? this.origin,
+      marketVersion: marketVersion ?? this.marketVersion,
+      packageSha256: packageSha256 ?? this.packageSha256,
+      author: author ?? this.author,
+      marketStatus: marketStatus ?? this.marketStatus,
+      marketRisk: marketRisk ?? this.marketRisk,
+      marketRiskNote: marketRiskNote ?? this.marketRiskNote,
     );
   }
 
@@ -423,6 +463,13 @@ class HomeCustomPluginConfig {
       'enabled': enabled,
       'sort': sort,
       'createdAt': createdAt,
+      'origin': origin,
+      'marketVersion': marketVersion,
+      'packageSha256': packageSha256,
+      'author': author,
+      'marketStatus': marketStatus,
+      'marketRisk': marketRisk,
+      'marketRiskNote': marketRiskNote,
     };
   }
 
@@ -455,6 +502,13 @@ class HomeCustomPluginConfig {
         json['createdAt'],
         DateTime.now().millisecondsSinceEpoch,
       ),
+      origin: _asString(json['origin']),
+      marketVersion: _asString(json['marketVersion'], _asString(json['version'])),
+      packageSha256: _asString(json['packageSha256']),
+      author: _asString(json['author']),
+      marketStatus: _asString(json['marketStatus']),
+      marketRisk: _asBool(json['marketRisk'], false),
+      marketRiskNote: _asString(json['marketRiskNote']),
     );
   }
 }
@@ -784,6 +838,14 @@ class HomePluginHost {
     if (index < 0) return;
 
     final current = list[index];
+    // 下架插件禁止重新启用
+    if (enabled) {
+      final cfg = current.customConfig;
+      if (cfg != null &&
+          (cfg.marketRisk || cfg.marketStatus == 'yanked')) {
+        return;
+      }
+    }
     final updated = current.copyWith(
       enabled: enabled,
       customConfig: current.customConfig?.copyWith(enabled: enabled),
@@ -979,6 +1041,13 @@ class HomePluginHost {
       enabled: plugin.enabled,
       sort: plugin.sort,
       createdAt: DateTime.now().millisecondsSinceEpoch,
+      origin: plugin.customConfig?.origin ?? '',
+      marketVersion: plugin.customConfig?.marketVersion ?? '',
+      packageSha256: plugin.customConfig?.packageSha256 ?? '',
+      author: plugin.customConfig?.author ?? '',
+      marketStatus: plugin.customConfig?.marketStatus ?? '',
+      marketRisk: plugin.customConfig?.marketRisk ?? false,
+      marketRiskNote: plugin.customConfig?.marketRiskNote ?? '',
     );
   }
 
@@ -995,13 +1064,38 @@ class HomePluginHost {
       sort: config.sort,
       customConfig: config,
       onTap: (context) async {
+        final latest = _notifier.value
+            .where((p) => p.id == config.id)
+            .map((p) => p.customConfig)
+            .firstOrNull;
+        final risk = latest?.marketRisk == true ||
+            latest?.marketStatus == 'yanked' ||
+            config.marketRisk ||
+            config.marketStatus == 'yanked';
+        if (risk) {
+          final note = (latest?.marketRiskNote.isNotEmpty == true)
+              ? latest!.marketRiskNote
+              : (config.marketRiskNote.isNotEmpty
+                  ? config.marketRiskNote
+                  : '该插件已被管理员下架，无法使用');
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+            SnackBar(content: Text(note)),
+          );
+          return;
+        }
+        if (!(latest?.enabled ?? config.enabled)) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+            const SnackBar(content: Text('插件已禁用')),
+          );
+          return;
+        }
         final ran = await HomePluginActionRegistry.run(
-          config.effectiveActionCode,
+          (latest ?? config).effectiveActionCode,
           context,
           HomePluginActionContext(
             pluginId: config.id,
-            title: config.title,
-            payload: config.payload,
+            title: (latest ?? config).title,
+            payload: (latest ?? config).payload,
           ),
         );
         if (!ran && context.mounted) {
@@ -1135,9 +1229,49 @@ class HomePluginHost {
         builtIn: true,
         sort: 50,
         onTap: (context) async {
+          final denial = await PluginGate.denial(
+            PluginIds.quizEntry,
+            feature: PluginFeature.entry,
+            highRisk: false,
+          );
+          if (denial != null && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(denial)),
+            );
+            return;
+          }
+          if (!context.mounted) return;
           await Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const QuizEntryPage()),
+          );
+        },
+      ),
+      HomePlugin(
+        id: 'builtin_quiz_bank_view',
+        title: '题库查看',
+        subtitle: '查看、复制、删除已录入题目',
+        icon: Icons.library_books_outlined,
+        color: const Color(0xFF7C3AED),
+        area: HomePluginArea.center,
+        builtIn: true,
+        sort: 48,
+        onTap: (context) async {
+          final denial = await PluginGate.denial(
+            PluginIds.quizBankView,
+            feature: PluginFeature.view,
+            highRisk: false,
+          );
+          if (denial != null && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(denial)),
+            );
+            return;
+          }
+          if (!context.mounted) return;
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const QuizBankViewPage()),
           );
         },
       ),
@@ -1151,6 +1285,17 @@ class HomePluginHost {
         builtIn: true,
         sort: 46,
         onTap: (context) async {
+          final denial = await PluginGate.denial(
+            PluginIds.quizAnswer,
+            highRisk: false,
+          );
+          if (denial != null && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(denial)),
+            );
+            // 仍打开配置页，但开关会被禁用
+          }
+          if (!context.mounted) return;
           await QuizPluginEntry.showConfigSheet(context);
         },
       ),

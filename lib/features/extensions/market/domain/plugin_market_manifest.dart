@@ -92,6 +92,13 @@ class _MarketIconRegistry {
     'auto_fix_high_outlined': Icons.auto_fix_high_outlined,
     'palette_outlined': Icons.palette_outlined,
     'local_fire_department_outlined': Icons.local_fire_department_outlined,
+    'extension': Icons.extension,
+  };
+
+  /// code point → 常量 IconData 反查表，供持久化配置恢复图标时使用，
+  /// 避免动态构造 IconData 破坏 release 构建的图标 tree-shaking。
+  static final Map<int, IconData> _byCodePoint = {
+    for (final icon in _icons.values) icon.codePoint: icon,
   };
 
   static IconData byName(String? name) {
@@ -99,6 +106,15 @@ class _MarketIconRegistry {
     if (key.isEmpty) return Icons.extension_outlined;
     return _icons[key] ?? Icons.extension_outlined;
   }
+
+  static IconData byCodePoint(int codePoint, {IconData? fallback}) {
+    return _byCodePoint[codePoint] ?? fallback ?? Icons.extension_outlined;
+  }
+}
+
+/// 按 code point 反查常量市场图标（tree-shaking 友好）。
+IconData marketIconByCodePoint(int codePoint, {IconData? fallback}) {
+  return _MarketIconRegistry.byCodePoint(codePoint, fallback: fallback);
 }
 
 const Set<String> _allowedAreaCodes = {
@@ -407,6 +423,12 @@ class MarketPluginTemplate {
   final List<String> permissions;
   final bool deprecated;
   final String changelog;
+  final String packageUrl;
+  final String packageSha256;
+  final String packageFormat;
+  final int packageSize;
+  final int downloadCount;
+  final String publishedAt;
 
   const MarketPluginTemplate({
     required this.id,
@@ -426,6 +448,12 @@ class MarketPluginTemplate {
     this.permissions = const [],
     this.deprecated = false,
     this.changelog = '',
+    this.packageUrl = '',
+    this.packageSha256 = '',
+    this.packageFormat = '',
+    this.packageSize = 0,
+    this.downloadCount = 0,
+    this.publishedAt = '',
   });
 
   bool get isValid => id.trim().isNotEmpty && title.trim().isNotEmpty;
@@ -461,6 +489,12 @@ class MarketPluginTemplate {
       'permissions': permissions,
       'deprecated': deprecated,
       'changelog': changelog,
+      'packageUrl': packageUrl,
+      'packageSha256': packageSha256,
+      'packageFormat': packageFormat,
+      'packageSize': packageSize,
+      'downloadCount': downloadCount,
+      'publishedAt': publishedAt,
     };
   }
 
@@ -494,23 +528,19 @@ class MarketPluginTemplate {
     final permissions = safeMarketStringList(json['permissions']);
     final deprecated = safeMarketBool(json['deprecated'], false);
     final changelog = safeMarketString(json['changelog']);
+    final packageUrl = safeMarketString(json['packageUrl']);
+    final packageSha256 = safeMarketString(json['packageSha256']);
+    final packageFormat = safeMarketString(json['packageFormat']);
+    final packageSize = safeMarketInt(json['packageSize'], 0);
+    final downloadCount = safeMarketInt(json['downloadCount'], 0);
+    final publishedAt = safeMarketString(json['publishedAt']);
 
     IconData icon;
     if (json['iconCodePoint'] != null) {
-      final cp = safeMarketInt(
-        json['iconCodePoint'],
-        _defaultIconForArea(areaCode).codePoint,
-      );
-      final ff = safeMarketString(json['iconFontFamily'], 'MaterialIcons');
-      final fp = safeMarketString(json['iconFontPackage']);
-      icon = IconData(
-        // ignore: non_const_argument_for_const_parameter
-        cp,
-        // ignore: non_const_argument_for_const_parameter
-        fontFamily: ff,
-        // ignore: non_const_argument_for_const_parameter
-        fontPackage: fp.isEmpty ? null : fp,
-      );
+      final defaultIcon = _defaultIconForArea(areaCode);
+      final cp = safeMarketInt(json['iconCodePoint'], defaultIcon.codePoint);
+      // 按 code point 反查常量图标，避免动态构造 IconData 破坏 tree-shaking。
+      icon = _MarketIconRegistry.byCodePoint(cp, fallback: defaultIcon);
     } else {
       final iconName = safeMarketString(
         json['iconName'],
@@ -544,6 +574,12 @@ class MarketPluginTemplate {
       permissions: permissions,
       deprecated: deprecated,
       changelog: changelog,
+      packageUrl: packageUrl,
+      packageSha256: packageSha256,
+      packageFormat: packageFormat,
+      packageSize: packageSize,
+      downloadCount: downloadCount,
+      publishedAt: publishedAt,
     );
   }
 

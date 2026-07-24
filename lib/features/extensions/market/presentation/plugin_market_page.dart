@@ -4,14 +4,17 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_bottom_sheet.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
+import 'package:box/features/extensions/market/data/plugin_market_api.dart';
 import 'package:box/features/extensions/market/data/plugin_market_manifest_repository.dart';
 import 'package:box/features/extensions/market/domain/plugin_market_manifest.dart';
 import 'package:box/plugin_market/models/plugin_market_security.dart';
 
 import 'widgets/plugin_market_widgets.dart';
 
-typedef MarketInstallHandler =
-    Future<void> Function(MarketPluginTemplate template);
+typedef MarketInstallHandler = Future<void> Function(
+  MarketPluginTemplate template, {
+  void Function(int receivedBytes, int totalBytes)? onProgress,
+});
 
 typedef MarketUninstallHandler = Future<void> Function(String pluginId);
 
@@ -25,6 +28,7 @@ class PluginMarketPage extends StatefulWidget {
     this.remoteConfigUrl,
     this.initialChannel = PluginMarketChannel.stable,
     this.securityConfig = const PluginMarketSecurityConfig(),
+    this.initialInstalledVersions = const {},
     PluginMarketManifestRepository? manifestRepository,
   }) : manifestRepository =
            manifestRepository ?? PluginMarketManifestRepository.instance;
@@ -44,6 +48,9 @@ class PluginMarketPage extends StatefulWidget {
   /// 验签配置
   final PluginMarketSecurityConfig securityConfig;
 
+  /// 本地已装版本（id → version）
+  final Map<String, String> initialInstalledVersions;
+
   @override
   State<PluginMarketPage> createState() => _PluginMarketPageState();
 }
@@ -53,12 +60,16 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
   late Set<String> _installedIds;
 
   final Set<String> _loadingIds = {};
+  final Map<String, double> _installProgress = {};
   late final TextEditingController _searchController;
   bool _bulkRunning = false;
   bool _marketLoading = true;
 
   String _keyword = '';
   String _areaFilter = 'all';
+  String _tagFilter = 'all';
+  // 排序：recommended(默认) | downloads | updated | title
+  String _sortBy = 'recommended';
 
   late PluginMarketChannel _currentChannel;
 
@@ -154,25 +165,60 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     await _loadMarket(forceRefresh: false);
   }
 
+  /// 当前频道下可用标签及数量（用于渲染标签筛选栏）。
+  List<MapEntry<String, int>> get _availableTags {
+    final counts = <String, int>{};
+    for (final item in _allTemplates) {
+      for (final t in item.tags) {
+        final k = t.trim();
+        if (k.isEmpty) continue;
+        counts[k] = (counts[k] ?? 0) + 1;
+      }
+    }
+    final entries = counts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return entries;
+  }
+
   List<MarketPluginTemplate> get _visibleTemplates {
     final keyword = _keyword.trim().toLowerCase();
+    final tag = _tagFilter.toLowerCase();
 
     final list = _allTemplates.where((item) {
       final areaOk = _areaFilter == 'all' || item.areaCode == _areaFilter;
       if (!areaOk) return false;
 
+      final tagOk = _tagFilter == 'all' ||
+          item.tags.any((t) => t.toLowerCase() == tag);
+      if (!tagOk) return false;
+
       if (keyword.isEmpty) return true;
 
-      final joined = '${item.title} ${item.subtitle} ${item.payload}'
-          .toLowerCase();
+      final joined =
+          '${item.title} ${item.subtitle} ${item.payload} ${item.author} ${item.tags.join(' ')}'
+              .toLowerCase();
       return joined.contains(keyword);
     }).toList();
 
-    list.sort((a, b) {
+    int cmpRecommended(MarketPluginTemplate a, MarketPluginTemplate b) {
       final c = a.sort.compareTo(b.sort);
       if (c != 0) return c;
       return a.title.compareTo(b.title);
-    });
+    }
+
+    switch (_sortBy) {
+      case 'downloads':
+        list.sort((a, b) => b.downloadCount.compareTo(a.downloadCount));
+        break;
+      case 'updated':
+        list.sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
+        break;
+      case 'title':
+        list.sort((a, b) => a.title.compareTo(b.title));
+        break;
+      default:
+        list.sort(cmpRecommended);
+    }
 
     return list;
   }
@@ -353,14 +399,30 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     try {
       final canInstall = await _confirmInstallCompatibility(item);
       if (!canInstall) return;
-      await widget.onInstall(item);
+
+      // 下载阶段：显示进度条
+      setState(() => _installProgress[item.id] = 0);
+      await widget.onInstall(item, onProgress: (received, total) {
+        if (!mounted) return;
+        final p = total > 0 ? received / total : 0.5;
+        setState(() => _installProgress[item.id] = p.clamp(0.05, 0.95));
+      });
       if (!mounted) return;
-      setState(() => _installedIds.add(item.id));
+      setState(() {
+        _installProgress[item.id] = 1.0;
+        _installedIds.add(item.id);
+      });
       _showSnack('安装成功：${item.title}');
     } catch (e) {
-      _showSnack('安装失败：$e');
+      if (!mounted) return;
+      _showSnack(_err(e));
     } finally {
-      if (mounted) setState(() => _loadingIds.remove(item.id));
+      if (mounted) {
+        setState(() {
+          _loadingIds.remove(item.id);
+          _installProgress.remove(item.id);
+        });
+      }
     }
   }
 
@@ -374,7 +436,8 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       setState(() => _installedIds.remove(item.id));
       _showSnack('已卸载：${item.title}');
     } catch (e) {
-      _showSnack('卸载失败：$e');
+      if (!mounted) return;
+      _showSnack(_err(e));
     } finally {
       if (mounted) setState(() => _loadingIds.remove(item.id));
     }
@@ -655,10 +718,11 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     final installed = _installedIds.contains(item.id);
     final loading = _loadingIds.contains(item.id) || _bulkRunning;
 
+    // 内容页优化：题干优先，操作下沉；标签收敛，避免窄屏 trailing 挤裁
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: installed
               ? AppTokens.emerald.withValues(alpha: 0.26)
@@ -667,106 +731,140 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
         boxShadow: AppTokens.shadowSm(color: item.color),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+        padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: item.color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(15),
-              ),
-              child: Icon(item.icon, color: item.color, size: 22),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: item.color.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(item.icon, color: item.color, size: 20),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: Text(
-                          item.title,
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w900,
-                            color: AppTokens.textPrimary,
+                      Text(
+                        item.title,
+                        style: const TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w900,
+                          color: AppTokens.textPrimary,
+                          height: 1.2,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        item.subtitle,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTokens.textSecondary,
+                          height: 1.3,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                MarketStatusBadge(installed: installed),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                MarketTagChip(text: _areaLabel(item.areaCode)),
+                MarketTagChip(text: _actionLabel(item.actionCode)),
+                if (item.version.trim().isNotEmpty)
+                  MarketTagChip(text: 'v${item.version}'),
+                if (item.deprecated) const MarketTagChip(text: '已废弃'),
+                for (final tag in item.tags.take(2)) MarketTagChip(text: tag),
+                // 安装前的权限知情权：卡片直接标出插件申请的权限，
+                // 用户投稿 → 管理员审核 → 他人安装 的链路里，普通用户
+                // 装之前必须能看到它要什么（网络、打开页面等）。
+                if (item.permissions.isNotEmpty)
+                  MarketTagChip(text: '权限：${item.permissions.join('、')}'),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                if (item.author.trim().isNotEmpty)
+                  Expanded(
+                    child: Text(
+                      '作者：${item.author}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        color: AppTokens.textTertiary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  )
+                else
+                  const Spacer(),
+                SizedBox(
+                  height: 34,
+                  child: loading
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : installed
+                      ? OutlinedButton(
+                          onPressed: () => _uninstall(item),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            foregroundColor: AppTokens.rose,
+                            side: BorderSide(
+                              color: AppTokens.rose.withValues(alpha: 0.38),
+                            ),
+                            visualDensity: VisualDensity.compact,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          child: const Text('卸载'),
+                        )
+                      : FilledButton(
+                          onPressed: () => _install(item),
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          child: const Text('安装'),
                         ),
-                      ),
-                      const SizedBox(width: 6),
-                      MarketStatusBadge(installed: installed),
-                    ],
+                ),
+              ],
+            ),
+            if (loading &&
+                _installProgress[item.id] != null &&
+                _installProgress[item.id]! < 1) ...[
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: LinearProgressIndicator(
+                  minHeight: 3,
+                  value: _installProgress[item.id],
+                  backgroundColor: AppTokens.divider,
+                  valueColor: const AlwaysStoppedAnimation<Color>(
+                    AppTokens.primaryBlue,
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    item.subtitle,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppTokens.textSecondary,
-                      height: 1.3,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 7),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    children: [
-                      MarketTagChip(text: _areaLabel(item.areaCode)),
-                      MarketTagChip(text: _actionLabel(item.actionCode)),
-                      MarketTagChip(text: _currentChannel.label),
-                      if (item.version.trim().isNotEmpty)
-                        MarketTagChip(text: 'v${item.version}'),
-                      if (item.author.trim().isNotEmpty)
-                        MarketTagChip(text: '作者：${item.author}'),
-                      if (item.permissions.isNotEmpty)
-                        MarketTagChip(text: '权限：${item.permissions.join('、')}'),
-                      if (item.deprecated) const MarketTagChip(text: '已废弃'),
-                      for (final tag in item.tags.take(3))
-                        MarketTagChip(text: tag),
-                    ],
-                  ),
-                ],
+                ),
               ),
-            ),
-            const SizedBox(width: 10),
-            SizedBox(
-              width: 92,
-              child: loading
-                  ? const Center(
-                      child: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  : installed
-                  ? OutlinedButton(
-                      onPressed: () => _uninstall(item),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        foregroundColor: AppTokens.rose,
-                        side: BorderSide(
-                          color: AppTokens.rose.withValues(alpha: 0.38),
-                        ),
-                      ),
-                      child: const Text('卸载'),
-                    )
-                  : FilledButton(
-                      onPressed: () => _install(item),
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                      ),
-                      child: const Text('安装'),
-                    ),
-            ),
+            ],
           ],
         ),
       ),
@@ -776,12 +874,13 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
   Widget _buildMarketHero(int visibleCount) {
     final installedCount = _installedIds.length;
     final totalCount = _allTemplates.length;
+    // 内容页：压扁 Hero，列表更早进入视口
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 10),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppTokens.divider),
         boxShadow: AppTokens.shadowSm(color: AppTokens.primaryBlue),
       ),
@@ -792,9 +891,10 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
             children: [
               IconButton.filledTonal(
                 onPressed: () => Navigator.of(context).maybePop(),
-                icon: const Icon(Icons.arrow_back_rounded),
+                icon: const Icon(Icons.arrow_back_rounded, size: 20),
+                visualDensity: VisualDensity.compact,
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -803,20 +903,21 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                       '插件市场',
                       style: TextStyle(
                         color: AppTokens.textPrimary,
-                        fontSize: 22,
+                        fontSize: 18,
                         fontWeight: FontWeight.w900,
-                        letterSpacing: -0.3,
+                        letterSpacing: -0.2,
+                        height: 1.1,
                       ),
                     ),
-                    const SizedBox(height: 3),
+                    const SizedBox(height: 2),
                     Text(
-                      '搜索、验签、安装扩展 · 当前 ${_currentChannel.label}',
+                      '$_currentChannel · 已装 $installedCount / 共 $totalCount · 筛选 $visibleCount',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: AppTokens.textSecondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
@@ -827,56 +928,35 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                 onPressed: _marketLoading
                     ? null
                     : () => _loadMarket(forceRefresh: true),
-                icon: const Icon(Icons.refresh_rounded),
+                icon: const Icon(Icons.refresh_rounded, size: 20),
+                visualDensity: VisualDensity.compact,
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: MarketMetric(
-                  value: '$totalCount',
-                  label: '模板',
-                  glass: false,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: MarketMetric(
-                  value: '$visibleCount',
-                  label: '筛选',
-                  glass: false,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: MarketMetric(
-                  value: '$installedCount',
-                  label: '已装',
-                  glass: false,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
                 child: FilledButton.icon(
                   onPressed: _bulkRunning ? null : _installVisible,
-                  icon: const Icon(Icons.download_done_rounded, size: 18),
-                  label: const Text('安装当前筛选'),
+                  icon: const Icon(Icons.download_done_rounded, size: 16),
+                  label: const Text('安装筛选', style: TextStyle(fontSize: 13)),
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: _bulkRunning ? null : _removeVisible,
-                  icon: const Icon(Icons.delete_outline_rounded, size: 18),
-                  label: const Text('卸载当前筛选'),
+                  icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                  label: const Text('卸载筛选', style: TextStyle(fontSize: 13)),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppTokens.rose,
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
                     side: BorderSide(
                       color: AppTokens.rose.withValues(alpha: 0.38),
                     ),
@@ -890,8 +970,94 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     );
   }
 
+  // A3: 排序栏
+  Widget _buildSortBar() {
+    const opts = <(String, String)>[
+      ('recommended', '推荐'),
+      ('downloads', '下载量'),
+      ('updated', '最近更新'),
+      ('title', '名称'),
+    ];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Row(
+        children: [
+          const Icon(Icons.sort_rounded, size: 16, color: AppTokens.textSecondary),
+          const SizedBox(width: 6),
+          const Text(
+            '排序',
+            style: TextStyle(fontSize: 12.5, color: AppTokens.textSecondary),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final (code, label) in opts) ...[
+                    ChoiceChip(
+                      label: Text(label, style: const TextStyle(fontSize: 12)),
+                      selected: _sortBy == code,
+                      visualDensity: VisualDensity.compact,
+                      onSelected: (_) => setState(() => _sortBy = code),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // A3: 标签筛选栏
+  Widget _buildTagBar() {
+    final tags = _availableTags;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            FilterChip(
+              label: const Text('全部标签', style: TextStyle(fontSize: 12)),
+              selected: _tagFilter == 'all',
+              visualDensity: VisualDensity.compact,
+              onSelected: (_) => setState(() => _tagFilter = 'all'),
+            ),
+            const SizedBox(width: 6),
+            for (final e in tags) ...[
+              FilterChip(
+                label: Text(
+                  '${e.key} ${e.value}',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                selected: _tagFilter.toLowerCase() == e.key.toLowerCase(),
+                visualDensity: VisualDensity.compact,
+                onSelected: (_) => setState(
+                  () => _tagFilter =
+                      _tagFilter.toLowerCase() == e.key.toLowerCase()
+                          ? 'all'
+                          : e.key,
+                ),
+              ),
+              const SizedBox(width: 6),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showSnack(String text) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  String _err(Object e) {
+    if (e is PluginMarketApiException) return e.friendlyMessage;
+    return e.toString();
   }
 
   @override
@@ -963,6 +1129,9 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                       ),
                     ),
                   ),
+                  SliverToBoxAdapter(child: _buildSortBar()),
+                  if (_availableTags.isNotEmpty)
+                    SliverToBoxAdapter(child: _buildTagBar()),
                   SliverToBoxAdapter(child: _buildMetaCard()),
                   SliverToBoxAdapter(child: _buildSignatureWarning()),
                   if (visible.isEmpty)

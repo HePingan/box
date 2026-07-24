@@ -71,7 +71,7 @@ void main() {
       MaterialApp(
         home: PluginMarketPage(
           initialInstalledIds: const {},
-          onInstall: (_) async {},
+          onInstall: (_, {onProgress}) async {},
           onUninstall: (_) async {},
           manifestRepository: _FakePluginMarketManifestRepository(
             _manifest([template]).copyWith(
@@ -85,7 +85,7 @@ void main() {
       ),
     );
 
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(find.text('元数据插件'), findsOneWidget);
     expect(find.text('v2.3.0'), findsOneWidget);
@@ -113,7 +113,7 @@ void main() {
       MaterialApp(
         home: PluginMarketPage(
           initialInstalledIds: const {},
-          onInstall: (_) async => installCalls++,
+          onInstall: (_, {onProgress}) async => installCalls++,
           onUninstall: (_) async {},
           manifestRepository: _FakePluginMarketManifestRepository(
             _manifest([template]),
@@ -159,7 +159,7 @@ void main() {
         MaterialApp(
           home: PluginMarketPage(
             initialInstalledIds: const {},
-            onInstall: (template) async => installedIds.add(template.id),
+            onInstall: (template, {onProgress}) async => installedIds.add(template.id),
             onUninstall: (_) async {},
             manifestRepository: _FakePluginMarketManifestRepository(
               _manifest([good, blocked]),
@@ -168,8 +168,8 @@ void main() {
         ),
       );
 
-      await tester.pump();
-      await tester.tap(find.text('安装当前筛选'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('安装筛选'));
       await tester.pump();
       final confirmButton = tester.widget<FilledButton>(
         find.widgetWithText(FilledButton, '开始安装'),
@@ -200,7 +200,7 @@ void main() {
       MaterialApp(
         home: PluginMarketPage(
           initialInstalledIds: const {},
-          onInstall: (_) async => installCalls++,
+          onInstall: (_, {onProgress}) async => installCalls++,
           onUninstall: (_) async {},
           manifestRepository: _FakePluginMarketManifestRepository(
             _manifest([template]),

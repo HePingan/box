@@ -45,24 +45,44 @@ class MarketPill extends StatelessWidget {
 }
 
 class MarketStatusBadge extends StatelessWidget {
-  const MarketStatusBadge({super.key, required this.installed});
+  const MarketStatusBadge({
+    super.key,
+    required this.installed,
+    this.hasUpdate = false,
+    this.risk = false,
+  });
 
   final bool installed;
+  final bool hasUpdate;
+  final bool risk;
 
   @override
   Widget build(BuildContext context) {
+    final Color color;
+    final String label;
+    if (risk) {
+      color = AppTokens.rose;
+      label = '已下架';
+    } else if (hasUpdate) {
+      color = const Color(0xFFF59E0B);
+      label = '有更新';
+    } else if (installed) {
+      color = AppTokens.emerald;
+      label = '已安装';
+    } else {
+      color = AppTokens.primaryBlue;
+      label = '可安装';
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: installed
-            ? AppTokens.emerald.withValues(alpha: 0.12)
-            : AppTokens.primaryBlue.withValues(alpha: 0.10),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(AppTokens.radiusPill),
       ),
       child: Text(
-        installed ? '已安装' : '可安装',
+        label,
         style: TextStyle(
-          color: installed ? AppTokens.emerald : AppTokens.primaryBlue,
+          color: color,
           fontSize: 10,
           fontWeight: FontWeight.w900,
         ),
@@ -110,10 +130,12 @@ class MarketEmptyState extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 6),
-          const Text(
-            '换个关键词，或重置筛选查看全部模板',
+          Text(
+            loading
+                ? '正在合并平台审核清单与内置模板…'
+                : '换个关键词，或重置筛选。也可去扩展中心「投稿插件」提交配置型插件。',
             textAlign: TextAlign.center,
-            style: TextStyle(color: AppTokens.textSecondary, fontSize: 12),
+            style: const TextStyle(color: AppTokens.textSecondary, fontSize: 12),
           ),
           if (!loading) ...[
             const SizedBox(height: 14),

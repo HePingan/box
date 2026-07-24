@@ -2,19 +2,24 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
-import '../../../../../novel/core/cache_store.dart';
+import 'package:box/core/storage/cache_store.dart';
 import '../../../../../plugin_market/models/plugin_market_security.dart';
 import '../../../../../plugin_market/models/plugin_market_signature_verifier.dart';
 import '../domain/plugin_market_manifest.dart';
+import 'plugin_market_api.dart';
 
 class PluginMarketManifestRepository {
-  PluginMarketManifestRepository({CacheStore? cache})
-    : _cache = cache ?? CacheStore(namespace: 'plugin_market');
+  PluginMarketManifestRepository({
+    CacheStore? cache,
+    PluginMarketApi? api,
+  })  : _cache = cache ?? CacheStore(namespace: 'plugin_market'),
+        _api = api ?? PluginMarketApi();
 
   static final PluginMarketManifestRepository instance =
       PluginMarketManifestRepository();
 
   final CacheStore _cache;
+  final PluginMarketApi _api;
 
   String _cacheManifestKey(PluginMarketChannel channel) {
     return 'remote_manifest_v3_${channel.name}';
@@ -44,29 +49,90 @@ class PluginMarketManifestRepository {
     final cached = await _readCache(channel);
     final url = safeMarketString(remoteConfigUrl);
 
-    // 未配置远程：缓存优先
-    if (url.isEmpty) {
-      return cached ?? builtin;
-    }
-
-    // 配置远程：尝试远程
-    final remote = await _fetchRemote(
-      url,
-      requestedChannel: channel,
+    // 1) 优先拉官方平台商店清单（审核通过的用户插件）
+    final platform = await _fetchPlatformMarket(
+      channel: channel,
       security: security,
     );
 
-    if (remote != null) {
-      if (!forceRefresh && cached != null && cached.version > remote.version) {
-        return cached.copyWith(source: 'cache');
-      }
-
-      await _writeCache(channel, remote);
-      return remote;
+    // 2) 兼容旧 remoteConfigUrl 静态清单
+    PluginMarketManifest? remote;
+    if (url.isNotEmpty) {
+      remote = await _fetchRemote(
+        url,
+        requestedChannel: channel,
+        security: security,
+      );
     }
 
-    // 远程失败，回退
+    // 合并：平台商店 + 远程静态 + 内置（id 去重，平台优先）
+    final mergedTemplates = <MarketPluginTemplate>[
+      ...?platform?.templates,
+      ...?remote?.templates,
+      ...builtin.templates,
+    ];
+    final merged = PluginMarketManifest(
+      version: [
+        platform?.version ?? 0,
+        remote?.version ?? 0,
+        builtin.version,
+      ].reduce((a, b) => a > b ? a : b),
+      templates: dedupMarketPluginTemplates(mergedTemplates),
+      source: platform != null
+          ? 'platform'
+          : (remote != null ? 'remote' : (cached?.source ?? 'builtin')),
+      fetchedAt: DateTime.now(),
+      channel: channel,
+      signatureVerified: platform != null
+          ? true
+          : (remote?.signatureVerified ??
+              security.mode == PluginMarketSignMode.none),
+      signatureMode: security.mode,
+      signatureMessage: platform != null
+          ? '平台商店清单'
+          : (remote?.signatureMessage ?? builtin.signatureMessage),
+      signatureValue: remote?.signatureValue ?? '',
+    );
+
+    if (platform != null || remote != null) {
+      if (!forceRefresh &&
+          cached != null &&
+          cached.version > merged.version &&
+          cached.templates.isNotEmpty) {
+        return cached.copyWith(source: 'cache');
+      }
+      await _writeCache(channel, merged);
+      return merged;
+    }
+
+    // 未配置远程且平台不可达：缓存优先
     return cached ?? builtin;
+  }
+
+  Future<PluginMarketManifest?> _fetchPlatformMarket({
+    required PluginMarketChannel channel,
+    required PluginMarketSecurityConfig security,
+  }) async {
+    try {
+      final remote = await _api.fetchMarket(channel: channel.name);
+      if (remote.plugins.isEmpty && remote.version <= 1) {
+        // 空清单也算成功，避免误回退掩盖“暂无用户插件”
+      }
+      final templates = parseMarketPluginTemplates(remote.plugins);
+      return PluginMarketManifest(
+        version: remote.version <= 0 ? 1 : remote.version,
+        templates: templates,
+        source: 'platform',
+        fetchedAt: remote.updatedAt ?? DateTime.now(),
+        channel: channel,
+        signatureVerified: true,
+        signatureMode: security.mode,
+        signatureMessage: '平台审核商店',
+        signatureValue: '',
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<PluginMarketManifest?> _fetchRemote(
