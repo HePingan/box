@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FrameLayout 根：标题/表单正常排版，缩放手柄叠在右下角，避免 LinearLayout 顶部留白 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/ocr_entry_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/quiz_overlay_bg"
+    android:elevation="12dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:id="@+id/ocr_entry_title"
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="12dp"
+            android:paddingEnd="4dp"
+            android:background="@drawable/quiz_overlay_title_bg">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="OCR 悬浮录入"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <ImageButton
+                android:id="@+id/btn_ocr_entry_close"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                android:background="@android:color/transparent"
+                android:tint="#FFFFFF"
+                android:contentDescription="关闭" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_ocr_entry_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="6dp"
+            android:text="驾考：框题干+选项+答案栏，少框底栏/技巧"
+            android:textColor="#344054"
+            android:textSize="12sp"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:background="#F8FAFC" />
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:scrollbars="none"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <Button
+                    android:id="@+id/btn_ocr_entry_region"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="框选"
+                    android:textColor="#4F46E5"
+                    android:background="@android:color/transparent"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:padding="8dp" />
+
+                <Button
+                    android:id="@+id/btn_ocr_entry_capture"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="OCR识别"
+                    android:textColor="#4F46E5"
+                    android:background="@android:color/transparent"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:padding="8dp" />
+
+                <Button
+                    android:id="@+id/btn_ocr_entry_probe"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="试捕"
+                    android:textColor="#4F46E5"
+                    android:background="@android:color/transparent"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:padding="8dp" />
+
+                <Button
+                    android:id="@+id/btn_ocr_entry_parse"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="重解析"
+                    android:textColor="#4F46E5"
+                    android:background="@android:color/transparent"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:padding="8dp" />
+
+                <Button
+                    android:id="@+id/btn_ocr_entry_save"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="保存题库"
+                    android:textColor="#059669"
+                    android:background="@android:color/transparent"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:padding="8dp" />
+
+                <Button
+                    android:id="@+id/btn_ocr_entry_batch_start"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="一键录入"
+                    android:textColor="#DC2626"
+                    android:background="@android:color/transparent"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:padding="8dp" />
+
+                <Button
+                    android:id="@+id/btn_ocr_entry_batch_stop"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="停止"
+                    android:textColor="#6B7280"
+                    android:background="@android:color/transparent"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:padding="8dp"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="28dp"
+            android:overScrollMode="ifContentScrolls">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="OCR 原文"
+                    android:textStyle="bold"
+                    android:textSize="12sp"
+                    android:textColor="#667085" />
+
+                <EditText
+                    android:id="@+id/et_ocr_raw"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minLines="2"
+                    android:maxLines="5"
+                    android:gravity="top|start"
+                    android:textSize="12sp"
+                    android:hint="识别结果原文…"
+                    android:background="#F2F4F7"
+                    android:padding="8dp"
+                    android:inputType="textMultiLine" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="题目"
+                    android:textStyle="bold"
+                    android:textSize="12sp"
+                    android:textColor="#667085" />
+
+                <EditText
+                    android:id="@+id/et_ocr_question"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minLines="2"
+                    android:maxLines="4"
+                    android:gravity="top|start"
+                    android:textSize="13sp"
+                    android:hint="题干"
+                    android:background="#F2F4F7"
+                    android:padding="8dp"
+                    android:inputType="textMultiLine" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="选项（每行一个）"
+                    android:textStyle="bold"
+                    android:textSize="12sp"
+                    android:textColor="#667085" />
+
+                <EditText
+                    android:id="@+id/et_ocr_options"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minLines="2"
+                    android:maxLines="5"
+                    android:gravity="top|start"
+                    android:textSize="13sp"
+                    android:hint="A. …\nB. …"
+                    android:background="#F2F4F7"
+                    android:padding="8dp"
+                    android:inputType="textMultiLine" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="正确答案"
+                    android:textStyle="bold"
+                    android:textSize="12sp"
+                    android:textColor="#667085" />
+
+                <EditText
+                    android:id="@+id/et_ocr_answer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="13sp"
+                    android:hint="A / 正确 / 选项原文"
+                    android:background="#F2F4F7"
+                    android:padding="8dp"
+                    android:inputType="text" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="解析（可选）"
+                    android:textStyle="bold"
+                    android:textSize="12sp"
+                    android:textColor="#667085" />
+
+                <EditText
+                    android:id="@+id/et_ocr_analysis"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minLines="1"
+                    android:maxLines="3"
+                    android:gravity="top|start"
+                    android:textSize="13sp"
+                    android:hint="解析"
+                    android:background="#F2F4F7"
+                    android:padding="8dp"
+                    android:inputType="textMultiLine" />
+            </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
+
+    <!-- 右下角缩放手柄，叠层不占垂直空间 -->
+    <FrameLayout
+        android:id="@+id/ocr_entry_resize_handle"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="2dp"
+        android:background="@null"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="调节大小">
+
+        <View
+            android:layout_width="14dp"
+            android:layout_height="14dp"
+            android:layout_gravity="bottom|end"
+            android:layout_marginBottom="6dp"
+            android:layout_marginEnd="6dp"
+            android:background="#664F46E5" />
+    </FrameLayout>
+</FrameLayout>

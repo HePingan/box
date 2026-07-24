@@ -25,6 +25,16 @@ class OcrResult {
     final sum = scores.fold<double>(0, (a, b) => a + b);
     return sum / scores.length;
   }
+
+  /// OCR 服务没有返回行级 score 时不阻断：老服务兼容；有 score 时要求平均值达标。
+  bool meetsAutoSearchConfidence({double minimum = 0.55}) =>
+      scores.isEmpty || averageScore >= minimum;
+
+  String confidenceDiagnostic({double minimum = 0.55}) {
+    if (scores.isEmpty) return 'OCR 未提供置信度，已按兼容模式继续';
+    return 'OCR 平均置信度 ${(averageScore * 100).toStringAsFixed(0)}%'
+        '${meetsAutoSearchConfidence(minimum: minimum) ? "" : "，低于自动搜题阈值 ${(minimum * 100).round()}%"}';
+  }
 }
 
 /// 图片题 OCR 客户端。

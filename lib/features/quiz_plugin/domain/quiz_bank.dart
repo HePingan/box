@@ -6,6 +6,40 @@ import 'package:sqflite/sqflite.dart';
 
 enum QuizQuestionType { singleChoice, trueFalse }
 
+/// 本地题 → 云端投稿状态（不影响搜题 canonical id）。
+class QuizSyncStatus {
+  static const localOnly = 'local_only';
+  static const pendingReview = 'pending_review';
+  static const published = 'published';
+  static const rejected = 'rejected';
+  static const merged = 'merged';
+
+  static String normalize(String? raw, {required String origin, String source = ''}) {
+    final value = (raw ?? '').trim();
+    final isCloud = origin == 'cloud' || source.contains('云端');
+    if (value.isEmpty) return isCloud ? published : localOnly;
+    // 云端镜像不应停留在 local_only（构造默认值 / 旧数据）。
+    if (isCloud && value == localOnly) return published;
+    return value;
+  }
+
+  static String label(String status) {
+    switch (status) {
+      case pendingReview:
+        return '审核中';
+      case published:
+        return '已上云';
+      case rejected:
+        return '已拒绝';
+      case merged:
+        return '云端已有';
+      case localOnly:
+      default:
+        return '未推送';
+    }
+  }
+}
+
 class QuizBankItem {
   const QuizBankItem({
     required this.id,
@@ -16,6 +50,13 @@ class QuizBankItem {
     this.analysis,
     this.source = '录入',
     this.createdAt,
+    this.imageUrl,
+    this.category = '',
+    this.origin = 'local',
+    this.syncStatus = QuizSyncStatus.localOnly,
+    this.lastSubmitAt,
+    this.lastSubmitError,
+    this.remoteSubmissionId,
   });
 
   final String id;
@@ -26,6 +67,32 @@ class QuizBankItem {
   final String? analysis;
   final String source;
   final DateTime? createdAt;
+  final String? imageUrl;
+  /// 题库分类（云端 catalog / 本地标签）。
+  final String category;
+  /// 来源归属：`local` 本地录入/OCR，`cloud` 云端正式库。
+  final String origin;
+  /// 云端投稿状态：local_only / pending_review / published / rejected / merged。
+  final String syncStatus;
+  final DateTime? lastSubmitAt;
+  final String? lastSubmitError;
+  final String? remoteSubmissionId;
+
+  bool get isCloud => origin == 'cloud' || source.contains('云端');
+
+  /// 本地题可投稿（云端镜像不重复投稿）。
+  bool get canPushToCloud =>
+      !isCloud &&
+      (syncStatus == QuizSyncStatus.localOnly ||
+          syncStatus == QuizSyncStatus.rejected ||
+          syncStatus == QuizSyncStatus.pendingReview ||
+          syncStatus == QuizSyncStatus.merged);
+
+  bool get isUnpushedLocal =>
+      !isCloud &&
+      (syncStatus == QuizSyncStatus.localOnly ||
+          syncStatus == QuizSyncStatus.rejected ||
+          syncStatus.trim().isEmpty);
 
   QuizBankItem copyWith({
     String? id,
@@ -36,6 +103,15 @@ class QuizBankItem {
     String? analysis,
     String? source,
     DateTime? createdAt,
+    String? imageUrl,
+    String? category,
+    String? origin,
+    String? syncStatus,
+    DateTime? lastSubmitAt,
+    String? lastSubmitError,
+    String? remoteSubmissionId,
+    bool clearLastSubmitError = false,
+    bool clearRemoteSubmissionId = false,
   }) {
     return QuizBankItem(
       id: id ?? this.id,
@@ -46,6 +122,17 @@ class QuizBankItem {
       analysis: analysis ?? this.analysis,
       source: source ?? this.source,
       createdAt: createdAt ?? this.createdAt,
+      imageUrl: imageUrl ?? this.imageUrl,
+      category: category ?? this.category,
+      origin: origin ?? this.origin,
+      syncStatus: syncStatus ?? this.syncStatus,
+      lastSubmitAt: lastSubmitAt ?? this.lastSubmitAt,
+      lastSubmitError: clearLastSubmitError
+          ? null
+          : (lastSubmitError ?? this.lastSubmitError),
+      remoteSubmissionId: clearRemoteSubmissionId
+          ? null
+          : (remoteSubmissionId ?? this.remoteSubmissionId),
     );
   }
 
@@ -76,6 +163,19 @@ class QuizBankItem {
         .toString();
     final analysis = (json['analysis'] ?? json['解析'] ?? '').toString();
     final question = (json['question'] ?? '').toString();
+    final imageUrl = (json['image'] ?? json['imageUrl'] ?? '').toString().trim();
+    final source = (json['source'] ?? '录入').toString();
+    final category = (json['category'] ?? '').toString().trim();
+    final originRaw = (json['origin'] ?? '').toString().trim();
+    final origin = originRaw.isNotEmpty
+        ? originRaw
+        : (source.contains('云端') ? 'cloud' : 'local');
+    final lastSubmitError =
+        (json['lastSubmitError'] ?? json['submitError'] ?? '').toString().trim();
+    final remoteSubmissionId =
+        (json['remoteSubmissionId'] ?? json['submissionId'] ?? '')
+            .toString()
+            .trim();
 
     return QuizBankItem(
       id: (json['id'] ?? UniqueQuizKeyGenerator.key(question, options: options))
@@ -85,14 +185,38 @@ class QuizBankItem {
       options: options,
       correctAnswer: correctAnswer,
       analysis: analysis.isEmpty ? null : analysis,
-      source: (json['source'] ?? '录入').toString(),
+      source: source,
       createdAt: json['createdAt'] == null
           ? null
           : DateTime.tryParse(json['createdAt'].toString()),
+      imageUrl: imageUrl.isEmpty ? null : imageUrl,
+      category: category,
+      origin: origin,
+      syncStatus: QuizSyncStatus.normalize(
+        (json['syncStatus'] ?? '').toString(),
+        origin: origin,
+        source: source,
+      ),
+      lastSubmitAt: json['lastSubmitAt'] == null
+          ? null
+          : DateTime.tryParse(json['lastSubmitAt'].toString()),
+      lastSubmitError: lastSubmitError.isEmpty ? null : lastSubmitError,
+      remoteSubmissionId:
+          remoteSubmissionId.isEmpty ? null : remoteSubmissionId,
     );
   }
 
   factory QuizBankItem.fromDb(Map<String, Object?> row) {
+    final rawImage = (row['image'] ?? row['imageUrl'] ?? '').toString().trim();
+    final source = row['source']?.toString() ?? '录入';
+    final category = (row['category']?.toString() ?? '').trim();
+    final originRaw = (row['origin']?.toString() ?? '').trim();
+    final origin = originRaw.isNotEmpty
+        ? originRaw
+        : (source.contains('云端') ? 'cloud' : 'local');
+    final lastSubmitError = (row['lastSubmitError']?.toString() ?? '').trim();
+    final remoteSubmissionId =
+        (row['remoteSubmissionId']?.toString() ?? '').trim();
     return QuizBankItem(
       id: row['id']?.toString() ?? '',
       question: row['question']?.toString() ?? '',
@@ -104,10 +228,24 @@ class QuizBankItem {
       analysis: (row['analysis']?.toString() ?? '').trim().isEmpty
           ? null
           : row['analysis']?.toString(),
-      source: row['source']?.toString() ?? '录入',
+      source: source,
       createdAt: row['createdAt'] == null
           ? null
           : DateTime.tryParse(row['createdAt'].toString()),
+      imageUrl: rawImage.isEmpty ? null : rawImage,
+      category: category,
+      origin: origin,
+      syncStatus: QuizSyncStatus.normalize(
+        row['syncStatus']?.toString(),
+        origin: origin,
+        source: source,
+      ),
+      lastSubmitAt: row['lastSubmitAt'] == null
+          ? null
+          : DateTime.tryParse(row['lastSubmitAt'].toString()),
+      lastSubmitError: lastSubmitError.isEmpty ? null : lastSubmitError,
+      remoteSubmissionId:
+          remoteSubmissionId.isEmpty ? null : remoteSubmissionId,
     );
   }
 
@@ -138,6 +276,19 @@ class QuizBankItem {
     if (analysis != null && analysis!.isNotEmpty) 'analysis': analysis,
     'source': source,
     if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
+    if (imageUrl != null && imageUrl!.isNotEmpty) 'image': imageUrl,
+    if (category.isNotEmpty) 'category': category,
+    'origin': origin,
+    'syncStatus': QuizSyncStatus.normalize(
+      syncStatus,
+      origin: origin,
+      source: source,
+    ),
+    if (lastSubmitAt != null) 'lastSubmitAt': lastSubmitAt!.toIso8601String(),
+    if (lastSubmitError != null && lastSubmitError!.isNotEmpty)
+      'lastSubmitError': lastSubmitError,
+    if (remoteSubmissionId != null && remoteSubmissionId!.isNotEmpty)
+      'remoteSubmissionId': remoteSubmissionId,
   };
 
   Map<String, Object?> toDb() => {
@@ -150,6 +301,17 @@ class QuizBankItem {
     'source': source,
     'createdAt': createdAt?.toIso8601String(),
     'updatedAt': DateTime.now().toIso8601String(),
+    'image': imageUrl,
+    'category': category,
+    'origin': origin,
+    'syncStatus': QuizSyncStatus.normalize(
+      syncStatus,
+      origin: origin,
+      source: source,
+    ),
+    'lastSubmitAt': lastSubmitAt?.toIso8601String(),
+    'lastSubmitError': lastSubmitError,
+    'remoteSubmissionId': remoteSubmissionId,
   };
 }
 
@@ -195,7 +357,12 @@ class QuizBankImportNormalization {
   final int skipped;
 }
 
-enum QuizBankWriteStatus { inserted, duplicateSkipped }
+enum QuizBankWriteStatus {
+  inserted,
+  duplicateSkipped,
+  variantInserted,
+  incompleteVariantNeedsRetry,
+}
 
 class QuizBankWriteDecision {
   const QuizBankWriteDecision({required this.status, required this.items});
@@ -212,6 +379,7 @@ class QuizBankWritePolicy {
   static QuizBankWriteDecision insertIfAbsent({
     required List<QuizBankItem> existing,
     required QuizBankItem incoming,
+    bool batchMode = false,
   }) {
     final canonical = incoming.copyWith(
       id: UniqueQuizKeyGenerator.keyFromItem(incoming),
@@ -225,10 +393,44 @@ class QuizBankWritePolicy {
         items: List.unmodifiable(existing),
       );
     }
+    final sameStem = existing.where(
+      (item) =>
+          QuizBankTextNormalizer.cleanForMatch(item.question) ==
+          QuizBankTextNormalizer.cleanForMatch(canonical.question),
+    );
+    final looksTruncatedVariant =
+        batchMode &&
+        sameStem.any(
+          (item) =>
+              _isStrictOptionSubset(canonical.options, item.options) ||
+              _isStrictOptionSubset(item.options, canonical.options),
+        );
+    if (looksTruncatedVariant) {
+      return QuizBankWriteDecision(
+        status: QuizBankWriteStatus.incompleteVariantNeedsRetry,
+        items: List.unmodifiable(existing),
+      );
+    }
     return QuizBankWriteDecision(
-      status: QuizBankWriteStatus.inserted,
+      status: sameStem.isEmpty
+          ? QuizBankWriteStatus.inserted
+          : QuizBankWriteStatus.variantInserted,
       items: List.unmodifiable([...existing, canonical]),
     );
+  }
+
+  /// A strict subset indicates that the OCR/试捕 pass likely missed options.
+  /// Use only for batch capture: manual entry remains intentionally permissive.
+  static bool _isStrictOptionSubset(List<String> left, List<String> right) {
+    final a = left
+        .map(QuizBankTextNormalizer.normalizeOption)
+        .where((option) => option.isNotEmpty)
+        .toSet();
+    final b = right
+        .map(QuizBankTextNormalizer.normalizeOption)
+        .where((option) => option.isNotEmpty)
+        .toSet();
+    return a.length < b.length && a.isNotEmpty && b.containsAll(a);
   }
 }
 
@@ -518,7 +720,7 @@ class QuizBankStorage {
     final dbPath = p.join(await getDatabasesPath(), 'quiz_bank.db');
     final db = await openDatabase(
       dbPath,
-      version: 1,
+      version: 4,
       onCreate: (database, _) async {
         await database.execute('''
 CREATE TABLE $_table (
@@ -530,12 +732,69 @@ CREATE TABLE $_table (
   analysis TEXT,
   source TEXT NOT NULL,
   createdAt TEXT,
-  updatedAt TEXT
+  updatedAt TEXT,
+  image TEXT,
+  category TEXT,
+  origin TEXT,
+  syncStatus TEXT,
+  lastSubmitAt TEXT,
+  lastSubmitError TEXT,
+  remoteSubmissionId TEXT
 )
 ''');
         await database.execute(
           'CREATE INDEX idx_quiz_bank_question ON $_table(question)',
         );
+        await database.execute(
+          'CREATE INDEX idx_quiz_bank_category ON $_table(category)',
+        );
+        await database.execute(
+          'CREATE INDEX idx_quiz_bank_origin ON $_table(origin)',
+        );
+        await database.execute(
+          'CREATE INDEX idx_quiz_bank_sync_status ON $_table(syncStatus)',
+        );
+      },
+      onUpgrade: (database, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await database.execute('ALTER TABLE $_table ADD COLUMN image TEXT');
+        }
+        if (oldVersion < 3) {
+          await database.execute('ALTER TABLE $_table ADD COLUMN category TEXT');
+          await database.execute('ALTER TABLE $_table ADD COLUMN origin TEXT');
+          await database.execute(
+            "UPDATE $_table SET origin = CASE WHEN source LIKE '%云端%' THEN 'cloud' ELSE 'local' END WHERE origin IS NULL OR origin = ''",
+          );
+          await database.execute(
+            'CREATE INDEX IF NOT EXISTS idx_quiz_bank_category ON $_table(category)',
+          );
+          await database.execute(
+            'CREATE INDEX IF NOT EXISTS idx_quiz_bank_origin ON $_table(origin)',
+          );
+        }
+        if (oldVersion < 4) {
+          await database.execute(
+            'ALTER TABLE $_table ADD COLUMN syncStatus TEXT',
+          );
+          await database.execute(
+            'ALTER TABLE $_table ADD COLUMN lastSubmitAt TEXT',
+          );
+          await database.execute(
+            'ALTER TABLE $_table ADD COLUMN lastSubmitError TEXT',
+          );
+          await database.execute(
+            'ALTER TABLE $_table ADD COLUMN remoteSubmissionId TEXT',
+          );
+          await database.execute(
+            'UPDATE $_table SET syncStatus = CASE '
+            "WHEN origin = 'cloud' OR source LIKE '%云端%' THEN 'published' "
+            "ELSE 'local_only' END "
+            "WHERE syncStatus IS NULL OR syncStatus = ''",
+          );
+          await database.execute(
+            'CREATE INDEX IF NOT EXISTS idx_quiz_bank_sync_status ON $_table(syncStatus)',
+          );
+        }
       },
     );
     _db = db;
@@ -600,7 +859,20 @@ CREATE TABLE $_table (
 
   /// Writes a new question only when its canonical identity is absent.
   /// Unlike import/legacy behavior, this never replaces an existing question.
-  static Future<QuizBankWriteStatus> insertIfAbsent(QuizBankItem item) async {
+  static Future<QuizBankWriteStatus> insertIfAbsent(
+    QuizBankItem item, {
+    bool batchMode = false,
+  }) async {
+    final existingItems = await loadAll();
+    final decision = QuizBankWritePolicy.insertIfAbsent(
+      existing: existingItems,
+      incoming: item,
+      batchMode: batchMode,
+    );
+    if (decision.status == QuizBankWriteStatus.duplicateSkipped ||
+        decision.status == QuizBankWriteStatus.incompleteVariantNeedsRetry) {
+      return decision.status;
+    }
     final db = await _database();
     final canonical = item.copyWith(
       id: UniqueQuizKeyGenerator.keyFromItem(item),
@@ -620,7 +892,7 @@ CREATE TABLE $_table (
     });
     if (!inserted) return QuizBankWriteStatus.duplicateSkipped;
     QuizBankCache.instance.assign(await loadAll());
-    return QuizBankWriteStatus.inserted;
+    return decision.status;
   }
 
   /// Merges import records without replacing questions already in the bank.
@@ -650,6 +922,130 @@ CREATE TABLE $_table (
   /// 按 id 更新；不存在则插入（同题已存在时保持原记录）。
   static Future<List<QuizBankItem>> upsertItem(QuizBankItem item) async {
     return importItems([item]);
+  }
+
+  /// 仅更新图片字段（离线缓存回写本地路径用）。
+  static Future<void> updateImagePath(String id, String imagePath) async {
+    final db = await _database();
+    final affected = await db.update(
+      _table,
+      {
+        'image': imagePath,
+        'updatedAt': DateTime.now().toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    if (affected > 0) {
+      QuizBankCache.instance.assign(await loadAll());
+    }
+  }
+
+  /// 更新云端投稿元数据（不改题干/选项/答案）。
+  static Future<void> updateSyncMeta(
+    String id, {
+    required String syncStatus,
+    DateTime? lastSubmitAt,
+    String? lastSubmitError,
+    String? remoteSubmissionId,
+    bool clearLastSubmitError = false,
+  }) async {
+    final db = await _database();
+    final patch = <String, Object?>{
+      'syncStatus': syncStatus,
+      'updatedAt': DateTime.now().toIso8601String(),
+    };
+    if (lastSubmitAt != null) {
+      patch['lastSubmitAt'] = lastSubmitAt.toIso8601String();
+    }
+    if (clearLastSubmitError) {
+      patch['lastSubmitError'] = null;
+    } else if (lastSubmitError != null) {
+      patch['lastSubmitError'] = lastSubmitError;
+    }
+    if (remoteSubmissionId != null) {
+      patch['remoteSubmissionId'] = remoteSubmissionId;
+    }
+    final affected = await db.update(
+      _table,
+      patch,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    if (affected > 0) {
+      QuizBankCache.instance.assign(await loadAll());
+    }
+  }
+
+  /// 云端同步合并：新题插入；已存在题可补写 image/analysis，不覆盖题干答案。
+  static Future<int> mergeCloudItems(List<QuizBankItem> items) async {
+    final db = await _database();
+    final normalized = QuizBankImportNormalizer.canonicalize(items).items;
+    if (normalized.isEmpty) return 0;
+    var inserted = 0;
+    await db.transaction((txn) async {
+      for (final item in normalized) {
+        final existing = await txn.query(
+          _table,
+          where: 'id = ?',
+          whereArgs: [item.id],
+          limit: 1,
+        );
+        if (existing.isEmpty) {
+          final cloudItem = item.copyWith(
+            origin: 'cloud',
+            syncStatus: QuizSyncStatus.published,
+            source: item.source.contains('云端') ? item.source : '云端题库',
+            clearLastSubmitError: true,
+          );
+          await txn.insert(_table, cloudItem.toDb());
+          inserted++;
+          continue;
+        }
+        final row = existing.first;
+        final oldImage = (row['image']?.toString() ?? '').trim();
+        final newImage = (item.imageUrl ?? '').trim();
+        final oldAnalysis = (row['analysis']?.toString() ?? '').trim();
+        final newAnalysis = (item.analysis ?? '').trim();
+        final oldCategory = (row['category']?.toString() ?? '').trim();
+        final newCategory = item.category.trim();
+        final oldOrigin = (row['origin']?.toString() ?? '').trim();
+        final patch = <String, Object?>{};
+        if (newImage.isNotEmpty) {
+          final oldIsLocal =
+              oldImage.startsWith('/') || oldImage.startsWith('file:');
+          final newIsRemote =
+              newImage.startsWith('http') || newImage.startsWith('/api/');
+          if (oldImage.isEmpty ||
+              (!oldIsLocal && newIsRemote && oldImage != newImage)) {
+            patch['image'] = newImage;
+          }
+        }
+        if (oldAnalysis.isEmpty && newAnalysis.isNotEmpty) {
+          patch['analysis'] = newAnalysis;
+        }
+        if (oldCategory.isEmpty && newCategory.isNotEmpty) {
+          patch['category'] = newCategory;
+        }
+        if (oldOrigin.isEmpty || oldOrigin == 'local') {
+          patch['origin'] = 'cloud';
+        }
+        // 云端正式库命中后，本地投稿态收敛为已上云。
+        patch['syncStatus'] = QuizSyncStatus.published;
+        patch['lastSubmitError'] = null;
+        if (patch.isNotEmpty) {
+          patch['updatedAt'] = DateTime.now().toIso8601String();
+          await txn.update(
+            _table,
+            patch,
+            where: 'id = ?',
+            whereArgs: [item.id],
+          );
+        }
+      }
+    });
+    QuizBankCache.instance.assign(await loadAll());
+    return inserted;
   }
 
   /// Atomically writes the replacement before removing the old identity.

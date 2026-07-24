@@ -1,6 +1,6 @@
-import 'package:box/features/quiz_plugin/quiz_bank.dart';
-import 'package:box/features/quiz_plugin/quiz_config.dart';
-import 'package:box/features/quiz_plugin/quiz_engine.dart';
+import 'package:box/features/quiz_plugin/domain/quiz_bank.dart';
+import 'package:box/features/quiz_plugin/domain/quiz_config.dart';
+import 'package:box/features/quiz_plugin/data/quiz_engine.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

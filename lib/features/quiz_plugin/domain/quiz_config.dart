@@ -26,6 +26,12 @@ class QuizConfig {
     this.ocrEndpoint = 'https://ocr.hpa888.top',
     this.ocrToken = '',
     this.overlayOpacity = 1.0,
+    /// 离开 box 进入第三方 App 时是否自动考试模式
+    this.autoExamOnLeaveApp = true,
+    /// 仅对这些包名自动考试模式（逗号/换行分隔）；空=对所有非系统 App 生效
+    this.autoExamPackages = '',
+    /// 考试模式悬浮窗尺寸：small / standard / large。
+    this.examOverlaySize = 'standard',
   });
 
   final bool enabled;
@@ -75,6 +81,15 @@ class QuizConfig {
   /// 答案悬浮窗整体透明度（0.3~1.0）。
   final double overlayOpacity;
 
+  /// 切到第三方 App 时自动进入考试模式。
+  final bool autoExamOnLeaveApp;
+
+  /// 自动考试模式包名白名单；空表示除系统外全部。
+  final String autoExamPackages;
+
+  /// 考试模式悬浮窗尺寸：small / standard / large。
+  final String examOverlaySize;
+
   QuizConfig copyWith({
     bool? enabled,
     String? apiUrl,
@@ -98,6 +113,9 @@ class QuizConfig {
     String? ocrEndpoint,
     String? ocrToken,
     double? overlayOpacity,
+    bool? autoExamOnLeaveApp,
+    String? autoExamPackages,
+    String? examOverlaySize,
   }) {
     return QuizConfig(
       enabled: enabled ?? this.enabled,
@@ -122,6 +140,9 @@ class QuizConfig {
       ocrEndpoint: ocrEndpoint ?? this.ocrEndpoint,
       ocrToken: ocrToken ?? this.ocrToken,
       overlayOpacity: overlayOpacity ?? this.overlayOpacity,
+      autoExamOnLeaveApp: autoExamOnLeaveApp ?? this.autoExamOnLeaveApp,
+      autoExamPackages: autoExamPackages ?? this.autoExamPackages,
+      examOverlaySize: examOverlaySize ?? this.examOverlaySize,
     );
   }
 
@@ -148,6 +169,9 @@ class QuizConfig {
     'ocrEndpoint': ocrEndpoint,
     'ocrToken': ocrToken,
     'overlayOpacity': overlayOpacity,
+    'autoExamOnLeaveApp': autoExamOnLeaveApp,
+    'autoExamPackages': autoExamPackages,
+    'examOverlaySize': examOverlaySize,
   };
 
   factory QuizConfig.fromJson(Map<String, dynamic> json) {
@@ -180,7 +204,21 @@ class QuizConfig {
       ocrToken: (json['ocrToken'] as String?) ?? '',
       overlayOpacity: ((json['overlayOpacity'] as num?)?.toDouble() ?? 1.0)
           .clamp(0.3, 1.0),
+      autoExamOnLeaveApp: (json['autoExamOnLeaveApp'] as bool?) ?? true,
+      autoExamPackages: (json['autoExamPackages'] as String?) ?? '',
+      examOverlaySize: _parseExamOverlaySize(json['examOverlaySize'] as String?),
     );
+  }
+
+  static String _parseExamOverlaySize(String? value) {
+    switch (value) {
+      case 'small':
+      case 'standard':
+      case 'large':
+        return value!;
+      default:
+        return 'standard';
+    }
   }
 
   static String _parseDisplayMode(String? value) {

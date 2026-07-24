@@ -8,98 +8,129 @@
     <LinearLayout
         android:id="@+id/answer_container"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="match_parent"
         android:orientation="vertical"
         android:background="@drawable/quiz_overlay_bg"
-        android:elevation="8dp"
-        android:padding="0dp">
+        android:elevation="10dp"
+        android:clipToPadding="false"
+        android:clipChildren="false">
 
+        <!-- 标题栏（仅此区域可拖动） -->
         <LinearLayout
+            android:id="@+id/title_bar"
             android:layout_width="match_parent"
-            android:layout_height="40dp"
+            android:layout_height="36dp"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:paddingLeft="12dp"
-            android:paddingRight="4dp"
-            android:background="#4F46E5">
+            android:paddingStart="10dp"
+            android:paddingEnd="6dp"
+            android:background="@drawable/quiz_overlay_title_bg">
+
+            <!-- 左侧留白作为拖动区域：标题栏只保留相似度、眼睛与关闭。 -->
+            <View
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1" />
 
             <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="答题助手"
+                android:id="@+id/tv_title"
+                android:layout_width="wrap_content"
+                android:layout_height="20dp"
+                android:minWidth="0dp"
+                android:maxWidth="56dp"
+                android:layout_marginEnd="4dp"
+                android:gravity="center"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:background="@drawable/quiz_similarity_badge_bg"
+                android:text="检索中"
                 android:textColor="#FFFFFF"
-                android:textSize="14sp"
-                android:textStyle="bold" />
+                android:textSize="9sp"
+                android:textStyle="bold"
+                android:maxLines="1"
+                android:ellipsize="end" />
 
-            <ImageButton
-                android:id="@+id/btn_font"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:src="@android:drawable/ic_menu_add"
-                android:background="@null"
-                android:scaleType="center"
-                android:tint="#FFFFFF"
-                android:alpha="0.8"
-                android:contentDescription="字号" />
-
-            <ImageButton
-                android:id="@+id/btn_collapse"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:src="@android:drawable/arrow_up_float"
-                android:background="@null"
-                android:scaleType="center"
-                android:tint="#FFFFFF"
-                android:alpha="0.8"
-                android:contentDescription="折叠" />
-
+            <!-- 眼睛 / 关闭：统一 26dp 轻量圆形按钮，避免系统大图标显笨 -->
+            <!-- 区域选择：与眼睛同规格，点进框选 -->
             <ImageButton
                 android:id="@+id/btn_area"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:src="@android:drawable/ic_menu_crop"
-                android:background="@null"
-                android:scaleType="center"
-                android:tint="#FFFFFF"
-                android:alpha="0.8"
-                android:contentDescription="选择识别区域" />
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginEnd="4dp"
+                android:padding="5dp"
+                android:src="@drawable/ic_region_overlay"
+                android:background="@drawable/quiz_title_action_bg"
+                android:scaleType="fitCenter"
+                android:tint="#F8FAFC"
+                android:alpha="0.95"
+                android:contentDescription="设置识别区域" />
 
             <ImageButton
-                android:id="@+id/btn_search"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:src="@android:drawable/ic_menu_search"
-                android:background="@null"
-                android:scaleType="center"
-                android:tint="#FFFFFF"
-                android:alpha="0.8"
-                android:contentDescription="搜题" />
+                android:id="@+id/btn_hide_overlay"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginEnd="4dp"
+                android:padding="5dp"
+                android:src="@drawable/ic_eye_overlay"
+                android:background="@drawable/quiz_title_action_bg"
+                android:scaleType="fitCenter"
+                android:tint="#F8FAFC"
+                android:alpha="0.95"
+                android:contentDescription="隐藏为小圆点" />
 
             <ImageButton
                 android:id="@+id/btn_close"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:src="@android:drawable/ic_menu_close_clear_cancel"
-                android:background="@null"
-                android:scaleType="center"
-                android:tint="#FFFFFF"
-                android:alpha="0.8"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:padding="5dp"
+                android:src="@drawable/ic_close_overlay"
+                android:background="@drawable/quiz_title_action_bg"
+                android:scaleType="fitCenter"
+                android:tint="#F8FAFC"
+                android:alpha="0.95"
                 android:contentDescription="关闭" />
+
+            <!-- 保留旧操作 id 供无障碍/普通浮窗路径兼容；操作入口已从标题栏移除。 -->
+            <View android:id="@+id/btn_collapse" android:layout_width="1dp" android:layout_height="1dp" android:visibility="gone" />
+            <View android:id="@+id/btn_probe" android:layout_width="1dp" android:layout_height="1dp" android:visibility="gone" />
+            <View android:id="@+id/btn_search" android:layout_width="1dp" android:layout_height="1dp" android:visibility="gone" />
+            <View android:id="@+id/btn_more" android:layout_width="1dp" android:layout_height="1dp" android:visibility="gone" />
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/tv_question"
+        <!-- 状态条：捕获/搜题/命中/未命中 -->
+        <View
+            android:id="@+id/status_bar"
+            android:layout_width="match_parent"
+            android:layout_height="3dp"
+            android:background="#4F46E5" />
+
+        <!-- 摘要条已移除：相似度只在标题显示，答案只在正文显示，避免重复占高。 -->
+
+        <!-- 题目区：限高，长题干在区内自滚，不挤占答案首屏 -->
+        <ScrollView
+            android:id="@+id/scroll_question"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:padding="12dp"
-            android:background="#FFFFFF"
-            android:text="等待捕获题目…"
-            android:textColor="#101828"
-            android:textSize="14sp"
-            android:maxLines="12"
-            android:ellipsize="end"
-            android:lineSpacingExtra="4dp" />
+            android:maxHeight="96dp"
+            android:fillViewport="false"
+            android:overScrollMode="ifContentScrolls"
+            android:scrollbars="vertical">
+
+            <TextView
+                android:id="@+id/tv_question"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="10dp"
+                android:paddingBottom="8dp"
+                android:background="#FFFFFF"
+                android:text="等待捕获题目…"
+                android:textColor="#101828"
+                android:textSize="14sp"
+                android:lineSpacingExtra="3dp"
+                android:textIsSelectable="false" />
+        </ScrollView>
 
         <View
             android:id="@+id/answer_divider"
@@ -107,124 +138,352 @@
             android:layout_height="0.5dp"
             android:background="#E6EAF2" />
 
-        <TextView
-            android:id="@+id/tv_answer"
+        <!-- 答案区优先占剩余高度 -->
+        <ScrollView
+            android:id="@+id/scroll_answer"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:padding="12dp"
-            android:background="#FFFFFF"
-            android:text="等待搜题结果…"
-            android:textColor="#667085"
-            android:textSize="13sp"
-            android:maxLines="14"
-            android:ellipsize="end"
-            android:lineSpacingExtra="3dp" />
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="false"
+            android:overScrollMode="ifContentScrolls"
+            android:scrollbars="vertical">
+
+            <TextView
+                android:id="@+id/tv_answer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="12dp"
+                android:background="#F8FAFC"
+                android:text="等待搜题结果…"
+                android:textColor="#344054"
+                android:textSize="13sp"
+                android:lineSpacingExtra="3dp"
+                android:textIsSelectable="false" />
+        </ScrollView>
     </LinearLayout>
 
-    <!-- 右下角缩放手柄（拖动改变悬浮窗大小） -->
-    <ImageView
-        android:id="@+id/resize_handle"
+    <!-- 隐身态入口：仅显示极小半透明眼睛圆点，点击立即恢复完整答案窗。 -->
+    <ImageButton
+        android:id="@+id/hidden_dot"
         android:layout_width="28dp"
         android:layout_height="28dp"
-        android:layout_gravity="bottom|end"
-        android:padding="4dp"
-        android:src="@android:drawable/ic_menu_crop"
-        android:tint="#4F46E5"
-        android:background="#FFFFFF"
-        android:alpha="0.9"
-        android:scaleType="fitCenter"
-        android:contentDescription="缩放" />
-
-    <!-- 识别区域调节层（默认隐藏） -->
-    <com.example.box.RegionSelectorView
-        android:id="@+id/region_selector"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_gravity="center"
+        android:src="@drawable/ic_eye_overlay"
+        android:background="@drawable/quiz_hidden_dot_bg"
+        android:padding="6dp"
+        android:tint="#FFFFFF"
+        android:alpha="0.48"
         android:visibility="gone"
-        android:background="#33000000" />
+        android:contentDescription="展开答题悬浮窗" />
 
-    <!-- 区域调节顶部工具栏 -->
+    <!-- 折叠态小药丸（整卡可点展开，也可拖动） -->
     <LinearLayout
-        android:id="@+id/region_toolbar"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
+        android:id="@+id/collapsed_pill"
+        android:layout_width="wrap_content"
+        android:layout_height="40dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp"
-        android:background="#4F46E5"
-        android:visibility="gone"
-        android:elevation="4dp">
+        android:paddingStart="14dp"
+        android:paddingEnd="10dp"
+        android:background="@drawable/quiz_overlay_title_bg"
+        android:elevation="8dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:layout_marginEnd="8dp"
+            android:src="@android:drawable/ic_menu_help"
+            android:tint="#FFFFFF"
+            android:alpha="0.95" />
 
         <TextView
-            android:layout_width="0dp"
+            android:id="@+id/tv_pill_label"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="调节识别区域"
+            android:text="答题助手"
             android:textColor="#FFFFFF"
             android:textSize="14sp"
             android:textStyle="bold" />
 
-        <Button
-            android:id="@+id/btn_preset_top"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="上半屏"
-            android:textColor="#FFFFFF"
-            android:background="?android:attr/selectableItemBackground"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"/>
-
-        <Button
-            android:id="@+id/btn_preset_mid"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="中部"
-            android:textColor="#FFFFFF"
-            android:background="?android:attr/selectableItemBackground"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"/>
-
-        <Button
-            android:id="@+id/btn_preset_full"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="全屏"
-            android:textColor="#FFFFFF"
-            android:background="?android:attr/selectableItemBackground"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"/>
-
-        <Button
-            android:id="@+id/btn_region_cancel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="取消"
-            android:textColor="#FFFFFF"
-            android:background="?android:attr/selectableItemBackground"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:layout_marginEnd="8dp"/>
-
-        <Button
-            android:id="@+id/btn_region_save"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="保存"
-            android:textColor="#FFFFFF"
-            android:background="?android:attr/selectableItemBackground"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"/>
+        <ImageButton
+            android:id="@+id/btn_expand"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_chevron_down"
+            android:background="@android:color/transparent"
+            android:scaleType="center"
+            android:tint="#FFFFFF"
+            android:alpha="0.85"
+            android:contentDescription="展开" />
     </LinearLayout>
 
-</FrameLayout>
+    <!-- 右下角缩放手柄 -->
+    <ImageView
+        android:id="@+id/resize_handle"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_gravity="bottom|end"
+        android:padding="8dp"
+        android:src="@drawable/ic_resize_handle"
+        android:tint="#4F46E5"
+        android:background="@drawable/quiz_resize_handle_bg"
+        android:alpha="0.95"
+        android:scaleType="fitCenter"
+        android:contentDescription="缩放" />
+
+    <!-- 兼容旧代码：隐藏的 font 按钮 id，避免 findViewById 全改 -->
+        <ImageButton
+            android:id="@+id/btn_font"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
+            android:contentDescription="字号" />
+
+        <!-- 识别区域调节层（默认隐藏） -->
+        <com.example.box.RegionSelectorView
+            android:id="@+id/region_selector"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone"
+            android:background="@android:color/transparent" />
+
+        <!-- 区域调节工具栏：轻量主操作 + 可展开更多 -->
+        <!-- 位置：贴底部，避免顶部文字/按钮遮挡选区上边缘与顶部手柄 -->
+        <LinearLayout
+            android:id="@+id/region_toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:orientation="vertical"
+            android:background="@drawable/quiz_overlay_title_bg"
+            android:visibility="gone"
+            android:elevation="6dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp">
+
+            <TextView
+                android:id="@+id/tv_region_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="6dp"
+                android:text="拖动四角调整识别区域"
+                android:textColor="#E5E7EB"
+                android:textSize="12sp"
+                android:maxLines="1"
+                android:ellipsize="end" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp">
+
+                <Button
+                    android:id="@+id/btn_region_cancel"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:text="取消"
+                    android:textColor="#FFFFFF"
+                    android:textSize="13sp"
+                    android:background="@android:color/transparent"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp" />
+
+                <Button
+                    android:id="@+id/btn_region_probe"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:text="试捕"
+                    android:textColor="#FDE68A"
+                    android:textSize="13sp"
+                    android:background="@android:color/transparent"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp" />
+
+                <Button
+                    android:id="@+id/btn_region_save"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1.2"
+                    android:text="保存并搜题"
+                    android:textColor="#FFFFFF"
+                    android:textStyle="bold"
+                    android:textSize="13sp"
+                    android:background="@android:color/transparent"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp" />
+
+                <Button
+                    android:id="@+id/btn_region_more"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:text="更多"
+                    android:textColor="#CBD5E1"
+                    android:textSize="12sp"
+                    android:background="@android:color/transparent"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="4dp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/region_more_panel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone"
+                android:paddingTop="2dp">
+
+                <HorizontalScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="36dp"
+                    android:scrollbars="none"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp">
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="match_parent"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <Button
+                            android:id="@+id/btn_preset_top"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="题干带"
+                            android:textColor="#FFFFFF"
+                            android:background="@android:color/transparent"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:paddingStart="10dp"
+                            android:paddingEnd="10dp" />
+
+                        <Button
+                            android:id="@+id/btn_preset_mid"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="中部"
+                            android:textColor="#FFFFFF"
+                            android:background="@android:color/transparent"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:paddingStart="10dp"
+                            android:paddingEnd="10dp" />
+
+                        <Button
+                            android:id="@+id/btn_preset_full"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="全屏"
+                            android:textColor="#FFFFFF"
+                            android:background="@android:color/transparent"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:paddingStart="10dp"
+                            android:paddingEnd="10dp" />
+
+                        <Button
+                            android:id="@+id/btn_preset_last"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="上次"
+                            android:textColor="#FFFFFF"
+                            android:background="@android:color/transparent"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:paddingStart="10dp"
+                            android:paddingEnd="10dp" />
+
+                        <Button
+                            android:id="@+id/btn_region_ocr"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="OCR试识"
+                            android:textColor="#FDE68A"
+                            android:background="@android:color/transparent"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:paddingStart="10dp"
+                            android:paddingEnd="10dp" />
+
+                        <Button
+                            android:id="@+id/btn_region_aspect"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="比例:自由"
+                            android:textColor="#FFFFFF"
+                            android:background="@android:color/transparent"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:paddingStart="10dp"
+                            android:paddingEnd="10dp" />
+                    </LinearLayout>
+                </HorizontalScrollView>
+
+                <!-- 试捕/OCR 预览（默认隐藏） -->
+                <LinearLayout
+                    android:id="@+id/region_probe_panel"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="6dp"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/tv_probe_title"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="试捕预览"
+                        android:textColor="#FDE68A"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                    <ScrollView
+                        android:layout_width="match_parent"
+                        android:layout_height="96dp"
+                        android:fillViewport="true">
+
+                        <TextView
+                            android:id="@+id/tv_probe_body"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:textColor="#FFFFFF"
+                            android:textSize="12sp"
+                            android:lineSpacingExtra="2dp"
+                            android:text="—" />
+                    </ScrollView>
+
+                    <Button
+                        android:id="@+id/btn_probe_search"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="end"
+                        android:text="用此文本搜题"
+                        android:textColor="#FDE68A"
+                        android:background="@android:color/transparent"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="4dp"
+                        android:paddingTop="4dp"
+                        android:paddingBottom="2dp" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+    </FrameLayout>

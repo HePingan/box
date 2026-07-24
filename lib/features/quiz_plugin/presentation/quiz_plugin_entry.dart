@@ -1,22 +1,36 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../design_system/app_tokens.dart';
-import 'ocr_quiz_parser.dart';
-import 'quiz_bank.dart';
-import 'quiz_capture_session.dart';
-import 'quiz_config.dart';
-import 'quiz_engine.dart';
-import 'quiz_ocr_client.dart';
-import 'quiz_search_policy.dart';
+import '../../../design_system/app_tokens.dart';
+import '../../policy/plugin_policy.dart';
+import '../domain/ocr_quiz_parser.dart';
+import '../domain/quiz_bank.dart';
+import '../data/quiz_cloud_pull.dart';
+import '../data/quiz_cloud_auto_sync.dart';
+import '../domain/quiz_capture_session.dart';
+import '../domain/quiz_config.dart';
+import '../data/quiz_engine.dart';
+import '../data/quiz_ocr_client.dart';
+import '../domain/quiz_search_policy.dart';
+
+part 'quiz_plugin_config_widgets.part.dart';
+part 'quiz_plugin_region_widgets.part.dart';
+part 'quiz_plugin_cloud_widgets.part.dart';
+part 'quiz_plugin_overlay_format.part.dart';
 
 /// 答题插件 - MethodChannel 名称
 const String _kChannel = 'com.example.box/quiz_plugin';
+
+class _OcrEntrySaveResult {
+  const _OcrEntrySaveResult({required this.status, required this.message});
+
+  final QuizBankWriteStatus status;
+  final String message;
+}
 
 /// 答题插件入口
 ///
@@ -85,8 +99,18 @@ class QuizPluginEntry {
   }
 
   static Future<void> saveConfig(QuizConfig config) async {
+    // 远程禁止时强制落盘为关闭，防止本地开关绕过
+    var toSave = config;
+    final denial = await PluginGate.denial(
+      PluginIds.quizAnswer,
+      feature: PluginFeature.overlay,
+      highRisk: true,
+    );
+    if (denial != null && config.enabled) {
+      toSave = config.copyWith(enabled: false);
+    }
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_configKey, jsonEncode(config.toJson()));
+    await prefs.setString(_configKey, jsonEncode(toSave.toJson()));
     // 通知无障碍服务：按新配置重算「离开 App 自动考试模式」
     try {
       await _channel.invokeMethod('onConfigChanged');
@@ -191,6 +215,11 @@ class QuizPluginEntry {
       // 关闭答题助手时不推送内容，避免答案悬浮窗再次弹出干扰 OCR 录入
       final cfg = await loadConfig();
       if (!cfg.enabled) return;
+      final denial = await PluginGate.denial(
+        PluginIds.quizAnswer,
+        feature: PluginFeature.overlay,
+      );
+      if (denial != null) return;
 
       // status: idle | searching | hit | miss
       final resolvedStatus =
@@ -208,14 +237,14 @@ class QuizPluginEntry {
       await _channel.invokeMethod('updateOverlayContent', {
         'question': question,
         'displayMode': displayMode,
-        if (answers != null) 'answers': answers,
-        if (isSearching != null) 'isSearching': isSearching,
+        'answers': ?answers,
+        'isSearching': ?isSearching,
         'status': resolvedStatus,
-        if (answerKey != null) 'answerKey': answerKey,
+        'answerKey': ?answerKey,
         if (similarity != null) 'similarity': similarity.clamp(0, 100),
-        if (matchIndex != null) 'matchIndex': matchIndex,
-        if (matchCount != null) 'matchCount': matchCount,
-        if (answersList != null) 'answersList': answersList,
+        'matchIndex': ?matchIndex,
+        'matchCount': ?matchCount,
+        'answersList': ?answersList,
       });
     } catch (_) {}
   }
@@ -232,6 +261,22 @@ class QuizPluginEntry {
       await _channel.invokeMethod('setOverlayOpacity', {
         'opacity': opacity.clamp(0.3, 1.0),
       });
+    } catch (_) {}
+  }
+
+  /// 设置普通答题悬浮窗宽高（逻辑像素 dp），考试模式由独立档位控制。
+  static Future<void> setOverlaySize(double widthDp, double heightDp) async {
+    try {
+      await _channel.invokeMethod('setOverlaySize', {
+        'widthDp': widthDp.clamp(240, 640),
+        'heightDp': heightDp.clamp(140, 720),
+      });
+    } catch (_) {}
+  }
+
+  static Future<void> resetOverlaySize() async {
+    try {
+      await _channel.invokeMethod('resetOverlaySize');
     } catch (_) {}
   }
 
@@ -280,15 +325,6 @@ class QuizPluginEntry {
     } catch (_) {}
   }
 
-  /// 将引擎的结构化答案转成悬浮窗正文。
-  /// 本地题库的 answer.text 是完整详情（首行常为「匹配题目」），
-  /// 必须优先使用 correctAnswer，不能把整段详情硬加「答案：」前缀。
-  /// 取引擎给出的相似度，作为原生标题栏的稳定状态信息。
-  static int? _similarityForResult(QuizResult result) {
-    if (!result.isSuccess || result.answers.isEmpty) return null;
-    return similarityPercentForAnswer(result.answers.first);
-  }
-
   /// 标题相似度取结构化置信度，正文正则仅为旧数据兼容回退。
   static int? similarityPercentForAnswer(QuizAnswer answer) {
     final confidence = answer.confidence;
@@ -299,100 +335,6 @@ class QuizPluginEntry {
       RegExp(r'相似度\s*[:：]?\s*(\d{1,3})').firstMatch(answer.text)?.group(1) ??
           '',
     );
-  }
-
-  static String _withSimilarityMarker(String text, QuizResult result) {
-    final similarity = _similarityForResult(result);
-    if (similarity == null) return text;
-    // 原生标题栏从正文提取相似度；隐藏 marker 不影响用户阅读，也不会重复显示。
-    return '$text\n[[SIM:$similarity]]';
-  }
-
-  /// 悬浮窗正文只放答案本身。
-  /// 相似度已在标题栏/摘要条展示；匹配题干/选项/解析不再塞进内容区。
-  static String _overlayTextForAnswer(QuizAnswer answer) {
-    final correct = answer.correctAnswer.trim();
-    if (correct.isNotEmpty) {
-      return correct.startsWith('答案') ? correct : '答案：$correct';
-    }
-
-    // 无结构化答案时，从详情里尽量抠出答案行；抠不到再退回极简首行。
-    final detail = answer.text.trim();
-    if (detail.isEmpty) return '答案待核对';
-    final lines = detail
-        .split('\n')
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-    final answerLine = lines.firstWhere(
-      (line) =>
-          line.startsWith('答案') &&
-          !line.startsWith('答案区') &&
-          !line.contains('相似度'),
-      orElse: () => '',
-    );
-    if (answerLine.isNotEmpty) return answerLine;
-
-    final optionLike = lines.firstWhere(
-      (line) =>
-          RegExp(r'^[A-DＡ-Ｄ][.、．:：)].+').hasMatch(line) ||
-          RegExp(r'^[A-DＡ-Ｄ]$').hasMatch(line) ||
-          ((line.contains('正确') || line.contains('错误')) && line.length <= 12),
-      orElse: () => '',
-    );
-    if (optionLike.isNotEmpty) {
-      return optionLike.startsWith('答案') ? optionLike : '答案：$optionLike';
-    }
-
-    final fallback = lines.firstWhere(
-      (line) =>
-          !line.startsWith('匹配题目') &&
-          !line.startsWith('选项') &&
-          !line.startsWith('解析') &&
-          !line.contains('相似度'),
-      orElse: () => '',
-    );
-    if (fallback.isEmpty) return '答案待核对';
-    return fallback.startsWith('答案') ? fallback : '答案：$fallback';
-  }
-
-  static String _formatResultForOverlay(QuizResult result) {
-    if (result.isSuccess) {
-      final texts = result.answers
-          .map(_overlayTextForAnswer)
-          .where((text) => text.trim().isNotEmpty)
-          .toList();
-      if (texts.isEmpty) return '未找到答案';
-      if (texts.length == 1) return texts.first.trim();
-      final buf = StringBuffer('多个匹配：');
-      for (var i = 0; i < texts.length; i++) {
-        final label = String.fromCharCode(0x41 + (i % 26));
-        buf.write('\n$label. ${texts[i].trim()}');
-      }
-      return buf.toString();
-    }
-    return result.error?.isNotEmpty == true ? result.error! : '未找到答案';
-  }
-
-  /// 多匹配列表：每条单独一条，供原生切换正文。
-  static List<String> _answersListForOverlay(QuizResult result) {
-    if (!result.isSuccess) return const [];
-    return result.answers
-        .map(_overlayTextForAnswer)
-        .where((t) => t.trim().isNotEmpty)
-        .toList();
-  }
-
-  static String? _extractAnswerKey(QuizResult result) {
-    if (!result.isSuccess || result.answers.isEmpty) return null;
-    final structured = result.answers.first.correctAnswer.trim();
-    final source = structured.isNotEmpty
-        ? structured
-        : result.answers.first.text.trim();
-    final m = RegExp(r'^[答案：:\s]*([A-DＡ-Ｄ])\b').firstMatch(source);
-    if (m != null) return m.group(1);
-    final m2 = RegExp(r'答案[是为：:\s]*([A-DＡ-Ｄ])').firstMatch(source);
-    return m2?.group(1);
   }
 
   static DateTime? _lastSearchAt;
@@ -484,19 +426,6 @@ class QuizPluginEntry {
     );
   }
 
-  static String _formatDebugCapture(String captured) {
-    final lines = captured
-        .split('\n')
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .take(12)
-        .toList();
-    final preview = lines.isEmpty ? captured.trim() : lines.join('\n');
-    return '【调试】无障碍捕获到 ${captured.length} 字 / ${lines.length} 行\n'
-        '若这里有题目但无答案，说明卡在题库匹配；若这里为空/不是题目，说明卡在屏幕捕获或识别区域。\n\n'
-        '$preview';
-  }
-
   static Future<void> _handleCapturedQuestion(
     String question,
     String method,
@@ -505,6 +434,21 @@ class QuizPluginEntry {
     if (captured.isEmpty) return;
     final config = await loadConfig();
     if (!config.enabled && method != 'manualSearch') return;
+    final denial = await PluginGate.denial(
+      PluginIds.quizAnswer,
+      feature: PluginFeature.search,
+    );
+    if (denial != null) {
+      if (method == 'manualSearch') {
+        await updateOverlayContent(
+          question: captured,
+          answers: denial,
+          isSearching: false,
+          displayMode: config.displayMode,
+        );
+      }
+      return;
+    }
 
     final shouldSearch = method == 'manualSearch' || config.autoSearch;
     if (!shouldSearch) {
@@ -922,8 +866,16 @@ class QuizPluginEntry {
         final args = call.arguments;
         if (args is Map) {
           try {
-            await _handleOcrEntrySave(Map<String, dynamic>.from(args));
-            return {'ok': true, 'message': '已保存题库'};
+            final batchMode = args['batchMode'] == true;
+            final result = await _handleOcrEntrySave(
+              Map<String, dynamic>.from(args),
+              batchMode: batchMode,
+            );
+            return {
+              'ok': true,
+              'message': result.message,
+              'status': result.status.name,
+            };
           } catch (e) {
             throw PlatformException(
               code: 'OCR_SAVE_ERROR',
@@ -1023,7 +975,7 @@ class QuizPluginEntry {
     return null;
   }
 
-  /// 从 MethodChannel invokeMethod 返回值中提取字节（兼容 Uint8List / List<int>）。
+  /// 从 MethodChannel invokeMethod 返回值中提取字节（兼容 `Uint8List` / `List<int>`）。
   static Uint8List? _bytesFromRaw(dynamic raw) {
     if (raw is Uint8List && raw.isNotEmpty) return raw;
     if (raw is List<int> && raw.isNotEmpty) return Uint8List.fromList(raw);
@@ -1032,8 +984,9 @@ class QuizPluginEntry {
 
   /// 从 QuizResult.source 字符串推断来源优先级。
   static QuizResultSource _sourceForResult(QuizResult result) {
-    if (!result.isSuccess || result.answers.isEmpty)
+    if (!result.isSuccess || result.answers.isEmpty) {
       return QuizResultSource.unknown;
+    }
     final src = result.answers.first.source.toLowerCase();
     if (src.contains('本地题库')) return QuizResultSource.localBank;
     if (src.contains('ocr')) return QuizResultSource.ocrLocalBank;
@@ -1063,7 +1016,10 @@ class QuizPluginEntry {
 
   /// 保存 OCR 录入到本地题库。
   /// 校验失败时抛出 PlatformException，Native 端会收到 error() 回调。
-  static Future<void> _handleOcrEntrySave(Map<String, dynamic> args) async {
+  static Future<_OcrEntrySaveResult> _handleOcrEntrySave(
+    Map<String, dynamic> args, {
+    bool batchMode = false,
+  }) async {
     final question = (args['question']?.toString() ?? '').trim();
     if (question.isEmpty) {
       await _ocrEntrySetStatus('题目不能为空');
@@ -1123,13 +1079,41 @@ class QuizPluginEntry {
           : 'OCR录入',
       createdAt: DateTime.now(),
     );
-    final status = await QuizBankStorage.insertIfAbsent(item);
+    final status = await QuizBankStorage.insertIfAbsent(
+      item,
+      batchMode: batchMode,
+    );
     final total = (await QuizBankStorage.loadAll()).length;
-    if (status == QuizBankWriteStatus.duplicateSkipped) {
-      await _ocrEntrySetStatus('检测到完全相同的题，未写入题库（题库共 $total 条）');
-      return;
+    if (status == QuizBankWriteStatus.incompleteVariantNeedsRetry) {
+      const message = '同题干但选项疑似漏捕；请重试试捕后再翻题';
+      await _ocrEntrySetStatus(message);
+      return const _OcrEntrySaveResult(
+        status: QuizBankWriteStatus.incompleteVariantNeedsRetry,
+        message: message,
+      );
     }
-    await _ocrEntrySetStatus('已保存，题库共 $total 条');
+    if (status == QuizBankWriteStatus.duplicateSkipped) {
+      const message = '检测到完全相同的题，未写入题库';
+      await _ocrEntrySetStatus('$message（题库共 $total 条）');
+      return const _OcrEntrySaveResult(
+        status: QuizBankWriteStatus.duplicateSkipped,
+        message: message,
+      );
+    }
+    if (status == QuizBankWriteStatus.variantInserted) {
+      const message = '同题干不同选项，已作为新变体保存';
+      await _ocrEntrySetStatus('$message（题库共 $total 条）');
+      return const _OcrEntrySaveResult(
+        status: QuizBankWriteStatus.variantInserted,
+        message: message,
+      );
+    }
+    const message = '已保存题库';
+    await _ocrEntrySetStatus('$message（题库共 $total 条）');
+    return const _OcrEntrySaveResult(
+      status: QuizBankWriteStatus.inserted,
+      message: message,
+    );
   }
 
   /// 区域调节 OCR 试识：使用原生本次携带的截图字节，缺失时单次截图。
@@ -1193,6 +1177,17 @@ class QuizPluginEntry {
 
   // 配置页
   static Future<void> showConfigSheet(BuildContext context) async {
+    // 打开前刷新策略
+    await PluginPolicyStore.instance.refresh();
+    final denial = await PluginGate.denial(
+      PluginIds.quizAnswer,
+      highRisk: false,
+    );
+    if (denial != null && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(denial)),
+      );
+    }
     final config = await loadConfig();
     if (!context.mounted) return;
 
@@ -1206,6 +1201,16 @@ class QuizPluginEntry {
     );
 
     if (result != null && context.mounted) {
+      final remoteDenial = await PluginGate.denial(
+        PluginIds.quizAnswer,
+        feature: PluginFeature.overlay,
+      );
+      if (remoteDenial != null && result!.enabled && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(remoteDenial)),
+        );
+        result = result!.copyWith(enabled: false);
+      }
       await saveConfig(result!);
       await initAutoSearch();
       try {
@@ -1306,838 +1311,3 @@ class QuizPluginEntry {
 // 配置 Sheet
 // ================================================
 
-class _AccessibilityStatusCard extends StatefulWidget {
-  final Future<void> Function() onRequestAccessibility;
-
-  const _AccessibilityStatusCard({required this.onRequestAccessibility});
-
-  @override
-  State<_AccessibilityStatusCard> createState() =>
-      _AccessibilityStatusCardState();
-}
-
-class _AccessibilityStatusCardState extends State<_AccessibilityStatusCard> {
-  bool _enabled = false;
-  bool _checking = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _refresh();
-  }
-
-  @override
-  void didUpdateWidget(covariant _AccessibilityStatusCard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _refresh();
-  }
-
-  Future<void> _refresh() async {
-    _enabled = await QuizPluginEntry.isAccessibilityEnabled();
-    if (mounted) setState(() => _checking = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final label = _checking
-        ? '正在检测无障碍权限...'
-        : _enabled
-        ? '无障碍服务已启用'
-        : '无障碍服务未启用';
-    final color = _checking
-        ? Colors.grey
-        : _enabled
-        ? AppTokens.success
-        : AppTokens.danger;
-    final action = _checking
-        ? null
-        : _enabled
-        ? null
-        : TextButton.icon(
-            onPressed: () async {
-              await widget.onRequestAccessibility();
-              await _refresh();
-            },
-            icon: const Icon(Icons.open_in_new, size: 16),
-            label: const Text('去开启'),
-          );
-
-    return Container(
-      padding: const EdgeInsets.all(AppTokens.spaceLg),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(AppTokens.radiusSm),
-        border: Border.all(color: AppTokens.divider),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.support_agent_rounded, color: color, size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
-          ),
-          if (action != null) action,
-        ],
-      ),
-    );
-  }
-}
-
-class _QuizConfigSheet extends StatefulWidget {
-  final QuizConfig initial;
-  final ValueChanged<QuizConfig> onResult;
-
-  const _QuizConfigSheet({required this.initial, required this.onResult});
-
-  @override
-  State<_QuizConfigSheet> createState() => _QuizConfigSheetState();
-}
-
-class _QuizConfigSheetState extends State<_QuizConfigSheet> {
-  late QuizConfig _cfg;
-  bool _saving = false;
-  late final TextEditingController _ocrEndpointController;
-  late final TextEditingController _ocrTokenController;
-  late final TextEditingController _apiUrlController;
-  late final TextEditingController _apiKeyController;
-
-  @override
-  void initState() {
-    super.initState();
-    _cfg = widget.initial;
-    _ocrEndpointController = TextEditingController(text: _cfg.ocrEndpoint);
-    _ocrTokenController = TextEditingController(text: _cfg.ocrToken);
-    _apiUrlController = TextEditingController(text: _cfg.apiUrl);
-    _apiKeyController = TextEditingController(text: _cfg.apiKey);
-  }
-
-  @override
-  void dispose() {
-    _ocrEndpointController.dispose();
-    _ocrTokenController.dispose();
-    _apiUrlController.dispose();
-    _apiKeyController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final themeColors = QuizConfig.themeColors;
-    final colorOptions = [
-      Colors.red,
-      Colors.purple,
-      Colors.blue,
-      Colors.teal,
-      Colors.orange,
-      Colors.green,
-    ];
-
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding:
-            MediaQuery.of(context).viewInsets +
-            const EdgeInsets.all(AppTokens.spaceXl),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('答题助手设置', style: Theme.of(context).textTheme.titleMedium),
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppTokens.spaceLg),
-            _AccessibilityStatusCard(
-              onRequestAccessibility: () =>
-                  QuizPluginEntry.requestAccessibility(),
-            ),
-            const SizedBox(height: AppTokens.spaceLg),
-            SwitchListTile(
-              title: const Text('启用答题助手'),
-              subtitle: const Text('开启至少一种搜题方式即生效'),
-              value: _cfg.enabled,
-              onChanged: (v) => setState(
-                () => _cfg = _cfg.copyWith(
-                  enabled: v,
-                  accessibilityCapture: v ? true : _cfg.accessibilityCapture,
-                ),
-              ),
-            ),
-            SwitchListTile(
-              title: const Text('收到题目自动搜题'),
-              subtitle: const Text('关闭后仅展示当前捕获内容，手动触发搜题'),
-              value: _cfg.autoSearch,
-              onChanged: (v) =>
-                  setState(() => _cfg = _cfg.copyWith(autoSearch: v)),
-            ),
-            SwitchListTile(
-              title: const Text('离开 App 自动考试模式'),
-              subtitle: const Text(
-                '切到其他 App 时自动缩小为「仅答案+相似度」；回到 box 恢复。改完点保存立即生效。',
-              ),
-              value: _cfg.autoExamOnLeaveApp,
-              onChanged: (v) async {
-                setState(() => _cfg = _cfg.copyWith(autoExamOnLeaveApp: v));
-                // 立即落盘并通知原生，悬浮窗马上按新规则重算
-                await QuizPluginEntry.saveConfig(_cfg);
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        v ? '已开启：离开 App 自动进入考试模式' : '已关闭：不再自动进入考试模式',
-                      ),
-                      duration: const Duration(seconds: 2),
-                    ),
-                  );
-                }
-              },
-            ),
-            if (_cfg.autoExamOnLeaveApp) ...[
-              TextFormField(
-                initialValue: _cfg.autoExamPackages,
-                decoration: const InputDecoration(
-                  labelText: '自动考试模式包名白名单（可选）',
-                  hintText: '空=全部第三方；多包用逗号或换行，如 com.xxx.driver',
-                  border: OutlineInputBorder(),
-                ),
-                maxLines: 2,
-                onChanged: (v) =>
-                    setState(() => _cfg = _cfg.copyWith(autoExamPackages: v)),
-              ),
-              const SizedBox(height: 10),
-              const Text('考试模式悬浮窗大小'),
-              const SizedBox(height: 6),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'small', label: Text('小')),
-                  ButtonSegment(value: 'standard', label: Text('标准')),
-                  ButtonSegment(value: 'large', label: Text('大')),
-                ],
-                selected: {_cfg.examOverlaySize},
-                onSelectionChanged: (value) async {
-                  final size = value.first;
-                  setState(() => _cfg = _cfg.copyWith(examOverlaySize: size));
-                  // 立即落盘并通知原生：当前考试窗立刻换尺寸。
-                  await QuizPluginEntry.saveConfig(_cfg);
-                },
-              ),
-              const Padding(
-                padding: EdgeInsets.only(top: 4),
-                child: Text(
-                  '标准：兼顾不挡题与答案可读性；考试窗仍只显示答案与相似度。',
-                  style: TextStyle(fontSize: 12, color: Colors.black54),
-                ),
-              ),
-            ],
-            SwitchListTile(
-              title: const Text('调试捕获文本'),
-              subtitle: const Text(
-                '开启后会把无障碍捕获到的屏幕文本先显示到通知/悬浮窗，用来判断是捕获问题还是题库匹配问题',
-              ),
-              value: _cfg.debugCapture,
-              onChanged: (v) =>
-                  setState(() => _cfg = _cfg.copyWith(debugCapture: v)),
-            ),
-            SwitchListTile(
-              title: const Text('过滤无关文本'),
-              subtitle: const Text('过滤设置、广告、上一题/下一题等界面噪声；调试时可临时关闭'),
-              value: _cfg.filterNoise,
-              onChanged: (v) =>
-                  setState(() => _cfg = _cfg.copyWith(filterNoise: v)),
-            ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('最大捕获行数'),
-              subtitle: Slider(
-                min: 1,
-                max: 20,
-                divisions: 19,
-                label: '${_cfg.maxCaptureLines} 行',
-                value: _cfg.maxCaptureLines.clamp(1, 20).toDouble(),
-                onChanged: (v) => setState(
-                  () => _cfg = _cfg.copyWith(maxCaptureLines: v.round()),
-                ),
-              ),
-              trailing: Text('${_cfg.maxCaptureLines.clamp(1, 20)} 行'),
-            ),
-            SwitchListTile(
-              title: const Text('允许外部网络搜题'),
-              subtitle: const Text('默认关闭：关闭时只查本地题库，避免把题目发送到第三方 API'),
-              value: _cfg.allowExternalApi,
-              onChanged: (v) =>
-                  setState(() => _cfg = _cfg.copyWith(allowExternalApi: v)),
-            ),
-            SwitchListTile(
-              title: const Text('无障碍读屏搜题'),
-              subtitle: const Text('由无障碍服务读取屏幕题目文本后搜题（抗屏蔽，推荐）。关闭后改用 OCR 截图搜题。'),
-              value: _cfg.accessibilityCapture,
-              onChanged: (v) => setState(
-                () => _cfg = _cfg.copyWith(
-                  accessibilityCapture: v,
-                  enabled: v || _cfg.ocrSearch,
-                ),
-              ),
-            ),
-            SwitchListTile(
-              title: const Text('OCR 截图搜题'),
-              subtitle: const Text(
-                '截屏识别区域→OCR→搜题，不依赖读屏文本，有些人觉得更快。需 Android 11+，对加密/防截屏页面无效。',
-              ),
-              value: _cfg.ocrSearch,
-              onChanged: (v) => setState(
-                () => _cfg = _cfg.copyWith(
-                  ocrSearch: v,
-                  enabled: v || _cfg.accessibilityCapture,
-                ),
-              ),
-            ),
-            if (_cfg.ocrSearch) ...[
-              const SizedBox(height: AppTokens.spaceSm),
-              TextField(
-                decoration: const InputDecoration(
-                  labelText: 'OCR 服务地址',
-                  hintText: 'https://ocr.hpa888.top',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                controller: _ocrEndpointController,
-                onChanged: (v) => _cfg = _cfg.copyWith(ocrEndpoint: v),
-              ),
-              const SizedBox(height: AppTokens.spaceSm),
-              TextField(
-                decoration: const InputDecoration(
-                  labelText: 'OCR Token（可选）',
-                  hintText: '留空则免密',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                obscureText: true,
-                controller: _ocrTokenController,
-                onChanged: (v) => _cfg = _cfg.copyWith(ocrToken: v),
-              ),
-            ],
-            const SizedBox(height: AppTokens.spaceMd),
-            Text('显示模式', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 8),
-            SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(
-                  value: 'accessibility',
-                  label: Text('无障碍悬浮'),
-                  icon: Icon(Icons.accessibility_new),
-                ),
-                ButtonSegment(
-                  value: 'notification',
-                  label: Text('通知'),
-                  icon: Icon(Icons.notifications),
-                ),
-                ButtonSegment(
-                  value: 'manual',
-                  label: Text('手动'),
-                  icon: Icon(Icons.edit_note),
-                ),
-              ],
-              selected: {_cfg.displayMode},
-              onSelectionChanged: (values) {
-                setState(() => _cfg = _cfg.copyWith(displayMode: values.first));
-              },
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _displayModeHint(_cfg.displayMode),
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: AppTokens.textSecondary),
-            ),
-            const SizedBox(height: AppTokens.spaceMd),
-            Text('主题色', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 48,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: colorOptions.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 12),
-                itemBuilder: (_, i) {
-                  final selected =
-                      themeColors.isNotEmpty &&
-                      themeColors[_cfg.themeColorIndex % themeColors.length]
-                              .value ==
-                          colorOptions[i].value;
-                  return GestureDetector(
-                    onTap: () => setState(
-                      () => _cfg = _cfg.copyWith(themeColorIndex: i),
-                    ),
-                    child: Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: colorOptions[i],
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: selected
-                              ? AppTokens.textPrimary
-                              : Colors.transparent,
-                          width: 3,
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: AppTokens.spaceLg),
-            Text('悬浮窗外观', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const Icon(Icons.opacity, size: 18),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Slider(
-                    value: _cfg.overlayOpacity,
-                    min: 0.3,
-                    max: 1.0,
-                    divisions: 14,
-                    label: '${(_cfg.overlayOpacity * 100).round()}%',
-                    onChanged: (v) {
-                      setState(() => _cfg = _cfg.copyWith(overlayOpacity: v));
-                      QuizPluginEntry.setOverlayOpacity(v);
-                    },
-                  ),
-                ),
-                SizedBox(
-                  width: 48,
-                  child: Text(
-                    '${(_cfg.overlayOpacity * 100).round()}%',
-                    textAlign: TextAlign.end,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppTokens.spaceSm),
-            Text(
-              '位置/大小/字号：长按悬浮窗标题栏可拖动，右下角手柄缩放，标题栏「+」循环字号，「∧」折叠；设置会自动记忆。',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: AppTokens.textSecondary),
-            ),
-            const SizedBox(height: AppTokens.spaceLg),
-            Text('API 地址', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 8),
-            TextField(
-              enabled: _cfg.allowExternalApi,
-              decoration: const InputDecoration(
-                hintText: 'https://example.com/search',
-                helperText: '需先开启“允许外部网络搜题”',
-                border: OutlineInputBorder(),
-              ),
-              controller: _apiUrlController,
-              onChanged: (v) => _cfg = _cfg.copyWith(apiUrl: v),
-            ),
-            const SizedBox(height: AppTokens.spaceMd),
-            TextField(
-              enabled: _cfg.allowExternalApi,
-              decoration: const InputDecoration(
-                hintText: 'API Key',
-                border: OutlineInputBorder(),
-              ),
-              obscureText: true,
-              controller: _apiKeyController,
-              onChanged: (v) => _cfg = _cfg.copyWith(apiKey: v),
-            ),
-            const SizedBox(height: AppTokens.spaceXl),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton(
-                    onPressed: _saving
-                        ? null
-                        : () async {
-                            setState(() => _saving = true);
-                            await QuizPluginEntry.showRegionSheet(context);
-                            await QuizPluginEntry.saveConfig(_cfg);
-                            if (mounted) {
-                              Navigator.pop(context);
-                              widget.onResult(_cfg);
-                            }
-                            setState(() => _saving = false);
-                          },
-                    child: const Text('设置识别区域'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton.tonal(
-                    onPressed: _saving
-                        ? null
-                        : () async {
-                            await QuizPluginEntry.saveConfig(_cfg);
-                            if (_cfg.displayMode == 'notification') {
-                              await QuizPluginEntry.requestNotificationPermission();
-                            }
-                            if (mounted) {
-                              Navigator.pop(context);
-                              widget.onResult(_cfg);
-                            }
-                          },
-                    child: Text(_saving ? '保存中...' : '保存'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppTokens.spaceXl),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ================================================
-// 识别区域调节 Page
-// ================================================
-
-String _displayModeHint(String mode) {
-  switch (mode) {
-    case 'accessibility':
-      return '推荐：由无障碍服务创建系统级悬浮窗展示答案，可绕过驾考宝典等 App 的悬浮窗屏蔽/考试模式限制；无需单独的悬浮窗权限，只要开启无障碍服务即可。无障碍未开启时自动降级为通知栏。';
-    case 'manual':
-      return '不主动弹出悬浮窗或通知，只保留应用内手动搜题。';
-    default:
-      return '用通知栏显示结果，稳定但需要下拉查看；适合无法开启无障碍服务时使用。';
-  }
-}
-
-class _RegionSheetPage extends StatefulWidget {
-  const _RegionSheetPage();
-
-  @override
-  State<_RegionSheetPage> createState() => _RegionSheetPageState();
-}
-
-class _RegionSheetPageState extends State<_RegionSheetPage> {
-  Rect _region = const Rect.fromLTWH(50, 300, 400, 300);
-
-  @override
-  void initState() {
-    super.initState();
-    _syncToNative();
-    QuizPluginEntry._regionPreviewNotifier.addListener(_onPreview);
-  }
-
-  @override
-  void dispose() {
-    QuizPluginEntry._regionPreviewNotifier.removeListener(_onPreview);
-    super.dispose();
-  }
-
-  void _onPreview() {
-    final r = QuizPluginEntry._regionPreviewNotifier.value;
-    if (r != null && mounted) {
-      // 原生框选拖动时实时联动数字（仅在没有正在编辑文本时覆盖）
-      setState(() => _region = r);
-    }
-  }
-
-  Future<void> _syncToNative() async {
-    await QuizPluginEntry.updateRegion(_region);
-  }
-
-  Future<void> _openNativeSelector() async {
-    await QuizPluginEntry.openRegionSelector();
-  }
-
-  void _applyPreset(Rect rectF) {
-    setState(
-      () => _region = Rect.fromLTWH(
-        rectF.left * _screenW,
-        rectF.top * _screenH,
-        (rectF.right - rectF.left) * _screenW,
-        (rectF.bottom - rectF.top) * _screenH,
-      ),
-    );
-    QuizPluginEntry.applyRegionPreset(rectF);
-    _syncToNative();
-  }
-
-  double get _screenW => MediaQuery.of(context).size.width;
-  double get _screenH => MediaQuery.of(context).size.height;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('识别区域调节'),
-        actions: [
-          IconButton(
-            onPressed: _openNativeSelector,
-            icon: const Icon(Icons.crop_free_rounded),
-            tooltip: '在悬浮窗中调节',
-          ),
-          IconButton(
-            onPressed: () async {
-              await _syncToNative();
-              if (mounted) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(const SnackBar(content: Text('已同步到原生悬浮窗')));
-              }
-            },
-            icon: const Icon(Icons.check),
-            tooltip: '同步',
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final width = constraints.maxWidth;
-                final height = constraints.maxHeight;
-                // 预览按屏幕真实比例映射，所见即所得
-                final scaleX = width / _screenW;
-                final scaleY = height / _screenH;
-                final previewRect = Rect.fromLTRB(
-                  _region.left * scaleX,
-                  _region.top * scaleY,
-                  _region.right * scaleX,
-                  _region.bottom * scaleY,
-                );
-                return RepaintBoundary(
-                  child: CustomPaint(
-                    size: Size(width, height),
-                    painter: _RegionPainter(
-                      region: previewRect,
-                      maxSize: Size(width, height),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.all(AppTokens.spaceXl),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              boxShadow: [
-                BoxShadow(
-                  blurRadius: 12,
-                  color: Theme.of(context).shadowColor.withOpacity(0.1),
-                ),
-              ],
-            ),
-            child: SafeArea(
-              child: Column(
-                children: [
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      FilledButton.tonal(
-                        onPressed: () => _applyPreset(
-                          const Rect.fromLTRB(0.02, 0.04, 0.98, 0.55),
-                        ),
-                        child: const Text('题干带'),
-                      ),
-                      FilledButton.tonal(
-                        onPressed: () => _applyPreset(
-                          const Rect.fromLTRB(0.04, 0.28, 0.96, 0.72),
-                        ),
-                        child: const Text('中部'),
-                      ),
-                      FilledButton.tonal(
-                        onPressed: () => _applyPreset(
-                          const Rect.fromLTRB(0.02, 0.04, 0.98, 0.96),
-                        ),
-                        child: const Text('全屏'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppTokens.spaceMd),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _Field(
-                          label: 'Left',
-                          value: _region.left.toInt(),
-                          onChanged: (v) {
-                            setState(
-                              () => _region = Rect.fromLTWH(
-                                v.toDouble(),
-                                _region.top,
-                                _region.width,
-                                _region.height,
-                              ),
-                            );
-                            _syncToNative();
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _Field(
-                          label: 'Top',
-                          value: _region.top.toInt(),
-                          onChanged: (v) {
-                            setState(
-                              () => _region = Rect.fromLTWH(
-                                _region.left,
-                                v.toDouble(),
-                                _region.width,
-                                _region.height,
-                              ),
-                            );
-                            _syncToNative();
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppTokens.spaceMd),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _Field(
-                          label: 'Width',
-                          value: _region.width.toInt(),
-                          onChanged: (v) {
-                            setState(
-                              () => _region = Rect.fromLTWH(
-                                _region.left,
-                                _region.top,
-                                v.toDouble(),
-                                _region.height,
-                              ),
-                            );
-                            _syncToNative();
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _Field(
-                          label: 'Height',
-                          value: _region.height.toInt(),
-                          onChanged: (v) {
-                            setState(
-                              () => _region = Rect.fromLTWH(
-                                _region.left,
-                                _region.top,
-                                _region.width,
-                                v.toDouble(),
-                              ),
-                            );
-                            _syncToNative();
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RegionPainter extends CustomPainter {
-  final Rect region;
-  final Size maxSize;
-
-  _RegionPainter({required this.region, required this.maxSize});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0x33000000)
-      ..style = PaintingStyle.fill;
-    final border = Paint()
-      ..color = const Color(0xFF4F46E5)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2
-      ..isAntiAlias = true;
-
-    canvas.drawRect(Offset.zero & maxSize, paint);
-    canvas.drawRect(region, border);
-
-    final texts = [
-      '识别区域',
-      'x: ${region.left.toInt()}, y: ${region.top.toInt()}',
-      'w: ${region.width.toInt()}, h: ${region.height.toInt()}',
-    ];
-    final hintPaint = Paint()
-      ..shader = LinearGradient(
-        colors: [Colors.black, Colors.transparent],
-      ).createShader(region)
-      ..style = PaintingStyle.fill;
-    final textPaint = TextPainter(
-      text: const TextSpan(
-        text: '',
-        style: TextStyle(color: Colors.white, fontSize: 13),
-      ),
-      textDirection: TextDirection.ltr,
-    );
-
-    canvas.drawRect(
-      Rect.fromLTWH(region.left, region.top, region.width, 48),
-      hintPaint,
-    );
-    texts.asMap().forEach((i, line) {
-      textPaint.text = TextSpan(
-        text: line,
-        style: const TextStyle(color: Colors.white, fontSize: 13),
-      );
-      textPaint.layout();
-      textPaint.paint(
-        canvas,
-        Offset(region.left + 12, region.top + 8 + i * 18),
-      );
-    });
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
-}
-
-class _Field extends StatelessWidget {
-  final String label;
-  final int value;
-  final ValueChanged<int> onChanged;
-
-  const _Field({
-    required this.label,
-    required this.value,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return TextField(
-      keyboardType: TextInputType.number,
-      decoration: InputDecoration(
-        labelText: label,
-        border: const OutlineInputBorder(),
-        isDense: true,
-      ),
-      controller: TextEditingController(text: value.toString())
-        ..selection = TextSelection.fromPosition(
-          TextPosition(offset: value.toString().length),
-        ),
-      onChanged: (v) {
-        final n = int.tryParse(v);
-        if (n != null) onChanged(n);
-      },
-    );
-  }
-}
