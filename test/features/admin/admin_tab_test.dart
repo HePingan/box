@@ -153,9 +153,18 @@ void main() {
 
   group('AdminResourceType enum', () {
     test('values contain all expected types', () {
-      expect(AdminResourceType.values.length, 3);
+      expect(AdminResourceType.values.length, 6);
       final types = AdminResourceType.values.map((e) => e.type).toSet();
-      expect(types, containsAll(['image-provider', 'book-source', 'video-source']));
+      expect(
+          types,
+          containsAll([
+            'image-provider',
+            'book-source',
+            'video-source',
+            'quiz-bank',
+            'plugin-policy',
+            'plugin-market',
+          ]));
     });
 
     test('fromType maps correctly', () {

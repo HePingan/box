@@ -5,9 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../design_system/app_tokens.dart';
-import '../../../../novel/core/novel_source_factory.dart';
-import '../../../../novel/pages/source_manager/book_source_manager.dart';
-import '../../../../novel/pages/source_manager/book_source_model.dart';
+import '../../../../novel/novel_module.dart';
 import '../../domain/admin_resource.dart';
 import '../../domain/admin_resource_provider.dart';
 
@@ -77,7 +75,7 @@ class _BookSourceTabState extends State<_BookSourceTab> {
   bool _batchMode = false;
   final Set<String> _selectedIds = {};
 
-  int _refreshKey = 0;
+  final int _refreshKey = 0;
 
   void _showSnack(String text) {
     if (!mounted) return;
@@ -552,7 +550,7 @@ class _BookSourceTabState extends State<_BookSourceTab> {
                                       child: Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Icon(
+                                          const Icon(
                                             Icons.play_arrow_rounded,
                                             size: 14,
                                             color: AppTokens.amber,
@@ -563,7 +561,7 @@ class _BookSourceTabState extends State<_BookSourceTab> {
                                               '当前：$name',
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
-                                              style: TextStyle(
+                                              style: const TextStyle(
                                                 fontSize: 12,
                                                 color: AppTokens.amber,
                                                 fontWeight: FontWeight.w500,

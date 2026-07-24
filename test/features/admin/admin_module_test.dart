@@ -10,7 +10,7 @@ import 'package:box/features/admin/presentation/widgets/video_source_tab.dart';
 void main() {
   group('AdminResourceType enum', () {
     test('values contain all expected types', () {
-      expect(AdminResourceType.values.length, 3);
+      expect(AdminResourceType.values.length, 6);
     });
 
     test('fromType finds correct enum', () {

@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:box/features/admin/presentation/widgets/video_source_tab.dart';
-import 'package:box/video-Pro/controller/video_catalog_repository.dart';
-import 'package:box/video-Pro/models/video_category.dart';
+import 'package:box/video/controller/video_catalog_repository.dart';
+import 'package:box/video/models/video_category.dart';
 import 'package:box/video_module.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

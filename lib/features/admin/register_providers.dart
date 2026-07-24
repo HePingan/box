@@ -1,7 +1,10 @@
 import 'data/resource_registry.dart';
 import 'presentation/widgets/book_source_tab.dart';
 import 'presentation/widgets/image_provider_tab.dart';
+import 'presentation/widgets/plugin_policy_tab.dart';
+import 'presentation/widgets/plugin_market_admin_tab.dart';
 import 'presentation/widgets/video_source_tab.dart';
+import 'presentation/widgets/quiz_bank_tab.dart';
 
 /// 初始化所有资源提供者并注册到 [ResourceRegistry]
 ///
@@ -16,4 +19,13 @@ void registerResourceProviders() {
 
   // 视频源，通过 VideoController 加载远程采集站
   ResourceRegistry.register(VideoSourceResourceProvider());
+
+  // 远程题库，支持题目 CRUD 与待审核投稿状态
+  ResourceRegistry.register(QuizBankResourceProvider());
+
+  // 插件远程禁用策略
+  ResourceRegistry.register(PluginPolicyResourceProvider());
+
+  // 用户插件市场审核
+  ResourceRegistry.register(PluginMarketAdminResourceProvider());
 }
