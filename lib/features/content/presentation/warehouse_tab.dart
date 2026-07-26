@@ -48,9 +48,6 @@ class _WarehouseTabState extends State<WarehouseTab>
   bool _editMode = false;
   final Set<String> _selectedKeys = {};
 
-  // 新用户引导
-  bool _showOnboarding = true;
-
   // 懒加载：板块首次可见后标记已加载
 
   @override
@@ -117,7 +114,11 @@ class _WarehouseTabState extends State<WarehouseTab>
         });
       }
     } catch (_) {
-      if (mounted) setState(() { _booksLoaded = true; _booksError = true; });
+      if (mounted)
+        setState(() {
+          _booksLoaded = true;
+          _booksError = true;
+        });
     }
   }
 
@@ -198,7 +199,9 @@ class _WarehouseTabState extends State<WarehouseTab>
       return text.isEmpty ? fallback : text;
     } catch (_) {
       try {
-        final value = (target as dynamic).toMap().cast<String, dynamic>()[field];
+        final value = (target as dynamic)
+            .toMap()
+            .cast<String, dynamic>()[field];
         if (value == null) return fallback;
         final text = value.toString().trim();
         return text.isEmpty ? fallback : text;
@@ -251,13 +254,13 @@ class _WarehouseTabState extends State<WarehouseTab>
       (_musicItems.isNotEmpty ? 1 : 0);
 
   int get _totalItems =>
-      _bookItems.length + _comicItems.length +
-      _videoItems.length + _musicItems.length;
+      _bookItems.length +
+      _comicItems.length +
+      _videoItems.length +
+      _musicItems.length;
 
   String get _syncLabel =>
-      _bookItems.where((e) => e.sourceLabel == '书架').isNotEmpty
-          ? '已同步'
-          : '待同步';
+      _bookItems.where((e) => e.sourceLabel == '书架').isNotEmpty ? '已同步' : '待同步';
 
   WarehouseItem? get _recentItem {
     final all = [..._bookItems, ..._comicItems, ..._videoItems, ..._musicItems];
@@ -296,7 +299,10 @@ class _WarehouseTabState extends State<WarehouseTab>
         title: const Text('确认删除'),
         content: Text('将删除 ${_selectedKeys.length} 个收藏项，此操作不可撤销。'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(backgroundColor: Colors.red.shade500),
@@ -326,10 +332,14 @@ class _WarehouseTabState extends State<WarehouseTab>
 
   List<WarehouseItem> _itemsForCategory(WarehouseCategory category) {
     switch (category) {
-      case WarehouseCategory.books: return _bookItems;
-      case WarehouseCategory.comics: return _comicItems;
-      case WarehouseCategory.videos: return _videoItems;
-      case WarehouseCategory.music: return _musicItems;
+      case WarehouseCategory.books:
+        return _bookItems;
+      case WarehouseCategory.comics:
+        return _comicItems;
+      case WarehouseCategory.videos:
+        return _videoItems;
+      case WarehouseCategory.music:
+        return _musicItems;
     }
   }
 
@@ -347,7 +357,9 @@ class _WarehouseTabState extends State<WarehouseTab>
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
           title: Row(
             children: [
               CircleAvatar(
@@ -373,7 +385,9 @@ class _WarehouseTabState extends State<WarehouseTab>
                       TextFormField(
                         controller: titleController,
                         decoration: const InputDecoration(
-                            labelText: '名称', hintText: '请输入标题'),
+                          labelText: '名称',
+                          hintText: '请输入标题',
+                        ),
                         validator: (v) =>
                             (v == null || v.trim().isEmpty) ? '请输入标题' : null,
                       ),
@@ -381,26 +395,33 @@ class _WarehouseTabState extends State<WarehouseTab>
                       TextFormField(
                         controller: subtitleController,
                         decoration: const InputDecoration(
-                            labelText: '副标题',
-                            hintText: '作者 / 分类 / 导演 / 艺人'),
+                          labelText: '副标题',
+                          hintText: '作者 / 分类 / 导演 / 艺人',
+                        ),
                       ),
                       const SizedBox(height: 10),
                       TextFormField(
                         controller: coverController,
                         decoration: const InputDecoration(
-                            labelText: '封面地址', hintText: 'https://...'),
+                          labelText: '封面地址',
+                          hintText: 'https://...',
+                        ),
                       ),
                       const SizedBox(height: 10),
                       TextFormField(
                         controller: detailController,
                         decoration: const InputDecoration(
-                            labelText: '详情链接', hintText: '可选'),
+                          labelText: '详情链接',
+                          hintText: '可选',
+                        ),
                       ),
                       const SizedBox(height: 10),
                       TextFormField(
                         controller: metaController,
                         decoration: const InputDecoration(
-                            labelText: '备注', hintText: '可填写简介、状态等信息'),
+                          labelText: '备注',
+                          hintText: '可填写简介、状态等信息',
+                        ),
                         maxLines: 3,
                       ),
                     ],
@@ -476,56 +497,75 @@ class _WarehouseTabState extends State<WarehouseTab>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [
-                  CircleAvatar(
-                    backgroundColor: item.category.color.withValues(alpha: 0.12),
-                    child: Icon(item.category.icon, color: item.category.color),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(item.title,
+                Row(
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: item.category.color.withValues(
+                        alpha: 0.12,
+                      ),
+                      child: Icon(
+                        item.category.icon,
+                        color: item.category.color,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        item.title,
                         style: const TextStyle(
-                            fontSize: 17, fontWeight: FontWeight.bold)),
-                  ),
-                ]),
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
                 if (item.subtitle.trim().isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  Text(item.subtitle,
-                      style: TextStyle(color: Colors.grey.shade700)),
+                  Text(
+                    item.subtitle,
+                    style: TextStyle(color: Colors.grey.shade700),
+                  ),
                 ],
                 if (item.meta.trim().isNotEmpty) ...[
                   const SizedBox(height: 10),
-                  Text(item.meta,
-                      style: TextStyle(
-                          color: Colors.grey.shade800, height: 1.45)),
+                  Text(
+                    item.meta,
+                    style: TextStyle(color: Colors.grey.shade800, height: 1.45),
+                  ),
                 ],
                 const SizedBox(height: 14),
-                Wrap(spacing: 10, runSpacing: 10, children: [
-                  if (item.detailUrl.trim().isNotEmpty)
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        await Clipboard.setData(
-                            ClipboardData(text: item.detailUrl));
-                        if (!mounted || !sheetContext.mounted) return;
-                        Navigator.pop(sheetContext);
-                        _showSnack('链接已复制');
-                      },
-                      icon: const Icon(Icons.copy),
-                      label: const Text('复制链接'),
-                    ),
-                  if (item.sourceLabel == '手动收藏')
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        await _store.remove(item.category, item.uniqueKey);
-                        if (!mounted || !sheetContext.mounted) return;
-                        Navigator.pop(sheetContext);
-                        await _refresh();
-                        _showSnack('已移出${item.category.label}');
-                      },
-                      icon: const Icon(Icons.delete_outline),
-                      label: const Text('删除'),
-                    ),
-                ]),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    if (item.detailUrl.trim().isNotEmpty)
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          await Clipboard.setData(
+                            ClipboardData(text: item.detailUrl),
+                          );
+                          if (!mounted || !sheetContext.mounted) return;
+                          Navigator.pop(sheetContext);
+                          _showSnack('链接已复制');
+                        },
+                        icon: const Icon(Icons.copy),
+                        label: const Text('复制链接'),
+                      ),
+                    if (item.sourceLabel == '手动收藏')
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          await _store.remove(item.category, item.uniqueKey);
+                          if (!mounted || !sheetContext.mounted) return;
+                          Navigator.pop(sheetContext);
+                          await _refresh();
+                          _showSnack('已移出${item.category.label}');
+                        },
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text('删除'),
+                      ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -535,28 +575,30 @@ class _WarehouseTabState extends State<WarehouseTab>
   }
 
   void _showSnack(String text) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(text)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
   // ── 入口导航 ──
 
   void _openVideoCenter() {
     Navigator.push(
-        context, MaterialPageRoute(builder: (_) => const VideoListPage()));
+      context,
+      MaterialPageRoute(builder: (_) => const VideoListPage()),
+    );
   }
 
   void _openNovelLibrary() {
     Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()));
+      context,
+      MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
+    );
   }
 
   void _openOpenLibrarySearch() {
     Navigator.push(
-        context,
-        MaterialPageRoute(
-            builder: (_) => const ApiHubPage(initialTool: 'books')));
+      context,
+      MaterialPageRoute(builder: (_) => const ApiHubPage(initialTool: 'books')),
+    );
   }
 
   void _openComicsDialog() => _showAddDialog(WarehouseCategory.comics);
@@ -564,8 +606,6 @@ class _WarehouseTabState extends State<WarehouseTab>
   void _openMusicDialog() => _showAddDialog(WarehouseCategory.music);
 
   void _showQuickImport() => _showCategoryPicker();
-
-  void _dismissOnboarding() => setState(() => _showOnboarding = false);
 
   Future<void> _showCategoryPicker() async {
     final category = await showModalBottomSheet<WarehouseCategory>(
@@ -608,12 +648,19 @@ class _WarehouseTabState extends State<WarehouseTab>
               onRefresh: _refresh,
               child: ListView(
                 physics: const AlwaysScrollableScrollPhysics(
-                    parent: BouncingScrollPhysics()),
+                  parent: BouncingScrollPhysics(),
+                ),
                 padding: EdgeInsets.fromLTRB(
-                  14, 10, 14,
+                  14,
+                  10,
+                  14,
                   _editMode
-                      ? AppTokens.pageBottomPadding + 80
-                      : AppTokens.pageBottomPadding + 28,
+                      ? AppTokens.shellBottomNavHeight +
+                            MediaQuery.viewPaddingOf(context).bottom +
+                            96
+                      : AppTokens.shellBottomNavHeight +
+                            MediaQuery.viewPaddingOf(context).bottom +
+                            44,
                 ),
                 children: [
                   ContentHubTopCard(
@@ -633,22 +680,15 @@ class _WarehouseTabState extends State<WarehouseTab>
                     onQuickImport: _showQuickImport,
                   ),
                   const SizedBox(height: 10),
-                  ContentOverviewCard(
-                    totalItems: _totalItems,
-                    recentItem: _recentItem,
-                    isLoading: _loading,
-                    onOpenItem: _openItem,
-                    onQuickImport: _showQuickImport,
-                  ),
-                  const SizedBox(height: 12),
-                  // 新用户引导条
-                  if (_showOnboarding && _totalItems == 0 && !_loading) ...[
-                    ContentOnboardingBanner(
-                      onDismiss: _dismissOnboarding,
-                      onQuickImport: _showQuickImport,
-                      onSearchBooks: _openOpenLibrarySearch,
+                  // 最近收藏：仅在非空或加载中时显示
+                  if (_totalItems > 0 || _loading) ...[
+                    ContentOverviewCard(
+                      totalItems: _totalItems,
+                      recentItem: _recentItem,
+                      isLoading: _loading,
+                      onOpenItem: _openItem,
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
                   ],
                   // 搜索栏 + 编辑开关
                   Row(
@@ -664,8 +704,12 @@ class _WarehouseTabState extends State<WarehouseTab>
                       IconButton(
                         tooltip: _showSearch ? '关闭搜索' : '搜索',
                         icon: Icon(
-                          _showSearch ? Icons.search_off_rounded : Icons.search_rounded,
-                          color: _showSearch ? AppTokens.primaryBlue : Colors.grey.shade600,
+                          _showSearch
+                              ? Icons.search_off_rounded
+                              : Icons.search_rounded,
+                          color: _showSearch
+                              ? AppTokens.primaryBlue
+                              : Colors.grey.shade600,
                         ),
                         onPressed: () {
                           setState(() {
@@ -680,8 +724,12 @@ class _WarehouseTabState extends State<WarehouseTab>
                       IconButton(
                         tooltip: _editMode ? '完成' : '编辑',
                         icon: Icon(
-                          _editMode ? Icons.check_circle_rounded : Icons.edit_outlined,
-                          color: _editMode ? AppTokens.emerald : Colors.grey.shade600,
+                          _editMode
+                              ? Icons.check_circle_rounded
+                              : Icons.edit_outlined,
+                          color: _editMode
+                              ? AppTokens.emerald
+                              : Colors.grey.shade600,
                         ),
                         onPressed: _editMode ? _exitEditMode : _enterEditMode,
                       ),
@@ -775,7 +823,9 @@ class _WarehouseTabState extends State<WarehouseTab>
           // 批量操作栏
           if (_editMode)
             Positioned(
-              left: 0, right: 0, bottom: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
               child: BatchActionBar(
                 selectedCount: _selectedKeys.length,
                 onDelete: _batchDelete,

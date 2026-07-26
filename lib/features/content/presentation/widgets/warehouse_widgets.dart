@@ -174,8 +174,8 @@ class ContentEntryGrid extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: AppCompactActionCard(
-                  title: '公开搜书',
-                  subtitle: 'OpenLib',
+                  title: '小说搜索',
+                  subtitle: 'OpenLib 搜索',
                   icon: Icons.auto_stories_rounded,
                   color: AppTokens.orange,
                   onTap: onOpenOpenLibrarySearch,
@@ -184,7 +184,7 @@ class ContentEntryGrid extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: AppCompactActionCard(
-                  title: '小说书架',
+                  title: '书架',
                   subtitle: '本地阅读',
                   icon: Icons.menu_book_rounded,
                   color: AppTokens.amber,
@@ -199,7 +199,7 @@ class ContentEntryGrid extends StatelessWidget {
               Expanded(
                 child: AppCompactActionCard(
                   title: '漫画',
-                  subtitle: '收藏导入',
+                  subtitle: '导入收藏',
                   icon: Icons.collections_bookmark_rounded,
                   color: AppTokens.violet,
                   onTap: onOpenComics,
@@ -218,7 +218,7 @@ class ContentEntryGrid extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: AppCompactActionCard(
-                  title: '快速导入',
+                  title: '导入资源',
                   subtitle: '手动添加',
                   icon: Icons.add_link_rounded,
                   color: AppTokens.orange,
@@ -272,8 +272,11 @@ class ContentOnboardingBanner extends StatelessWidget {
               color: AppTokens.emerald.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.rocket_launch_rounded,
-                color: AppTokens.emerald, size: 22),
+            child: const Icon(
+              Icons.rocket_launch_rounded,
+              color: AppTokens.emerald,
+              size: 22,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -318,8 +321,7 @@ class ContentOnboardingBanner extends StatelessWidget {
             onTap: onDismiss,
             child: Padding(
               padding: const EdgeInsets.all(6),
-              child: Icon(Icons.close,
-                  size: 18, color: Colors.green.shade400),
+              child: Icon(Icons.close, size: 18, color: Colors.green.shade400),
             ),
           ),
         ],
@@ -381,17 +383,19 @@ class ContentOverviewCard extends StatelessWidget {
     required this.recentItem,
     required this.isLoading,
     required this.onOpenItem,
-    required this.onQuickImport,
   });
 
   final int totalItems;
   final WarehouseItem? recentItem;
   final bool isLoading;
   final ValueChanged<WarehouseItem>? onOpenItem;
-  final VoidCallback onQuickImport;
 
   @override
   Widget build(BuildContext context) {
+    // 无收藏且未加载时隐藏整个最近收藏区，节省空间
+    if ((recentItem == null && !isLoading) || totalItems == 0)
+      return const SizedBox.shrink();
+
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
@@ -431,12 +435,10 @@ class ContentOverviewCard extends StatelessWidget {
                 ),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: AppTokens.emerald.withValues(alpha: 0.10),
-                  borderRadius:
-                      BorderRadius.circular(AppTokens.radiusPill),
+                  borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                 ),
                 child: Text(
                   isLoading ? '加载中' : '$totalItems 项',
@@ -450,33 +452,12 @@ class ContentOverviewCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                flex: 3,
-                child: Builder(builder: (ctx) {
-                  final ri = recentItem;
-                  return _RecentCollectionTile(
-                    item: ri,
-                    isLoading: isLoading,
-                    onTap: ri != null && onOpenItem != null
-                        ? () => onOpenItem!(ri)
-                        : onQuickImport,
-                  );
-                }),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                flex: 2,
-                child: AppCompactActionCard(
-                  title: '快速导入',
-                  subtitle: '添加资源',
-                  icon: Icons.add_link_rounded,
-                  color: AppTokens.orange,
-                  onTap: onQuickImport,
-                ),
-              ),
-            ],
+          _RecentCollectionTile(
+            item: recentItem,
+            isLoading: isLoading,
+            onTap: recentItem != null && onOpenItem != null
+                ? () => onOpenItem!(recentItem!)
+                : () {},
           ),
         ],
       ),
@@ -497,23 +478,6 @@ class _RecentCollectionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading) {
-      return Container(
-        height: 72,
-        decoration: BoxDecoration(
-          color: Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Center(
-          child: SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-      );
-    }
-
     final i = item;
     if (i == null) {
       return Container(
@@ -535,7 +499,11 @@ class _RecentCollectionTile extends StatelessWidget {
               const SizedBox(width: 6),
               Text(
                 '还没有收藏',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppTokens.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
@@ -588,9 +556,7 @@ class _RecentCollectionTile extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    i.subtitle.trim().isNotEmpty
-                        ? i.subtitle
-                        : i.sourceLabel,
+                    i.subtitle.trim().isNotEmpty ? i.subtitle : i.sourceLabel,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -601,8 +567,10 @@ class _RecentCollectionTile extends StatelessWidget {
                   ),
                   const SizedBox(height: 3),
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 1,
+                    ),
                     decoration: BoxDecoration(
                       color: i.category.color.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(6),
@@ -666,8 +634,7 @@ class ContentSearchBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.search_rounded,
-              size: 20, color: Colors.grey.shade500),
+          Icon(Icons.search_rounded, size: 20, color: Colors.grey.shade500),
           const SizedBox(width: 10),
           Expanded(
             child: TextField(
@@ -699,8 +666,7 @@ class ContentSearchBar extends StatelessWidget {
             GestureDetector(
               onTap: onClear,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: AppTokens.emerald.withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(10),
@@ -776,8 +742,7 @@ class _WarehouseSectionState extends State<WarehouseSection>
       duration: const Duration(milliseconds: 200),
       vsync: this,
     );
-    _anim = CurvedAnimation(
-        parent: _animController, curve: Curves.easeInOut);
+    _anim = CurvedAnimation(parent: _animController, curve: Curves.easeInOut);
     if (_expanded) _animController.value = 1.0;
   }
 
@@ -822,8 +787,11 @@ class _WarehouseSectionState extends State<WarehouseSection>
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Row(
                   children: [
-                    Icon(widget.category.icon,
-                        size: 18, color: widget.category.color),
+                    Icon(
+                      widget.category.icon,
+                      size: 18,
+                      color: widget.category.color,
+                    ),
                     const SizedBox(width: 8),
                     Text(
                       widget.category.hubLabel,
@@ -900,13 +868,13 @@ class _WarehouseSectionState extends State<WarehouseSection>
         actionLabel: widget.category == WarehouseCategory.videos
             ? '打开影视搜索'
             : widget.category == WarehouseCategory.books
-                ? '打开小说书架'
-                : '添加一个',
+            ? '打开小说书架'
+            : '添加一个',
         onAction: widget.category == WarehouseCategory.videos
             ? widget.onOpenVideoCenter
             : widget.category == WarehouseCategory.books
-                ? widget.onOpenNovelLibrary
-                : () => widget.onAdd(widget.category),
+            ? widget.onOpenNovelLibrary
+            : () => widget.onAdd(widget.category),
       );
     }
 
@@ -919,8 +887,7 @@ class _WarehouseSectionState extends State<WarehouseSection>
         separatorBuilder: (_, _) => const SizedBox(width: 10),
         itemBuilder: (context, index) {
           final item = widget.items[index];
-          final isSelected =
-              widget.selectedKeys.contains(item.uniqueKey);
+          final isSelected = widget.selectedKeys.contains(item.uniqueKey);
           return WarehouseCard(
             item: item,
             editMode: widget.editMode,
@@ -997,8 +964,11 @@ class WarehouseCard extends StatelessWidget {
                           ),
                         ),
                         child: isSelected
-                            ? const Icon(Icons.check,
-                                size: 14, color: Colors.white)
+                            ? const Icon(
+                                Icons.check,
+                                size: 14,
+                                color: Colors.white,
+                              )
                             : null,
                       ),
                     ),
@@ -1010,8 +980,7 @@ class WarehouseCard extends StatelessWidget {
               item.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.w600),
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 2),
             Text(
@@ -1036,8 +1005,7 @@ class WarehouseCard extends StatelessWidget {
     return Container(
       color: const Color(0xFFE9ECEF),
       child: Center(
-        child: Icon(item.category.icon,
-            size: 32, color: Colors.grey.shade500),
+        child: Icon(item.category.icon, size: 32, color: Colors.grey.shade500),
       ),
     );
   }
@@ -1069,8 +1037,9 @@ class WarehouseErrorBox extends StatelessWidget {
             Text(
               '加载失败',
               style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.red.shade400),
+                fontWeight: FontWeight.bold,
+                color: Colors.red.shade400,
+              ),
             ),
           ],
         ),
@@ -1116,16 +1085,10 @@ class BatchActionBar extends StatelessWidget {
           children: [
             Text(
               '已选 $selectedCount 项',
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
             ),
             const Spacer(),
-            OutlinedButton(
-              onPressed: onCancel,
-              child: const Text('取消'),
-            ),
+            OutlinedButton(onPressed: onCancel, child: const Text('取消')),
             const SizedBox(width: 10),
             FilledButton.icon(
               onPressed: selectedCount > 0 ? onDelete : null,
@@ -1178,23 +1141,29 @@ class ContentHeaderMetricPill extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      color: AppTokens.textPrimary,
-                      fontSize: 18,
-                      height: 1,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -0.2)),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppTokens.textPrimary,
+                  fontSize: 18,
+                  height: 1,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.2,
+                ),
+              ),
               const SizedBox(height: 4),
-              Text(label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      color: AppTokens.textSecondary,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700)),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppTokens.textSecondary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ],
           ),
         ],
@@ -1221,17 +1190,23 @@ class WarehouseSectionHeader extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title,
-                  style: const TextStyle(
-                      color: AppTokens.textPrimary,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900)),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: AppTokens.textPrimary,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
               const SizedBox(height: 3),
-              Text(subtitle,
-                  style: const TextStyle(
-                      color: AppTokens.textSecondary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600)),
+              Text(
+                subtitle,
+                style: const TextStyle(
+                  color: AppTokens.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ],
           ),
         ),
