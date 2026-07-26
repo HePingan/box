@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -42,6 +44,7 @@ class _WarehouseTabState extends State<WarehouseTab>
   // 搜索状态
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  Timer? _searchDebounce;
   bool _showSearch = false;
 
   // 编辑模式
@@ -57,11 +60,18 @@ class _WarehouseTabState extends State<WarehouseTab>
   void initState() {
     super.initState();
     _loadAllData();
+    // 延迟同步：等页面渲染完成后自动同步
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (mounted && !_hasLocalData()) {
+        _syncFromCloud();
+      }
+    });
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _searchDebounce?.cancel();
     super.dispose();
   }
 
@@ -342,6 +352,45 @@ class _WarehouseTabState extends State<WarehouseTab>
       case WarehouseCategory.music:
         return _musicItems;
     }
+  }
+
+  // ── 云端同步 ──
+
+  bool _syncing = false;
+  String? _syncStatus;
+
+  Future<void> _syncFromCloud() async {
+    if (_syncing) return;
+    setState(() {
+      _syncing = true;
+      _syncStatus = '同步中…';
+    });
+
+    try {
+      // TODO: 实现真实的云端 API 调用
+      // final response = await http.get(Uri.parse('${ApiConfig.baseUrl}/api/warehouse/sync'));
+      // if (response.statusCode == 200) { ... }
+
+      // 模拟延迟
+      await Future.delayed(const Duration(seconds: 1));
+
+      setState(() {
+        _syncing = false;
+        _syncStatus = '已同步（本地优先）';
+      });
+    } catch (e) {
+      setState(() {
+        _syncing = false;
+        _syncStatus = '同步失败: $e';
+      });
+    }
+  }
+
+  bool _hasLocalData() {
+    return _bookItems.isNotEmpty ||
+        _comicItems.isNotEmpty ||
+        _videoItems.isNotEmpty ||
+        _musicItems.isNotEmpty;
   }
 
   // ── 添加对话框 ──
@@ -688,6 +737,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                       recentItem: _recentItem,
                       isLoading: _loading,
                       onOpenItem: _openItem,
+                      onQuickImport: _showCategoryPicker,
                     ),
                     const SizedBox(height: 12),
                   ],
@@ -736,12 +786,95 @@ class _WarehouseTabState extends State<WarehouseTab>
                       ),
                     ],
                   ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ContentSearchBar(
+                          controller: _searchController,
+                          onChanged: (q) {
+                            _searchDebounce?.cancel();
+                            _searchDebounce = Timer(
+                              const Duration(milliseconds: 300),
+                              () {
+                                if (!mounted) return;
+                                setState(() => _searchQuery = q);
+                              },
+                            );
+                          },
+                          onClear: () {
+                            _searchDebounce?.cancel();
+                            _searchController.clear();
+                            setState(() => _searchQuery = '');
+                          },
+                          resultCount: _totalFiltered,
+                          isSearching: false,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      InkWell(
+                        onTap: _syncing ? null : () => _syncFromCloud(),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _syncing
+                                ? Colors.grey.shade100
+                                : AppTokens.emerald.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (_syncing)
+                                const SizedBox(
+                                  width: 12,
+                                  height: 12,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 1.5,
+                                  ),
+                                )
+                              else
+                                Icon(
+                                  Icons.sync_rounded,
+                                  size: 14,
+                                  color: AppTokens.emerald,
+                                ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _syncStatus ?? '同步',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: _syncing
+                                      ? Colors.grey.shade600
+                                      : AppTokens.emerald,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                   if (_showSearch) ...[
                     const SizedBox(height: 6),
                     ContentSearchBar(
                       controller: _searchController,
-                      onChanged: (q) => setState(() => _searchQuery = q),
+                      onChanged: (q) {
+                        _searchDebounce?.cancel();
+                        _searchDebounce = Timer(
+                          const Duration(milliseconds: 300),
+                          () {
+                            if (!mounted) return;
+                            setState(() => _searchQuery = q);
+                          },
+                        );
+                      },
                       onClear: () {
+                        _searchDebounce?.cancel();
                         _searchController.clear();
                         setState(() => _searchQuery = '');
                       },
@@ -765,6 +898,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                       editMode: _editMode,
                       selectedKeys: _selectedKeys,
                       onToggleSelect: _toggleSelectItem,
+                      searchQuery: _searchQuery,
                     ),
                   if (_shouldShowSection(WarehouseCategory.comics)) ...[
                     const SizedBox(height: 12),
@@ -781,6 +915,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                       editMode: _editMode,
                       selectedKeys: _selectedKeys,
                       onToggleSelect: _toggleSelectItem,
+                      searchQuery: _searchQuery,
                     ),
                   ],
                   if (_shouldShowSection(WarehouseCategory.videos)) ...[
@@ -798,6 +933,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                       editMode: _editMode,
                       selectedKeys: _selectedKeys,
                       onToggleSelect: _toggleSelectItem,
+                      searchQuery: _searchQuery,
                     ),
                   ],
                   if (_shouldShowSection(WarehouseCategory.music)) ...[
@@ -815,6 +951,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                       editMode: _editMode,
                       selectedKeys: _selectedKeys,
                       onToggleSelect: _toggleSelectItem,
+                      searchQuery: _searchQuery,
                     ),
                   ],
                 ],

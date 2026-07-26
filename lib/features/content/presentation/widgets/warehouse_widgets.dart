@@ -383,7 +383,10 @@ class ContentOverviewCard extends StatelessWidget {
     required this.recentItem,
     required this.isLoading,
     required this.onOpenItem,
+    this.onQuickImport,
   });
+
+  final VoidCallback? onQuickImport;
 
   final int totalItems;
   final WarehouseItem? recentItem;
@@ -459,6 +462,7 @@ class ContentOverviewCard extends StatelessWidget {
             onTap: recentItem != null && onOpenItem != null
                 ? () => onOpenItem!(recentItem!)
                 : () {},
+            onQuickImport: onQuickImport,
           ),
         ],
       ),
@@ -471,42 +475,67 @@ class _RecentCollectionTile extends StatelessWidget {
     required this.item,
     required this.isLoading,
     required this.onTap,
+    this.onQuickImport,
   });
 
   final WarehouseItem? item;
   final bool isLoading;
   final VoidCallback onTap;
+  final VoidCallback? onQuickImport;
 
   @override
   Widget build(BuildContext context) {
     final i = item;
     if (i == null) {
-      return Container(
-        height: 72,
-        decoration: BoxDecoration(
-          color: const Color(0xFFF5F3FF),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE8E0FF)),
-        ),
-        child: Center(
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.inbox_rounded,
-                size: 18,
-                color: AppTokens.violet.withValues(alpha: 0.55),
-              ),
-              const SizedBox(width: 6),
-              const Text(
-                '还没有收藏',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppTokens.textSecondary,
-                  fontWeight: FontWeight.w600,
+      return InkWell(
+        onTap: onQuickImport,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          height: 72,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF5F3FF),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE8E0FF)),
+          ),
+          child: Center(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.inbox_rounded,
+                  size: 18,
+                  color: AppTokens.violet.withValues(alpha: 0.55),
                 ),
-              ),
-            ],
+                const SizedBox(width: 6),
+                const Text(
+                  '还没有收藏',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppTokens.textSecondary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTokens.violet,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Text(
+                    '去添加',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -562,7 +591,7 @@ class _RecentCollectionTile extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 11,
-                      color: Colors.grey.shade600,
+                      color: Color(0xFF757575),
                       height: 1.15,
                     ),
                   ),
@@ -709,6 +738,7 @@ class WarehouseSection extends StatefulWidget {
     this.editMode = false,
     this.selectedKeys = const {},
     this.onToggleSelect,
+    this.searchQuery = '',
   });
 
   final WarehouseCategory category;
@@ -723,6 +753,7 @@ class WarehouseSection extends StatefulWidget {
   final bool editMode;
   final Set<String> selectedKeys;
   final ValueChanged<String>? onToggleSelect;
+  final String searchQuery;
 
   @override
   State<WarehouseSection> createState() => _WarehouseSectionState();
@@ -807,7 +838,7 @@ class _WarehouseSectionState extends State<WarehouseSection>
                         '${widget.items.length}',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey.shade600,
+                          color: Color(0xFF757575),
                         ),
                       ),
                     if (widget.items.isEmpty && !widget.isLoading)
@@ -893,6 +924,7 @@ class _WarehouseSectionState extends State<WarehouseSection>
             item: item,
             editMode: widget.editMode,
             isSelected: isSelected,
+            searchQuery: widget.searchQuery,
             onTap: widget.editMode && widget.onToggleSelect != null
                 ? () => widget.onToggleSelect!(item.uniqueKey)
                 : () => widget.onOpenItem(item),
@@ -914,12 +946,14 @@ class WarehouseCard extends StatelessWidget {
     required this.onTap,
     this.editMode = false,
     this.isSelected = false,
+    this.searchQuery = '',
   });
 
   final WarehouseItem item;
   final VoidCallback onTap;
   final bool editMode;
   final bool isSelected;
+  final String searchQuery;
 
   @override
   Widget build(BuildContext context) {
@@ -977,29 +1011,60 @@ class WarehouseCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            Text(
-              item.title,
+            RichText(
+              text: TextSpan(children: _highlightText(item.title)),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 2),
-            Text(
-              item.subtitle.trim().isNotEmpty
-                  ? item.subtitle
-                  : item.sourceLabel,
+            RichText(
+              text: TextSpan(
+                children: _highlightText(
+                  item.subtitle.trim().isNotEmpty
+                      ? item.subtitle
+                      : item.sourceLabel,
+                ),
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Color(0xFF757575),
+                  height: 1.25,
+                ),
+              ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                color: Colors.grey.shade600,
-                height: 1.25,
-              ),
+              textAlign: TextAlign.left,
             ),
           ],
         ),
       ),
     );
+  }
+
+  /// 高亮匹配关键词的富文本构建器
+  List<TextSpan> _highlightText(String text) {
+    if (searchQuery.isEmpty) return [TextSpan(text: text)];
+    final lower = text.toLowerCase();
+    final q = searchQuery.toLowerCase();
+    final index = lower.indexOf(q);
+    if (index == -1) return [TextSpan(text: text)];
+
+    final spans = <TextSpan>[];
+    if (index > 0) {
+      spans.add(TextSpan(text: text.substring(0, index)));
+    }
+    spans.add(
+      TextSpan(
+        text: text.substring(index, index + searchQuery.length),
+        style: const TextStyle(
+          fontWeight: FontWeight.bold,
+          color: Color(0xFF6C5CE7),
+        ),
+      ),
+    );
+    if (index + searchQuery.length < text.length) {
+      spans.add(TextSpan(text: text.substring(index + searchQuery.length)));
+    }
+    return spans;
   }
 
   Widget _buildFallback() {
