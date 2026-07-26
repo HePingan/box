@@ -14,10 +14,13 @@ class VideoPlayArgs {
   final int initialPosition;
   final VoidCallback? onPreviousEpisode;
   final VoidCallback? onNextEpisode;
+  final VoidCallback? onFallbackLine;
   final String? referer;
   final Map<String, String>? httpHeaders;
   final String userAgent;
   final bool showDebugInfo;
+  /// 本地文件路径（离线播放时使用）。
+  final String? localPath;
 
   const VideoPlayArgs({
     required this.url,
@@ -30,10 +33,12 @@ class VideoPlayArgs {
     this.initialPosition = 0,
     this.onPreviousEpisode,
     this.onNextEpisode,
+    this.onFallbackLine,
     this.referer,
     this.httpHeaders,
     this.userAgent =
         'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Mobile Safari/537.36',
     this.showDebugInfo = false,
+    this.localPath,
   });
 }

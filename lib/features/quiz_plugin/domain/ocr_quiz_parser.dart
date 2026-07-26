@@ -90,6 +90,8 @@ class OcrQuizParser {
     }
 
     final normalized = text
+        // OCR/无障碍常把「·」当逻辑项分隔符（分隔题干与选项、选项之间）；先切成行。
+        .replaceAll(RegExp(r'[·•・]'), '\n')
         .replaceAllMapped(
           // 无障碍树有时把选项字母和正文拆成相邻节点：A\n选项 → A. 选项。
           RegExp(r'^\s*([A-DＡ-Ｄ])\s*\n\s*(?!答案|正确答案)([^\n]+)$', multiLine: true),
@@ -344,7 +346,10 @@ class OcrQuizParser {
       final isQuestionLike =
           head.contains('?') ||
           head.contains('？') ||
-          RegExp(r'(属于|是什么|哪些|哪种|哪个|如何|为什么|错误的是|正确的是|以下|表示|含义)').hasMatch(head);
+          // 填空式题干：OCR 常丢问号，「（）」是强题干信号。
+          head.contains('（）') ||
+          head.contains('()') ||
+          RegExp(r'(属于|是什么|哪些|哪种|哪个|如何|为什么|错误的是|正确的是|以下|表示|含义|行为是|的是)').hasMatch(head);
       if (!isQuestionLike) continue;
       final opts = <String>[];
       for (var j = i + 1; j < lines.length && opts.length < 6; j++) {
@@ -361,11 +366,56 @@ class OcrQuizParser {
         }
         opts.add(_cleanOptionNoise(t));
       }
-      if (opts.length >= 2 && opts.length <= 5) {
-        return _QaSplit(question: _cleanQuestion(head), options: opts);
+      // OCR 常把同屏并排的选项黏进一行（如「未立即排除故障未将车停到路边」）；
+      // 若多数选项共享首字，按首字二次切分。
+      final expanded = _splitGluedSiblings(opts);
+      if (expanded.length >= 2 && expanded.length <= 5) {
+        return _QaSplit(question: _cleanQuestion(head), options: expanded);
       }
     }
     return null;
+  }
+
+  /// 兄弟选项共享首字时，拆开被 OCR 黏连的选项。
+  /// 例：首字均为「未」→「未立即排除故障未将车停到路边」拆成两项。
+  /// 仅在 ≥2 个选项共享同一首字时启用，避免误切普通文本。
+  static List<String> _splitGluedSiblings(List<String> opts) {
+    if (opts.length < 2) return opts;
+    // 统计首字频次，取出现 ≥2 次的首字作为切分标记。
+    final firstCharCount = <String, int>{};
+    for (final o in opts) {
+      if (o.isEmpty) continue;
+      final c = o.substring(0, 1);
+      firstCharCount[c] = (firstCharCount[c] ?? 0) + 1;
+    }
+    final delim = firstCharCount.entries
+        .where((e) => e.value >= 2)
+        .fold<MapEntry<String, int>?>(
+          null,
+          (best, e) => best == null || e.value > best.value ? e : best,
+        )
+        ?.key;
+    if (delim == null) return opts;
+    final out = <String>[];
+    for (final o in opts) {
+      if (o.length > 1 && o.substring(1).contains(delim)) {
+        // 在内部出现的 delim 处切分，保留 delim 作为后段首字。
+        var buf = o.substring(0, 1);
+        for (var k = 1; k < o.length; k++) {
+          final ch = o[k];
+          if (ch == delim) {
+            if (buf.isNotEmpty) out.add(buf);
+            buf = ch;
+          } else {
+            buf += ch;
+          }
+        }
+        if (buf.isNotEmpty) out.add(buf);
+      } else {
+        out.add(o);
+      }
+    }
+    return out;
   }
 
   /// 清洗单条选项文本的噪点（· × 等装饰符、首尾标点）。

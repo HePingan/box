@@ -171,9 +171,37 @@ class _SourcePickerBodyState extends State<_SourcePickerBody> {
     }
   }
 
+  /// 排序权重：可用/未检测优先，失败次之，已死沉底。
+  /// 让“点了是空白”的死源不再挤在列表中段。
+  int _healthSortRank(_SourceHealth health) {
+    switch (health) {
+      case _SourceHealth.healthy:
+        return 0;
+      case _SourceHealth.checking:
+        return 1;
+      case _SourceHealth.unknown:
+        return 2;
+      case _SourceHealth.warning:
+        return 3;
+      case _SourceHealth.down:
+        return 4;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final sources = controller.sources;
+    // 稳定排序：先按健康度分档(死源沉底)，同档内保持目录原始顺序。
+    final sources = List<VideoSource>.of(controller.sources);
+    final originalIndex = <String, int>{
+      for (var i = 0; i < controller.sources.length; i++)
+        controller.sources[i].id: i,
+    };
+    sources.sort((a, b) {
+      final rankDiff = _healthSortRank(_healthOf(a))
+          .compareTo(_healthSortRank(_healthOf(b)));
+      if (rankDiff != 0) return rankDiff;
+      return (originalIndex[a.id] ?? 0).compareTo(originalIndex[b.id] ?? 0);
+    });
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -258,53 +286,66 @@ class _SourcePickerBodyState extends State<_SourcePickerBody> {
                   : source.url;
               final health = _healthOf(source);
               final healthColor = _healthColor(health);
+              // 已确证失效(实测 down)的源置灰，点击时给出明确提示而非
+              // 静默切过去看空白。未检测/失败中的源仍可正常切换。
+              final isDead = health == _SourceHealth.down;
 
-              return InkWell(
-                borderRadius: BorderRadius.circular(18),
-                onTap: () {
-                  Navigator.pop(context);
-                  controller.setCurrentSource(source);
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? Colors.blue.withValues(alpha: 0.07)
-                        : const Color(0xFFF7F8FA),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
+              return Opacity(
+                opacity: isDead ? 0.55 : 1.0,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(18),
+                  onTap: () {
+                    if (isDead) {
+                      final live = _liveResults[source.id];
+                      final reason = live?.message ?? '源站已失效';
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('「${source.name}」$reason，暂不可用')),
+                      );
+                      return;
+                    }
+                    Navigator.pop(context);
+                    controller.setCurrentSource(source);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
                       color: selected
-                          ? Colors.blue.withValues(alpha: 0.22)
-                          : const Color(0xFFE6EAF2),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        selected
-                            ? Icons.check_circle_rounded
-                            : Icons.radio_button_unchecked,
-                        color: selected ? Colors.blue : Colors.grey,
+                          ? Colors.blue.withValues(alpha: 0.07)
+                          : const Color(0xFFF7F8FA),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: selected
+                            ? Colors.blue.withValues(alpha: 0.22)
+                            : const Color(0xFFE6EAF2),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    source.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontWeight: selected
-                                          ? FontWeight.w900
-                                          : FontWeight.w700,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          selected
+                              ? Icons.check_circle_rounded
+                              : Icons.radio_button_unchecked,
+                          color: selected ? Colors.blue : Colors.grey,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      source.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontWeight: selected
+                                            ? FontWeight.w900
+                                            : FontWeight.w700,
+                                      ),
                                     ),
                                   ),
-                                ),
                                 const SizedBox(width: 8),
                                 _HealthBadge(
                                   color: healthColor,
@@ -365,6 +406,7 @@ class _SourcePickerBodyState extends State<_SourcePickerBody> {
                           ),
                         ),
                     ],
+                  ),
                   ),
                 ),
               );

@@ -94,6 +94,7 @@ class VideoCatalogRepository {
         );
 
         if (categories.isNotEmpty) {
+          _rememberWorkingUrl(source, url);
           _log('[loadCategories] success on url=$url');
           return categories;
         }
@@ -115,10 +116,12 @@ class VideoCatalogRepository {
     VideoSource source, {
     required int? typeId,
     required int page,
+    String? typeQuery,
   }) async {
     _log(
       '[loadVideos] start source=${_briefSource(source)} '
-      'typeId=${typeId?.toString() ?? "all"} page=$page',
+      'typeId=${typeId?.toString() ?? "all"} '
+      'typeQuery=${typeQuery ?? "-"} page=$page',
     );
 
     final candidates = _candidateApiUrls(source);
@@ -133,7 +136,12 @@ class VideoCatalogRepository {
       );
 
       try {
-        final videos = await VideoApiService.fetchVideos(url, typeId, page);
+        final videos = await VideoApiService.fetchVideos(
+          url,
+          typeId,
+          page,
+          typeQuery: typeQuery,
+        );
 
         _log(
           '[loadVideos] result url=$url '
@@ -141,6 +149,7 @@ class VideoCatalogRepository {
         );
 
         if (videos.isNotEmpty) {
+          _rememberWorkingUrl(source, url);
           _log(
             '[loadVideos] success url=$url '
             'typeId=${typeId?.toString() ?? "all"} page=$page',
@@ -163,9 +172,37 @@ class VideoCatalogRepository {
     return const <VodItem>[];
   }
 
-  /// API 候选地址：优先 url，其次 detailUrl
+  /// 记住每个源“哪个候选地址真正有效”，命中后提到队首优先尝试，
+  /// 避免每次请求都先在失效地址上白失败一轮再兜底。
+  /// key = 源标识(id/url)，value = 命中过的有效地址。
+  static final Map<String, String> _workingApiUrl = <String, String>{};
+
+  static String _sourceCacheKey(VideoSource source) {
+    final id = source.id.toString().trim();
+    if (id.isNotEmpty && id != 'null') return 'id:$id';
+    final url = source.url.trim();
+    if (url.isNotEmpty) return 'url:$url';
+    return 'detail:${source.detailUrl.trim()}';
+  }
+
+  /// 标记某个源的有效地址（由 loadCategories / loadVideos 命中后回填）。
+  void _rememberWorkingUrl(VideoSource source, String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return;
+    final key = _sourceCacheKey(source);
+    if (_workingApiUrl[key] == trimmed) return;
+    _workingApiUrl[key] = trimmed;
+    _log('[candidates] remember working url=$trimmed for $key');
+  }
+
+  /// API 候选地址：优先已命中的有效地址，其次 url，其次 detailUrl。
   List<String> _candidateApiUrls(VideoSource source) {
-    return _uniqueOrdered([source.url, source.detailUrl]);
+    final cached = _workingApiUrl[_sourceCacheKey(source)];
+    return _uniqueOrdered([
+      ?cached,
+      source.url,
+      source.detailUrl,
+    ]);
   }
 
   /// 去重、清理空字符串、保留原顺序

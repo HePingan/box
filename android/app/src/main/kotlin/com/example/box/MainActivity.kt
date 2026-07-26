@@ -12,6 +12,9 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
 
     companion object {
+        // 视频下载 MethodChannel — com.example.box/video_downloads
+        const val DOWNLOAD_CHANNEL = "com.example.box/video_downloads"
+
         private const val CHANNEL = "com.example.box/quiz_plugin"
         private const val REQUEST_OVERLAY_PERMISSION = 1001
         private const val REQUEST_NOTIFICATION_PERMISSION = 1002
@@ -238,9 +241,133 @@ class MainActivity : FlutterActivity() {
                     QuizOcrEntryOverlay.setStatus(msg)
                     result.success(true)
                 }
+
                 else -> result.notImplemented()
             }
         }
+
+        // ── 视频下载 MethodChannel（独立通道）──
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DOWNLOAD_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "enqueue" -> {
+                    val args = mutableMapOf<String, Any?>()
+                    call.arguments?.let {
+                        if (it is Map<*, *>) {
+                            @Suppress("UNCHECKED_CAST")
+                            args.putAll(it as Map<String, Any?>)
+                        }
+                    }
+                    handleEnqueue(args, result)
+                }
+                "pause" -> handleControlPause(call.argument("id"), result)
+                "resume" -> handleControlResume(call.argument("id"), result)
+                "cancel" -> handleControlCancel(call.argument("id"), result)
+                "remove" -> handleRemove(call.argument("id"), result)
+                "snapshots" -> handleSnapshots(result)
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    // ─────────────────────── 下载任务处理 ───────────────────────
+
+    private fun handleEnqueue(args: Map<String, Any?>, result: MethodChannel.Result) {
+        try {
+            val taskId = args["id"]?.toString() ?: ""
+            val mediaUrl = args["media_url"]?.toString() ?: ""
+            val episodeName = args["episode_name"]?.toString() ?: ""
+            val sourceName = args["source_name"]?.toString() ?: ""
+
+            if (taskId.isEmpty()) {
+                result.error("INVALID_ARGS", "Missing task id", null)
+                return
+            }
+            if (mediaUrl.isEmpty()) {
+                result.error("INVALID_ARGS", "Missing media url", null)
+                return
+            }
+            if (!mediaUrl.startsWith("https://")) {
+                result.error("UNSUPPORTED_URL", "仅支持 HTTPS 地址", null)
+                return
+            }
+
+            val referer = args["referer"]?.toString() ?: ""
+
+            val bundle = Bundle().apply {
+                putString("id", taskId)
+                putString("media_url", mediaUrl)
+                putString("episode_name", episodeName)
+                putString("source_name", sourceName)
+                putString("referer", referer)
+            }
+
+            val intent = Intent(this, VideoDownloadService::class.java).apply {
+                action = VideoDownloadService.ACTION_ENQUEUE
+                putExtra(VideoDownloadService.EXTRA_TASK_DATA, bundle)
+            }
+            // startForegroundService 在 Android 8+ 上需要 FOREGROUND_SERVICE_MEDIA_PLAYBACK 权限
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            result.success(true)
+        } catch (e: Exception) {
+            result.error("ENQUEUE_FAILED", e.message, null)
+        }
+    }
+
+    private fun sendControlIntent(action: String, taskId: String) {
+        val intent = Intent(this, VideoDownloadService::class.java).apply {
+            this.action = action
+            putExtra(VideoDownloadService.EXTRA_TASK_ID, taskId)
+        }
+        // 控制指令不启动前台服务：若服务已死，控制无意义（任务快照也已清空）。
+        try {
+            startService(intent)
+        } catch (_: Exception) {
+            // 服务未运行时 startService 可能抛异常，静默忽略——控制目标已不存在。
+        }
+    }
+
+    private fun handleControlPause(taskId: String?, result: MethodChannel.Result) {
+        if (taskId == null || taskId.isEmpty()) {
+            return result.error("INVALID_ARGS", "Missing task id", null)
+        }
+        sendControlIntent(VideoDownloadService.ACTION_PAUSE, taskId)
+        result.success(true)
+    }
+
+    private fun handleControlResume(taskId: String?, result: MethodChannel.Result) {
+        if (taskId == null || taskId.isEmpty()) {
+            return result.error("INVALID_ARGS", "Missing task id", null)
+        }
+        if (VideoDownloadService.taskForId(this, taskId) == null) {
+            return result.error("TASK_NOT_FOUND", "下载任务不存在，请重新创建", null)
+        }
+        sendControlIntent(VideoDownloadService.ACTION_RESUME, taskId)
+        result.success(true)
+    }
+
+    private fun handleControlCancel(taskId: String?, result: MethodChannel.Result) {
+        if (taskId == null || taskId.isEmpty()) {
+            return result.error("INVALID_ARGS", "Missing task id", null)
+        }
+        sendControlIntent(VideoDownloadService.ACTION_CANCEL, taskId)
+        result.success(true)
+    }
+
+    private fun handleRemove(taskId: String?, result: MethodChannel.Result) {
+        if (taskId == null || taskId.isEmpty()) {
+            return result.error("INVALID_ARGS", "Missing task id", null)
+        }
+        sendControlIntent(VideoDownloadService.ACTION_REMOVE, taskId)
+        result.success(true)
+    }
+
+    private fun handleSnapshots(result: MethodChannel.Result) {
+        VideoDownloadService.restoreTasks(this)
+        result.success(VideoDownloadService.snapshotList())
     }
 
     override fun onDestroy() {

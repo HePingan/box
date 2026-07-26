@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 
 import '../../utils/app_logger.dart';
 import '../config/video_proxy_config.dart';
@@ -10,6 +9,9 @@ import '../models/video_source.dart';
 import '../models/vod_item.dart';
 import '../utils/isolate_parser.dart';
 import 'request_policy.dart';
+import 'search_failure_exception.dart';
+import 'shared_http_client.dart';
+import 'ttl_cache.dart';
 
 class VideoApiService {
   static const Duration _defaultTimeout = Duration(seconds: 25);
@@ -139,14 +141,15 @@ class VideoApiService {
     String url, {
     Duration timeout = _defaultTimeout,
     Map<String, String>? headers,
+    VideoGetRequestPolicy policy = const VideoGetRequestPolicy(),
   }) async {
     final mergedHeaders = <String, String>{..._headersForUrl(url), ...?headers};
 
     _log('[GET] url=$url');
 
     try {
-      final response = await const VideoGetRequestPolicy().execute(() async {
-        final response = await http
+      final response = await policy.execute(() async {
+        final response = await SharedHttpClient.instance
             .get(Uri.parse(url), headers: mergedHeaders)
             .timeout(timeout);
         if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -213,6 +216,31 @@ class VideoApiService {
   static Future<dynamic> _getJson(String url) async {
     final body = await _getRawString(url);
     return _decodeJsonSafely(body);
+  }
+
+  /// 目录中有时把真实采集 API 再套进第三方 `?url=` 转发器。
+  ///
+  /// 那层转发器会单独下线（百度云就是 404），而内层标准 VOD API 仍可用。
+  /// 解开后仍会按当前配置走本应用的代理，不会绕过既有网络策略。
+  static String _preferDirectVodApiUrl(String rawUrl) {
+    final original = rawUrl.trim();
+    if (original.isEmpty || vodProxyConfig.isProxyUrl(original)) {
+      return original;
+    }
+
+    final target = _unwrapTargetUrl(original);
+    if (target == original) return original;
+    final uri = Uri.tryParse(target);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) return original;
+
+    final path = uri.path.toLowerCase();
+    if (path.contains('/api.php/provide/vod') ||
+        path.contains('/provide/vod') ||
+        path.contains('api.php')) {
+      _log('[sources] unwrap nested VOD API $original -> $target');
+      return target;
+    }
+    return original;
   }
 
   static String _asString(dynamic value, [String fallback = '']) {
@@ -319,12 +347,14 @@ class VideoApiService {
                 item['name'] ?? item['title'] ?? entry.key,
                 entry.key.toString(),
               ),
-              'url': _asString(
-                item['url'] ??
-                    item['api'] ??
-                    item['apiUrl'] ??
-                    item['api_url'] ??
-                    '',
+              'url': _preferDirectVodApiUrl(
+                _asString(
+                  item['url'] ??
+                      item['api'] ??
+                      item['apiUrl'] ??
+                      item['api_url'] ??
+                      '',
+                ),
               ),
               'detailUrl': _asString(
                 item['detailUrl'] ??
@@ -347,8 +377,8 @@ class VideoApiService {
   }
 
   static Map<String, dynamic>? _normalizeSourceItem(Map<String, dynamic> raw) {
-    final url = _asString(
-      raw['url'] ?? raw['api'] ?? raw['apiUrl'] ?? raw['api_url'],
+    final url = _preferDirectVodApiUrl(
+      _asString(raw['url'] ?? raw['api'] ?? raw['apiUrl'] ?? raw['api_url']),
     );
     if (url.isEmpty) return null;
 
@@ -482,6 +512,11 @@ class VideoApiService {
     final typeName = _asString(
       raw['type_name'] ?? raw['typeName'] ?? raw['name'] ?? raw['title'],
     );
+    final pid =
+        int.tryParse(
+          _asString(raw['type_pid'] ?? raw['typePid'] ?? raw['pid']),
+        ) ??
+        0;
 
     return <String, dynamic>{
       ...raw,
@@ -489,6 +524,7 @@ class VideoApiService {
       'typeId': typeId,
       'type_name': typeName,
       'typeName': typeName,
+      'type_pid': pid,
       'id': typeId == 0 ? _asString(raw['id'] ?? raw['type'] ?? '') : typeId,
       'name': typeName,
       'title': typeName,
@@ -594,17 +630,70 @@ class VideoApiService {
     return patched;
   }
 
+  /// 记住每个源命中过的参数模板签名，避免每次都从头盲试全部候选。
+  /// key = baseUrl，value = 命中的模板签名（见 [_paramTemplateSignature]）。
+  static final Map<String, String> _winningParamTemplate = <String, String>{};
+
+  /// 把一组请求参数归一成“模板签名”：变量值(t/pg/page)用占位符，
+  /// 保留结构性键值(如 ac=list)。用于跨 typeId/page 复用命中格式。
+  static String _paramTemplateSignature(Map<String, String> params) {
+    if (params.isEmpty) return '<root>';
+    const variableKeys = {'t', 'pg', 'page', 'wd', 'ids', 'id'};
+    final entries =
+        params.entries
+            .map(
+              (e) => variableKeys.contains(e.key)
+                  ? '${e.key}=?'
+                  : '${e.key}=${e.value}',
+            )
+            .toList()
+          ..sort();
+    return entries.join('&');
+  }
+
+  /// 若该源已有命中记录，把匹配的候选提到队首优先尝试。
+  static List<Map<String, String>> _prioritizeCandidates(
+    String baseUrl,
+    List<Map<String, String>> candidates,
+  ) {
+    final winner = _winningParamTemplate[baseUrl];
+    if (winner == null) return candidates;
+
+    final matched = <Map<String, String>>[];
+    final rest = <Map<String, String>>[];
+    for (final params in candidates) {
+      if (_paramTemplateSignature(params) == winner) {
+        matched.add(params);
+      } else {
+        rest.add(params);
+      }
+    }
+
+    if (matched.isEmpty) return candidates;
+
+    _log(
+      '[fetchVodListByCandidates] prioritize cached template=$winner '
+      'for baseUrl=$baseUrl',
+    );
+    return [...matched, ...rest];
+  }
+
   static Future<List<VodItem>> _fetchVodListByCandidates(
     String baseUrl,
     List<Map<String, String>> candidates,
   ) async {
-    for (final params in candidates) {
+    final ordered = _prioritizeCandidates(baseUrl, candidates);
+
+    for (final params in ordered) {
       try {
         final items = await _fetchVodListByParams(baseUrl, params);
         if (items.isNotEmpty) {
+          final signature = _paramTemplateSignature(params);
+          _winningParamTemplate[baseUrl] = signature;
           _log(
             '[fetchVodListByCandidates] success '
             'params=${_paramsText(params)} '
+            'template=$signature '
             'count=${items.length}',
           );
           return items;
@@ -720,6 +809,9 @@ class VideoApiService {
 
   /// 读取“JSON集合.txt”
   /// 兼容你现在的 api_site 结构，也兼容老的数组结构
+  ///
+  /// GitHub raw 国内直连极不稳定，这里对 raw.githubusercontent.com 自动生成
+  /// jsDelivr / ghproxy 镜像候选，任一命中即返回，避免首屏整个拉不出来。
   static Future<List<VideoSource>> fetchSources(String configUrl) async {
     final url = configUrl.trim();
     if (url.isEmpty) {
@@ -727,40 +819,77 @@ class VideoApiService {
       return [];
     }
 
-    _log('[fetchSources] start configUrl=$url');
+    final candidates = _catalogUrlCandidates(url);
+    _log(
+      '[fetchSources] start configUrl=$url '
+      'candidates=${candidates.length} -> ${candidates.join(" | ")}',
+    );
 
-    try {
-      final decoded = await _getJson(url);
-      _log('[fetchSources] decodedType=${decoded.runtimeType}');
-
-      final rawItems = _extractSourceItems(decoded);
-      _log(
-        '[fetchSources] rawItems=${rawItems.length} '
-        'sampleKeys=${rawItems.isNotEmpty ? rawItems.first.keys.take(12).join(" | ") : "-"}',
-      );
-      if (rawItems.isNotEmpty) {
+    for (final candidate in candidates) {
+      try {
+        final decoded = await _getJson(candidate);
         _log(
-          '[fetchSources] firstRaw=${_preview(jsonEncode(rawItems.first), max: 800)}',
+          '[fetchSources] via=$candidate decodedType=${decoded.runtimeType}',
         );
+
+        final rawItems = _extractSourceItems(decoded);
+        _log(
+          '[fetchSources] rawItems=${rawItems.length} '
+          'sampleKeys=${rawItems.isNotEmpty ? rawItems.first.keys.take(12).join(" | ") : "-"}',
+        );
+
+        final sources = rawItems
+            .map(_normalizeSourceItem)
+            .whereType<Map<String, dynamic>>()
+            .map(VideoSource.fromJson)
+            .toList(growable: false);
+
+        if (sources.isNotEmpty) {
+          _log(
+            '[fetchSources] success via=$candidate '
+            'parsedSources=${sources.length} '
+            'sample=${sources.take(5).map((e) => e.name).join(" | ")}',
+          );
+          return sources;
+        }
+
+        _log('[fetchSources] empty result via=$candidate, try next mirror');
+      } catch (e, st) {
+        _log('[fetchSources] candidate failed url=$candidate error=$e');
+        _log(st.toString());
       }
-
-      final sources = rawItems
-          .map(_normalizeSourceItem)
-          .whereType<Map<String, dynamic>>()
-          .map(VideoSource.fromJson)
-          .toList(growable: false);
-
-      _log(
-        '[fetchSources] parsedSources=${sources.length} '
-        'sample=${sources.take(5).map((e) => e.name).join(" | ")}',
-      );
-
-      return sources;
-    } catch (e, st) {
-      _log('[fetchSources] failed: $e');
-      _log(st.toString());
-      return [];
     }
+
+    _log('[fetchSources] all candidates failed');
+    return [];
+  }
+
+  /// 为目录地址生成镜像候选：原地址优先，其后是 GitHub raw 的镜像。
+  static List<String> _catalogUrlCandidates(String rawUrl) {
+    final trimmed = rawUrl.trim();
+    final candidates = <String>[trimmed];
+
+    final uri = Uri.tryParse(trimmed);
+    if (uri != null && uri.host.toLowerCase() == 'raw.githubusercontent.com') {
+      final segs = uri.pathSegments;
+      // /{user}/{repo}/{branch}/{path...}
+      if (segs.length >= 4) {
+        final user = segs[0];
+        final repo = segs[1];
+        final branch = segs[2];
+        final path = segs.sublist(3).join('/');
+
+        candidates.addAll([
+          'https://cdn.jsdelivr.net/gh/$user/$repo@$branch/$path',
+          'https://fastly.jsdelivr.net/gh/$user/$repo@$branch/$path',
+          'https://ghproxy.net/$trimmed',
+        ]);
+      }
+    }
+
+    // 去重保序
+    final seen = <String>{};
+    return candidates.where((u) => u.isNotEmpty && seen.add(u)).toList();
   }
 
   /// 分类：
@@ -769,7 +898,19 @@ class VideoApiService {
   /// 3. 再尝试 ac=list
   ///
   /// 注意：根接口只接受“明确是分类”的结构，避免把视频列表误判成分类
-  static Future<List<VideoCategory>> fetchCategories(String baseUrl) async {
+  /// 分类列表变化很慢，套 30 分钟 TTL 缓存，切 tab / 返回近乎秒开。
+  static Future<List<VideoCategory>> fetchCategories(String baseUrl) {
+    return TtlCache.getOrFetch<List<VideoCategory>>(
+      'categories::$baseUrl',
+      ttl: const Duration(minutes: 30),
+      shouldCache: (value) => value.isNotEmpty,
+      loader: () => _fetchCategoriesImpl(baseUrl),
+    );
+  }
+
+  static Future<List<VideoCategory>> _fetchCategoriesImpl(
+    String baseUrl,
+  ) async {
     final url = _buildVodBaseUrl(baseUrl);
     if (url.isEmpty) {
       _log('[fetchCategories] skip empty baseUrl');
@@ -867,11 +1008,35 @@ class VideoApiService {
 
   /// 拉视频列表
   /// typeId = null 表示“全部”
+  /// 列表页短时效缓存(5 分钟):翻回上一页 / 来回切分类近乎秒开。
+  ///
+  /// [typeQuery] 是真正写进 `t=` 的值。父分类会被展开成子分类逗号多选
+  /// (如 "6,7,8,9")，用来救活“顶级分类不挂视频、视频挂子类”的源。
+  /// 为空时退回用 [typeId] 本身。[typeId] 始终作为“身份”用于缓存键与匹配。
   static Future<List<VodItem>> fetchVideos(
     String baseUrl,
     int? typeId,
-    int page,
-  ) async {
+    int page, {
+    String? typeQuery,
+  }) {
+    final tKey = (typeQuery != null && typeQuery.trim().isNotEmpty)
+        ? typeQuery.trim()
+        : (typeId?.toString() ?? 'all');
+    return TtlCache.getOrFetch<List<VodItem>>(
+      'videos::$baseUrl::$tKey::$page',
+      ttl: const Duration(minutes: 5),
+      shouldCache: (value) => value.isNotEmpty,
+      loader: () =>
+          _fetchVideosImpl(baseUrl, typeId, page, typeQuery: typeQuery),
+    );
+  }
+
+  static Future<List<VodItem>> _fetchVideosImpl(
+    String baseUrl,
+    int? typeId,
+    int page, {
+    String? typeQuery,
+  }) async {
     final url = _buildVodBaseUrl(baseUrl);
     if (url.isEmpty) {
       _log('[fetchVideos] skip empty baseUrl');
@@ -895,13 +1060,25 @@ class VideoApiService {
     }
 
     if (typeId != null && typeId > 0) {
+      // 优先用展开后的 typeQuery(父类→子类逗号多选);为空退回 typeId 本身。
+      final tValue = (typeQuery != null && typeQuery.trim().isNotEmpty)
+          ? typeQuery.trim()
+          : '$typeId';
       candidates.addAll([
-        {'ac': 'list', 't': '$typeId', 'pg': '$page'},
-        {'ac': 'videolist', 't': '$typeId', 'pg': '$page'},
-        {'t': '$typeId', 'pg': '$page'},
-        {'ac': 'list', 't': '$typeId', 'page': '$page'},
-        {'t': '$typeId', 'page': '$page'},
+        {'ac': 'list', 't': tValue, 'pg': '$page'},
+        {'ac': 'videolist', 't': tValue, 'pg': '$page'},
+        {'t': tValue, 'pg': '$page'},
+        {'ac': 'list', 't': tValue, 'page': '$page'},
+        {'t': tValue, 'page': '$page'},
       ]);
+      // 若用了展开的多选 ID,再补一组“原始 typeId 单选”兜底:
+      // 万一某源不认逗号多选,还能用父类 ID 试一次。
+      if (tValue != '$typeId') {
+        candidates.addAll([
+          {'ac': 'list', 't': '$typeId', 'pg': '$page'},
+          {'t': '$typeId', 'pg': '$page'},
+        ]);
+      }
     } else {
       candidates.addAll([
         {'ac': 'list', 'pg': '$page'},
@@ -934,16 +1111,33 @@ class VideoApiService {
   }
 
   /// 搜索视频
+  ///
+  /// 返回值语义：
+  /// - 成功且无匹配 → 返回空列表 []
+  /// - 所有候选参数均网络/解析失败 → 向上抛出异常
+  /// - 至少一个候选成功但无结果 → 返回空列表 []（与"成功且无匹配"相同）
+  ///
+  /// [timeout] 是**整个搜索的总预算**（覆盖全部候选参数的累计尝试时间），
+  /// 而非每个候选的超时。[fastFail] 为 true 时默认使用 8 秒总预算，
+  /// 单源搜索场景下避免死源拖慢整体聚合。
   static Future<List<VodItem>> searchVideo(
     String baseUrl,
-    String keyword,
-  ) async {
+    String keyword, {
+    bool fastFail = false,
+    Duration? timeout,
+  }) async {
     final url = _buildVodBaseUrl(baseUrl);
     final query = keyword.trim();
     if (url.isEmpty || query.isEmpty) {
       _log('[searchVideo] skip empty url or keyword');
       return [];
     }
+
+    final policy = fastFail
+        ? const VideoGetRequestPolicy(maxAttempts: 1)
+        : const VideoGetRequestPolicy();
+    final effectiveTimeout =
+        timeout ?? (fastFail ? const Duration(seconds: 8) : _defaultTimeout);
 
     _log('[searchVideo] start baseUrl=$baseUrl builtUrl=$url keyword=$query');
 
@@ -954,16 +1148,40 @@ class VideoApiService {
       {'wd': query},
     ];
 
+    // 按总超时预算逐个尝试候选参数；任一命中即返回。
+    final stopwatch = Stopwatch()..start();
+    final errors = <Object?>[];
+    var hadSuccessfulCandidate = false;
     for (final params in candidates) {
+      // 检查是否已耗尽总预算
+      if (stopwatch.elapsed >= effectiveTimeout) {
+        _log(
+          '[searchVideo] total timeout budget exhausted '
+          'elapsed=${stopwatch.elapsed}',
+        );
+        break;
+      }
+
+      final remaining = effectiveTimeout - stopwatch.elapsed;
+      if (remaining <= Duration.zero) break;
+
       try {
         final requestUrl = _withQuery(url, params);
         _log(
           '[searchVideo] try requestUrl=$requestUrl '
-          'params=${_paramsText(params)}',
+          'params=${_paramsText(params)} '
+          'remainingBudget=$remaining',
         );
 
-        final rawBody = await _getRawString(requestUrl);
+        // _getRawString 的 request policy 可能包含重试；对其整体再施加
+        // 剩余预算，确保重试和退避也不能越过本次搜索的总时限。
+        final rawBody = await _getRawString(
+          requestUrl,
+          timeout: remaining,
+          policy: policy,
+        ).timeout(remaining);
         final items = await IsolateParser.parseVodList(rawBody);
+        hadSuccessfulCandidate = true;
 
         _log(
           '[searchVideo] parsed count=${items.length} '
@@ -972,6 +1190,7 @@ class VideoApiService {
 
         if (items.isNotEmpty) return _patchVodItemsMedia(items, url);
       } catch (e, st) {
+        errors.add(e);
         _log(
           '[searchVideo] candidate failed params=${_paramsText(params)} error=$e',
         );
@@ -979,12 +1198,30 @@ class VideoApiService {
       }
     }
 
-    _log('[searchVideo] fallback empty');
+    if (!hadSuccessfulCandidate && errors.isNotEmpty) {
+      throw AllSearchCandidatesFailedException(
+        baseUrl: baseUrl,
+        keyword: query,
+        errors: errors,
+      );
+    }
+
+    _log('[searchVideo] completed without matches');
     return [];
   }
 
   /// 获取详情
-  static Future<VodItem?> fetchDetail(String baseUrl, int vodId) async {
+  /// 详情短时效缓存(10 分钟):重复点开同一部片、返回再进近乎秒开。
+  static Future<VodItem?> fetchDetail(String baseUrl, int vodId) {
+    return TtlCache.getOrFetch<VodItem?>(
+      'detail::$baseUrl::$vodId',
+      ttl: const Duration(minutes: 10),
+      shouldCache: (value) => value != null,
+      loader: () => _fetchDetailImpl(baseUrl, vodId),
+    );
+  }
+
+  static Future<VodItem?> _fetchDetailImpl(String baseUrl, int vodId) async {
     final url = _buildVodBaseUrl(baseUrl);
     if (url.isEmpty || vodId <= 0) {
       _log('[fetchDetail] skip empty url or invalid vodId=$vodId');

@@ -30,9 +30,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-
-        // 强制单架构 arm64：部分插件（jni、datastore）的原生 .so 会无视
-        // --target-platform 打进全 ABI，用 abiFilters 兜底裁掉 v7a/x86_64。
+        // 交付单架构 arm64，避免第三方插件把 v7a/x86_64 原生库一并打入。
         ndk {
             abiFilters.clear()
             abiFilters.add("arm64-v8a")
@@ -89,6 +87,11 @@ android {
 }
 
 dependencies {
+    // Media3 Download — background HLS/MP4 downloads via DownloadService
+    implementation("androidx.media3:media3-exoplayer:1.2.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.2.1")
+    implementation("androidx.media3:media3-session:1.2.1")
+
     testImplementation("junit:junit:4.13.2")
 }
 

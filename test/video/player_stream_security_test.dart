@@ -27,5 +27,18 @@ void main() {
         expect(isAllowedRemoteMediaUri(Uri.parse(raw)), isFalse, reason: raw);
       }
     });
+
+    test(
+      'removes query parameters and fragments from media URLs used in logs',
+      () {
+        expect(
+          sanitizeMediaUrl(
+            'https://cdn.example.com/live/playlist.m3u8?token=secret&expires=1#part',
+          ),
+          'https://cdn.example.com/live/playlist.m3u8',
+        );
+        expect(sanitizeMediaUrl('not a URL'), '[invalid-url]');
+      },
+    );
   });
 }

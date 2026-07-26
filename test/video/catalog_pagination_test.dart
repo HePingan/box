@@ -317,6 +317,7 @@ class TestRepository extends VideoCatalogRepository {
     VideoSource source, {
     required int? typeId,
     required int page,
+    String? typeQuery,
   }) async {
     callCount++;
     if (delayMs > 0) {

@@ -11,6 +11,7 @@ import '../controller/video_controller.dart';
 import '../services/favorites_repository.dart';
 import '../models/video_source.dart';
 import 'video_detail_page.dart';
+import 'video_downloads_page.dart';
 
 /// 独立收藏/追剧页：网格展示、左滑删除单条、一键清空。
 class FavoritesPage extends StatelessWidget {
@@ -104,12 +105,22 @@ class FavoritesPage extends StatelessWidget {
           ],
           const Spacer(),
           if (count > 0)
+            IconButton(
+              icon: const Icon(Icons.file_download_rounded, size: 22),
+              color: AppTokens.primaryBlue,
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const VideoDownloadsPage()),
+              ),
+            ),
+          if (count > 0) ...[
+            const SizedBox(width: 8),
             TextButton.icon(
               onPressed: () => _confirmClear(context, controller),
               icon: const Icon(Icons.delete_sweep_rounded, size: 18),
               label: const Text('清空'),
               style: TextButton.styleFrom(foregroundColor: AppTokens.rose),
             ),
+          ],
         ],
       ),
     );
@@ -132,7 +143,8 @@ class FavoritesPage extends StatelessWidget {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => VideoDetailPage(source: targetSource, vodId: item.vodId),
+        builder: (_) =>
+            VideoDetailPage(source: targetSource, vodId: item.vodId),
       ),
     );
   }
@@ -205,7 +217,9 @@ class FavoritesPage extends StatelessWidget {
               decoration: BoxDecoration(
                 color: AppTokens.rose.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-                border: Border.all(color: AppTokens.rose.withValues(alpha: 0.18)),
+                border: Border.all(
+                  color: AppTokens.rose.withValues(alpha: 0.18),
+                ),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,

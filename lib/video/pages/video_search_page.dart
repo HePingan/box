@@ -7,8 +7,11 @@ import 'package:box/design_system/widgets/app_page_scaffold.dart';
 
 import '../models/video_source.dart';
 import '../models/vod_item.dart';
+import '../services/search_history_repository.dart';
 import '../services/video_api_service.dart';
 import 'search/search_empty_state.dart';
+import 'search/search_history_view.dart';
+import 'search/search_input_bar.dart';
 import 'search/search_result_card.dart';
 import 'search/search_utils.dart';
 import 'video_detail_page.dart';
@@ -24,6 +27,10 @@ class VideoSearchPage extends StatefulWidget {
 
 class _VideoSearchPageState extends State<VideoSearchPage> {
   final TextEditingController _searchController = TextEditingController();
+  // 源内搜索用独立历史 box，与聚合搜索互不污染。
+  final SearchHistoryRepository _historyRepo = SearchHistoryRepository(
+    boxName: 'video_source_search_history_box',
+  );
 
   List<VodItem> _results = [];
   bool _isLoading = false;
@@ -31,10 +38,51 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
   String? _errorMessage;
   int _searchGeneration = 0;
 
+  List<String> _recentKeywords = const [];
+  List<String> _hotKeywords = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadHistory() async {
+    await _historyRepo.init();
+    if (!mounted) return;
+    setState(() {
+      _recentKeywords = _historyRepo.recentKeywords();
+      _hotKeywords = _historyRepo.hotKeywords();
+    });
+  }
+
+  Future<void> _refreshHistoryState() async {
+    if (!mounted) return;
+    setState(() {
+      _recentKeywords = _historyRepo.recentKeywords();
+      _hotKeywords = _historyRepo.hotKeywords();
+    });
+  }
+
+  Future<void> _searchWithKeyword(String keyword) async {
+    _searchController.text = keyword;
+    await _performSearch();
+  }
+
+  Future<void> _removeHistory(String keyword) async {
+    await _historyRepo.remove(keyword);
+    await _refreshHistoryState();
+  }
+
+  Future<void> _clearHistory() async {
+    await _historyRepo.clear();
+    await _refreshHistoryState();
   }
 
   Future<void> _performSearch() async {
@@ -63,6 +111,12 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
         _results = res;
         _isLoading = false;
       });
+
+      // 命中结果才记历史，避免记录无效关键词。
+      if (res.isNotEmpty) {
+        await _historyRepo.record(keyword);
+        await _refreshHistoryState();
+      }
     } catch (e) {
       if (!mounted || generation != _searchGeneration) return;
       setState(() {
@@ -115,7 +169,18 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
         physics: const BouncingScrollPhysics(),
         slivers: [
           SliverToBoxAdapter(child: _buildHero()),
-          SliverToBoxAdapter(child: _buildSearchBox()),
+          SliverToBoxAdapter(
+            child: SearchInputBar(
+              controller: _searchController,
+              hintText: '搜索片名 / 关键词',
+              onSubmit: _performSearch,
+              onClear: _clearSearch,
+              accentColor: AppTokens.primaryBlue,
+              leadingIcon: Icons.search_rounded,
+              actionIcon: Icons.manage_search_rounded,
+              actionLabel: '搜索',
+            ),
+          ),
           if (_hasSearched || _isLoading)
             SliverToBoxAdapter(child: _buildResultSummary()),
           SliverFillRemaining(
@@ -123,9 +188,14 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
             child: _isLoading
                 ? const _VideoSearchLoading()
                 : !_hasSearched
-                ? const SearchEmptyState(
-                    message: '输入片名，在当前源内快速搜索',
-                    icon: Icons.manage_search_rounded,
+                ? SearchHistoryView(
+                    recentKeywords: _recentKeywords,
+                    hotKeywords: _hotKeywords,
+                    onTapKeyword: _searchWithKeyword,
+                    onRemoveRecent: _removeHistory,
+                    onClearRecent: _clearHistory,
+                    emptyMessage: '输入片名，在当前源内快速搜索',
+                    emptyIcon: Icons.manage_search_rounded,
                   )
                 : _errorMessage != null
                 ? _buildErrorView()
@@ -194,48 +264,6 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
           color: AppTokens.primaryBlue,
         ),
       ],
-    );
-  }
-
-  Widget _buildSearchBox() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
-        boxShadow: AppTokens.shadowSm(color: AppTokens.primaryBlue),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.search_rounded, color: AppTokens.primaryBlue),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: _searchController,
-              autofocus: true,
-              decoration: const InputDecoration(
-                hintText: '搜索片名 / 关键词',
-                border: InputBorder.none,
-                isDense: true,
-              ),
-              textInputAction: TextInputAction.search,
-              onSubmitted: (_) => _performSearch(),
-            ),
-          ),
-          IconButton(
-            tooltip: '清空',
-            icon: const Icon(Icons.close_rounded),
-            onPressed: _clearSearch,
-          ),
-          FilledButton.icon(
-            onPressed: _performSearch,
-            icon: const Icon(Icons.manage_search_rounded, size: 18),
-            label: const Text('搜索'),
-          ),
-        ],
-      ),
     );
   }
 

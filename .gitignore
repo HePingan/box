@@ -33,7 +33,7 @@ migrate_working_dir/
 /build/
 /coverage/
 
-# Symbolication related
+# Symbolization related
 app.*.symbols
 
 # Obfuscation related
@@ -66,12 +66,14 @@ gpt55-code.sh
 # Node.js artifacts (not needed in Flutter project)
 node_modules/
 
-# Local debugging artifacts
-errors.txt
+# Local AI agent helper artifacts
+LocalAI.md
+local-ai.md
+local_ai.md
+
+# Runtime artifacts (quiz image cache, platform state)
+.var/
 
 # Git bundle / transfer temp files
 *.bundle
 *.tar
-
-# Runtime artifacts (quiz image cache, platform state)
-.var/

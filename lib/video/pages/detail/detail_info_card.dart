@@ -1,28 +1,33 @@
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../models/video_source.dart';
 import '../../models/vod_item.dart';
 
 import '../../../design_system/app_tokens.dart';
 
-class DetailInfoCard extends StatelessWidget {
-  const DetailInfoCard({
-    super.key,
-    required this.detail,
-    required this.source,
-    required this.coverUrl,
-    required this.lineCount,
-    required this.totalEpisodeCount,
-    required this.currentEpisodeName,
-  });
+/// 影片资料卡：纯资料表 + 可折叠简介。
+///
+/// 封面、标题、总集数/线路等已在页面顶部头部呈现，这里不再重复，
+/// 只承载「来源/分类/更新/时间/地区/导演/主演 + 剧情简介」这类次级信息。
+class DetailInfoCard extends StatefulWidget {
+  const DetailInfoCard({super.key, required this.detail, required this.source});
 
   final VodItem detail;
   final VideoSource source;
-  final String? coverUrl;
-  final int lineCount;
-  final int totalEpisodeCount;
-  final String currentEpisodeName;
+
+  @override
+  State<DetailInfoCard> createState() => _DetailInfoCardState();
+}
+
+class _DetailInfoCardState extends State<DetailInfoCard> {
+  bool _synopsisExpanded = false;
+
+  // 统一设计 token，避免圆角/描边/间距各处跳变。
+  static const double _cardRadius = 20;
+  static const double _innerRadius = 12;
+  static const Color _border = Color(0xFFE7ECF5);
+  static const Color _fill = Color(0xFFF8FAFC);
+  static const Color _iconMuted = Color(0xFF94A3B8);
 
   String? _text(dynamic value) {
     if (value == null) return null;
@@ -68,88 +73,17 @@ class DetailInfoCard extends StatelessWidget {
     return lines.join('\n');
   }
 
-  Widget _buildCoverImage() {
-    final url = coverUrl?.trim();
-    if (url == null || url.isEmpty) return _buildPlaceholder();
-
-    return CachedNetworkImage(
-      imageUrl: url,
-      fit: BoxFit.cover,
-      placeholder: (context, url) => Container(
-        color: const Color(0xFFE7ECF5),
-        alignment: Alignment.center,
-        child: const SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      ),
-      errorWidget: (context, url, error) => _buildPlaceholder(),
-    );
-  }
-
-  Widget _buildPlaceholder() {
-    return Container(
-      color: const Color(0xFFE7ECF5),
-      alignment: Alignment.center,
-      child: const Icon(
-        Icons.movie_outlined,
-        size: 34,
-        color: Color(0xFF94A3B8),
-      ),
-    );
-  }
-
-  Widget _metric(String value, String label) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFE7ECF5)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTokens.inkDark,
-                fontSize: 15,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFF64748B),
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _infoRow(IconData icon, String label, String value) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        color: _fill,
+        borderRadius: BorderRadius.circular(_innerRadius),
+        border: Border.all(color: _border),
       ),
       child: Row(
         children: [
-          Icon(icon, size: 16, color: const Color(0xFF6D28D9)),
+          Icon(icon, size: 16, color: _iconMuted),
           const SizedBox(width: 8),
           Text(
             '$label：',
@@ -183,7 +117,8 @@ class DetailInfoCard extends StatelessWidget {
           width: 4,
           height: 16,
           decoration: BoxDecoration(
-            color: const Color(0xFFFFC857),
+            // 与选集/播放的金橙强调统一，去掉此前独立的黄色。
+            color: const Color(0xFFFB923C),
             borderRadius: BorderRadius.circular(99),
           ),
         ),
@@ -200,8 +135,68 @@ class DetailInfoCard extends StatelessWidget {
     );
   }
 
+  Widget _buildSynopsis(String synopsis) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle('剧情简介'),
+        const SizedBox(height: 8),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 180),
+          alignment: Alignment.topCenter,
+          child: Text(
+            synopsis,
+            maxLines: _synopsisExpanded ? null : 3,
+            overflow: _synopsisExpanded
+                ? TextOverflow.visible
+                : TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF475569),
+              fontSize: 13,
+              height: 1.55,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => setState(() => _synopsisExpanded = !_synopsisExpanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _synopsisExpanded ? '收起' : '展开',
+                    style: const TextStyle(
+                      color: Color(0xFF64748B),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  Icon(
+                    _synopsisExpanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    size: 16,
+                    color: const Color(0xFF64748B),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final detail = widget.detail;
     final synopsis = _normalizeSynopsis(detail.vodContent);
     final category = _text(detail.typeName) ?? '未分类';
     final status = _text(detail.vodRemarks) ?? '未知';
@@ -216,71 +211,16 @@ class DetailInfoCard extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
-        boxShadow: [
-          BoxShadow(
-            color: AppTokens.inkDark.withValues(alpha: 0.06),
-            blurRadius: 18,
-            offset: const Offset(0, 10),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(_cardRadius),
+        // B5：扁平次级卡，无阴影，只用浅描边，把视觉主体让给播放器。
+        border: Border.all(color: _border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: SizedBox(
-                  width: 82,
-                  height: 116,
-                  child: _buildCoverImage(),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      '影片档案',
-                      style: TextStyle(
-                        color: Color(0xFF6D28D9),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.8,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      detail.vodName,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppTokens.inkDark,
-                        fontSize: 19,
-                        height: 1.14,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        _metric('$totalEpisodeCount', '总集数'),
-                        const SizedBox(width: 8),
-                        _metric('$lineCount', '线路'),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+          _sectionTitle('影片资料'),
           const SizedBox(height: 12),
-          _infoRow(Icons.source_rounded, '来源', source.name),
+          _infoRow(Icons.source_rounded, '来源', widget.source.name),
           const SizedBox(height: 8),
           _infoRow(Icons.category_rounded, '分类', category),
           const SizedBox(height: 8),
@@ -303,52 +243,9 @@ class DetailInfoCard extends StatelessWidget {
             const SizedBox(height: 8),
             _infoRow(Icons.groups_rounded, '主演', actor),
           ],
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFF7D6),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFFFE08A)),
-            ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.play_circle_fill_rounded,
-                  size: 18,
-                  color: Color(0xFFB45309),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '当前播放：$currentEpisodeName',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF78350F),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
           if (synopsis != null && synopsis.isNotEmpty) ...[
             const SizedBox(height: 14),
-            _sectionTitle('剧情简介'),
-            const SizedBox(height: 8),
-            Text(
-              synopsis,
-              maxLines: 6,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFF475569),
-                fontSize: 13,
-                height: 1.55,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            _buildSynopsis(synopsis),
           ],
         ],
       ),

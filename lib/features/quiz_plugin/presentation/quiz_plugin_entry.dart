@@ -249,10 +249,14 @@ class QuizPluginEntry {
     } catch (_) {}
   }
 
-  static Future<void> openRegionSelector() async {
+  /// 拉起原生悬浮窗框选。返回 false 表示无障碍服务未运行、无法进入框选。
+  static Future<bool> openRegionSelector() async {
     try {
-      await _channel.invokeMethod('openRegionSelector');
-    } catch (_) {}
+      final opened = await _channel.invokeMethod('openRegionSelector');
+      return opened == true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// 设置答案悬浮窗透明度（0.3~1.0）。
@@ -1297,13 +1301,6 @@ class QuizPluginEntry {
                 : '悬浮窗未能显示：请先开启无障碍服务或授予悬浮窗权限') +
             notificationTail;
     }
-  }
-
-  // 识别区域调节页入口
-  static Future<void> showRegionSheet(BuildContext context) async {
-    await Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const _RegionSheetPage()));
   }
 }
 

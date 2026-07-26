@@ -50,6 +50,15 @@ class VideoController extends ChangeNotifier {
   int _currentPage = 1;
   String? _errorMessage;
 
+  /// 观察到的“每页真实条数”参照值。不同源每页返回条数不一（12/20/25/30），
+  /// 硬编码 pageSize 会误判到末尾或无限空翻页。以首页真实返回条数为参照，
+  /// 后续页低于此值才判定到底。每次切源/切分类（page=1）重置。
+  int _observedPageSize = 0;
+
+  /// 分类稀疏回退提示：某分类在该源过滤失效/无独立内容时，
+  /// 自动回退到“全部”并在此写入一行说明，供 UI 轻提示后自动清除。
+  String? _categoryNotice;
+
   int _requestToken = 0;
   bool _disposed = false;
 
@@ -75,6 +84,9 @@ class VideoController extends ChangeNotifier {
   bool get hasMore => _hasMore;
 
   String? get errorMessage => _errorMessage;
+
+  /// 分类稀疏回退提示，UI 消费后应调用 [clearCategoryNotice] 清除。
+  String? get categoryNotice => _categoryNotice;
 
   int get currentPage => _currentPage;
 
@@ -360,13 +372,25 @@ class VideoController extends ChangeNotifier {
           ? null
           : _normalizeTypeId(_currentTypeId, newCategories);
 
-      final videos = await _loadVideosWithFallback(
+      final loadResult = await _loadVideosWithFallback(
         source: source,
         typeId: effectiveTypeId,
         page: page,
       );
 
       if (_isStale(token)) return;
+
+      final videos = loadResult.videos;
+
+      // 分类稀疏回退：内容落到“全部”，同步把选中态弹回“全部”并写一行提示。
+      int? resolvedTypeId = effectiveTypeId;
+      if (loadResult.fellBack) {
+        final label = _categoryLabel(effectiveTypeId);
+        resolvedTypeId = null;
+        _categoryNotice = label == null
+            ? '该分类无独立内容，已显示全部'
+            : '该片源「$label」无独立内容，已显示全部';
+      }
 
       if (!append) {
         _videoList.clear();
@@ -390,8 +414,17 @@ class VideoController extends ChangeNotifier {
       }
 
       _currentSource = source;
-      _currentTypeId = effectiveTypeId;
+      _currentTypeId = resolvedTypeId;
       _currentPage = page;
+
+      // 首页以默认页大小作为参照；若源返回更多则抬高参照。不能以偏短首页
+      // 自身作为参照，否则 15 条会被误当作“此源一整页”而继续显示加载更多。
+      if (page == 1) {
+        _observedPageSize = videos.length > _repository.pageSize
+            ? videos.length
+            : _repository.pageSize;
+      }
+
       _hasMore = _resolveHasMore(
         rawCount: videos.length,
         addedCount: addedCount,
@@ -418,28 +451,52 @@ class VideoController extends ChangeNotifier {
   }
 
   /// 满页判定（基于真实数据，不再人为限制页数）：
-  /// - 原始返回不足一页 → 已到末尾。
+  /// - 以观察到的“每页真实条数”为参照，不再硬编码 pageSize=20。
+  ///   不同源每页返回 12/25/30 都能正确判定，避免误判到底或无限空翻页。
+  /// - 返回条数少于该源观察到的页大小 → 已到末尾。
   /// - 满页但全是重复（新增为 0）→ 源在重复回吐旧页，停止避免死循环。
   /// - 满页且有新增 → 还有更多。
   bool _resolveHasMore({required int rawCount, required int addedCount}) {
-    if (rawCount < _repository.pageSize) return false;
+    final reference = _observedPageSize > 0
+        ? _observedPageSize
+        : _repository.pageSize;
+    if (rawCount < reference) return false;
     return addedCount > 0;
   }
 
-  /// 先按分类加载；如果第一页分类没数据，自动回退到“全部”
-  Future<List<VodItem>> _loadVideosWithFallback({
+  /// 分类首页内容过于稀疏时视为“该分类在此源过滤失效”。
+  /// 阈值内(含)触发回退到“全部”，避免把用户留在孤零一两张卡上。
+  static const int _sparseCategoryThreshold = 2;
+
+  /// 先按分类加载；如果第一页分类内容稀疏(≤阈值)，自动回退到“全部”。
+  ///
+  /// 返回结果同时告知是否发生了回退，便于上层同步弹回“全部”选中态并提示。
+  Future<_CategoryLoadResult> _loadVideosWithFallback({
     required VideoSource source,
     required int? typeId,
     required int page,
   }) async {
+    // 父分类展开：顶级分类(pid=0)本身常不挂视频，展开成其子分类
+    // 逗号多选(如 "6,7,8,9")，救活“列表空”的源。叶子分类返回 null。
+    final typeQuery = _buildTypeQuery(typeId);
+
     final videos = await _repository.loadVideos(
       source,
       typeId: typeId,
       page: page,
+      typeQuery: typeQuery,
     );
 
-    if (videos.isNotEmpty || typeId == null || page != 1) {
-      return videos;
+    // 仅在“按分类拉第一页”且内容稀疏时才回退：
+    // - typeId == null：本就是全部，无处可退。
+    // - page != 1：翻页阶段不回退，避免打断分页。
+    final shouldFallback =
+        typeId != null &&
+        page == 1 &&
+        videos.length <= _sparseCategoryThreshold;
+
+    if (!shouldFallback) {
+      return _CategoryLoadResult(videos: videos, fellBack: false);
     }
 
     final fallbackVideos = await _repository.loadVideos(
@@ -448,7 +505,12 @@ class VideoController extends ChangeNotifier {
       page: page,
     );
 
-    return fallbackVideos;
+    // 回退结果反而更少/为空时，保留原分类内容，不做无谓切换。
+    if (fallbackVideos.length <= videos.length) {
+      return _CategoryLoadResult(videos: videos, fellBack: false);
+    }
+
+    return _CategoryLoadResult(videos: fallbackVideos, fellBack: true);
   }
 
   void _scheduleCoverPrefetch(
@@ -532,7 +594,10 @@ class VideoController extends ChangeNotifier {
       // 只处理视口附近的一段：从 startIndex 起、跨度 limit 的窗口，
       // 其中缺封面的条目。随滚动推进窗口，避免一次性抓完整页。
       final snapshot = List<VodItem>.from(items ?? _videoList);
-      final safeStart = startIndex.clamp(0, snapshot.isEmpty ? 0 : snapshot.length - 1);
+      final safeStart = startIndex.clamp(
+        0,
+        snapshot.isEmpty ? 0 : snapshot.length - 1,
+      );
       final windowEnd = (safeStart + limit).clamp(0, snapshot.length);
       final targetItems = snapshot
           .sublist(safeStart, windowEnd)
@@ -696,6 +761,43 @@ class VideoController extends ChangeNotifier {
     return exists ? typeId : null;
   }
 
+  /// 把分类 ID 展开成真正写进 `t=` 的查询值。
+  ///
+  /// 苹果CMS 顶级分类(pid=0，如“电影”)常是父容器、本身不挂视频，
+  /// 视频挂在子分类(pid≠0)上。若 [typeId] 是有子类的父分类，
+  /// 展开成子类 ID 逗号多选(如 "6,7,8,9")；否则返回 null 表示
+  /// 直接用 typeId 本身(叶子分类、或分类里无 pid 信息时)。
+  String? _buildTypeQuery(int? typeId) {
+    if (typeId == null) return null;
+
+    final children = _categories
+        .where((c) => c.pid == typeId && c.typeId > 0)
+        .map((c) => c.typeId)
+        .toList(growable: false);
+
+    if (children.isEmpty) return null;
+
+    return children.join(',');
+  }
+
+  /// 按 typeId 找到分类名，用于稀疏回退提示；找不到返回 null。
+  String? _categoryLabel(int? typeId) {
+    if (typeId == null) return null;
+    for (final category in _categories) {
+      if (category.typeId == typeId) {
+        final name = category.typeName.trim();
+        return name.isEmpty ? null : name;
+      }
+    }
+    return null;
+  }
+
+  /// UI 消费稀疏回退提示后清除，避免重复弹出。
+  void clearCategoryNotice() {
+    if (_categoryNotice == null) return;
+    _categoryNotice = null;
+  }
+
   List<VideoSource> _dedupeSources(List<VideoSource> sources) {
     final result = <VideoSource>[];
     final seen = <String>{};
@@ -752,4 +854,12 @@ class VideoController extends ChangeNotifier {
     if (_disposed) return;
     notifyListeners();
   }
+}
+
+/// 分类加载结果：携带视频列表与“是否发生了稀疏回退到全部”的标记。
+class _CategoryLoadResult {
+  const _CategoryLoadResult({required this.videos, required this.fellBack});
+
+  final List<VodItem> videos;
+  final bool fellBack;
 }

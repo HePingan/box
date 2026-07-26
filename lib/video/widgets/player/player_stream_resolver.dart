@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../../../utils/app_logger.dart';
+import '../../services/shared_http_client.dart';
 
 String normalizePlayableUrl(String raw) {
   var url = raw.trim().replaceAll('\\', '');
@@ -67,6 +68,16 @@ bool isInvalidWebPageUrl(Uri uri) {
   return false;
 }
 
+String sanitizeMediaUrl(Object value) {
+  final raw = value.toString();
+  final uri = Uri.tryParse(raw);
+  if (uri == null || !uri.hasScheme || uri.host.isEmpty) return '[invalid-url]';
+  return uri
+      .replace(queryParameters: const <String, String>{}, fragment: '')
+      .toString()
+      .replaceFirst(RegExp(r'[?#]+$'), '');
+}
+
 class PlayerStreamResolver {
   const PlayerStreamResolver({
     this.probeTimeout = const Duration(seconds: 5),
@@ -87,7 +98,8 @@ class PlayerStreamResolver {
     }
 
     Uri currentUri = uri;
-    final client = http.Client();
+    // 复用全局共享连接池，不在此处 close（close 会毁掉进程级连接池）。
+    final client = SharedHttpClient.instance;
 
     try {
       for (int i = 0; i < 2; i++) {
@@ -98,7 +110,7 @@ class PlayerStreamResolver {
         final finalUrl = res.request?.url ?? currentUri;
         if (!isAllowedRemoteMediaUri(finalUrl)) return currentUri;
         AppLogger.instance.log(
-          'HLS检查: code=${res.statusCode}, final=$finalUrl, ct=${res.headers['content-type']}',
+          'HLS检查: code=${res.statusCode}, final=${sanitizeMediaUrl(finalUrl)}, ct=${res.headers['content-type']}',
           tag: 'PLAYER',
         );
 
@@ -138,7 +150,7 @@ class PlayerStreamResolver {
         }
 
         AppLogger.instance.log(
-          'HLS Master降维成功，切入内核直连 -> $nextUri',
+          'HLS Master降维成功，切入内核直连 -> ${sanitizeMediaUrl(nextUri)}',
           tag: 'PLAYER',
         );
         currentUri = nextUri;
@@ -146,9 +158,8 @@ class PlayerStreamResolver {
     } catch (e, st) {
       AppLogger.instance.logError(e, st, 'PLAYER');
       return uri;
-    } finally {
-      client.close();
     }
+    // 共享连接池，不 close。
 
     return currentUri;
   }
@@ -164,12 +175,16 @@ class PlayerStreamResolver {
     if (kIsWeb) return true;
     if (!uri.path.toLowerCase().contains('.m3u8')) return true;
 
-    final client = http.Client();
+    // 复用全局共享连接池，不在此处 close。
+    final client = SharedHttpClient.instance;
 
     try {
       Uri mediaPlaylistUri = uri;
 
-      AppLogger.instance.log('HLS探测开始 -> $uri', tag: 'PLAYER');
+      AppLogger.instance.log(
+        'HLS探测开始 -> ${sanitizeMediaUrl(uri)}',
+        tag: 'PLAYER',
+      );
 
       final entryRes = await _httpGetWithTimeout(
         client,
@@ -180,7 +195,7 @@ class PlayerStreamResolver {
 
       final entryFinalUrl = entryRes.request?.url ?? uri;
       AppLogger.instance.log(
-        'HLS探测 entry: code=${entryRes.statusCode}, final=$entryFinalUrl, ct=${entryRes.headers['content-type']}, len=${entryRes.bodyBytes.length}',
+        'HLS探测 entry: code=${entryRes.statusCode}, final=${sanitizeMediaUrl(entryFinalUrl)}, ct=${entryRes.headers['content-type']}, len=${entryRes.bodyBytes.length}',
         tag: 'PLAYER',
       );
 
@@ -227,7 +242,7 @@ class PlayerStreamResolver {
 
         mediaPlaylistUri = mediaRes.request?.url ?? mediaPlaylistUri;
         AppLogger.instance.log(
-          'HLS探测 media: code=${mediaRes.statusCode}, final=$mediaPlaylistUri, ct=${mediaRes.headers['content-type']}, len=${mediaRes.bodyBytes.length}',
+          'HLS探测 media: code=${mediaRes.statusCode}, final=${sanitizeMediaUrl(mediaPlaylistUri)}, ct=${mediaRes.headers['content-type']}, len=${mediaRes.bodyBytes.length}',
           tag: 'PLAYER',
         );
 
@@ -263,7 +278,7 @@ class PlayerStreamResolver {
           );
 
           AppLogger.instance.log(
-            'HLS探测 key: code=${keyRes.statusCode}, final=${keyRes.request?.url ?? keyUri}, ct=${keyRes.headers['content-type']}, len=${keyRes.bodyBytes.length}, hex=${_hexPreview(keyRes.bodyBytes)}',
+            'HLS探测 key: code=${keyRes.statusCode}, final=${sanitizeMediaUrl(keyRes.request?.url ?? keyUri)}, ct=${keyRes.headers['content-type']}, len=${keyRes.bodyBytes.length}, hex=${_hexPreview(keyRes.bodyBytes)}',
             tag: 'PLAYER',
           );
         }
@@ -288,7 +303,7 @@ class PlayerStreamResolver {
           );
 
           AppLogger.instance.log(
-            'HLS探测 map: code=${mapRes.statusCode}, final=${mapRes.request?.url ?? mapUri}, ct=${mapRes.headers['content-type']}, len=${mapRes.bodyBytes.length}, hex=${_hexPreview(mapRes.bodyBytes)}',
+            'HLS探测 map: code=${mapRes.statusCode}, final=${sanitizeMediaUrl(mapRes.request?.url ?? mapUri)}, ct=${mapRes.headers['content-type']}, len=${mapRes.bodyBytes.length}, hex=${_hexPreview(mapRes.bodyBytes)}',
             tag: 'PLAYER',
           );
         }
@@ -317,7 +332,7 @@ class PlayerStreamResolver {
       );
 
       AppLogger.instance.log(
-        'HLS探测 seg: code=${segRes.statusCode}, final=${segRes.request?.url ?? segUri}, ct=${segRes.headers['content-type']}, len=${segRes.bodyBytes.length}, hex=${_hexPreview(segRes.bodyBytes)}',
+        'HLS探测 seg: code=${segRes.statusCode}, final=${sanitizeMediaUrl(segRes.request?.url ?? segUri)}, ct=${segRes.headers['content-type']}, len=${segRes.bodyBytes.length}, hex=${_hexPreview(segRes.bodyBytes)}',
         tag: 'PLAYER',
       );
 
@@ -334,9 +349,8 @@ class PlayerStreamResolver {
     } catch (e, st) {
       AppLogger.instance.logError(e, st, 'PLAYER');
       return false;
-    } finally {
-      client.close();
     }
+    // 共享连接池，不 close。
   }
 
   Future<http.Response> _httpGetWithTimeout(

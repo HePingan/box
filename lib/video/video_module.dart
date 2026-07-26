@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
+import 'services/shared_http_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models/video_source.dart';
@@ -351,7 +351,9 @@ class VideoModule {
       AppLogger.instance.log('probe catalog url=$url', tag: tag);
 
       try {
-        final response = await http.get(Uri.parse(url)).timeout(timeout);
+        final response = await SharedHttpClient.instance
+            .get(Uri.parse(url))
+            .timeout(timeout);
         final body = utf8
             .decode(response.bodyBytes, allowMalformed: true)
             .trim();

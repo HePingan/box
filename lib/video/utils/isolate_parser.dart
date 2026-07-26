@@ -5,8 +5,16 @@ import 'package:flutter/foundation.dart';
 import '../models/video_category.dart';
 import '../models/vod_item.dart';
 
-/// 异步数据解析器（运行在独立的后台线程 Isolate 中）
+/// 异步数据解析器
+///
+/// 大 payload 丢到后台 Isolate（`compute`）避免卡 UI 线程；小 payload 直接在
+/// 主线程解析——spawn 一个 isolate 有固定开销（序列化 + 线程创建约数毫秒），
+/// 对几 KB 的小数据反而更慢，聚合搜索里 N 个源就是 N 次无谓的 isolate 创建。
 class IsolateParser {
+  /// 低于此字节数在主线程解析，高于则丢后台 isolate。
+  /// 32KB 约对应几十条 VodItem，超过才值得 isolate 的固定开销。
+  static const int _isolateThresholdBytes = 32 * 1024;
+
   /// 开启后台线程，解析视频列表数据
   static Future<List<VodItem>> parseVodList(
     String jsonString, {
@@ -14,10 +22,16 @@ class IsolateParser {
   }) async {
     if (jsonString.trim().isEmpty) return <VodItem>[];
 
-    return compute(_parseVodListTask, <String, String?>{
+    final payload = <String, String?>{
       'jsonString': jsonString,
       'baseUrl': baseUrl,
-    });
+    };
+
+    // 小数据主线程直接解析，省掉 isolate 固定开销。
+    if (jsonString.length < _isolateThresholdBytes) {
+      return _parseVodListTask(payload);
+    }
+    return compute(_parseVodListTask, payload);
   }
 
   /// 开启后台线程，解析分类列表数据
@@ -25,6 +39,11 @@ class IsolateParser {
     String jsonString,
   ) async {
     if (jsonString.trim().isEmpty) return <VideoCategory>[];
+
+    // 分类数据通常很小（几十条以内），几乎总是走主线程。
+    if (jsonString.length < _isolateThresholdBytes) {
+      return _parseCategoryListTask(jsonString);
+    }
     return compute(_parseCategoryListTask, jsonString);
   }
 
@@ -186,41 +205,22 @@ class IsolateParser {
     final vodTime = _asString(raw['vod_time'] ?? raw['vodTime']);
     final vodContent = _asString(raw['vod_content'] ?? raw['vodContent']);
 
-    // 同时保留驼峰和下划线，兼容不同的 model 实现
+    // 只写规范下划线键（VodItem.fromJson 按别名列表回退时优先命中这些），
+    // 保留 ...raw 透传 year/area/lang/director/actor 等 normalize 未显式处理的
+    // 字段。以前给同一个值塞 10 个驼峰/别名副本，列表几百条时内存翻数倍且全是
+    // fromJson 用不到的冗余键，这里一并去掉。
     return <String, dynamic>{
       ...raw,
       'vod_id': vodId,
-      'vodId': vodId,
-      'id': vodId,
-      'vod_name': vodName,
-      'vodName': vodName,
-      'name': vodName,
-      'title': vodName,
       'type_id': typeId,
-      'typeId': typeId,
       'type_name': typeName,
-      'typeName': typeName,
+      'vod_name': vodName,
       'vod_pic': vodPic,
-      'vodPic': vodPic,
-      'pic': vodPic,
-      'poster': vodPic,
-      'cover': vodPic,
-      'image': vodPic,
-      'img': vodPic,
-      'thumb': vodPic,
-      'posterUrl': vodPic,
-      'coverUrl': vodPic,
-      'imageUrl': vodPic,
       'vod_remarks': vodRemarks,
-      'vodRemarks': vodRemarks,
       'vod_play_from': vodPlayFrom,
-      'vodPlayFrom': vodPlayFrom,
       'vod_play_url': vodPlayUrl,
-      'vodPlayUrl': vodPlayUrl,
       'vod_time': vodTime,
-      'vodTime': vodTime,
       'vod_content': vodContent,
-      'vodContent': vodContent,
     };
   }
 
@@ -229,6 +229,7 @@ class IsolateParser {
     final typeName = _asString(
       raw['type_name'] ?? raw['typeName'] ?? raw['name'],
     );
+    final pid = _asInt(raw['type_pid'] ?? raw['typePid'] ?? raw['pid']);
 
     return <String, dynamic>{
       ...raw,
@@ -236,6 +237,7 @@ class IsolateParser {
       'typeId': typeId,
       'type_name': typeName,
       'typeName': typeName,
+      'type_pid': pid,
     };
   }
 

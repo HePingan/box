@@ -18,6 +18,10 @@ class VideoDetailController extends ChangeNotifier {
   final int vodId;
   final String? initialEpisodeUrl;
   final int initialPosition;
+  final String? localPath;
+  final bool isOfflinePlayback;
+  final String? episodeName; // 离线播放时传入剧集名称
+  final int localFileExpectedBytes;
 
   VodItem? fullDetail;
   List<DetailPlayLine> playLines = [];
@@ -29,6 +33,9 @@ class VideoDetailController extends ChangeNotifier {
 
   String? currentEpisodeUrl;
   String? currentEpisodeName;
+  String? currentLocalPath; // 离线播放时存储本地文件路径
+  int get expectedLocalFileBytes =>
+      isOfflinePlayback ? localFileExpectedBytes : 0;
 
   bool _resumeApplied = false;
   String? resumeMessage; // 用于通知 UI 弹出 Snackbar
@@ -46,12 +53,16 @@ class VideoDetailController extends ChangeNotifier {
     required this.vodId,
     this.initialEpisodeUrl,
     this.initialPosition = 0,
+    this.localPath,
+    this.isOfflinePlayback = false,
+    this.episodeName,
+    this.localFileExpectedBytes = 0,
     DetailFetcher? detailFetcher,
     PlayLineMemoryRepository? lineMemoryRepo,
     FavoritesRepository? favoritesRepo,
-  })  : _detailFetcher = detailFetcher,
-        _lineMemoryRepo = lineMemoryRepo ?? PlayLineMemoryRepository(),
-        _favoritesRepo = favoritesRepo ?? FavoritesRepository() {
+  }) : _detailFetcher = detailFetcher,
+       _lineMemoryRepo = lineMemoryRepo ?? PlayLineMemoryRepository(),
+       _favoritesRepo = favoritesRepo ?? FavoritesRepository() {
     _lineMemoryRepo.init();
     _initFavorite();
     loadDetail();
@@ -98,14 +109,40 @@ class VideoDetailController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final detailUrl = source.detailUrl.trim().isNotEmpty
-          ? source.detailUrl
-          : source.url;
-      _log('开始加载详情，vodId=$vodId');
+      // 离线任务只有本地文件路径；不能再请求原站详情，因为下载管理页构造的 source
+      // 并不带可用 API 地址。先构造最小详情状态，让详情页直接承载本地播放器。
+      if (isOfflinePlayback &&
+          localPath != null &&
+          localPath!.trim().isNotEmpty) {
+        final title = episodeName?.trim().isNotEmpty == true
+            ? episodeName!.trim()
+            : '已下载视频';
+        fullDetail = VodItem(vodId: vodId, vodName: title);
+        playLines = const [];
+        currentLocalPath = localPath;
+        currentEpisodeName = title;
+        isLoading = false;
+        notifyListeners();
+        return;
+      }
 
-      final detail =
-          await (_detailFetcher?.call() ??
-              VideoApiService.fetchDetail(detailUrl, vodId));
+      // url 是真实采集 API，detailUrl 是官网/Referer 备用；优先走 API，
+      // 避免列表可用但官网没有标准详情接口时误报详情失败。
+      final candidates = <String>[
+        source.url.trim(),
+        source.detailUrl.trim(),
+      ].where((url) => url.isNotEmpty).toSet();
+      _log('开始加载详情，vodId=$vodId，候选=${candidates.join(" | ")}');
+
+      VodItem? detail;
+      if (_detailFetcher != null) {
+        detail = await _detailFetcher();
+      } else {
+        for (final baseUrl in candidates) {
+          detail = await VideoApiService.fetchDetail(baseUrl, vodId);
+          if (detail != null) break;
+        }
+      }
       if (_disposed || generation != _loadGeneration) return;
 
       if (detail == null) {
@@ -117,6 +154,16 @@ class VideoDetailController extends ChangeNotifier {
 
       fullDetail = detail;
       playLines = DetailPlayParser.buildPlayLines(detail, source);
+
+      // 离线播放：直接使用本地文件，跳过网络线路选择
+      if (isOfflinePlayback && localPath != null && localPath!.isNotEmpty) {
+        currentLocalPath = localPath;
+        currentEpisodeName = episodeName ?? '已下载';
+        isLoading = false;
+        notifyListeners();
+        return;
+      }
+
       final defaultSelection = _pickDefaultSelection(
         playLines,
         initialEpisodeUrl: initialEpisodeUrl,
@@ -320,6 +367,47 @@ class VideoDetailController extends ChangeNotifier {
     }
 
     return false;
+  }
+
+  /// 在不同线路中寻找与当前集同序号的候选；调用方仅在当前线路失败时使用。
+  ///
+  /// 优先严格复用当前索引；若线路集数较短，则返回其最后一个有效集，避免
+  /// 自动恢复落在不可播放索引上。没有其它可播放线路时返回 null。
+  int? findFallbackLineIndex({int? excludingLineIndex}) {
+    for (var index = 0; index < playLines.length; index++) {
+      if (index == excludingLineIndex || playLines[index].episodes.isEmpty) {
+        continue;
+      }
+      return index;
+    }
+    return null;
+  }
+
+  /// 切换到指定线路，并尽可能保留当前集序号，用于失败恢复。
+  void selectFallbackLine(int index) {
+    if (index < 0 || index >= playLines.length) return;
+    final line = playLines[index];
+    if (line.episodes.isEmpty) return;
+
+    final targetEpisodeIndex = selectedEpisodeIndex
+        .clamp(0, line.episodes.length - 1)
+        .toInt();
+    final episode = line.episodes[targetEpisodeIndex];
+    selectedLineIndex = index;
+    selectedEpisodeIndex = targetEpisodeIndex;
+    currentEpisodeUrl = episode.url;
+    currentEpisodeName = episode.name;
+    _resumeApplied = true;
+
+    unawaited(
+      _lineMemoryRepo.saveMemory(
+        source,
+        vodId,
+        lineName: line.name,
+        lineIndex: index,
+      ),
+    );
+    notifyListeners();
   }
 
   void selectLine(int index) {

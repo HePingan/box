@@ -57,11 +57,18 @@ class SearchResultCard extends StatelessWidget {
       return _buildPlaceholder();
     }
 
-    // 🏆 使用工业级缓存组件，大幅降低丢帧，列表图片滑落瞬间回收
+    // 网格卡片宽约 120px，源站封面常为 1000×1500 大图。限制解码宽到 300px
+    // （3 列网格在高密度屏也够清晰），避免全尺寸解码——此前缺这行，多图
+    // 网格会把每张大图全尺寸解码进内存，快速滑动明显丢帧。与聚合卡片
+    // 的 memCacheWidth 策略对齐。
     return CachedNetworkImage(
       imageUrl: imageUrl,
       fit: BoxFit.cover,
       alignment: Alignment.center,
+      memCacheWidth: 300,
+      // 短淡入替代硬闪：缓存命中瞬显，新图柔和出现，主观更快。
+      fadeInDuration: const Duration(milliseconds: 180),
+      fadeOutDuration: const Duration(milliseconds: 80),
       placeholder: (context, url) => Container(
         color: Colors.grey.shade200,
         alignment: Alignment.center,

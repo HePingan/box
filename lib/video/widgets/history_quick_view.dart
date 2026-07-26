@@ -31,64 +31,54 @@ class HistoryQuickView extends StatelessWidget {
         final items = controller.historyList;
 
         return RepaintBoundary(
-          child: Card(
-            elevation: 0,
-            color: AppTokens.inkDark,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(26),
-              side: const BorderSide(color: Color(0xFF273449)),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+              border: Border.all(color: const Color(0xFFEDF1F8)),
+              boxShadow: AppTokens.shadowSm(),
             ),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildHeader(context, controller, items.length),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      color: Colors.white.withValues(alpha: 0.60),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (items.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      child: Center(
-                        child: Text(
-                          emptyText,
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.60),
-                          ),
+            padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildHeader(context, controller, items.length),
+                const SizedBox(height: 8),
+                if (items.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Center(
+                      child: Text(
+                        emptyText,
+                        style: const TextStyle(
+                          color: AppTokens.textSecondary,
+                          fontSize: 12,
                         ),
                       ),
-                    )
-                  else
-                    SizedBox(
-                      height: 172,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        physics: const ClampingScrollPhysics(),
-                        itemCount: items.length,
-                        separatorBuilder: (_, _) => const SizedBox(width: 12),
-                        itemBuilder: (context, index) {
-                          final item = items[index];
-                          return RepaintBoundary(
-                            child: _HistoryCard(
-                              item: item,
-                              onTap: () => _openHistoryItem(context, item),
-                              onLongPress: () =>
-                                  _confirmDelete(context, controller, item),
-                            ),
-                          );
-                        },
-                      ),
                     ),
-                ],
-              ),
+                  )
+                else
+                  SizedBox(
+                    height: 132,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      physics: const ClampingScrollPhysics(),
+                      itemCount: items.length,
+                      separatorBuilder: (_, _) => const SizedBox(width: 10),
+                      itemBuilder: (context, index) {
+                        final item = items[index];
+                        return RepaintBoundary(
+                          child: _HistoryCard(
+                            item: item,
+                            onTap: () => _openHistoryItem(context, item),
+                            onLongPress: () =>
+                                _confirmDelete(context, controller, item),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
             ),
           ),
         );
@@ -103,12 +93,18 @@ class HistoryQuickView extends StatelessWidget {
   ) {
     return Row(
       children: [
+        const Icon(
+          Icons.play_circle_outline_rounded,
+          size: 18,
+          color: AppTokens.primaryBlue,
+        ),
+        const SizedBox(width: 6),
         Text(
           title,
           style: const TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w900,
-            color: Colors.white,
+            fontSize: 14.5,
+            fontWeight: FontWeight.w800,
+            color: AppTokens.textPrimary,
           ),
         ),
         const Spacer(),
@@ -120,7 +116,7 @@ class HistoryQuickView extends StatelessWidget {
             ),
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8),
-              minimumSize: const Size(0, 30),
+              minimumSize: const Size(0, 28),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
             child: const Row(
@@ -129,15 +125,15 @@ class HistoryQuickView extends StatelessWidget {
                 Text(
                   '查看全部',
                   style: TextStyle(
-                    color: Color(0xFFFFE08A),
+                    color: AppTokens.primaryBlue,
                     fontSize: 12,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 Icon(
                   Icons.chevron_right_rounded,
                   size: 16,
-                  color: Color(0xFFFFE08A),
+                  color: AppTokens.primaryBlue,
                 ),
               ],
             ),
@@ -387,41 +383,34 @@ class _HistoryCard extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-                color: Colors.white,
-                height: 1.2,
+                fontWeight: FontWeight.w700,
+                fontSize: 12.5,
+                color: AppTokens.textPrimary,
+                height: 1.15,
               ),
             ),
-            const SizedBox(height: 2),
-            Text(
-              item.episodeName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                color: Colors.white.withValues(alpha: 0.70),
-                height: 1.2,
-              ),
-            ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 1),
             Row(
               children: [
-                const Icon(
-                  Icons.video_library_rounded,
-                  size: 10,
-                  color: Color(0xFFFFE08A),
+                Text(
+                  '$progress%',
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    color: AppTokens.primaryBlue,
+                    fontWeight: FontWeight.w700,
+                    height: 1.1,
+                  ),
                 ),
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
-                    item.sourceName,
+                    item.episodeName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.white.withValues(alpha: 0.54),
-                      height: 1.2,
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      color: AppTokens.textSecondary,
+                      height: 1.1,
                     ),
                   ),
                 ),

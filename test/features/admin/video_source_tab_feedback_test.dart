@@ -38,6 +38,7 @@ class _VideoRepository extends VideoCatalogRepository {
     VideoSource source, {
     required int? typeId,
     required int page,
+    String? typeQuery,
   }) async {
     return const [];
   }

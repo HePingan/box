@@ -50,6 +50,25 @@ B 错误
       expect(r.options, contains('错误'));
     });
 
+    test('图片题：·分隔+无字母前缀+选项黏行+末尾答案（真实试捕样本）', () {
+      // 悬浮窗试捕预览原文：选项无 A/B/C/D（字母是图形圆圈），
+      // 「·」当逻辑项分隔符，且「未立即排除故障」「未将车停到路边」黏成一行。
+      const raw = '·x图中故障车辆的违法行为是()。\n'
+          '·未设置警告标志·未立即排除故障未将车停到路边\n'
+          '·未开启危险报警闪光灯·答案A';
+      final r = OcrQuizParser.parse(raw);
+      expect(r.question, contains('图中故障车辆的违法行为是'));
+      expect(r.question, isNot(contains('·')));
+      expect(r.options, hasLength(4));
+      expect(r.options, contains('未设置警告标志'));
+      expect(r.options, contains('未立即排除故障'));
+      expect(r.options, contains('未将车停到路边'));
+      expect(r.options, contains('未开启危险报警闪光灯'));
+      // 答案 A → 第 0 个选项
+      expect(r.correctAnswer, '未设置警告标志');
+      expect(r.questionType, 'single_choice');
+    });
+
     test('答案与解析被 OCR 合并为同一行时应分割', () {
       const raw = '''
 夜间通过没有交通信号灯的路口应如何操作？

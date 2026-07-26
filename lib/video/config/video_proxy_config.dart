@@ -39,9 +39,22 @@ class VideoProxyConfig {
         uri.host.toLowerCase() == proxyUri.host.toLowerCase();
   }
 
+  /// 已验证被当前转发服务拦截、但直连标准 VOD 接口正常的源。
+  ///
+  /// 这不是“关闭代理”：只有命中这些确定的 host 时才直连；其他源仍完全
+  /// 沿用全局代理策略。新增前必须完成 分类→列表→详情→播放 的实测。
+  static const Set<String> _directVodApiHosts = {'p2100.net'};
+
+  bool _shouldUseDirectVodApi(String url) {
+    final target = Uri.tryParse(unwrapTargetUrl(url));
+    if (target == null || target.host.isEmpty) return false;
+    return _directVodApiHosts.contains(target.host.toLowerCase());
+  }
+
   String wrapWithProxy(String url) {
     final trimmed = url.trim();
     if (trimmed.isEmpty) return trimmed;
+    if (_shouldUseDirectVodApi(trimmed)) return trimmed;
     if (trimmed.startsWith(proxyPrefix)) return trimmed;
     if (isProxyUrl(trimmed)) return trimmed;
     return '$proxyPrefix${Uri.encodeComponent(trimmed)}';

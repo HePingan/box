@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -12,12 +13,19 @@ import '../models/aggregate_result.dart';
 import '../services/search_history_repository.dart';
 import '../services/video_api_service.dart';
 import 'aggregate_search/aggregate_search_group_section.dart';
+import 'aggregate_search/aggregate_search_video_card.dart'
+    show kAggregateCoverDecodeWidth;
 import 'search/search_empty_state.dart';
+import 'search/search_history_view.dart';
+import 'search/search_input_bar.dart';
 import 'search/search_utils.dart';
 import 'video_detail_page.dart';
 
 class AggregateSearchPage extends StatefulWidget {
-  const AggregateSearchPage({super.key});
+  const AggregateSearchPage({super.key, this.prefillKeyword});
+
+  /// 预填搜索关键词(从榜单点击等场景传入)。
+  final String? prefillKeyword;
 
   @override
   State<AggregateSearchPage> createState() => _AggregateSearchPageState();
@@ -33,14 +41,28 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
   String? _errorMessage;
   int _searchGeneration = 0;
   int _failedSourceCount = 0;
+  int _completedSourceCount = 0;
+  int _totalSourceCount = 0;
 
   List<String> _recentKeywords = const [];
   List<String> _hotKeywords = const [];
 
+  AggregateSortMode _sortMode = AggregateSortMode.hitCount;
+  bool _multiSourceOnly = false;
+
   @override
   void initState() {
     super.initState();
+    if (widget.prefillKeyword != null && widget.prefillKeyword!.isNotEmpty) {
+      _searchController.text = widget.prefillKeyword!;
+    }
     _loadHistory();
+    if (widget.prefillKeyword != null && widget.prefillKeyword!.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _searchWithKeyword(widget.prefillKeyword!);
+      });
+    }
   }
 
   @override
@@ -93,6 +115,8 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
       _results = [];
       _errorMessage = null;
       _failedSourceCount = 0;
+      _completedSourceCount = 0;
+      _totalSourceCount = 0;
     });
 
     try {
@@ -110,29 +134,60 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
         return;
       }
 
+      if (!mounted || generation != _searchGeneration) return;
+      setState(() {
+        _totalSourceCount = sources.length;
+      });
+
       const concurrency = 4;
       var cursor = 0;
       var failed = 0;
-      final responses = <List<AggregateResult>>[];
+      var completed = 0;
+      final aggregated = <AggregateResult>[];
 
       Future<void> worker() async {
         while (true) {
           final index = cursor++;
           if (index >= sources.length) return;
           final source = sources[index];
+          List<AggregateResult>? sourceResults;
+          var sourceFailed = false;
           try {
+            // 聚合搜索走快速失败：单源单次尝试、超时收紧到 8s，
+            // 由其他源兜底，避免死源被反复重试拖慢整体出结果。
             final items = await VideoApiService.searchVideo(
               source.url,
               keyword,
-            ).timeout(const Duration(seconds: 12));
-            responses.add(
-              items
-                  .map((video) => AggregateResult(source: source, video: video))
-                  .toList(growable: false),
+              fastFail: true,
             );
+            sourceResults = items
+                .map((video) => AggregateResult(source: source, video: video))
+                .toList(growable: false);
           } catch (_) {
-            failed++;
+            sourceFailed = true;
           }
+
+          // 每个源一回来就渲染，体感“秒出结果”，不再干等最慢的源。
+          if (!mounted || generation != _searchGeneration) return;
+          completed++;
+          if (sourceFailed) failed++;
+          if (sourceResults != null && sourceResults.isNotEmpty) {
+            aggregated.addAll(sourceResults);
+            // 预热该源封面(前 6 张):滑到时已在缓存,体感秒开。
+            // 静默预取,失败无副作用(错误封面走占位图)。
+            _precacheCovers(sourceResults.take(6));
+          }
+          setState(() {
+            _completedSourceCount = completed;
+            _failedSourceCount = failed;
+            _results = List<AggregateResult>.unmodifiable(aggregated);
+            if (completed == sources.length) {
+              _isLoading = false;
+              if (failed == sources.length) {
+                _errorMessage = '所有视频源暂时不可用，请稍后重试';
+              }
+            }
+          });
         }
       }
 
@@ -144,20 +199,8 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
       );
       if (!mounted || generation != _searchGeneration) return;
 
-      final results = responses
-          .expand((items) => items)
-          .toList(growable: false);
-      setState(() {
-        _results = results;
-        _failedSourceCount = failed;
-        _isLoading = false;
-        if (failed == sources.length) {
-          _errorMessage = '所有视频源暂时不可用，请稍后重试';
-        }
-      });
-
       // 命中结果才计入搜索历史/热词，避免记录无效关键词。
-      if (results.isNotEmpty) {
+      if (aggregated.isNotEmpty) {
         await _historyRepo.record(keyword);
         await _refreshHistoryState();
       }
@@ -180,8 +223,26 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
     });
   }
 
-  List<AggregateGroupedResult> _groupedResults() =>
-      groupResultsByFilmName(_results);
+  /// 预热封面:结果一到就把前几张解码进缓存,用户滑到时秒开。
+  /// 与卡片同用 200px 解码宽,预取的即最终展示的那份,零重复解码。
+  /// 静默进行,单张失败不影响其它(错误封面走占位图)。
+  void _precacheCovers(Iterable<AggregateResult> results) {
+    if (!mounted) return;
+    for (final result in results) {
+      final url = loadSearchVideoCover(result.video, result.source);
+      if (url == null || url.isEmpty) continue;
+      precacheImage(
+        CachedNetworkImageProvider(url, maxWidth: kAggregateCoverDecodeWidth),
+        context,
+      ).catchError((_) {});
+    }
+  }
+
+  List<AggregateGroupedResult> _groupedResults() => sortAndFilterGroups(
+    groupResultsByFilmName(_results),
+    mode: _sortMode,
+    multiSourceOnly: _multiSourceOnly,
+  );
 
   void _openDetail(AggregateResult result) {
     if (result.video.vodId <= 0) return;
@@ -196,6 +257,7 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
 
   Widget _buildResultList() {
     final groups = _groupedResults();
+    // 头部控制栏占 index 0，其余为结果组。
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(
         16,
@@ -204,10 +266,12 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
         AppTokens.pageBottomPadding + 32,
       ),
       physics: const AlwaysScrollableScrollPhysics(),
-      itemCount: groups.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 12),
+      itemCount: groups.length + 1,
+      separatorBuilder: (_, index) =>
+          SizedBox(height: index == 0 ? 8 : 12),
       itemBuilder: (context, index) {
-        final group = groups[index];
+        if (index == 0) return _buildSortFilterBar(groups.length);
+        final group = groups[index - 1];
         return AggregateSearchGroupSection(
           group: group,
           coverUrlFor: (result) =>
@@ -218,165 +282,114 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
     );
   }
 
-  Widget _buildHistoryView() {
-    final hasRecent = _recentKeywords.isNotEmpty;
-    final hasHot = _hotKeywords.isNotEmpty;
-
-    if (!hasRecent && !hasHot) {
-      return const SearchEmptyState(
-        message: '输入片名，同时搜索全部可用视频源',
-        icon: Icons.travel_explore_rounded,
-      );
-    }
-
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(
-        16,
-        8,
-        16,
-        AppTokens.pageBottomPadding + 32,
-      ),
-      physics: const AlwaysScrollableScrollPhysics(),
-      children: [
-        if (hasHot) ...[
-          _buildHistoryHeader(
-            title: '热门搜索',
-            icon: Icons.local_fire_department_rounded,
-            color: AppTokens.orange,
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (var i = 0; i < _hotKeywords.length; i++)
-                _buildKeywordChip(
-                  label: _hotKeywords[i],
-                  leading: Text(
-                    '${i + 1}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      color: i < 3 ? AppTokens.orange : AppTokens.textSecondary,
-                    ),
-                  ),
-                  onTap: () => _searchWithKeyword(_hotKeywords[i]),
-                ),
-            ],
-          ),
-          const SizedBox(height: 20),
-        ],
-        if (hasRecent) ...[
-          Row(
-            children: [
-              Expanded(
-                child: _buildHistoryHeader(
-                  title: '最近搜索',
-                  icon: Icons.history_rounded,
-                  color: AppTokens.primaryBlue,
-                ),
-              ),
-              TextButton.icon(
-                onPressed: _clearHistory,
-                icon: const Icon(Icons.delete_sweep_rounded, size: 18),
-                label: const Text('清空'),
-                style: TextButton.styleFrom(
-                  foregroundColor: AppTokens.textSecondary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final keyword in _recentKeywords)
-                _buildKeywordChip(
-                  label: keyword,
-                  onTap: () => _searchWithKeyword(keyword),
-                  onDeleted: () => _removeHistory(keyword),
-                ),
-            ],
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildHistoryHeader({
-    required String title,
-    required IconData icon,
-    required Color color,
-  }) {
+  /// 结果列表顶部的紧凑排序/筛选条。
+  Widget _buildSortFilterBar(int visibleCount) {
     return Row(
-      mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 18, color: color),
-        const SizedBox(width: 6),
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            child: Row(
+              children: [
+                for (final mode in AggregateSortMode.values) ...[
+                  _buildSortChip(mode),
+                  const SizedBox(width: 8),
+                ],
+                _buildFilterChip(),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
         Text(
-          title,
+          '$visibleCount 部',
           style: const TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w800,
-            color: AppTokens.textPrimary,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: AppTokens.textSecondary,
           ),
         ),
       ],
     );
   }
 
-  Widget _buildKeywordChip({
+  Widget _buildSortChip(AggregateSortMode mode) {
+    final selected = _sortMode == mode;
+    return _buildPillButton(
+      label: mode.label,
+      selected: selected,
+      onTap: () {
+        if (_sortMode == mode) return;
+        setState(() => _sortMode = mode);
+      },
+    );
+  }
+
+  Widget _buildFilterChip() {
+    return _buildPillButton(
+      label: '只看多源',
+      selected: _multiSourceOnly,
+      icon: _multiSourceOnly
+          ? Icons.check_circle_rounded
+          : Icons.filter_alt_outlined,
+      onTap: () => setState(() => _multiSourceOnly = !_multiSourceOnly),
+    );
+  }
+
+  Widget _buildPillButton({
     required String label,
+    required bool selected,
     required VoidCallback onTap,
-    Widget? leading,
-    VoidCallback? onDeleted,
+    IconData? icon,
   }) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        padding: EdgeInsets.fromLTRB(12, 8, onDeleted != null ? 6 : 12, 8),
+      borderRadius: BorderRadius.circular(18),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: EdgeInsets.fromLTRB(icon != null ? 10 : 14, 7, 14, 7),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFE7ECF5)),
+          color: selected ? AppTokens.violet : Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: selected ? AppTokens.violet : const Color(0xFFE7ECF5),
+          ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (leading != null) ...[leading, const SizedBox(width: 6)],
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 160),
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: AppTokens.textPrimary,
-                ),
+            if (icon != null) ...[
+              Icon(
+                icon,
+                size: 15,
+                color: selected ? Colors.white : AppTokens.textSecondary,
+              ),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: selected ? Colors.white : AppTokens.textPrimary,
               ),
             ),
-            if (onDeleted != null) ...[
-              const SizedBox(width: 2),
-              GestureDetector(
-                onTap: onDeleted,
-                behavior: HitTestBehavior.opaque,
-                child: Padding(
-                  padding: const EdgeInsets.all(2),
-                  child: Icon(
-                    Icons.close_rounded,
-                    size: 15,
-                    color: Colors.grey.shade500,
-                  ),
-                ),
-              ),
-            ],
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildHistoryView() {
+    return SearchHistoryView(
+      recentKeywords: _recentKeywords,
+      hotKeywords: _hotKeywords,
+      onTapKeyword: _searchWithKeyword,
+      onRemoveRecent: _removeHistory,
+      onClearRecent: _clearHistory,
+      emptyMessage: '输入片名，同时搜索全部可用视频源',
+      emptyIcon: Icons.travel_explore_rounded,
     );
   }
 
@@ -387,24 +400,39 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
         physics: const BouncingScrollPhysics(),
         slivers: [
           SliverToBoxAdapter(child: _buildHero()),
-          SliverToBoxAdapter(child: _buildSearchBox()),
+          SliverToBoxAdapter(
+            child: SearchInputBar(
+              controller: _searchController,
+              hintText: '搜索片名 / 主演',
+              onSubmit: _performAggregateSearch,
+              onClear: _clearSearch,
+              accentColor: AppTokens.violet,
+              leadingIcon: Icons.travel_explore_rounded,
+              actionIcon: Icons.search_rounded,
+              actionLabel: '全网搜',
+            ),
+          ),
           if (_hasSearched || _isLoading)
             SliverToBoxAdapter(child: _buildResultSummary()),
           SliverFillRemaining(
             hasScrollBody: _hasScrollableBody,
-            child: _isLoading
-                ? const _AggregateSearchLoading()
-                : !_hasSearched
+            child: !_hasSearched && !_isLoading
                 ? _buildHistoryView()
+                // 流式渲染：已有结果就先展示列表，即便仍在等待其余源。
+                : _results.isNotEmpty
+                ? _buildResultList()
+                : _isLoading
+                ? _AggregateSearchLoading(
+                    completed: _completedSourceCount,
+                    total: _totalSourceCount,
+                  )
                 : _errorMessage != null
                 ? _buildErrorView()
-                : _results.isEmpty
-                ? SearchEmptyState(
+                : SearchEmptyState(
                     message: '全网未找到相关资源，试试更短片名',
                     actionLabel: '重新搜索',
                     onAction: _performAggregateSearch,
-                  )
-                : _buildResultList(),
+                  ),
           ),
         ],
       ),
@@ -412,10 +440,7 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
   }
 
   bool get _hasScrollableBody =>
-      !_isLoading &&
-      _hasSearched &&
-      _errorMessage == null &&
-      _results.isNotEmpty;
+      _hasSearched && _errorMessage == null && _results.isNotEmpty;
 
   Widget _buildHero() {
     return AppLightHeroCard(
@@ -442,48 +467,6 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
           color: AppTokens.primaryBlue,
         ),
       ],
-    );
-  }
-
-  Widget _buildSearchBox() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
-        boxShadow: AppTokens.shadowSm(color: AppTokens.violet),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.travel_explore_rounded, color: AppTokens.violet),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: _searchController,
-              autofocus: true,
-              decoration: const InputDecoration(
-                hintText: '搜索片名 / 主演',
-                border: InputBorder.none,
-                isDense: true,
-              ),
-              textInputAction: TextInputAction.search,
-              onSubmitted: (_) => _performAggregateSearch(),
-            ),
-          ),
-          IconButton(
-            tooltip: '清空',
-            icon: const Icon(Icons.close_rounded),
-            onPressed: _clearSearch,
-          ),
-          FilledButton.icon(
-            onPressed: _performAggregateSearch,
-            icon: const Icon(Icons.search_rounded, size: 18),
-            label: const Text('全网搜'),
-          ),
-        ],
-      ),
     );
   }
 
@@ -541,19 +524,23 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
 }
 
 class _AggregateSearchLoading extends StatelessWidget {
-  const _AggregateSearchLoading();
+  const _AggregateSearchLoading({this.completed = 0, this.total = 0});
+
+  final int completed;
+  final int total;
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    final progressText = total > 0 ? '已搜 $completed/$total 源' : '正在多源聚合搜索...';
+    return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          CircularProgressIndicator(strokeWidth: 2.5),
-          SizedBox(height: 14),
+          const CircularProgressIndicator(strokeWidth: 2.5),
+          const SizedBox(height: 14),
           Text(
-            '正在多源聚合搜索...',
-            style: TextStyle(
+            progressText,
+            style: const TextStyle(
               color: AppTokens.textSecondary,
               fontWeight: FontWeight.w700,
             ),

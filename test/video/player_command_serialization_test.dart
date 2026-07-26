@@ -109,5 +109,36 @@ void main() {
         expect(calls, 2);
       },
     );
+    test(
+      'unlocks after timeout when Chewie never reports fullscreen state',
+      () async {
+        var calls = 0;
+        final gate = FullscreenToggleGate(
+          () => calls++,
+          unlockTimeout: const Duration(milliseconds: 1),
+        );
+
+        gate.request();
+        expect(gate.isLocked, isTrue);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(gate.isLocked, isFalse);
+        gate.request();
+        expect(calls, 2);
+      },
+    );
+
+    test(
+      'reset unlocks a pending request during disposal or lifecycle recovery',
+      () {
+        final gate = FullscreenToggleGate(() {});
+
+        gate.request();
+        expect(gate.isLocked, isTrue);
+        gate.reset();
+
+        expect(gate.isLocked, isFalse);
+      },
+    );
   });
 }

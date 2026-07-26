@@ -37,6 +37,91 @@ class AggregateGroupedResult {
     if (url.isNotEmpty) return url;
     return r.source.name.trim();
   }
+
+  /// 组内最大年份（从 vodYear 解析，取首个 1900~2099 的四位数）。
+  /// 无有效年份返回 0，用于「最新年份」排序时垫底。
+  int get latestYear {
+    var best = 0;
+    for (final r in results) {
+      final y = _parseYear(r.video.vodYear) ?? _parseYear(r.video.vodName);
+      if (y != null && y > best) best = y;
+    }
+    return best;
+  }
+
+  static int? _parseYear(String? raw) {
+    final text = raw?.trim() ?? '';
+    if (text.isEmpty) return null;
+    final match = RegExp(r'(19|20)\d{2}').firstMatch(text);
+    if (match == null) return null;
+    return int.tryParse(match.group(0)!);
+  }
+}
+
+/// 聚合结果组的排序方式。
+enum AggregateSortMode {
+  /// 命中源数最多优先（默认，越多越可能是热门/资源全）。
+  hitCount,
+
+  /// 最新年份优先。
+  year,
+
+  /// 片名拼音/字典序。
+  title,
+}
+
+extension AggregateSortModeLabel on AggregateSortMode {
+  String get label {
+    switch (this) {
+      case AggregateSortMode.hitCount:
+        return '综合';
+      case AggregateSortMode.year:
+        return '最新';
+      case AggregateSortMode.title:
+        return '片名';
+    }
+  }
+}
+
+/// 对已归并的结果组按给定方式排序，并可选只保留多源命中的组。
+///
+/// - [mode]：排序方式，见 [AggregateSortMode]。
+/// - [multiSourceOnly]：为 true 时只保留 hitCount >= 2 的组（过滤单源冷门）。
+/// 排序稳定：比较键相等时保持原有（命中源数倒序）顺序。
+List<AggregateGroupedResult> sortAndFilterGroups(
+  List<AggregateGroupedResult> groups, {
+  AggregateSortMode mode = AggregateSortMode.hitCount,
+  bool multiSourceOnly = false,
+}) {
+  var list = groups;
+  if (multiSourceOnly) {
+    list = list.where((g) => g.hitCount >= 2).toList();
+  } else {
+    list = List<AggregateGroupedResult>.of(list);
+  }
+
+  // 记录原始下标做稳定回退。
+  final indexOf = <AggregateGroupedResult, int>{};
+  for (var i = 0; i < list.length; i++) {
+    indexOf[list[i]] = i;
+  }
+
+  int cmp(AggregateGroupedResult a, AggregateGroupedResult b) {
+    switch (mode) {
+      case AggregateSortMode.hitCount:
+        final byHit = b.hitCount.compareTo(a.hitCount);
+        return byHit != 0 ? byHit : indexOf[a]!.compareTo(indexOf[b]!);
+      case AggregateSortMode.year:
+        final byYear = b.latestYear.compareTo(a.latestYear);
+        return byYear != 0 ? byYear : indexOf[a]!.compareTo(indexOf[b]!);
+      case AggregateSortMode.title:
+        final byTitle = a.title.toLowerCase().compareTo(b.title.toLowerCase());
+        return byTitle != 0 ? byTitle : indexOf[a]!.compareTo(indexOf[b]!);
+    }
+  }
+
+  list.sort(cmp);
+  return list;
 }
 
 /// 片名归一化：去除空白、全角/半角括号内容与常见修饰后缀，用于归并判重。

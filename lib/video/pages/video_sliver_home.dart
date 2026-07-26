@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 
 import '../config/video_proxy_config.dart';
@@ -11,9 +12,10 @@ import '../controller/video_controller.dart';
 import '../models/video_source.dart';
 import '../models/vod_item.dart';
 import '../video_module.dart';
+import '../widgets/douban_ranking_section.dart';
+import 'video_downloads_page.dart';
 import '../widgets/history_quick_view.dart';
 import '../../design_system/app_tokens.dart';
-import '../../design_system/widgets/app_cards.dart';
 import 'aggregate_search_page.dart';
 import 'favorites_page.dart';
 import 'home/home_category_bar.dart';
@@ -44,6 +46,22 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
 
   final ScrollController _scrollController = ScrollController();
   bool _autoLoadMoreRunning = false;
+  VideoController? _observedController;
+
+  /// 「按分类浏览」区默认收起：首屏只露豆瓣热榜 + 继续观看，页面更短更清爽。
+  /// 收起时不触发自动翻页，避免为隐藏内容白白 loadMore。
+  bool _browseExpanded = false;
+
+  void _toggleBrowse() {
+    setState(() => _browseExpanded = !_browseExpanded);
+    if (_browseExpanded) {
+      // 展开后按需把首屏填满（此前收起时跳过了自动翻页）。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _autoLoadMoreIfNeeded();
+      });
+    }
+  }
 
   @override
   void initState() {
@@ -52,15 +70,37 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      _attachControllerListener();
       _bootstrapCatalogIfNeeded();
     });
   }
 
   @override
   void dispose() {
+    _observedController?.removeListener(_onControllerChanged);
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _attachControllerListener() {
+    final controller = context.read<VideoController>();
+    if (identical(_observedController, controller)) return;
+    _observedController?.removeListener(_onControllerChanged);
+    _observedController = controller..addListener(_onControllerChanged);
+  }
+
+  /// 消费分类稀疏回退提示：弹一行轻提示后立即清除，避免重复弹出。
+  void _onControllerChanged() {
+    final controller = _observedController;
+    if (controller == null) return;
+    final notice = controller.categoryNotice;
+    if (notice == null) return;
+    controller.clearCategoryNotice();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _showSnackBar(notice);
+    });
   }
 
   Future<void> _bootstrapCatalogIfNeeded({bool force = false}) async {
@@ -103,6 +143,8 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
 
   void _onScroll() {
     if (!_scrollController.hasClients) return;
+    // 分类浏览收起时网格不可见，不触发翻页。
+    if (!_browseExpanded) return;
 
     final controller = context.read<VideoController>();
 
@@ -114,6 +156,8 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
   }
 
   Future<void> _autoLoadMoreIfNeeded() async {
+    // 分类浏览收起时网格不可见，跳过自动填充翻页。
+    if (!_browseExpanded) return;
     if (_autoLoadMoreRunning || !mounted) return;
 
     _autoLoadMoreRunning = true;
@@ -181,17 +225,6 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
     );
   }
 
-  String _currentCategoryLabel(VideoController controller) {
-    final typeId = controller.currentTypeId;
-    if (typeId == null) return '全部';
-
-    for (final category in controller.categories) {
-      if (category.typeId == typeId) return category.typeName;
-    }
-
-    return '分类#$typeId';
-  }
-
   void _showSnackBar(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(
@@ -251,64 +284,80 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
     required VideoSource? source,
     required String subtitle,
   }) {
-    final sourceTitle = source?.name ?? '影视内容中心';
-    return AppLightHeroCard(
-      margin: EdgeInsets.zero,
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      eyebrow: '影视聚合首页',
-      title: '光影剧场',
-      subtitle: '$sourceTitle · $subtitle',
-      badge: 'VIDEO',
-      accentGradient: AppTokens.violetGradient,
-      leading: const _VideoLightIcon(icon: Icons.local_movies_rounded),
-      actions: [
-        GestureDetector(
-          onTap: () => _openCurrentSourceSearch(controller),
-          child: const AppStatusPill(
-            label: '当前源搜索',
+    // 工具栏式头部：图标 + 标题 + 片源数一行，右侧三枚紧凑操作按钮，
+    // 不再用等宽大按钮占高，让分类/内容更早进入首屏。
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 7, 8, 7),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+        border: Border.all(color: const Color(0xFFEDF1F8)),
+        boxShadow: AppTokens.shadowSm(),
+      ),
+      child: Row(
+        children: [
+          const _VideoLightIcon(icon: Icons.local_movies_rounded),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  '光影剧场',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppTokens.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTokens.textSecondary,
+                    fontSize: 11.5,
+                    height: 1.15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 6),
+          _VideoHeaderAction(
             icon: Icons.search_rounded,
+            label: '搜索',
             color: AppTokens.primaryBlue,
+            onTap: () => _openCurrentSourceSearch(controller),
           ),
-        ),
-        GestureDetector(
-          onTap: _openAggregateSearch,
-          child: const AppStatusPill(
-            label: '聚合搜索',
+          _VideoHeaderAction(
             icon: Icons.public_rounded,
+            label: '聚合',
             color: AppTokens.violet,
+            onTap: _openAggregateSearch,
           ),
-        ),
-        GestureDetector(
-          onTap: _openFavorites,
-          child: const AppStatusPill(
-            label: '追剧',
+          _VideoHeaderAction(
             icon: Icons.favorite_rounded,
+            label: '追剧',
             color: AppTokens.rose,
+            onTap: _openFavorites,
           ),
-        ),
-      ],
-      metrics: [
-        Expanded(
-          child: _VideoLightMetric(
-            value: '${controller.sources.length}',
-            label: '片源',
+          _VideoHeaderAction(
+            icon: Icons.file_download_rounded,
+            label: '下载',
+            color: AppTokens.primaryBlue,
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const VideoDownloadsPage()),
+            ),
           ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _VideoLightMetric(
-            value: '${controller.videoList.length}',
-            label: '影片',
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _VideoLightMetric(
-            value: _currentCategoryLabel(controller),
-            label: '分类',
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -323,7 +372,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
 
         return Container(
           color: Colors.transparent,
-          padding: const EdgeInsets.fromLTRB(14, 6, 14, 4),
+          padding: const EdgeInsets.fromLTRB(14, 2, 14, 2),
           child: _buildHeaderCard(
             context,
             controller: controller,
@@ -354,63 +403,60 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
         final source = controller.currentSource;
         final hasSources = controller.sources.isNotEmpty;
 
-        return Container(
-          margin: const EdgeInsets.fromLTRB(14, 4, 14, 8),
-          padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFE7ECF5)),
-            boxShadow: AppTokens.shadowSm(),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                Icons.video_camera_back_rounded,
-                size: 18,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  source == null ? '视频推荐' : source.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
+        // 清新版：整行可点击折叠「按分类浏览」区。展开后才显示刷新/换源，
+        // 收起时只留标题 + 展开箭头，首屏更短。
+        return InkWell(
+          onTap: _toggleBrowse,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 10, 4),
+            child: Row(
+              children: [
+                Container(
+                  width: 4,
+                  height: 15,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primary,
+                    borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-              ),
-              SizedBox(
-                height: 30,
-                child: TextButton.icon(
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    source == null ? '按分类浏览' : '按分类浏览 · ${source.name}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: AppTokens.textPrimary,
+                    ),
                   ),
-                  onPressed: _reloadCurrentSource,
-                  icon: const Icon(Icons.refresh_rounded, size: 15),
-                  label: const Text('刷新', style: TextStyle(fontSize: 12.5)),
                 ),
-              ),
-              SizedBox(
-                height: 30,
-                child: TextButton.icon(
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                if (_browseExpanded) ...[
+                  _VideoTextAction(
+                    icon: Icons.refresh_rounded,
+                    label: '刷新',
+                    onTap: _reloadCurrentSource,
                   ),
-                  onPressed: hasSources
-                      ? () => showHomeSourcePickerSheet(context, controller)
-                      : null,
-                  icon: const Icon(Icons.swap_horiz_rounded, size: 15),
-                  label: const Text('换源', style: TextStyle(fontSize: 12.5)),
+                  const SizedBox(width: 2),
+                  _VideoTextAction(
+                    icon: Icons.swap_horiz_rounded,
+                    label: '换源',
+                    onTap: hasSources
+                        ? () => showHomeSourcePickerSheet(context, controller)
+                        : null,
+                  ),
+                  const SizedBox(width: 2),
+                ],
+                Icon(
+                  _browseExpanded
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                  size: 22,
+                  color: AppTokens.textSecondary,
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -479,7 +525,9 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
         context.read<HistoryController>().historyList.isNotEmpty;
 
     return AppPageScaffold(
-      safeTop: false,
+      // safeTop:true 让内容避开状态栏/刘海（背景渐变在 SafeArea 外层，仍全屏铺满，
+      // 不会露白边）。此前 false 导致 Header 卡片与系统状态栏重叠。
+      safeTop: true,
       child: RefreshIndicator(
         onRefresh: _reloadCurrentSource,
         child: Center(
@@ -487,6 +535,10 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
             width: layoutWidth,
             child: CustomScrollView(
               controller: _scrollController,
+              // 默认 250px 只预渲染视口外一点点。封面墙给一屏左右的
+              // cacheExtent，配合扩容后的 ImageCache，滚动方向提前解码好，
+              // 快速下滑不露白、回滚即命中。
+              scrollCacheExtent: const ScrollCacheExtent.pixels(800),
               physics: const AlwaysScrollableScrollPhysics(
                 parent: ClampingScrollPhysics(),
               ),
@@ -505,20 +557,29 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
                       ),
                     ),
                   ),
-                SliverToBoxAdapter(
-                  child: _buildCategorySection(videoController),
+                // 豆瓣热榜(真实数据,非编造): 热门电影/剧集双 Tab,
+                // 点击后当前源优先搜→聚合兜底→进详情页。
+                const SliverToBoxAdapter(
+                  child: DoubanRankingSection(),
                 ),
+                // 「按分类浏览」头部常驻（可点击展开/收起）；
+                // 分类栏 + 网格 + 加载更多仅在展开时挂载。
                 SliverToBoxAdapter(
                   child: _buildVideoHeaderSection(videoController),
                 ),
-                _buildVideoGridSection(videoController, screenWidth),
-                SliverToBoxAdapter(
-                  child: SafeAnimatedBuilder(
-                    animation: videoController,
-                    builder: (context, _) =>
-                        _buildBottomLoader(videoController),
+                if (_browseExpanded) ...[
+                  SliverToBoxAdapter(
+                    child: _buildCategorySection(videoController),
                   ),
-                ),
+                  _buildVideoGridSection(videoController, screenWidth),
+                  SliverToBoxAdapter(
+                    child: SafeAnimatedBuilder(
+                      animation: videoController,
+                      builder: (context, _) =>
+                          _buildBottomLoader(videoController),
+                    ),
+                  ),
+                ],
                 const SliverToBoxAdapter(
                   child: SizedBox(height: AppTokens.pageBottomPadding + 32),
                 ),
@@ -551,46 +612,92 @@ class _VideoLightIcon extends StatelessWidget {
   }
 }
 
-class _VideoLightMetric extends StatelessWidget {
-  const _VideoLightMetric({required this.value, required this.label});
+/// 工具栏式头部操作：小图标 + 短标签，浅色底，竖排紧凑，占高低。
+class _VideoHeaderAction extends StatelessWidget {
+  const _VideoHeaderAction({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
 
-  final String value;
   final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF6F8FD),
-        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Flexible(
-            child: Text(
-              value,
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, size: 17, color: color),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              label,
               maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTokens.textPrimary,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w900,
+              style: TextStyle(
+                color: color,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
               ),
             ),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: const TextStyle(
-              color: AppTokens.textSecondary,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 清新版轻文字按钮：图标 + 文案，无边框，点按浅色高亮。
+class _VideoTextAction extends StatelessWidget {
+  const _VideoTextAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    final color = enabled ? AppTokens.textSecondary : AppTokens.textTertiary;
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: color),
+            const SizedBox(width: 3),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

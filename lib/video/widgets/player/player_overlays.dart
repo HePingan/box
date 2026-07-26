@@ -46,10 +46,12 @@ class PlayerErrorOverlay extends StatelessWidget {
     super.key,
     required this.errorMessage,
     required this.onRetry,
+    this.onFallbackLine,
   });
 
   final String errorMessage;
   final VoidCallback onRetry;
+  final VoidCallback? onFallbackLine;
 
   @override
   Widget build(BuildContext context) {
@@ -75,6 +77,18 @@ class PlayerErrorOverlay extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
+            if (onFallbackLine != null) ...[
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white70,
+                  side: const BorderSide(color: Colors.white24),
+                ),
+                onPressed: onFallbackLine,
+                icon: const Icon(Icons.alt_route_rounded, size: 18),
+                label: const Text('换线路重试'),
+              ),
+              const SizedBox(height: 8),
+            ],
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blueAccent,

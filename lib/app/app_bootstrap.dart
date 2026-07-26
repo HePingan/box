@@ -31,6 +31,7 @@ class AppBootstrap {
     await _initLogger();
     _installErrorHandlers();
     _configureSystemUi();
+    _configureImageCache();
 
     final prefs = await SharedPreferences.getInstance();
     final novelBootstrap = await BookSourceBootstrap.loadAndConfigure(prefs);
@@ -66,6 +67,17 @@ class AppBootstrap {
       AppLogger.instance.logError(error, stack, 'DART');
       return true;
     };
+  }
+
+  /// 扩容全局图片内存缓存。
+  ///
+  /// 默认上限 1000 张 / 100MB。首页是 2 列大封面墙 + 滚动预取，
+  /// 默认池容易把刚滑过的大图挤出，往回滚要重新解码。提到 ~256MB /
+  /// 更多张数后，回滚立即命中内存、不重解码。纯内存配置、可回退。
+  static void _configureImageCache() {
+    final imageCache = PaintingBinding.instance.imageCache;
+    imageCache.maximumSize = 400;
+    imageCache.maximumSizeBytes = 256 * 1024 * 1024;
   }
 
   static void _configureSystemUi() {

@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:ui' show ImageFilter;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -70,7 +71,8 @@ class HomeVideoSliverGrid extends StatelessWidget {
     // 新版视频首页：手机端固定 2 列大封面卡片，平板/窄桌面保持 2 列，
     // 让用户一眼看到“封面墙”而不是旧的小图密集网格。
     const crossAxisCount = 2;
-    final childAspectRatio = effectiveWidth >= 520 ? 0.60 : 0.57;
+    // 略微降低卡片高度，让首屏能多露出一点内容（更重封面本身、页脚更薄）。
+    final childAspectRatio = effectiveWidth >= 520 ? 0.64 : 0.62;
 
     const horizontalPadding = 24.0;
     const crossAxisSpacing = 12.0;
@@ -154,151 +156,108 @@ class HomeVideoCard extends StatelessWidget {
     final subtitle = remarks.isNotEmpty ? remarks : typeName;
 
     return InkWell(
-      borderRadius: BorderRadius.circular(26),
+      borderRadius: BorderRadius.circular(16),
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
           color: AppTokens.inkDark,
-          borderRadius: BorderRadius.circular(26),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+          borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: AppTokens.inkDark.withValues(alpha: 0.18),
-              blurRadius: 22,
-              offset: const Offset(0, 12),
+              color: Colors.black.withValues(alpha: 0.10),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
             ),
           ],
         ),
         clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        // 干净海报：整卡即封面，信息压在底部渐变里，不再有图下页脚。
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  _buildImage(),
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      padding: const EdgeInsets.fromLTRB(10, 30, 10, 10),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            Colors.transparent,
-                            Colors.black.withValues(alpha: 0.84),
-                          ],
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13,
-                              height: 1.12,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.play_circle_fill_rounded,
-                                size: 14,
-                                color: Color(0xFFFFE08A),
-                              ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text(
-                                  typeName.isNotEmpty ? typeName : '点击播放',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.76),
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
+            _buildImage(),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(10, 22, 10, 9),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withValues(alpha: 0.82),
+                    ],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
                   ),
-                  if (subtitle.isNotEmpty)
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(
-                            0xFFFFE08A,
-                          ).withValues(alpha: 0.92),
-                          borderRadius: BorderRadius.circular(
-                            AppTokens.radiusPill,
-                          ),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.20),
-                          ),
-                        ),
-                        child: Text(
-                          subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: AppTokens.inkDark,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 9, 10, 11),
-              child: Row(
-                children: [
-                  Container(
-                    width: 7,
-                    height: 7,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Color(0xFFFFE08A),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      remarks.isNotEmpty ? remarks : '新版影院卡片',
-                      maxLines: 1,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: Color(0xFFCBD5E1),
-                        fontSize: 11,
+                        color: Colors.white,
+                        fontSize: 13,
+                        height: 1.15,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ),
-                ],
+                    if (typeName.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        typeName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.62),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
             ),
+            // 更新信息移到左上，改半透明黑毛玻璃，不与片名抢亮度。
+            if (subtitle.isNotEmpty)
+              Positioned(
+                top: 8,
+                left: 8,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(AppTokens.radiusPill),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.42),
+                        borderRadius: BorderRadius.circular(
+                          AppTokens.radiusPill,
+                        ),
+                      ),
+                      child: Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

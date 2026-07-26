@@ -155,7 +155,13 @@ class SourceHealthService {
         );
       }
 
-      final videos = await _fetchVideoList(source, categories.first);
+      var videos = await _fetchVideoList(source, categories.first, categories);
+      // 有些源的首个分类只是展示父类或空壳（如最大/无尽/飘零），
+      // 不能因一个空分类把整个源判死。分类请求为空时，用“全部”再验证一次。
+      if (videos.isEmpty) {
+        videos = await VideoApiService.fetchVideos(source.url, null, 1)
+            .timeout(timeout);
+      }
       if (videos.isEmpty) {
         return SourceCheckResult(
           source: source,
@@ -168,10 +174,21 @@ class SourceHealthService {
         );
       }
 
-      final detailBaseUrl = source.detailUrl.trim().isNotEmpty
-          ? source.detailUrl.trim()
-          : source.url.trim();
-      final detail = await _fetchDetail(detailBaseUrl, videos.first);
+      // `url` 是目录给出的真实采集 API；`detailUrl` 通常只是官网/Referer。
+      // 详情同样必须 API 优先，否则列表正常的源会被官网的 404/超时误判详情为空。
+      final detailCandidates = <String>[
+        source.url.trim(),
+        source.detailUrl.trim(),
+      ].where((url) => url.isNotEmpty).toSet();
+      dynamic detail;
+      String detailBaseUrl = source.url.trim();
+      for (final candidate in detailCandidates) {
+        detail = await _fetchDetail(candidate, videos.first);
+        if (detail != null) {
+          detailBaseUrl = candidate;
+          break;
+        }
+      }
       if (detail == null) {
         return SourceCheckResult(
           source: source,
@@ -199,13 +216,21 @@ class SourceHealthService {
         );
       }
 
-      final playable = await _probePlayableUrl(
-        playableUrl,
-        baseUrl: detailBaseUrl,
-        headers: _buildHeaders(source),
-      );
+      // CDN 字节探测仅作参考信号：媒体地址常在非标端口、带 refer/UA/geo
+      // 校验，裸 HttpClient 的 HEAD/Range 会被拒或被网络挡，而真正播放时
+      // ExoPlayer 带完整头能正常播。因此只要能解析出“格式合法的绝对
+      // 播放地址”，就判定源可用；探测失败仅降级为提示，绝不据此把源判死。
+      final normalizedPlayable = _normalizeUrl(playableUrl, detailBaseUrl);
+      final playableUri = normalizedPlayable == null
+          ? null
+          : Uri.tryParse(normalizedPlayable);
+      final hasValidPlayableUrl = playableUri != null &&
+          playableUri.hasScheme &&
+          (playableUri.scheme == 'http' || playableUri.scheme == 'https') &&
+          playableUri.host.isNotEmpty;
 
-      if (!playable) {
+      if (!hasValidPlayableUrl) {
+        // 连合法绝对地址都拼不出，才算真的播放地址不可用。
         return SourceCheckResult(
           source: source,
           success: false,
@@ -219,11 +244,17 @@ class SourceHealthService {
         );
       }
 
+      final playable = await _probePlayableUrl(
+        playableUrl,
+        baseUrl: detailBaseUrl,
+        headers: _buildHeaders(source),
+      );
+
       return SourceCheckResult(
         source: source,
         success: true,
         stage: SourceHealthStage.play,
-        message: '可用',
+        message: playable ? '可用' : '可用（播放地址已解析，实际播放以播放器为准）',
         playableUrl: playableUrl,
         categoryCount: categories.length,
         videoCount: videos.length,
@@ -256,12 +287,27 @@ class SourceHealthService {
   Future<List<VodItem>> _fetchVideoList(
     VideoSource source,
     VideoCategory category,
+    List<VideoCategory> allCategories,
   ) async {
-    return await VideoApiService.fetchVideoList(
-      baseUrl: source.url,
-      page: 1,
-      typeId: category.typeId,
+    // 与业务侧一致：顶级分类(pid=0)常不挂视频，展开成子分类逗号多选，
+    // 避免把“视频挂子类”的正常源误报为“列表为空”。
+    final typeQuery = _buildTypeQuery(category.typeId, allCategories);
+    return await VideoApiService.fetchVideos(
+      source.url,
+      category.typeId,
+      1,
+      typeQuery: typeQuery,
     ).timeout(timeout);
+  }
+
+  /// 把父分类展开成子分类 ID 逗号多选(如 "6,7,8,9")；叶子分类返回 null。
+  String? _buildTypeQuery(int typeId, List<VideoCategory> categories) {
+    final children = categories
+        .where((c) => c.pid == typeId && c.typeId > 0)
+        .map((c) => c.typeId)
+        .toList(growable: false);
+    if (children.isEmpty) return null;
+    return children.join(',');
   }
 
   Future<dynamic> _fetchDetail(String detailBaseUrl, VodItem item) async {

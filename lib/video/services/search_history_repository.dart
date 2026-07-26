@@ -5,7 +5,11 @@ import 'package:hive_flutter/hive_flutter.dart';
 /// - 最近搜索：按最后一次搜索时间倒序，去重、限量。
 /// - 热门搜索：按累计搜索次数倒序，反映高频关键词。
 class SearchHistoryRepository {
-  static const String _boxName = 'video_search_history_box';
+  /// Hive box 名。默认聚合搜索历史；源内搜索传入独立名字，两者互不污染。
+  final String _boxName;
+
+  SearchHistoryRepository({String boxName = 'video_search_history_box'})
+    : _boxName = boxName;
 
   /// 最多保留的历史条数
   static const int maxHistory = 20;
