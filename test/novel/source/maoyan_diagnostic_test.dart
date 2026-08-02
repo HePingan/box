@@ -1,3 +1,6 @@
+@Tags(['network'])
+library;
+
 // 端到端诊断：真实 API 调用测试
 // 运行: flutter test test/novel/source/maoyan_diagnostic_test.dart
 import 'dart:convert';

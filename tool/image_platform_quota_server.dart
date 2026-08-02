@@ -3185,7 +3185,7 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
         actorName: account.username,
         pluginId: pluginId,
         submissionId: id,
-        note: '${title} (${zipBytes.length}B)',
+        note: '$title (${zipBytes.length}B)',
         createdAt: DateTime.now(),
       ),
     );
@@ -4068,9 +4068,9 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
         },
         'pluginJson': pluginJson,
         'files': files,
-        if (iconBase64 != null) 'iconBase64': iconBase64,
+        'iconBase64': ?iconBase64,
         if (iconBase64 != null) 'iconBytes': iconBytes,
-        if (packageError != null) 'packageError': packageError,
+        'packageError': ?packageError,
         'checklist': {
           'actionWhitelist': actionOk,
           'noReservedId': !sub.pluginId.startsWith('builtin_') &&

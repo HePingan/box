@@ -1,3 +1,6 @@
+@Tags(['network'])
+library;
+
 // 端到端测试：用 MaoYanNovelSource 直接测试真实 API
 import 'dart:convert';
 import 'dart:io';

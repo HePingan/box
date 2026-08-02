@@ -1,3 +1,6 @@
+@Tags(['network'])
+library;
+
 // 精确诊断：MaoYanNovelSource fetchDetail 章节提取追踪
 import 'dart:convert';
 import 'dart:io';

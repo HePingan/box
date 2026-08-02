@@ -378,7 +378,7 @@ class _DrawerContent extends StatelessWidget {
                 ],
               ),
             ),
-            Icon(
+            const Icon(
               Icons.chevron_right_rounded,
               size: 20,
               color: AppTokens.textTertiary,
@@ -392,7 +392,7 @@ class _DrawerContent extends StatelessWidget {
   // ─── 导航区（紧凑、有选中态） ───
 
   Widget _buildNavSection(BuildContext context) {
-    final tabs = const [
+    const tabs = [
       _NavTabData(title: '首页', icon: Icons.home_rounded, index: 0),
       _NavTabData(title: '工具', icon: Icons.handyman_rounded, index: 1),
       _NavTabData(title: '内容', icon: Icons.collections_bookmark_rounded, index: 2),
@@ -608,7 +608,7 @@ class _DrawerContent extends StatelessWidget {
                   ],
                 ),
               ),
-              if (trailing != null) trailing,
+              ?trailing,
               if (trailing == null)
                 const Icon(
                   Icons.chevron_right_rounded,

@@ -1,3 +1,6 @@
+@Tags(['network'])
+library;
+
 import 'dart:convert';
 import 'dart:io';
 
@@ -67,7 +70,9 @@ void main() {
       print('code: ${json['code']}');
       if (json['data'] is List) {
         print('data length: ${(json['data'] as List).length}');
-      } else if (json['data'] is Map) print('data keys: ${(json['data'] as Map).keys}');
+      } else if (json['data'] is Map) {
+        print('data keys: ${(json['data'] as Map).keys}');
+      }
     } catch (e) {
       print('ERROR: $e');
     }
@@ -84,7 +89,9 @@ void main() {
       print('code: ${json['code']}');
       if (json['data'] is List) {
         print('data length: ${(json['data'] as List).length}');
-      } else if (json['data'] is Map) print('data keys: ${(json['data'] as Map).keys}');
+      } else if (json['data'] is Map) {
+        print('data keys: ${(json['data'] as Map).keys}');
+      }
     } catch (e) {
       print('ERROR: $e');
     }

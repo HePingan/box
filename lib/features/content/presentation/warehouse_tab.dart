@@ -114,11 +114,12 @@ class _WarehouseTabState extends State<WarehouseTab>
         });
       }
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _booksLoaded = true;
           _booksError = true;
         });
+      }
     }
   }
 

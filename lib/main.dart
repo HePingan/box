@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import 'app/app.dart';
@@ -20,34 +18,12 @@ void main() {
     PluginPolicyStore.instance.refresh();
   });
 
-  // Step 1: Disable Flutter's red error screen for assertions entirely.
-  // This prevents ANY assertion failure from showing the red screen.
-  // Errors will still be logged to console but won't crash the app.
+  // 注册全局错误处理：调试模式上报到控制台，不再静默吞掉 AssertionError。
   FlutterError.onError = (details) {
-    if (details.exception is AssertionError) {
-      // For ALL assertion errors, just log and don't crash
-      debugPrint('⚠️ [Assertion suppressed] ${details.exception}');
-      if (details.stack != null) {
-        debugPrint('Stack: ${details.stack}');
-      }
-      return;
-    }
-    FlutterError.dumpErrorToConsole(details);
+    FlutterError.presentError(details);
   };
 
-  // Step 2: Also catch unhandled errors
-  runZonedGuarded(
-    () {
-      runApp(_AppBootstrapper());
-    },
-    (error, stack) {
-      if (error is AssertionError) {
-        debugPrint('⚠️ [Zone suppressed AssertionError] $error');
-        return;
-      }
-      Zone.current.handleUncaughtError(error, stack);
-    },
-  );
+  runApp(_AppBootstrapper());
 }
 
 class _AppBootstrapper extends StatefulWidget {

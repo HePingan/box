@@ -1,3 +1,6 @@
+@Tags(['network'])
+library;
+
 // 直接用 MaoYanNovelSource 的 _request 方法测试
 import 'dart:convert';
 import 'dart:io';

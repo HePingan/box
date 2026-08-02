@@ -117,7 +117,7 @@ VideoDownloadTask _task(String url) => VideoDownloadTask(
 class _MemoryRepository implements VideoDownloadRepository {
   _MemoryRepository({List<VideoDownloadTask> initial = const []})
     : _tasks = List.of(initial);
-  List<VideoDownloadTask> _tasks;
+  final List<VideoDownloadTask> _tasks;
   @override
   Future<void> delete(String id) async =>
       _tasks.removeWhere((item) => item.id == id);

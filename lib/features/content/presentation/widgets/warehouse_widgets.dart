@@ -393,8 +393,9 @@ class ContentOverviewCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 无收藏且未加载时隐藏整个最近收藏区，节省空间
-    if ((recentItem == null && !isLoading) || totalItems == 0)
+    if ((recentItem == null && !isLoading) || totalItems == 0) {
       return const SizedBox.shrink();
+    }
 
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -497,9 +498,9 @@ class _RecentCollectionTile extends StatelessWidget {
                 color: AppTokens.violet.withValues(alpha: 0.55),
               ),
               const SizedBox(width: 6),
-              Text(
+              const Text(
                 '还没有收藏',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
                   color: AppTokens.textSecondary,
                   fontWeight: FontWeight.w600,

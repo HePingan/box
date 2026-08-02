@@ -85,14 +85,15 @@ class VideoDownloadTask {
   String get remainingTimeLabel {
     if (status == VideoDownloadStatus.completed) return '已完成';
     final remainingBytes = totalBytes - downloadedBytes;
-    if (remainingBytes <= 0 || downloadSpeedBytesPerSecond <= 0)
+    if (remainingBytes <= 0 || downloadSpeedBytesPerSecond <= 0) {
       return '剩余时间计算中…';
+    }
     final seconds = (remainingBytes / downloadSpeedBytesPerSecond).ceil();
     if (seconds < 60) return '预计剩余 ${seconds}s';
     final minutes = seconds ~/ 60;
-    if (minutes < 60) return '预计剩余 ${minutes}分${seconds % 60}s';
+    if (minutes < 60) return '预计剩余 $minutes分${seconds % 60}s';
     final hours = minutes ~/ 60;
-    return '预计剩余 ${hours}时${minutes % 60}分';
+    return '预计剩余 $hours时${minutes % 60}分';
   }
 
   String _formatBytes(int bytes) {

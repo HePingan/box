@@ -1,3 +1,6 @@
+@Tags(['network'])
+library;
+
 // 直接测试 _request 逻辑
 import 'dart:convert';
 import 'dart:io';
