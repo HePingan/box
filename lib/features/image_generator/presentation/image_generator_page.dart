@@ -165,6 +165,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage>
     if (!mounted) return;
     setState(() {
       _accountSession = session;
+      _platformError = null;
       _syncPlatformUrlFromAccountIfNeeded();
     });
   }
@@ -383,6 +384,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage>
     setState(() {
       _loadingModels = true;
       _modelListError = null;
+      _platformError = null;
     });
     try {
       final models = await _client.fetchModels(
@@ -424,6 +426,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage>
     setState(() {
       _loadingModels = true;
       _modelListError = null;
+      _platformError = null;
     });
     try {
       if (!_ensurePlatformSession()) {
@@ -489,6 +492,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage>
       _accessMode = mode;
       _error = null;
       _modelListError = null;
+      _platformError = null;
+      _platformQuota = null;
     });
     _scheduleSaveDraft();
   }
@@ -855,6 +860,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage>
     _loadingNotifier.value = true;
     setState(() {
       _error = null;
+      _platformError = null;
       _results = const [];  // Clear old results immediately so the user
       // sees the loading state instead of stale data.
       _imageCaptureKeys.clear();
