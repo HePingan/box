@@ -706,6 +706,152 @@ class QuizBankTextNormalizer {
   }
 }
 
+/// 题库答案 → 选项原文的投影。
+///
+/// 云端 `/api/quiz/sync` 绝大多数题的 `correctAnswer` 已是选项原文，
+/// 但真实库中残留少量字母形答案（`'C'`），且字母下标可能越界于选项数
+/// （实测 1934 题中有 3 道：答案 'C'/'D' 却只有 2~3 个选项）。
+///
+/// 查看页与答题助手都按「选项原文」比较答案，遇到字母形会静默失配、
+/// 整题显示不出对号。此处统一做一次投影：
+/// - 答案能按原文命中选项 → 用选项原文（不动）
+/// - 答案是字母且下标在范围内 → 投影为对应选项原文
+/// - 字母越界 / 答案为空 → 标记 needsRepair，不编造答案
+class QuizAnswerProjection {
+  QuizAnswerProjection._();
+
+  static final RegExp _letterForm = RegExp(
+    r'^[\s]*(?:答案|正确答案)?[\s:：]*([A-Ha-hＡ-Ｈａ-ｈ])[\s.、．:：)）]*$',
+  );
+
+  /// 解析某题的实际答案。
+  static QuizAnswerResolution resolve(QuizBankItem item) {
+    final raw = item.correctAnswer.trim();
+    final options = item.options;
+
+    if (raw.isEmpty) {
+      return const QuizAnswerResolution(
+        answer: '',
+        projected: false,
+        outOfRange: false,
+        needsRepair: true,
+        matchedIndex: null,
+      );
+    }
+
+    // 1) 先按选项原文精确命中（含空白/大小写归一），优先于字母解释。
+    //    这样选项本身就是 'A'/'B' 字面值时不会被当成下标。
+    final exact = _indexOfOption(options, raw);
+    if (exact != null) {
+      return QuizAnswerResolution(
+        answer: options[exact],
+        projected: false,
+        outOfRange: false,
+        needsRepair: false,
+        matchedIndex: exact,
+      );
+    }
+
+    // 2) 字母形答案 → 按下标投影到选项原文。
+    final letter = _extractLetter(raw);
+    if (letter != null) {
+      final index = _letterIndex(letter);
+      if (index >= 0 && index < options.length) {
+        return QuizAnswerResolution(
+          answer: options[index],
+          projected: true,
+          outOfRange: false,
+          needsRepair: false,
+          matchedIndex: index,
+        );
+      }
+      // 字母越界：保留原值，交由 UI 提示「答案待补」，绝不猜一个选项。
+      return QuizAnswerResolution(
+        answer: raw,
+        projected: false,
+        outOfRange: true,
+        needsRepair: true,
+        matchedIndex: null,
+      );
+    }
+
+    // 3) 既非字母也对不上任何选项：视为待补，保留原文。
+    return QuizAnswerResolution(
+      answer: raw,
+      projected: false,
+      outOfRange: false,
+      needsRepair: options.isNotEmpty,
+      matchedIndex: null,
+    );
+  }
+
+  /// 供列表 UI 判断第 [index] 个选项是否应打对号。
+  static bool isCorrectOption(QuizBankItem item, int index) {
+    if (index < 0 || index >= item.options.length) return false;
+    final resolved = resolve(item);
+    if (resolved.needsRepair) return false;
+    final matched = resolved.matchedIndex;
+    if (matched != null) return matched == index;
+    return QuizBankTextNormalizer.normalizeOption(item.options[index]) ==
+        QuizBankTextNormalizer.normalizeOption(resolved.answer);
+  }
+
+  /// 该题答案是否需要人工补全（空答案 / 字母越界 / 对不上任何选项）。
+  static bool needsRepair(QuizBankItem item) => resolve(item).needsRepair;
+
+  static int? _indexOfOption(List<String> options, String answer) {
+    final target = QuizBankTextNormalizer.normalizeOption(answer);
+    if (target.isEmpty) return null;
+    for (var i = 0; i < options.length; i++) {
+      if (QuizBankTextNormalizer.normalizeOption(options[i]) == target) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  static String? _extractLetter(String raw) {
+    final match = _letterForm.firstMatch(raw);
+    if (match == null) return null;
+    return match.group(1);
+  }
+
+  static int _letterIndex(String letter) {
+    final ch = letter.toUpperCase();
+    final code = ch.codeUnitAt(0);
+    // 半角 A-H
+    if (code >= 0x41 && code <= 0x48) return code - 0x41;
+    // 全角 Ａ-Ｈ
+    if (code >= 0xFF21 && code <= 0xFF28) return code - 0xFF21;
+    return -1;
+  }
+}
+
+class QuizAnswerResolution {
+  const QuizAnswerResolution({
+    required this.answer,
+    required this.projected,
+    required this.outOfRange,
+    required this.needsRepair,
+    required this.matchedIndex,
+  });
+
+  /// 投影后的答案（选项原文）；待补时为原始值。
+  final String answer;
+
+  /// 是否由字母形投影得到。
+  final bool projected;
+
+  /// 字母下标是否越界于选项数。
+  final bool outOfRange;
+
+  /// 是否需要人工补答案。
+  final bool needsRepair;
+
+  /// 命中的选项下标；未命中为 null。
+  final int? matchedIndex;
+}
+
 class QuizBankStorage {
   QuizBankStorage._();
 

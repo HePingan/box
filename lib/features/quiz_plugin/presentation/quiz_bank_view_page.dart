@@ -141,7 +141,8 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
     final buffer = StringBuffer();
     for (var i = 0; i < item.options.length; i++) {
       final p = i < prefix.length ? prefix[i] : '${i + 1}';
-      final mark = item.options[i] == item.correctAnswer ? '  ✓' : '';
+      // 经投影判定对号：字母形答案（如 'B'）也能正确命中选项。
+      final mark = QuizAnswerProjection.isCorrectOption(item, i) ? '  ✓' : '';
       buffer.writeln('$p. ${item.options[i]}$mark');
     }
     return buffer.toString().trimRight();
@@ -154,7 +155,12 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
       buffer.writeln('【选项】');
       buffer.writeln(_optionsText(item));
     }
-    buffer.writeln('【答案】${item.correctAnswer}');
+    final resolvedAnswer = QuizAnswerProjection.resolve(item);
+    buffer.writeln(
+      resolvedAnswer.needsRepair
+          ? '【答案】${item.correctAnswer}（待补：对不上选项）'
+          : '【答案】${resolvedAnswer.answer}',
+    );
     if (item.analysis != null && item.analysis!.isNotEmpty) {
       buffer.writeln('【解析】${item.analysis}');
     }
@@ -1007,8 +1013,13 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
                                 ],
                                 if (item.options.isNotEmpty) ...[
                                   const SizedBox(height: 8),
-                                  ...item.options.map((o) {
-                                    final isCorrect = o == item.correctAnswer;
+                                  ...item.options.asMap().entries.map((entry) {
+                                    final o = entry.value;
+                                    final isCorrect =
+                                        QuizAnswerProjection.isCorrectOption(
+                                          item,
+                                          entry.key,
+                                        );
                                     return Padding(
                                       padding: const EdgeInsets.only(bottom: 4),
                                       child: Row(
@@ -1132,7 +1143,7 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
   late final TextEditingController _analysis;
   late final List<TextEditingController> _opts;
   late QuizQuestionType _type;
-  late int _correctIndex;
+  int? _correctIndex;
 
   @override
   void initState() {
@@ -1146,8 +1157,8 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
       opts.add('');
     }
     _opts = opts.map((e) => TextEditingController(text: e)).toList();
-    final idx = item.options.indexOf(item.correctAnswer);
-    _correctIndex = idx >= 0 ? idx : 0;
+    final resolved = QuizAnswerProjection.resolve(item);
+    _correctIndex = resolved.needsRepair ? null : resolved.matchedIndex;
   }
 
   @override
@@ -1168,7 +1179,7 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
     while (_opts.length > n) {
       _opts.removeLast().dispose();
     }
-    if (_correctIndex >= n) _correctIndex = 0;
+    if (_correctIndex != null && _correctIndex! >= n) _correctIndex = null;
     setState(() {});
   }
 
@@ -1190,7 +1201,13 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
       ).showSnackBar(const SnackBar(content: Text('请至少填写一个选项')));
       return;
     }
-    final correct = options[_correctIndex.clamp(0, options.length - 1)];
+    if (_correctIndex == null || _correctIndex! >= options.length) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请选择正确答案')));
+      return;
+    }
+    final correct = options[_correctIndex!];
     final analysis = _analysis.text.trim();
     Navigator.pop(
       context,
@@ -1281,7 +1298,7 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
             ),
             RadioGroup<int>(
               groupValue: _correctIndex,
-              onChanged: (v) => setState(() => _correctIndex = v ?? 0),
+              onChanged: (v) => setState(() => _correctIndex = v),
               child: Column(
                 children: [
                   for (var i = 0; i < _opts.length; i++) ...[
