@@ -14,6 +14,7 @@ class ReaderPagedView extends StatelessWidget {
     required this.topPadding,
     required this.onPageChanged,
     this.onLookupWord,
+    this.menuVisible = false,
   });
 
   final ReaderController controller;
@@ -26,6 +27,9 @@ class ReaderPagedView extends StatelessWidget {
 
   /// 查词回调（从 contextMenuBuilder -> 选中文字）
   final void Function(String word)? onLookupWord;
+
+  /// 菜单是否可见，影响 SelectableText 是否启用选词功能
+  final bool menuVisible;
 
   Widget _buildBoundaryPage({required bool isNext}) {
     final canMove = isNext ? controller.canGoNext : controller.canGoPrev;
@@ -107,122 +111,140 @@ class ReaderPagedView extends StatelessWidget {
 
         final index = viewIndex - 1;
 
-        return Container(
-          padding: EdgeInsets.fromLTRB(20, topPadding + 8, 20, 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (index == 0)
-                Container(
-                  height: 46,
-                  alignment: Alignment.bottomLeft,
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    controller.currentChapterTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                      color: textColor,
-                      height: 1.1,
-                    ),
-                  ),
-                )
-              else
-                SizedBox(
-                  height: 24,
-                  child: Align(
-                    alignment: Alignment.topLeft,
-                    child: Text(
-                      controller.currentChapterTitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: textColor.withValues(alpha: 0.5),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ),
-              Expanded(
-                child: SelectableText(
-                  textPages[index],
-                  contextMenuBuilder: (context, editableTextState) {
-                    final selection =
-                        editableTextState.textEditingValue.selection;
-                    String? selectedText;
-                    if (selection.isValid && !selection.isCollapsed) {
-                      selectedText =
-                          editableTextState.textEditingValue.text
-                              .substring(selection.start, selection.end);
-                    }
-                    return AdaptiveTextSelectionToolbar(
-                      anchors: editableTextState.contextMenuAnchors,
-                      children: [
-                        for (final item
-                            in editableTextState.contextMenuButtonItems)
-                          TextButton(
-                            onPressed: () {
-                              item.onPressed?.call();
-                              if (item.type !=
-                                  ContextMenuButtonType.selectAll) {
-                                editableTextState.hideToolbar();
-                              }
-                            },
-                            child: Text(item.label ?? ''),
-                          ),
-                        if (selectedText != null && selectedText.isNotEmpty)
-                          TextButton(
-                            onPressed: () {
-                              editableTextState.hideToolbar();
-                              final word = selectedText;
-                              if (word != null) onLookupWord?.call(word);
-                            },
-                            child: const Text('查词'),
-                          ),
-                      ],
-                    );
-                  },
-                  style: TextStyle(
-                    fontSize: settings.fontSize,
-                    height: settings.lineHeight,
-                    letterSpacing: settings.letterSpacing + 0.6,
-                    fontFamily: settings.fontFamily,
-                    color: textColor,
-                  ),
-                ),
-              ),
-              SizedBox(
-                height: 24,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(
+        return Stack(
+          children: [
+            Container(
+              padding: EdgeInsets.fromLTRB(20, topPadding + 8, 20, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (index == 0)
+                    Container(
+                      height: 46,
+                      alignment: Alignment.bottomLeft,
+                      padding: const EdgeInsets.only(bottom: 8),
                       child: Text(
-                        controller.bookTitle,
+                        controller.currentChapterTitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 11,
-                          color: textColor.withValues(alpha: 0.5),
+                          fontSize: 26,
+                          fontWeight: FontWeight.bold,
+                          color: textColor,
+                          height: 1.1,
+                        ),
+                      ),
+                    )
+                  else
+                    SizedBox(
+                      height: 24,
+                      child: Align(
+                        alignment: Alignment.topLeft,
+                        child: Text(
+                          controller.currentChapterTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: textColor.withValues(alpha: 0.5),
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
                     ),
-                    Text(
-                      '${index + 1}/$totalPages   ${((index + 1) / totalPages * 100).toStringAsFixed(1)}%',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: textColor.withValues(alpha: 0.5),
-                      ),
-                    ),
-                  ],
-                ),
+                  Expanded(
+                    child: menuVisible
+                        ? Text(
+                            textPages[index],
+                            style: TextStyle(
+                              fontSize: settings.fontSize,
+                              height: settings.lineHeight,
+                              letterSpacing: settings.letterSpacing + 0.6,
+                              fontFamily: settings.fontFamily,
+                              color: textColor,
+                            ),
+                          )
+                        : SelectableText(
+                            textPages[index],
+                            contextMenuBuilder: (context, editableTextState) {
+                              final selection =
+                                  editableTextState.textEditingValue.selection;
+                              String? selectedText;
+                              if (selection.isValid && !selection.isCollapsed) {
+                                selectedText =
+                                    editableTextState.textEditingValue.text
+                                        .substring(selection.start, selection.end);
+                              }
+                              return AdaptiveTextSelectionToolbar(
+                                anchors: editableTextState.contextMenuAnchors,
+                                children: [
+                                  for (final item
+                                      in editableTextState.contextMenuButtonItems)
+                                    TextButton(
+                                      onPressed: () {
+                                        item.onPressed?.call();
+                                        if (item.type !=
+                                            ContextMenuButtonType.selectAll) {
+                                          editableTextState.hideToolbar();
+                                        }
+                                      },
+                                      child: Text(item.label ?? ''),
+                                    ),
+                                  if (selectedText != null &&
+                                      selectedText.isNotEmpty)
+                                    TextButton(
+                                      onPressed: () {
+                                        editableTextState.hideToolbar();
+                                        final word = selectedText;
+                                        if (word != null) {
+                                          onLookupWord?.call(word);
+                                        }
+                                      },
+                                      child: const Text('查词'),
+                                    ),
+                                ],
+                              );
+                            },
+                            style: TextStyle(
+                              fontSize: settings.fontSize,
+                              height: settings.lineHeight,
+                              letterSpacing: settings.letterSpacing + 0.6,
+                              fontFamily: settings.fontFamily,
+                              color: textColor,
+                            ),
+                          ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+            // 底部页码/进度指示（绝对定位，不占用内容空间）
+            Positioned(
+              left: 20,
+              right: 20,
+              bottom: 8,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '第 ${index + 1} / $totalPages 页',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: textColor.withValues(alpha: 0.4),
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                  Text(
+                    '${((index + 1) / totalPages * 100).toStringAsFixed(1)}%',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: textColor.withValues(alpha: 0.4),
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         );
       },
     );

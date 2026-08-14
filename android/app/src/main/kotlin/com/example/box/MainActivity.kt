@@ -16,11 +16,20 @@ class MainActivity : FlutterActivity() {
         const val DOWNLOAD_CHANNEL = "com.example.box/video_downloads"
 
         private const val CHANNEL = "com.example.box/quiz_plugin"
+
+        // 阅读器按键 MethodChannel — 音量键翻页
+        const val READER_KEYS_CHANNEL = "com.example.box/reader_keys"
+
         private const val REQUEST_OVERLAY_PERMISSION = 1001
         private const val REQUEST_NOTIFICATION_PERMISSION = 1002
     }
 
     private var overlayManager: QuizOverlayManager? = null
+
+    /// 仅当阅读页开启「音量键翻页」时才拦截音量键；
+    /// 其余场景必须放行，否则整个 App 都调不了系统音量。
+    private var volumeKeyNavEnabled = false
+    private var readerKeyChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -267,6 +276,54 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        // ── 阅读器按键 MethodChannel（音量键翻页）──
+        readerKeyChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            READER_KEYS_CHANNEL,
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    // 阅读页进入/退出、或用户拨动开关时调用。
+                    // 退出阅读页必须置 false，否则音量键在别的页面也被吞掉。
+                    "setVolumeKeyNavEnabled" -> {
+                        volumeKeyNavEnabled = call.argument<Boolean>("enabled") ?: false
+                        result.success(true)
+                    }
+                    "isVolumeKeyNavEnabled" -> result.success(volumeKeyNavEnabled)
+                    else -> result.notImplemented()
+                }
+            }
+        }
+    }
+
+    // ─────────────────────── 音量键翻页 ───────────────────────
+
+    /// 在 dispatch 阶段拦截，早于任何 View 消费音量键。
+    /// 只吞 ACTION_DOWN 并向 Flutter 派发一次翻页；ACTION_UP 同样吞掉，
+    /// 否则系统会在抬起时补一次音量 UI。长按 repeatCount>0 也放行给翻页，
+    /// 让用户可以按住连续翻页。
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (!volumeKeyNavEnabled) return super.dispatchKeyEvent(event)
+
+        val direction = when (event.keyCode) {
+            android.view.KeyEvent.KEYCODE_VOLUME_UP -> "previous"
+            android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> "next"
+            else -> return super.dispatchKeyEvent(event)
+        }
+
+        if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+            try {
+                readerKeyChannel?.invokeMethod(
+                    "onVolumeKey",
+                    mapOf("direction" to direction),
+                )
+            } catch (_: Throwable) {
+                // 通道异常不能让按键卡死，也不回落到系统音量——
+                // 用户已明确开启翻页，突然改音量比无响应更糟。
+            }
+        }
+        return true
     }
 
     // ─────────────────────── 下载任务处理 ───────────────────────

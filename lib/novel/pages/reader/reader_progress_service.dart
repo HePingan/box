@@ -44,4 +44,16 @@ class ReaderProgressService {
     final progress = await loadCurrentChapterProgress(bookId, chapterIndex);
     return progress?.scrollOffset;
   }
+
+  /// 恢复当前章节的字符偏移（排版无关的锚点）。
+  ///
+  /// 返回 null 表示：没有该章进度，或进度是旧版本（无 charOffset 字段）。
+  /// 调用方须降级到 [restoreOffsetForChapter] 的页索引逻辑。
+  Future<int?> restoreCharOffsetForChapter(
+    String bookId,
+    int chapterIndex,
+  ) async {
+    final progress = await loadCurrentChapterProgress(bookId, chapterIndex);
+    return progress?.charOffset;
+  }
 }

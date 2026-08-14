@@ -76,6 +76,16 @@ class _FakeCache implements CacheStore {
 
   @override
   Future<void> remove(String key) async {}
+
+  @override
+  Future<int> clear() async {
+    final count = map.length;
+    map.clear();
+    return count;
+  }
+
+  @override
+  Future<int> sizeInBytes() async => map.length;
 }
 
 void main() {

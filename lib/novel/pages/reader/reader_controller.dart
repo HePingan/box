@@ -66,10 +66,26 @@ class ReaderController extends ChangeNotifier {
   bool isTransitioning = false;
   String transitionTitle = '';
 
+  /// 取消正在进行的切章转场（用户点击遮罩时调用）
+  void cancelTransition() {
+    if (!isTransitioning) return;
+    isTransitioning = false;
+    transitionTitle = '';
+    notifyListeners();
+  }
+
+  /// 最后一次进度保存的错误（UI 可用于提示用户）
+  Object? lastSaveError;
+
+  // --- 预取统计 ---
+  int _prefetchFailCount = 0;
+
+  /// 累计预取失败次数（调试用，可在设置页展示）
+  int get prefetchFailCount => _prefetchFailCount;
+
   String title = '';
   String content = '';
 
-  bool showMenu = false;
   bool isScrollMode = false;
   bool loadingNextScroll = false;
 
@@ -78,8 +94,22 @@ class ReaderController extends ChangeNotifier {
 
   final List<ReaderScrollChapterItem> scrollItems = <ReaderScrollChapterItem>[];
 
-  // 已读章节追踪
+  /// 已读章节追踪
   final Set<int> _openedChapters = <int>{};
+
+  /// 已读章节集合（公开只读）
+  Set<int> get readChapters => _openedChapters;
+
+  /// 滚动模式下，基于已读章节数估算全书进度（跨章节更准确）
+  double get scrollBookProgress {
+    if (totalChapters <= 1) return chapterProgress;
+    final ratio = _openedChapters.length / totalChapters;
+    // 当前章节进度也叠加进来
+    final currentProgress = chapterProgress;
+    // 已读章节的权重：当前章节在最后一个位置时，progress 贡献最大
+    final currentWeight = currentProgress / (totalChapters * 1.5);
+    return (ratio + currentWeight).clamp(0.0, 1.0);
+  }
 
   /// 请求序列号，防止并发加载覆盖
   int _loadSeq = 0;
@@ -103,8 +133,9 @@ class ReaderController extends ChangeNotifier {
   int _lastSampleChars = 0;
   static const _sampleInterval = Duration(seconds: 15);
 
-  /// 阅读进度 0.0–1.0
+  /// 阅读进度 0.0–1.0（滚动模式下返回全书进度，分页模式下返回章节进度）
   double get chapterProgress {
+    if (isScrollMode) return scrollBookProgress;
     if (_totalChars <= 0) return 0.0;
     return (_charsRead / _totalChars).clamp(0.0, 1.0);
   }
@@ -279,17 +310,27 @@ class ReaderController extends ChangeNotifier {
 
   // --- 书签相关 ---
 
-  /// 当前书籍的书签列表
+  /// 乐观更新时缓存的书签列表（持久化失败时回滚）
+  List<ReaderBookmark> _cachedBookmarks = const [];
+
+  /// 当前书籍的书签列表（优先返回缓存，兜底从 storage 读取）
   List<ReaderBookmark> get bookmarks =>
-      bookmarkService.loadForBook(detail.book.id);
+      _cachedBookmarks.isNotEmpty ? _cachedBookmarks : bookmarkService.loadForBook(detail.book.id);
 
   /// 当前章节是否已收藏
   bool get hasBookmarkForCurrent {
     return bookmarks.any((b) => b.chapterIndex == chapterIndex);
   }
 
-  /// 添加书签
-  Future<void> addBookmark({int? pageIndex}) async {
+  /// 添加书签（乐观更新：先更新 UI，持久化失败时回滚）
+  /// 返回是否成功（false 表示重复或持久化失败）
+  Future<bool> addBookmark({int? pageIndex}) async {
+    final existing = bookmarks;
+    final alreadyHas = existing.any(
+      (b) => b.chapterIndex == chapterIndex,
+    );
+    if (alreadyHas) return false;
+
     final bookmark = ReaderBookmark(
       id: '${detail.book.id}_${chapterIndex}_${DateTime.now().millisecondsSinceEpoch}',
       bookId: detail.book.id,
@@ -298,14 +339,39 @@ class ReaderController extends ChangeNotifier {
       pageIndex: pageIndex,
       createdAt: DateTime.now(),
     );
-    await bookmarkService.add(bookmark);
+
+    // 乐观更新 UI
+    _cachedBookmarks = [...existing, bookmark];
     notifyListeners();
+
+    // 异步持久化，失败时回滚
+    final success = await bookmarkService.add(bookmark);
+    if (!success) {
+      _cachedBookmarks = existing;
+      notifyListeners();
+    }
+    return success;
   }
 
-  /// 删除书签
-  Future<void> removeBookmark(String bookmarkId) async {
-    await bookmarkService.remove(detail.book.id, bookmarkId);
+  /// 删除书签（乐观更新 + 失败回滚）
+  Future<bool> removeBookmark(String bookmarkId) async {
+    final existing = bookmarks;
+    final before = existing;
+
+    // 乐观更新 UI
+    _cachedBookmarks = existing.where((b) => b.id != bookmarkId).toList();
     notifyListeners();
+
+    // 异步持久化，失败时回滚
+    await bookmarkService.remove(detail.book.id, bookmarkId);
+    // 注意：remove 不返回 success 标志，失败时静默回滚
+    // 由于 SharedPreferences 是同步写入，实际失败概率极低
+    final stillExists = existing.any((b) => b.id == bookmarkId);
+    if (stillExists) {
+      _cachedBookmarks = before;
+      notifyListeners();
+    }
+    return !stillExists;
   }
 
   /// 跳转到指定书签章节
@@ -333,9 +399,14 @@ class ReaderController extends ChangeNotifier {
     );
   }
 
+  /// 更新已保存的阅读进度。
+  ///
+  /// 阅读页不读取 `progress`（它只在详情页由 NovelDetailController 使用），
+  /// 而本方法会在滚动/翻页的防抖保存里被高频调用。若在此 notifyListeners，
+  /// 每次落库都会重建整个阅读页（顶栏、底栏、PageView），造成滚动卡顿。
+  /// 因此这里只更新字段，不触发重建。
   void updateProgress(ReadingProgress? next) {
     progress = next;
-    notifyListeners();
   }
 
   Future<void> bootstrap() async {
@@ -386,7 +457,6 @@ class ReaderController extends ChangeNotifier {
     loading = true;
     isError = false;
     errorText = '';
-    showMenu = false;
     loadingNextScroll = false;
     notifyListeners();
 
@@ -432,7 +502,11 @@ class ReaderController extends ChangeNotifier {
         unawaited(
           _repo
               .prefetchChapter(detail: detail, chapterIndex: nextIndex)
-              .catchError((_) {}),
+              .catchError((Object e) {
+            _prefetchFailCount++;
+            debugPrint('预取失败 (章节 $nextIndex): $e');
+            return null;
+          }),
         );
       }
 
@@ -441,7 +515,11 @@ class ReaderController extends ChangeNotifier {
         unawaited(
           offlineCacheService!
               .prefetchNext(detail, chapterIndex + 1, count: 30)
-              .catchError((_) {}),
+              .catchError((Object e) {
+            _prefetchFailCount++;
+            debugPrint('批量预取失败: $e');
+            return null;
+          }),
         );
       }
 
@@ -484,21 +562,10 @@ class ReaderController extends ChangeNotifier {
     await loadCurrentChapter(forceRefresh: false, target: target);
   }
 
-  void setMenuVisible(bool value) {
-    if (showMenu == value) return;
-    showMenu = value;
-    notifyListeners();
-  }
-
-  void toggleMenu() {
-    setMenuVisible(!showMenu);
-  }
-
   void setScrollMode(bool value) {
     if (isScrollMode == value) return;
 
     isScrollMode = value;
-    showMenu = false;
 
     scrollItems.clear();
     if (value && hasChapters) {
@@ -541,8 +608,9 @@ class ReaderController extends ChangeNotifier {
           content: _cleanText(data.content),
         ),
       );
-    } catch (_) {
-      // 预加载失败不影响当前阅读
+    } catch (e) {
+      // 预加载失败不影响当前阅读，但记录日志
+      debugPrint('预加载章节失败: $e');
     } finally {
       loadingNextScroll = false;
       notifyListeners();

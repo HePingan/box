@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'reader_controller.dart';
@@ -10,11 +11,15 @@ class ReaderSearchSheet extends StatefulWidget {
     required this.controller,
     required this.bgColor,
     required this.textColor,
+    this.initialQuery,
+    this.onQueryUpdated,
   });
 
   final ReaderController controller;
   final Color bgColor;
   final Color textColor;
+  final String? initialQuery;
+  final void Function(String)? onQueryUpdated;
 
   @override
   State<ReaderSearchSheet> createState() => _ReaderSearchSheetState();
@@ -23,6 +28,7 @@ class ReaderSearchSheet extends StatefulWidget {
 class _ReaderSearchSheetState extends State<ReaderSearchSheet> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
+  Timer? _searchDebounce;
 
   bool _isSearching = false;
   List<ChapterSearchResult> _results = [];
@@ -30,11 +36,15 @@ class _ReaderSearchSheetState extends State<ReaderSearchSheet> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialQuery != null && widget.initialQuery!.isNotEmpty) {
+      _controller.text = widget.initialQuery!;
+    }
     _focusNode.requestFocus();
   }
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -42,6 +52,7 @@ class _ReaderSearchSheetState extends State<ReaderSearchSheet> {
 
   Future<void> _search(String query) async {
     if (query.trim().isEmpty) {
+      widget.onQueryUpdated?.call('');
       setState(() {
         _results = [];
         _isSearching = false;
@@ -50,6 +61,7 @@ class _ReaderSearchSheetState extends State<ReaderSearchSheet> {
     }
 
     setState(() => _isSearching = true);
+    widget.onQueryUpdated?.call(query);
 
     try {
       final results = await widget.controller.searchInBook(query);
@@ -58,8 +70,9 @@ class _ReaderSearchSheetState extends State<ReaderSearchSheet> {
         _results = results;
         _isSearching = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
+      debugPrint('搜索失败：$e');
       setState(() => _isSearching = false);
     }
   }
@@ -124,6 +137,11 @@ class _ReaderSearchSheetState extends State<ReaderSearchSheet> {
                 ),
                 onSubmitted: _search,
                 onChanged: (v) {
+                  // 防抖搜索，避免每次按键都触发
+                  _searchDebounce?.cancel();
+                  _searchDebounce = Timer(const Duration(milliseconds: 400), () {
+                    if (mounted) _search(v);
+                  });
                   setState(() {}); // 更新清除按钮
                 },
                 textInputAction: TextInputAction.search,

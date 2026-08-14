@@ -254,6 +254,25 @@ class ReaderSettingsSheet extends StatelessWidget {
                   },
                 ),
 
+                const SizedBox(height: 18),
+                // 音量键翻页
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    '音量键翻页',
+                    style: TextStyle(fontSize: 14, color: textColor.withValues(alpha: 0.8)),
+                  ),
+                  subtitle: Text(
+                    '开启后阅读页音量键不再调节音量',
+                    style: TextStyle(fontSize: 12, color: textColor.withValues(alpha: 0.5)),
+                  ),
+                  value: settings.volumeKeyNav,
+                  activeThumbColor: Colors.orange,
+                  onChanged: (v) {
+                    onSettingsChanged(settings.copyWith(volumeKeyNav: v));
+                  },
+                ),
+
                 const SizedBox(height: 24),
                 Row(
                   children: [

@@ -14,6 +14,7 @@ class ReaderPaginationRequest {
     required this.fontSize,
     required this.lineHeight,
     this.letterSpacing = 0.6,
+    this.fontFamily,
     this.textDirection = TextDirection.ltr,
     this.cacheSize = 16,
   });
@@ -34,6 +35,11 @@ class ReaderPaginationRequest {
   final double fontSize;
   final double lineHeight;
   final double letterSpacing;
+
+  /// 正文字体族。必须与渲染层 TextStyle.fontFamily 一致，
+  /// 否则测量用的字形宽度与实际排版不符，会导致页底文字被裁。
+  final String? fontFamily;
+
   final TextDirection textDirection;
 
   /// 内存缓存条数上限
@@ -112,6 +118,7 @@ class IncrementalPageIterator {
       fontSize: _request.fontSize,
       height: _request.lineHeight,
       letterSpacing: _request.letterSpacing,
+      fontFamily: _request.fontFamily,
     );
     _painter ??= TextPainter(textDirection: _request.textDirection);
 
@@ -245,20 +252,36 @@ class ReaderPaginator {
   }
 
   static String _buildCacheKey(ReaderPaginationRequest request) {
-    final contentSignature =
-        '${request.content.length}:${request.content.hashCode}';
+    // 使用稳定签名避免 hashCode 跨进程不一致（Dart 默认 hashCode 进程间随机）
+    // 用 CRC32 替代内容片段，既稳定又抗碰撞
+    final text = request.content;
+    final signature = text.isEmpty ? 'empty' : 'crc32:${_crc32(text)}';
 
     return [
       request.bookId,
-      request.chapterIndex,
+      request.chapterIndex.toString(),
       request.fitWidth.toStringAsFixed(1),
       request.firstPageHeight.toStringAsFixed(1),
       request.normalPageHeight.toStringAsFixed(1),
       request.fontSize.toStringAsFixed(1),
       request.lineHeight.toStringAsFixed(2),
       request.letterSpacing.toStringAsFixed(2),
-      contentSignature,
+      request.fontFamily ?? 'sysdefault',
+      signature,
     ].join('|');
+  }
+
+  /// 简单 CRC32 实现（稳定、跨进程一致）
+  static int _crc32(String text) {
+    var crc = 0xFFFFFFFF;
+    for (var i = 0; i < text.length; i++) {
+      var c = text.codeUnitAt(i);
+      crc ^= c;
+      for (var j = 0; j < 8; j++) {
+        crc = (crc >>> 1) ^ (crc & 1 == 1 ? 0xEDB88320 : 0);
+      }
+    }
+    return (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF;
   }
 
   /// 全量计算（内部复用，供 [paginate] 使用）

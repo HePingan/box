@@ -85,4 +85,59 @@ class CacheStore {
       await file.delete();
     }
   }
+
+  /// 清空该 namespace 下的全部缓存条目。
+  ///
+  /// 之前没有这个能力，"清除全部缓存"只能删掉索引、正文文件留给 TTL 过期，
+  /// 导致用户清完缓存磁盘占用不变。
+  /// 返回实际删除的条目数。
+  Future<int> clear() async {
+    if (webMode) {
+      final count = _webCache.length;
+      _webCache.clear();
+      return count;
+    }
+
+    final root = await _rootDir();
+    if (!await root.exists()) return 0;
+
+    var removed = 0;
+    await for (final entity in root.list(followLinks: false)) {
+      if (entity is! File || !entity.path.endsWith('.json')) continue;
+      try {
+        await entity.delete();
+        removed++;
+      } catch (_) {
+        // 单个文件删除失败不影响其余条目
+      }
+    }
+    return removed;
+  }
+
+  /// 统计该 namespace 当前占用的磁盘字节数。
+  ///
+  /// web / 内存模式下返回 UTF-8 编码后的近似值。
+  Future<int> sizeInBytes() async {
+    if (webMode) {
+      var total = 0;
+      for (final value in _webCache.values) {
+        total += utf8.encode(value).length;
+      }
+      return total;
+    }
+
+    final root = await _rootDir();
+    if (!await root.exists()) return 0;
+
+    var total = 0;
+    await for (final entity in root.list(followLinks: false)) {
+      if (entity is! File || !entity.path.endsWith('.json')) continue;
+      try {
+        total += await entity.length();
+      } catch (_) {
+        // 统计期间文件被删则跳过
+      }
+    }
+    return total;
+  }
 }

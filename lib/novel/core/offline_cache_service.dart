@@ -33,6 +33,12 @@ class OfflineCacheService {
   /// 新版：存储 List<Map> 元数据（id, title, author, cover, totalChapters）
   static const String _metaKey = 'offline_books_meta_v3';
 
+  /// 单章缓存体积估算基准（~3KB）。
+  ///
+  /// 之前两处统计分别写成 `cached * 3` 和 `cached * 3072`，
+  /// 同一字段出现 1024 倍差异，列表页体积显示忽大忽小；统一到此常量。
+  static const int _bytesPerChapter = 3072;
+
   // ---------------------------------------------------------------------------
   // 标记管理
   // ---------------------------------------------------------------------------
@@ -162,7 +168,7 @@ class OfflineCacheService {
       return meta.copyWith(
         cachedChapters: cached,
         totalChapters: detail.chapters.length,
-        estimatedBytes: cached * 3, // 每章约 3KB 估算
+        estimatedBytes: cached * _bytesPerChapter,
       );
     } catch (_) {
       // 加载失败 → 不展示缓存统计
@@ -194,23 +200,34 @@ class OfflineCacheService {
   }
 
   /// 清除全部离线缓存（标记 + 元数据 + 章节数据）
+  ///
+  /// 章节正文直接走 [CacheStore.clear] 整目录删除，不再依赖 TTL 过期，
+  /// 保证用户点完"清除缓存"磁盘占用立刻下降。
   Future<void> clearAll() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_offlineKey);
     await prefs.remove(_metaKey);
-    // CacheStore 不支持批量删除全部 key，
-    // 章节数据会在下次读取时由 TTL 过期自动清理
+    try {
+      await cache.clear();
+    } catch (_) {
+      // 整目录清理失败时不影响标记与元数据已被清空
+    }
   }
 
   /// 清除全部缓存并尝试逐本清除章节
+  ///
+  /// [clearAll] 已经整目录清空，这里无需再逐本拉取 detail 联网清理。
   Future<void> clearAllWithChapters() async {
-    final metas = await getOfflineMetas();
-    for (final meta in metas) {
-      try {
-        await clearCacheById(meta.id);
-      } catch (_) {}
-    }
     await clearAll();
+  }
+
+  /// 当前离线缓存实际占用的磁盘字节数
+  Future<int> totalCacheBytes() async {
+    try {
+      return await cache.sizeInBytes();
+    } catch (_) {
+      return 0;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -336,7 +353,7 @@ class OfflineCacheService {
       return meta.copyWith(
         cachedChapters: cached,
         totalChapters: detail.chapters.length,
-        estimatedBytes: cached * 3072, // ~3KB/章
+        estimatedBytes: cached * _bytesPerChapter,
       );
     } catch (_) {}
     return meta;

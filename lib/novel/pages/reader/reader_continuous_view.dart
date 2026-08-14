@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'reader_controller.dart';
 
-class ReaderContinuousView extends StatelessWidget {
+class ReaderContinuousView extends StatefulWidget {
   const ReaderContinuousView({
     super.key,
     required this.controller,
@@ -13,9 +13,9 @@ class ReaderContinuousView extends StatelessWidget {
     required this.textColor,
     required this.onLoadNextChapter,
     this.onLookupWord,
+    this.menuVisible = false,
   });
 
-  static const double _preloadThreshold = 2000;
   static const double _emptyPaddingTopExtra = 120;
   static const EdgeInsets _listPadding = EdgeInsets.fromLTRB(20, 0, 20, 100);
   static const EdgeInsets _endPadding = EdgeInsets.only(top: 60, bottom: 40);
@@ -29,7 +29,7 @@ class ReaderContinuousView extends StatelessWidget {
   static const double _loadingAlpha = 0.35;
   static const double _endTextAlpha = 0.4;
   static const double _endTextLetterSpacing = 2;
-  static const Duration _preloadDebounce = Duration(milliseconds: 300);
+  static const Duration preloadDebounce = Duration(milliseconds: 300);
 
   final ReaderController controller;
   final ScrollController scrollController;
@@ -40,57 +40,79 @@ class ReaderContinuousView extends StatelessWidget {
   /// 查词回调（从 contextMenuBuilder -> 选中文字）
   final void Function(String word)? onLookupWord;
 
+  /// 菜单是否可见，影响 SelectableText 是否启用选词功能
+  final bool menuVisible;
+
+  @override
+  State<ReaderContinuousView> createState() => _ReaderContinuousViewState();
+}
+
+class _ReaderContinuousViewState extends State<ReaderContinuousView> {
+  Timer? _preloadDebounce;
+
+  @override
+  void dispose() {
+    _preloadDebounce?.cancel();
+    super.dispose();
+  }
+
+  void _maybePreloadNext() {
+    if (_preloadDebounce?.isActive ?? false) return;
+    _preloadDebounce = Timer(ReaderContinuousView.preloadDebounce, () {
+      if (mounted) {
+        unawaited(widget.onLoadNextChapter());
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    Timer? debounce;
-
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
-        if (notification.metrics.axis != Axis.vertical) return false;
+            if (notification.metrics.axis != Axis.vertical) return false;
 
-        if (notification.metrics.extentAfter < _preloadThreshold &&
-            !controller.loadingNextScroll &&
-            controller.canGoNext) {
-          if (debounce?.isActive ?? false) return false;
-          debounce = Timer(_preloadDebounce, () {
-            unawaited(onLoadNextChapter());
-          });
-        }
+            // 预加载阈值可从 settings 获取，默认 2000
+            final threshold = widget.controller.settings.prefetchAheadPx;
+            if (notification.metrics.extentAfter < threshold &&
+                !widget.controller.loadingNextScroll &&
+                widget.controller.canGoNext) {
+              _maybePreloadNext();
+            }
 
-        return false;
-      },
+            return false;
+          },
       child: ListView.builder(
-        controller: scrollController,
+        controller: widget.scrollController,
         physics: const BouncingScrollPhysics(),
-        padding: _listPadding,
-        itemCount: controller.scrollItems.length + 1,
+        padding: ReaderContinuousView._listPadding,
+        itemCount: widget.controller.scrollItems.length + 1,
         itemBuilder: (context, index) {
-          if (controller.scrollItems.isEmpty) {
+          if (widget.controller.scrollItems.isEmpty) {
             return Padding(
-              padding: EdgeInsets.only(top: topPadding + _emptyPaddingTopExtra),
+              padding: EdgeInsets.only(top: widget.topPadding + ReaderContinuousView._emptyPaddingTopExtra),
               child: Center(
                 child: CircularProgressIndicator(
-                  color: textColor.withValues(alpha: _loadingAlpha),
-                  strokeWidth: _progressIndicatorStroke,
+                  color: widget.textColor.withValues(alpha: ReaderContinuousView._loadingAlpha),
+                  strokeWidth: ReaderContinuousView._progressIndicatorStroke,
                 ),
               ),
             );
           }
 
-          if (index == controller.scrollItems.length) {
+          if (index == widget.controller.scrollItems.length) {
             final isLastInWholeBook =
-                controller.scrollItems.last.index >=
-                controller.totalChapters - 1;
+                widget.controller.scrollItems.last.index >=
+                widget.controller.totalChapters - 1;
 
             if (isLastInWholeBook) {
               return Padding(
-                padding: _endPadding,
+                padding: ReaderContinuousView._endPadding,
                 child: Center(
                   child: Text(
                     '—— 全书完 ——',
                     style: TextStyle(
-                      color: textColor.withValues(alpha: _endTextAlpha),
-                      letterSpacing: _endTextLetterSpacing,
+                      color: widget.textColor.withValues(alpha: ReaderContinuousView._endTextAlpha),
+                      letterSpacing: ReaderContinuousView._endTextLetterSpacing,
                     ),
                   ),
                 ),
@@ -98,21 +120,21 @@ class ReaderContinuousView extends StatelessWidget {
             }
 
             return Padding(
-              padding: _loadingPadding,
+              padding: ReaderContinuousView._loadingPadding,
               child: Center(
                 child: CircularProgressIndicator(
-                  color: textColor.withValues(alpha: _loadingAlpha),
-                  strokeWidth: _progressIndicatorStroke,
+                  color: widget.textColor.withValues(alpha: ReaderContinuousView._loadingAlpha),
+                  strokeWidth: ReaderContinuousView._progressIndicatorStroke,
                 ),
               ),
             );
           }
 
-          final item = controller.scrollItems[index];
+          final item = widget.controller.scrollItems[index];
 
           return Container(
             padding: EdgeInsets.only(
-              top: index == 0 ? topPadding + _firstChapterTopExtra : _chapterTopPadding,
+              top: index == 0 ? widget.topPadding + ReaderContinuousView._firstChapterTopExtra : ReaderContinuousView._chapterTopPadding,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -120,59 +142,78 @@ class ReaderContinuousView extends StatelessWidget {
                 Text(
                   item.title,
                   style: TextStyle(
-                    fontSize: _chapterTitleFontSize,
+                    fontSize: ReaderContinuousView._chapterTitleFontSize,
                     fontWeight: FontWeight.bold,
-                    color: textColor,
-                    height: _chapterTitleHeight,
+                    color: widget.textColor,
+                    height: ReaderContinuousView._chapterTitleHeight,
                   ),
                 ),
-                const SizedBox(height: _chapterSpacing),
-                SelectableText(
-                  item.content,
-                  contextMenuBuilder: (context, editableTextState) {
-                    final selection =
-                        editableTextState.textEditingValue.selection;
-                    String? selectedText;
-                    if (selection.isValid && !selection.isCollapsed) {
-                      selectedText =
-                          editableTextState.textEditingValue.text
-                              .substring(selection.start, selection.end);
-                    }
-                    return AdaptiveTextSelectionToolbar(
-                      anchors: editableTextState.contextMenuAnchors,
-                      children: [
-                        for (final item
-                            in editableTextState.contextMenuButtonItems)
-                          TextButton(
-                            onPressed: () {
-                              item.onPressed?.call();
-                              if (item.type !=
-                                  ContextMenuButtonType.selectAll) {
-                                editableTextState.hideToolbar();
-                              }
-                            },
-                            child: Text(item.label ?? ''),
-                          ),
-                        if (selectedText != null && selectedText.isNotEmpty)
-                          TextButton(
-                            onPressed: () {
-                              editableTextState.hideToolbar();
-                              final word = selectedText;
-                              if (word != null) onLookupWord?.call(word);
-                            },
-                            child: const Text('查词'),
-                          ),
-                      ],
-                    );
-                  },
-                  style: TextStyle(
-                    fontSize: controller.settings.fontSize,
-                    height: controller.settings.lineHeight,
-                    letterSpacing: controller.settings.letterSpacing + 0.6,
-                    fontFamily: controller.settings.fontFamily,
-                    color: textColor,
-                  ),
-                ),
+                const SizedBox(height: ReaderContinuousView._chapterSpacing),
+                widget.menuVisible
+                    ? Text(
+                        item.content,
+                        style: TextStyle(
+                          fontSize: widget.controller.settings.fontSize,
+                          height: widget.controller.settings.lineHeight,
+                          letterSpacing:
+                              widget.controller.settings.letterSpacing + 0.6,
+                          fontFamily: widget.controller.settings.fontFamily,
+                          color: widget.textColor,
+                        ),
+                      )
+                    : SelectableText(
+                        item.content,
+                        contextMenuBuilder: (context, editableTextState) {
+                          final selection =
+                              editableTextState.textEditingValue.selection;
+                          String? selectedText;
+                          if (selection.isValid &&
+                              !selection.isCollapsed) {
+                            selectedText =
+                                editableTextState.textEditingValue.text
+                                    .substring(selection.start,
+                                        selection.end);
+                          }
+                          return AdaptiveTextSelectionToolbar(
+                            anchors: editableTextState.contextMenuAnchors,
+                            children: [
+                              for (final menuitem
+                                  in editableTextState
+                                      .contextMenuButtonItems)
+                                TextButton(
+                                  onPressed: () {
+                                    menuitem.onPressed?.call();
+                                    if (menuitem.type !=
+                                        ContextMenuButtonType.selectAll) {
+                                      editableTextState.hideToolbar();
+                                    }
+                                  },
+                                  child: Text(menuitem.label ?? ''),
+                                ),
+                              if (selectedText != null &&
+                                  selectedText.isNotEmpty)
+                                TextButton(
+                                  onPressed: () {
+                                    editableTextState.hideToolbar();
+                                    final word = selectedText;
+                                    if (word != null) {
+                                      widget.onLookupWord?.call(word);
+                                    }
+                                  },
+                                  child: const Text('查词'),
+                                ),
+                            ],
+                          );
+                        },
+                        style: TextStyle(
+                          fontSize: widget.controller.settings.fontSize,
+                          height: widget.controller.settings.lineHeight,
+                          letterSpacing:
+                              widget.controller.settings.letterSpacing + 0.6,
+                          fontFamily: widget.controller.settings.fontFamily,
+                          color: widget.textColor,
+                        ),
+                      ),
               ],
             ),
           );

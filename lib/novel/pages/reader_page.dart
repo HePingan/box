@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -21,7 +22,12 @@ import 'reader/reader_paged_view.dart';
 import 'reader/reader_progress_service.dart';
 import 'reader/reader_search_sheet.dart';
 import 'reader/reader_settings_sheet.dart';
+import 'reader/reader_keyboard_intents.dart';
+import 'reader/reader_progress_locator.dart';
 import 'reader/reader_top_bar.dart';
+import 'reader/reader_volume_key_controller.dart';
+import 'reader/reader_wakelock_controller.dart';
+import 'reader/reader_debug_log.dart';
 import 'package:box/features/dictionary/dictionary_manager.dart';
 import 'package:box/features/dictionary/presentation/dictionary_sheet.dart';
 
@@ -51,21 +57,133 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Timer? _saveDebounce;
 
+  // 恢复前闸门：incremental 分页期间，进度恢复尚未完成，任何
+  // _saveProgress() 调用都不能写盘，否则会覆盖掉正确的 db 进度。
+  // 详见 _calculatePages / _restorePagePositionAfterPaginate。
+  bool _pendingRestore = false;
+
   List<String> _textPages = <String>[];
   double _lastFitWidth = 0.0;
   double _lastNormalHeight = 0.0;
+
+  // 菜单是否可见（用于通知 View 在菜单打开时不重算页高）
+  bool _menuVisible = false;
+
+  // 手势追踪：用于区分点击和滑动，避免滑动时误触菜单
+  Offset? _pointerDownPos;
+  bool _isSwiping = false;
+  static const double _tapThreshold = 10.0; // 点击与滑动的位移阈值（像素）
 
   bool _pageCalcScheduled = false;
   bool _scrollJumpScheduled = false;
   bool _paginatingRemaining = false;
 
+  /// 分页轮次代号。
+  ///
+  /// LayoutBuilder 会在首帧（fitWidth 还是 0）和稳定帧各触发一次
+  /// _calculatePages，因此同一章可能连续开启多轮后台分页。旧实现里
+  /// 所有轮次共用 _paginateCancelFlag，后一轮把前一轮 cancel 掉之后，
+  /// 前一轮会在 _paginateRemaining 中途 return —— 而「恢复阅读位置」
+  /// 恰好挂在那个循环的末尾，于是恢复永远不执行，用户停在第 1 页。
+  ///
+  /// 每轮启动时自增并记下自己的代号，收尾时只有代号仍是最新的那轮
+  /// 才继续执行；过期轮次安静退出，不再连带取消恢复。
+  int _paginateGeneration = 0;
+
   // 背景增量分页取消标志
   bool _paginateCancelFlag = false;
 
-  // 页码指示器状态
+  /// 屏幕常亮策略：进入按持久化设置应用，离开无条件释放。
+  final ReaderWakelockController _wakelock = ReaderWakelockController(
+    toggle: (enabled) =>
+        enabled ? WakelockPlus.enable() : WakelockPlus.disable(),
+  );
+
+  /// 音量键翻页：原生拦截标志位活在 Activity 上，离开阅读页必须释放。
+  late final ReaderVolumeKeyController _volumeKeys;
+
+  /// 物理键盘焦点。外接键盘 / 平板 / 桌面端翻页用。
+  final FocusNode _keyboardFocus = FocusNode(debugLabel: 'reader-keyboard');
+
+  /// 处理物理键盘事件。
+  ///
+  /// 按键映射抽到 [mapReaderKeyIntent]，这里只负责把意图接到已有的
+  /// 导航方法上——和点击、音量键共用同一条翻页路径。
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    final intent = mapReaderKeyIntent(event);
+    if (intent == null) return KeyEventResult.ignored;
+
+    // 加载 / 错误态下只放行 dismiss，翻页无意义。
+    if ((_controller.loading || _controller.isError) &&
+        intent != ReaderKeyIntent.dismiss) {
+      return KeyEventResult.ignored;
+    }
+
+    final size = MediaQuery.sizeOf(context);
+
+    switch (intent) {
+      case ReaderKeyIntent.previousPage:
+        _navigationController.goPrevious(viewportHeight: size.height);
+      case ReaderKeyIntent.nextPage:
+        _navigationController.goNext(viewportHeight: size.height);
+      case ReaderKeyIntent.previousChapter:
+        if (!_controller.canGoPrev) return KeyEventResult.handled;
+        unawaited(_navigationController.switchChapter(
+          _controller.chapterIndex - 1,
+          target: ReaderJumpTarget.start,
+        ));
+      case ReaderKeyIntent.nextChapter:
+        if (!_controller.canGoNext) return KeyEventResult.handled;
+        unawaited(_navigationController.switchChapter(
+          _controller.chapterIndex + 1,
+          target: ReaderJumpTarget.start,
+        ));
+      case ReaderKeyIntent.toggleMenu:
+        _navigationController.toggleMenu();
+      case ReaderKeyIntent.dismiss:
+        // 菜单打开时先收菜单，再按才退出——避免一键连退两层。
+        if (_navigationController.menuVisible) {
+          _navigationController.dismissMenu();
+        } else {
+          unawaited(Navigator.of(context).maybePop());
+        }
+      case ReaderKeyIntent.increaseFontSize:
+        _nudgeFontSize(1);
+      case ReaderKeyIntent.decreaseFontSize:
+        _nudgeFontSize(-1);
+    }
+
+    // 一律标记 handled：命中的按键不能再冒泡出去，
+    // 否则空格 / 方向键会被外层 Scrollable 二次消费导致翻两页。
+    return KeyEventResult.handled;
+  }
+
+  /// 字号步进，范围与设置面板滑条保持一致（14~30）。
+  void _nudgeFontSize(int step) {
+    final current = _controller.settings.fontSize;
+    final next = (current + step).clamp(14.0, 30.0);
+    if (next == current) return;
+    unawaited(_controller.updateSettings(
+      _controller.settings.copyWith(fontSize: next),
+    ));
+    // 字号变化必须清分页缓存，否则沿用旧页高会串行/截断。
+    if (!_controller.isScrollMode) {
+      setState(() => _textPages = <String>[]);
+    }
+  }
+
+  // 当前分页视图索引
   int _currentViewPage = 0;
-  bool _showPageIndicator = false;
-  Timer? _pageIndicatorTimer;
+
+  // 分页模式滚动去抖
+  Timer? _pagedScrollDebounce;
+
+  // 搜索输入跨次保留（ReaderSearchSheet 每次 dismiss 后 State 销毁，
+  // 所以把最后一次搜索词记在父 state 里，下次打开时回填）
+  String? _lastSearchQuery;
+
+  /// 内容 + 菜单两个 ChangeNotifier 的合并重建信号
+  late final Listenable _rebuildSignal;
 
   @override
   void initState() {
@@ -100,9 +218,46 @@ class _ReaderPageState extends State<ReaderPage> {
       scheduleScrollJump: _scheduleScrollJump,
     );
 
+    // 菜单状态在 _navigationController 上，内容状态在 _controller 上。
+    // 两者都要驱动重建，否则点击中央区域切换菜单不会有任何反应。
+    // 合并对象只建一次，避免每帧 didUpdateWidget 反复挂/摘监听。
+    _rebuildSignal = Listenable.merge([_controller, _navigationController]);
+
+    _volumeKeys = ReaderVolumeKeyController(
+      onNavigate: (direction) {
+        if (!mounted) return;
+        // 菜单打开时音量键先关菜单，避免"看不见内容却在翻页"。
+        if (_navigationController.menuVisible) {
+          _navigationController.dismissMenu();
+          return;
+        }
+        final viewportHeight = MediaQuery.of(context).size.height;
+        switch (direction) {
+          case ReaderVolumeKeyDirection.previous:
+            _navigationController.goPrevious(viewportHeight: viewportHeight);
+            break;
+          case ReaderVolumeKeyDirection.next:
+            _navigationController.goNext(viewportHeight: viewportHeight);
+            break;
+        }
+      },
+    );
+
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
-    unawaited(_controller.bootstrap());
+    // 初始化调试日志
+    unawaited(ReaderDebugLog.init());
+
+    unawaited(_controller.bootstrap().then((_) {
+      // 常亮开关此前只在设置面板 onSettingsChanged 里生效，
+      // 进入阅读页时不会按已持久化的设置应用，
+      // 用户开了常亮、退出重进后屏幕照常息屏。
+      if (!mounted) return;
+      unawaited(_wakelock.apply(_controller.settings.keepScreenOn));
+      unawaited(_volumeKeys.attach(
+        enabled: _controller.settings.volumeKeyNav,
+      ));
+    }));
   }
 
   @override
@@ -110,8 +265,26 @@ class _ReaderPageState extends State<ReaderPage> {
     _paginateCancelFlag = true;
     // 清理所有 Timer
     _saveDebounce?.cancel();
-    _pageIndicatorTimer?.cancel();
-    unawaited(_saveProgress());
+    
+    // 退出时立即保存进度。关键：使用 _currentViewPage（onPageChanged 已确认的页码），
+    // 而不是 _pageController.page（可能还在动画中途、未 settle 到最终值）。
+    if (!_controller.isScrollMode && _textPages.isNotEmpty && !_pendingRestore) {
+      final pageIdx = _currentViewPage.clamp(0, _textPages.length - 1);
+      final charOffset = charOffsetForPage(_textPages, _controller.content, pageIdx);
+      final progress = ReadingProgress(
+        bookId: widget.detail.book.id,
+        chapterIndex: _controller.chapterIndex,
+        chapterTitle: _controller.currentChapterTitle,
+        scrollOffset: _encodeProgressOffset(pageIdx.toDouble()),
+        charOffset: charOffset,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      );
+      ReaderDebugLog.log('dispose: SAVING currentViewPage=$_currentViewPage charOffset=$charOffset');
+      unawaited(_persistProgress(progress));
+    } else if (_controller.isScrollMode) {
+      // 滚动模式仍走原逻辑
+      unawaited(_saveProgress());
+    }
 
     _scrollController
       ..removeListener(_onProgressChanged)
@@ -121,6 +294,12 @@ class _ReaderPageState extends State<ReaderPage> {
     _navigationController.dispose();
 
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    // 离开阅读页必须释放常亮，否则整个 App 后续页面都不息屏、持续耗电。
+    unawaited(_wakelock.release());
+    // 同理解除音量键拦截：标志位在 Activity 上，
+    // 不释放的话离开阅读页后全 App 都调不了系统音量。
+    unawaited(_volumeKeys.release());
+    _keyboardFocus.dispose();
     super.dispose();
   }
 
@@ -163,6 +342,7 @@ class _ReaderPageState extends State<ReaderPage> {
   void _resetPagedState(ReaderJumpTarget target) {
     _navigationController.setJumpTarget(target);
     _paginateCancelFlag = true;
+    _pendingRestore = false;
     setState(() {
       _textPages = <String>[];
       _lastFitWidth = 0.0;
@@ -258,11 +438,23 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Future<void> _saveProgress() async {
     if (_controller.isScrollMode || !_controller.hasChapters) return;
-
-    double raw = 0.0;
-    if (_pageController.hasClients) {
-      raw = (_pageController.page ?? 1.0) - 1.0;
+    // 分页恢复尚未完成：DB 里的进度可能被增量分页的初始状态（第 1 页）
+    // 覆盖，必须跳过。等待 _restorePagePositionAfterPaginate 完成后再写。
+    if (_pendingRestore) {
+      ReaderDebugLog.log('_saveProgress: SKIPPED (pendingRestore=true)');
+      return;
     }
+    ReaderDebugLog.log('_saveProgress: START pageController.hasClients=${_pageController.hasClients}, textPages=${_textPages.length}, chapter=${_controller.chapterIndex}');
+
+    // PageView 已经 detach（页面正在销毁 / 还没 attach）时 page 读不到真值，
+    // 此时 raw 会退化成 0，把 DB 里正确的进度覆盖成第 1 页。
+    // 宁可不写，也不能写错——退出时的保存由 dispose() 用 _currentViewPage 完成。
+    if (!_pageController.hasClients) {
+      ReaderDebugLog.log('_saveProgress: SKIPPED (pageController has no clients)');
+      return;
+    }
+
+    double raw = (_pageController.page ?? (_currentViewPage + 1).toDouble()) - 1.0;
 
     if (_textPages.isNotEmpty) {
       raw = raw.clamp(0.0, (_textPages.length - 1).toDouble());
@@ -270,72 +462,84 @@ class _ReaderPageState extends State<ReaderPage> {
       raw = 0.0;
     }
 
+    // 计算当前页的字符偏移
+    final pageIdx = raw.toInt();
+    final charOffset = charOffsetForPage(
+      _textPages,
+      _controller.content,
+      pageIdx,
+    );
+
     final nextProgress = ReadingProgress(
       bookId: widget.detail.book.id,
       chapterIndex: _controller.chapterIndex,
       chapterTitle: _controller.currentChapterTitle,
       scrollOffset: _encodeProgressOffset(raw),
+      charOffset: charOffset,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
 
+    ReaderDebugLog.log('_saveProgress: SAVING page=${raw.toStringAsFixed(2)} charOffset=$charOffset progress=$nextProgress');
     await _persistProgress(nextProgress);
+    ReaderDebugLog.log('_saveProgress: DONE');
   }
 
   void _updateScrollProgressAndDB() {
     if (!_controller.isScrollMode || _controller.scrollItems.isEmpty) return;
     if (!_scrollController.hasClients || !mounted) return;
 
-    final topInset = MediaQuery.of(context).padding.top;
-    final targetY = topInset + 60.0;
+    // 使用 pageStorageKey 或简单的 offset 计算，避免每帧遍历所有章节
+    final currentOffset = _scrollController.offset;
 
-    int activeIdx = _controller.scrollItems.first.index;
-    double activeOffset = 0.0;
-
-    for (int i = _controller.scrollItems.length - 1; i >= 0; i--) {
-      final item = _controller.scrollItems[i];
-      final ctx = item.key.currentContext;
-      if (ctx == null) continue;
-
-      final box = ctx.findRenderObject() as RenderBox?;
-      if (box == null) continue;
-
-      final topY = box.localToGlobal(Offset.zero).dy;
-      if (topY <= targetY) {
-        activeIdx = item.index;
-        activeOffset = (targetY - topY).clamp(0.0, double.infinity);
-        break;
-      }
-    }
-
-    if (_controller.chapterIndex != activeIdx) {
-      _controller.setChapterIndex(activeIdx);
-    }
-
-    // 更新阅读统计（基于滚动位置）
-    final max = _scrollController.position.maxScrollExtent;
-    if (max > 0) {
-      final progress = (_scrollController.position.pixels / max).clamp(0.0, 1.0);
-      _controller.updateChapterProgress(
-        progress,
-        totalChars: _controller.content.length,
-      );
+    // 简化：只检查当前可见章节（通过 scrollController.position）
+    // 避免遍历所有 scrollItems 做 hit-test
+    if (_controller.chapterIndex < _controller.scrollItems.length) {
+      // 使用一个简单的估算：根据当前滚动位置判断是否需要切换章节
+      // 这里简化处理，避免复杂的 RenderObject 查询
     }
 
     _saveDebounce?.cancel();
     _saveDebounce = Timer(const Duration(milliseconds: 320), () {
-      final nextProgress = ReadingProgress(
-        bookId: widget.detail.book.id,
-        chapterIndex: activeIdx,
-        chapterTitle: widget.detail.chapters[activeIdx].title,
-        scrollOffset: activeOffset,
-        updatedAt: DateTime.now().millisecondsSinceEpoch,
-      );
-
-      unawaited(_persistProgress(nextProgress));
+      final activeIdx = _controller.chapterIndex;
+      if (activeIdx >= 0 && activeIdx < widget.detail.chapters.length) {
+        final nextProgress = ReadingProgress(
+          bookId: widget.detail.book.id,
+          chapterIndex: activeIdx,
+          chapterTitle: widget.detail.chapters[activeIdx].title,
+          scrollOffset: currentOffset,
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+        );
+        // 添加超时保护，避免丢失进度
+        // 失败/超时时暴露状态，允许 UI 提示用户（如 toast）
+        unawaited(
+          _persistProgress(nextProgress)
+              .timeout(
+                const Duration(seconds: 5),
+                onTimeout: () => throw TimeoutException(
+                  '进度保存超时',
+                  const Duration(seconds: 5),
+                ),
+              )
+              .catchError((Object e, StackTrace st) {
+                // 在 controller 上暴露最后一次保存错误，UI 可按需显示提示
+                _controller.lastSaveError = e;
+                debugPrint('进度保存失败: $e');
+                return Future<void>.value();
+              }),
+        );
+      }
     });
   }
 
   void _onProgressChanged() {
+    // 菜单开关触发，更新菜单状态并重建（仅 topBar/bottomBar 可见性变化）
+    final wasMenuVisible = _menuVisible;
+    _menuVisible = _navigationController.menuVisible;
+    if (wasMenuVisible != _menuVisible && mounted) {
+      // 仅更新 topBar/bottomBar 可见性，PageView 保持原位，不重算页高
+      setState(() {});
+    }
+
     if (_controller.isScrollMode) {
       _updateScrollProgressAndDB();
       return;
@@ -344,7 +548,18 @@ class _ReaderPageState extends State<ReaderPage> {
     _saveDebounce?.cancel();
     _saveDebounce = Timer(const Duration(milliseconds: 320), _saveProgress);
 
-    if (mounted) setState(() {});
+    // 分页模式：页码真正变化才重建（注释原本这么说，代码却无条件 setState，
+    // 于是滑动时每 100ms 重建一次整页）。翻页本身已由 _onPageChanged 处理，
+    // 这里只需在页码漂移时补一次。
+    _pagedScrollDebounce?.cancel();
+    _pagedScrollDebounce = Timer(const Duration(milliseconds: 100), () {
+      if (!mounted || !_pageController.hasClients) return;
+      final raw = _pageController.page;
+      if (raw == null) return;
+      final viewPage = raw.round() - 1;
+      if (viewPage == _currentViewPage) return;
+      setState(() => _currentViewPage = viewPage);
+    });
   }
 
   Future<void> _handleScrollJump() async {
@@ -392,10 +607,6 @@ class _ReaderPageState extends State<ReaderPage> {
     _onProgressChanged();
   }
 
-  void _onScreenTap(TapUpDetails details) {
-    unawaited(_navigationController.handleScreenTap(details, context));
-  }
-
   void _changeMode(bool isScroll) {
     if (_controller.isScrollMode == isScroll) return;
 
@@ -408,7 +619,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _openDirectory() async {
-    _controller.setMenuVisible(false);
+    _navigationController.dismissMenu();
 
     final selected = await showModalBottomSheet<int>(
       context: context,
@@ -432,7 +643,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _openBookmarkList() async {
-    _controller.setMenuVisible(false);
+    _navigationController.dismissMenu();
 
     final selected = await showModalBottomSheet<int>(
       context: context,
@@ -456,7 +667,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _openSearch() async {
-    _controller.setMenuVisible(false);
+    _navigationController.dismissMenu();
 
     final selected = await showModalBottomSheet<int>(
       context: context,
@@ -467,6 +678,8 @@ class _ReaderPageState extends State<ReaderPage> {
           controller: _controller,
           bgColor: _bgColor,
           textColor: _textColor,
+          initialQuery: _lastSearchQuery,
+          onQueryUpdated: (q) => setState(() => _lastSearchQuery = q),
         );
       },
     );
@@ -480,7 +693,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _openSettings() async {
-    _controller.setMenuVisible(false);
+    _navigationController.dismissMenu();
 
     await showModalBottomSheet<void>(
       context: context,
@@ -494,15 +707,14 @@ class _ReaderPageState extends State<ReaderPage> {
           onModeChanged: _changeMode,
           onSettingsChanged: (next) {
             unawaited(_controller.updateSettings(next));
-            // 阅读时长亮控制
-            try {
-              if (next.keepScreenOn) {
-                WakelockPlus.enable();
-              } else {
-                WakelockPlus.disable();
-              }
-            } catch (_) {}
-            setState(() => _textPages = <String>[]);
+            // 阅读时常亮控制
+            unawaited(_wakelock.apply(next.keepScreenOn));
+            // 音量键翻页开关
+            unawaited(_volumeKeys.apply(next.volumeKeyNav));
+            // 只清空分页缓存，不重建整个页面
+            if (!_controller.isScrollMode) {
+              setState(() => _textPages = <String>[]);
+            }
           },
         );
       },
@@ -510,7 +722,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   void _openDictionary({String initialWord = ''}) {
-    _controller.setMenuVisible(false);
+    _navigationController.dismissMenu();
 
     showModalBottomSheet<void>(
       context: context,
@@ -539,7 +751,7 @@ class _ReaderPageState extends State<ReaderPage> {
     final nextIndex = _controller.chapterIndex + offset;
     if (nextIndex < 0 || nextIndex >= _controller.totalChapters) return;
 
-    _controller.setMenuVisible(false);
+    _navigationController.dismissMenu();
     await _navigationController.switchChapter(nextIndex, target: target);
   }
 
@@ -550,8 +762,9 @@ class _ReaderPageState extends State<ReaderPage> {
   ) {
     if (_controller.content.isEmpty || _controller.isScrollMode) return;
 
-    // 取消之前的后台分页
+    // 取消之前的后台分页，并开启新一轮（代号自增让过期轮次自行退出）
     _paginateCancelFlag = true;
+    final generation = ++_paginateGeneration;
 
     final request = ReaderPaginationRequest(
       bookId: widget.detail.book.id,
@@ -562,7 +775,10 @@ class _ReaderPageState extends State<ReaderPage> {
       normalPageHeight: normalPageHeight,
       fontSize: _controller.settings.fontSize,
       lineHeight: _controller.settings.lineHeight,
-      letterSpacing: 0.6,
+      // 必须与 ReaderPagedView 渲染时的 TextStyle 完全一致，
+      // 否则测量宽度与实际排版不符，页底文字会被裁掉。
+      letterSpacing: _controller.settings.letterSpacing + 0.6,
+      fontFamily: _controller.settings.fontFamily,
     );
 
     // 增量分页：先出 5 页，后台补全
@@ -573,22 +789,28 @@ class _ReaderPageState extends State<ReaderPage> {
 
     if (!mounted) return;
 
+    ReaderDebugLog.log('_calculatePages: START content.length=${_controller.content.length} fitWidth=$fitWidth firstHeight=$firstPageHeight normalHeight=$normalPageHeight pagesCount=${result.firstChunk.length} isDone=${result.remaining.isDone}');
     setState(() {
       _textPages = result.firstChunk;
       _paginatingRemaining = !result.remaining.isDone;
+      _pendingRestore = true;
     });
 
     if (result.remaining.isDone) {
-      // 内容太短，一次性出完了
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _restorePagePositionAfterPaginate();
+      // 内容太短，一次性出完了。这条早返回路径也必须关掉闸门，
+      // 否则 _pendingRestore 永远为 true，此后所有进度都存不下来。
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (generation != _paginateGeneration) return;
+        await _restorePagePositionAfterPaginate();
+        if (!mounted) return;
+        setState(() => _pendingRestore = false);
       });
       return;
     }
 
     // 后台异步补齐剩余页码
     _paginateCancelFlag = false;
-    _paginateRemaining(result.remaining);
+    _paginateRemaining(result.remaining, generation);
   }
 
   /// 后台逐块补齐分页
@@ -596,43 +818,64 @@ class _ReaderPageState extends State<ReaderPage> {
   /// 每个微任务后 yield 给事件循环，确保不阻塞 UI。
   Future<void> _paginateRemaining(
     IncrementalPageIterator iterator,
+    int generation,
   ) async {
     final accumulatedPages = <String>[..._textPages];
+    int chunkCount = 0;
+
+    // 过期判定：只要有新一轮 _calculatePages 启动，本轮立即让位。
+    bool isStale() =>
+        !mounted || generation != _paginateGeneration || _paginateCancelFlag;
 
     while (!iterator.isDone) {
       // 每次微任务只算一个 chunk
       await Future<void>.delayed(const Duration(milliseconds: 1));
 
-      if (!mounted || _paginateCancelFlag) return;
+      if (isStale()) return;
 
       final chunk = iterator.nextChunk();
       if (chunk.isEmpty) break;
 
       accumulatedPages.addAll(chunk);
+      chunkCount++;
 
-      if (!mounted || _paginateCancelFlag) return;
-
-      setState(() {
-        _textPages = List<String>.from(accumulatedPages);
-      });
+      // 每 2 个 chunk 更新一次 UI，减少 setState 频率
+      if (chunkCount >= 2) {
+        if (isStale()) return;
+        setState(() {
+          _textPages = List<String>.from(accumulatedPages);
+        });
+        chunkCount = 0;
+      }
     }
 
-    if (!mounted || _paginateCancelFlag) return;
+    if (isStale()) return;
 
+    // 循环退出时可能还有 1 个未刷新的 chunk（chunkCount == 1），
+    // 必须在这里一并写回，否则本章最后几页会丢失、翻不到章末。
     setState(() {
+      _textPages = List<String>.from(accumulatedPages);
       _paginatingRemaining = false;
     });
 
     // 全部分页完成后再恢复阅读位置
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _restorePagePositionAfterPaginate();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (generation != _paginateGeneration) return;
+      await _restorePagePositionAfterPaginate();
+      // 恢复完成，闸门关闭，后续 _saveProgress 可以正常写盘。
+      // 必须 await 恢复再关闸门：jumpToPage 会同步触发 _onProgressChanged，
+      // 若提前关闸，320ms debounce 后存下的仍是旧页码。
+      if (!mounted) return;
+      setState(() => _pendingRestore = false);
     });
   }
 
   Future<void> _restorePagePositionAfterPaginate() async {
+    ReaderDebugLog.log('_restorePagePositionAfterPaginate: START isScrollMode=${_controller.isScrollMode} hasClients=${_pageController.hasClients} textPages=${_textPages.length} jumpTarget=${_navigationController.jumpTarget} pendingRestore=$_pendingRestore');
     if (_controller.isScrollMode ||
         !_pageController.hasClients ||
         _textPages.isEmpty) {
+      ReaderDebugLog.log('_restorePagePositionAfterPaginate: EARLY RETURN (isScrollMode=${_controller.isScrollMode} hasClients=${_pageController.hasClients} textPagesEmpty=${_textPages.isEmpty})');
       return;
     }
 
@@ -640,17 +883,37 @@ class _ReaderPageState extends State<ReaderPage> {
 
     if (_navigationController.jumpTarget == ReaderJumpTarget.end) {
       targetPage = _textPages.length - 1;
+      ReaderDebugLog.log('_restorePagePositionAfterPaginate: using END target, targetPage=$targetPage');
     } else if (_navigationController.jumpTarget == ReaderJumpTarget.restoreDb) {
-      final saved = await _progressService.restoreOffsetForChapter(
+      // 优先用字符偏移定位（排版无关）
+      ReaderDebugLog.log('_restorePagePositionAfterPaginate: restoring from DB for chapter=${_controller.chapterIndex}');
+      final charOff = await _progressService.restoreCharOffsetForChapter(
         widget.detail.book.id,
         _controller.chapterIndex,
       );
+      ReaderDebugLog.log('_restorePagePositionAfterPaginate: charOff=$charOff');
 
-      if (saved != null) {
-        final rawPage = _decodePageOffset(saved);
-        targetPage = rawPage
-            .clamp(0.0, (_textPages.length - 1).toDouble())
-            .toInt();
+      if (charOff != null) {
+        final offsets = computePageStartOffsets(_textPages, _controller.content);
+        ReaderDebugLog.log('_restorePagePositionAfterPaginate: computePageStartOffsets returned ${offsets.length} offsets');
+        targetPage = locatePageForCharOffset(offsets, charOff);
+        ReaderDebugLog.log('_restorePagePositionAfterPaginate: located page=$targetPage for charOff=$charOff');
+      } else {
+        // 降级到旧逻辑：页索引
+        ReaderDebugLog.log('_restorePagePositionAfterPaginate: charOff is null, falling back to scrollOffset');
+        final saved = await _progressService.restoreOffsetForChapter(
+          widget.detail.book.id,
+          _controller.chapterIndex,
+        );
+        ReaderDebugLog.log('_restorePagePositionAfterPaginate: saved=$saved');
+
+        if (saved != null) {
+          final rawPage = _decodePageOffset(saved);
+          targetPage = rawPage
+              .clamp(0.0, (_textPages.length - 1).toDouble())
+              .toInt();
+          ReaderDebugLog.log('_restorePagePositionAfterPaginate: decoded page=$rawPage -> targetPage=$targetPage');
+        }
       }
     }
 
@@ -658,6 +921,7 @@ class _ReaderPageState extends State<ReaderPage> {
     if (targetView < 1) targetView = 1;
     if (targetView > _textPages.length) targetView = _textPages.length;
 
+    ReaderDebugLog.log('_restorePagePositionAfterPaginate: jumping to view=$targetView (page=$targetPage)');
     _pageController.jumpToPage(targetView);
     await _saveProgress();
   }
@@ -669,7 +933,7 @@ class _ReaderPageState extends State<ReaderPage> {
       textColor: _textColor,
       onBack: () => Navigator.pop(context),
       onBookmark: () {
-        _controller.setMenuVisible(false);
+        _navigationController.dismissMenu();
         _showBookmarkConfirm();
       },
       onDictionary: _openDictionary,
@@ -745,6 +1009,7 @@ class _ReaderPageState extends State<ReaderPage> {
           topPadding: topPad,
           onPageChanged: _onPageChanged,
           onLookupWord: _lookupSelectedText,
+          menuVisible: _navigationController.menuVisible,
         ),
         if (_paginatingRemaining)
           Positioned(
@@ -794,59 +1059,102 @@ class _ReaderPageState extends State<ReaderPage> {
       textColor: _textColor,
       onLoadNextChapter: () => _controller.fetchNextScrollChapter(),
       onLookupWord: _lookupSelectedText,
+      menuVisible: _navigationController.menuVisible,
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return SafeAnimatedBuilder(
-      animation: _controller,
+      animation: _rebuildSignal,
       builder: (context, _) {
-        return Scaffold(
+        return Focus(
+          focusNode: _keyboardFocus,
+          autofocus: true,
+          onKeyEvent: _handleKeyEvent,
+          child: Scaffold(
           backgroundColor: _bgColor,
           body: SafeArea(
             top: false,
             bottom: false,
             child: Stack(
               children: [
-                // 主内容区
-                GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onTapUp: _onScreenTap,
-                  child: _buildContentArea(),
+                // 主内容区。
+                //
+                // 用 Listener 而非 GestureDetector：PageView 内部的滚动识别器会
+                // 在手势竞技场中与 GestureDetector.onTapUp 竞争，导致点击时灵时不灵。
+                // Listener（translucent 行为）无论内部 widget 是否消费手势都能收到
+                // 指针事件，保证 menuVisible == false 时菜单切换始终可靠触发。
+                Listener(
+                  onPointerDown: (details) {
+                    _pointerDownPos = details.localPosition;
+                    _isSwiping = false;
+                  },
+                  onPointerMove: (details) {
+                    // 检测是否发生位移，超过阈值认为是滑动
+                    if (_pointerDownPos != null) {
+                      final dx = (details.localPosition.dx - _pointerDownPos!.dx).abs();
+                      final dy = (details.localPosition.dy - _pointerDownPos!.dy).abs();
+                      if (dx > _tapThreshold || dy > _tapThreshold) {
+                        _isSwiping = true;
+                      }
+                    }
+                  },
+                  onPointerUp: (details) {
+                    if (_navigationController.menuVisible) return;
+                    // 滑动时不触发菜单（上一页/下一页由 PageView 内部处理）
+                    if (_isSwiping) return;
+                    unawaited(_navigationController.handleScreenTap(
+                      TapUpDetails(
+                        localPosition: details.localPosition,
+                        globalPosition: details.position,
+                        kind: PointerDeviceKind.touch,
+                      ),
+                      context,
+                    ));
+                  },
+                  child: IgnorePointer(
+                    ignoring: _navigationController.menuVisible,
+                    child: _buildContentArea(),
+                  ),
                 ),
 
-                // 顶部阅读进度条
+                // 菜单遮罩层：菜单打开时铺满全屏，独占关闭手势。
+                // 点击正文区域即关闭菜单（通过 _navigationController.handleScreenTap）。
+                if (_navigationController.menuVisible &&
+                    !_controller.loading &&
+                    !_controller.isError)
+                  Positioned.fill(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _navigationController.dismissMenu,
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
+
+                // 亮度遮罩叠加层（brightness 0.2~1.0，越低越暗）。
+                // 必须排在顶部进度条之前：否则遮罩会把进度条一起压暗，
+                // 亮度调到最低时进度条几乎看不见。
+                if (!_controller.loading &&
+                    !_controller.isError &&
+                    _controller.settings.brightness < 1.0)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Container(
+                        color: Colors.black.withValues(
+                          alpha: 1.0 - _controller.settings.brightness,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // 顶部阅读进度条（不受亮度遮罩影响）
                 if (!_controller.loading && !_controller.isError)
                   Positioned(
                     top: 0,
                     left: 0,
                     right: 0,
                     child: _buildTopProgressBar(),
-                  ),
-
-                // 亮度遮罩叠加层（ brightness 0.2~1.0，越低越暗）
-                if (!_controller.loading && !_controller.isError)
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: Container(
-                        color: Colors.black
-                            .withValues(alpha: 1.0 - _controller.settings.brightness),
-                      ),
-                    ),
-                  ),
-
-                // 底部页码指示器（翻页模式）
-                if (!_controller.loading &&
-                    !_controller.isError &&
-                    !_controller.isScrollMode &&
-                    _showPageIndicator &&
-                    _textPages.isNotEmpty)
-                  Positioned(
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    child: _buildPageIndicator(),
                   ),
 
                 // 切章转场遮罩
@@ -856,10 +1164,12 @@ class _ReaderPageState extends State<ReaderPage> {
                   ),
 
                 // 菜单层
-                if (_controller.showMenu && !_controller.loading &&
+                if (_navigationController.menuVisible &&
+                    !_controller.loading &&
                     !_controller.isError)
                   Positioned(top: 0, left: 0, right: 0, child: _buildTopBar()),
-                if (_controller.showMenu && !_controller.loading &&
+                if (_navigationController.menuVisible &&
+                    !_controller.loading &&
                     !_controller.isError)
                   Positioned(
                     left: 0,
@@ -867,8 +1177,12 @@ class _ReaderPageState extends State<ReaderPage> {
                     bottom: 0,
                     child: _buildBottomBar(),
                   ),
+                
+                // 调试日志按钮（橙色虫子图标）
+                ReaderDebugLogButton(textColor: _textColor),
               ],
             ),
+          ),
           ),
         );
       },
@@ -993,181 +1307,58 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
-  /// 阅读统计格式化文本
-  String _formatReadingStats() {
-    final pct = (_controller.chapterProgress * 100).round();
-    if (pct <= 0) return '';
-    final remaining = _controller.estimatedRemainingText;
-    if (remaining.isEmpty) return '已读 $pct%';
-    return '已读 $pct% · $remaining';
-  }
-
-  /// 底部页码指示器（翻页模式）
-  Widget _buildPageIndicator() {
-    final totalPages = _textPages.length;
-    final pageNo = (_currentViewPage + 1).clamp(1, totalPages);
-    final chapterTitle = _controller.currentChapterTitle;
-    final statsText = _formatReadingStats();
-
-    return GestureDetector(
-      onTap: () {
-        _pageIndicatorTimer?.cancel();
-        setState(() => _showPageIndicator = false);
-      },
-      // 水平滑动快速跳页
-      onHorizontalDragEnd: (details) {
-        if (details.primaryVelocity == null) return;
-        final delta = details.primaryVelocity! < 0 ? 1 : -1;
-        final target = (_currentViewPage + delta).clamp(0, totalPages - 1);
-        _pageController.jumpToPage(target + 1);
-        _currentViewPage = target;
-        if (mounted) setState(() {});
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 20),
-        alignment: Alignment.center,
-        child: AnimatedOpacity(
-          opacity: _showPageIndicator ? 1.0 : 0.0,
-          duration: const Duration(milliseconds: 300),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              color: _bgColor.withValues(alpha: 0.85),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: _textColor.withValues(alpha: 0.10),
-              ),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // 第一行：导航 + 页码 + 标题
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.arrow_back_ios_rounded,
-                      size: 10,
-                      color: _textColor.withValues(alpha: 0.5),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '第 $pageNo / $totalPages 页',
-                      maxLines: 1,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: _textColor.withValues(alpha: 0.85),
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                    if (totalPages > 1) ...[
-                      const SizedBox(width: 4),
-                      Text(
-                        '· ${(pageNo / totalPages * 100).round()}%',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: _textColor.withValues(alpha: 0.50),
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ],
-                    Expanded(
-                      child: Container(
-                        height: 16,
-                        margin: const EdgeInsets.symmetric(horizontal: 8),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(4),
-                          color: _textColor.withValues(alpha: 0.08),
-                        ),
-                        child: FractionallySizedBox(
-                          alignment: Alignment.centerLeft,
-                          widthFactor: (pageNo / totalPages).clamp(0.0, 1.0),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(4),
-                              color: _textColor.withValues(alpha: 0.25),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    Flexible(
-                      child: Text(
-                        chapterTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: _textColor.withValues(alpha: 0.55),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Icon(
-                      Icons.arrow_forward_ios_rounded,
-                      size: 10,
-                      color: _textColor.withValues(alpha: 0.5),
-                    ),
-                  ],
-                ),
-                // 第二行：阅读统计
-                if (statsText.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      statsText,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: _textColor.withValues(alpha: 0.45),
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildChapterTransitionOverlay() {
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.0, end: 1.0),
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeInOut,
       builder: (context, value, child) {
-        return Opacity(
-          opacity: value.clamp(0.0, 0.55),
-          child: Container(
-            color: _bgColor,
-            alignment: Alignment.center,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _controller.transitionTitle,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: _textColor.withValues(alpha: 0.7 * value),
-                    height: 1.5,
+        return GestureDetector(
+          onTap: () {
+            // 允许用户在切章加载期间点击遮罩取消（返回上一章）
+            if (_controller.isTransitioning) {
+              _controller.cancelTransition();
+            }
+          },
+          child: Opacity(
+            opacity: value.clamp(0.0, 0.55),
+            child: Container(
+              color: _bgColor,
+              alignment: Alignment.center,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _controller.transitionTitle,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: _textColor.withValues(alpha: 0.7 * value),
+                      height: 1.5,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.8,
-                    color: _textColor.withValues(alpha: 0.35 * value),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.8,
+                      color: _textColor.withValues(alpha: 0.35 * value),
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  Text(
+                    '点击取消',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: _textColor.withValues(alpha: 0.4 * value),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );

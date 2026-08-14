@@ -259,12 +259,19 @@ class ReadingProgress {
   final double scrollOffset;
   final int updatedAt;
 
+  /// 分页模式专用：当前页在原文中的字符偏移（0-based）。
+  /// 
+  /// 优先级高于 scrollOffset 的页索引编码。存在时直接定位到原文位置，
+  /// 不受字号、行高、屏幕尺寸变化影响。为 null 时降级到旧的页索引逻辑。
+  final int? charOffset;
+
   const ReadingProgress({
     required this.bookId,
     required this.chapterIndex,
     required this.chapterTitle,
     required this.scrollOffset,
     required this.updatedAt,
+    this.charOffset,
   });
 
   ReadingProgress copyWith({
@@ -273,6 +280,7 @@ class ReadingProgress {
     String? chapterTitle,
     double? scrollOffset,
     int? updatedAt,
+    Object? charOffset = _unset,
   }) {
     return ReadingProgress(
       bookId: bookId ?? this.bookId,
@@ -280,8 +288,11 @@ class ReadingProgress {
       chapterTitle: chapterTitle ?? this.chapterTitle,
       scrollOffset: scrollOffset ?? this.scrollOffset,
       updatedAt: updatedAt ?? this.updatedAt,
+      charOffset: charOffset == _unset ? this.charOffset : charOffset as int?,
     );
   }
+
+  static const Object _unset = Object();
 
   @override
   bool operator ==(Object other) =>
@@ -292,14 +303,15 @@ class ReadingProgress {
           chapterIndex == other.chapterIndex &&
           chapterTitle == other.chapterTitle &&
           scrollOffset == other.scrollOffset &&
-          updatedAt == other.updatedAt;
+          updatedAt == other.updatedAt &&
+          charOffset == other.charOffset;
 
   @override
-  int get hashCode => Object.hash(bookId, chapterIndex, chapterTitle, scrollOffset, updatedAt);
+  int get hashCode => Object.hash(bookId, chapterIndex, chapterTitle, scrollOffset, updatedAt, charOffset);
 
   @override
   String toString() =>
-      'ReadingProgress(bookId: $bookId, chapterIndex: $chapterIndex, chapterTitle: $chapterTitle, scrollOffset: $scrollOffset)';
+      'ReadingProgress(bookId: $bookId, chapterIndex: $chapterIndex, chapterTitle: $chapterTitle, scrollOffset: $scrollOffset, charOffset: $charOffset)';
 
   Map<String, dynamic> toJson() => {
     'bookId': bookId,
@@ -307,6 +319,7 @@ class ReadingProgress {
     'chapterTitle': chapterTitle,
     'scrollOffset': scrollOffset,
     'updatedAt': updatedAt,
+    if (charOffset != null) 'charOffset': charOffset,
   };
 
   factory ReadingProgress.fromJson(Map<String, dynamic> json) {
@@ -316,6 +329,7 @@ class ReadingProgress {
       chapterTitle: json['chapterTitle'] as String? ?? '',
       scrollOffset: (json['scrollOffset'] as num?)?.toDouble() ?? 0,
       updatedAt: json['updatedAt'] as int? ?? 0,
+      charOffset: json['charOffset'] as int?,
     );
   }
 }
@@ -327,8 +341,15 @@ class ReaderSettings {
   final double brightness;
   final bool keepScreenOn;
   final bool enableHaptic;
+
+  /// 音量键翻页。开启后阅读页拦截音量键，
+  /// 退出阅读页时必须解除拦截，否则全 App 调不了音量。
+  final bool volumeKeyNav;
   final double letterSpacing;
   final String? fontFamily;
+
+  /// 滚动模式预加载阈值（剩余多少像素时触发下一章加载，默认 2000）
+  final double prefetchAheadPx;
 
   const ReaderSettings({
     this.fontSize = 18,
@@ -337,9 +358,16 @@ class ReaderSettings {
     this.brightness = 1.0,
     this.keepScreenOn = false,
     this.enableHaptic = true,
+    this.volumeKeyNav = false,
     this.letterSpacing = 0.0,
     this.fontFamily,
+    this.prefetchAheadPx = 2000.0,
   });
+
+  /// 用于区分"未传 fontFamily"与"显式传 null（回到系统默认字体）"。
+  /// 普通的 `fontFamily ?? this.fontFamily` 无法表达后者，
+  /// 会导致字体切到衬线/等宽后再也选不回系统默认。
+  static const Object _unset = Object();
 
   ReaderSettings copyWith({
     double? fontSize,
@@ -348,8 +376,10 @@ class ReaderSettings {
     double? brightness,
     bool? keepScreenOn,
     bool? enableHaptic,
+    bool? volumeKeyNav,
     double? letterSpacing,
-    String? fontFamily,
+    Object? fontFamily = _unset,
+    double? prefetchAheadPx,
   }) {
     return ReaderSettings(
       fontSize: fontSize ?? this.fontSize,
@@ -358,8 +388,12 @@ class ReaderSettings {
       brightness: brightness ?? this.brightness,
       keepScreenOn: keepScreenOn ?? this.keepScreenOn,
       enableHaptic: enableHaptic ?? this.enableHaptic,
+      volumeKeyNav: volumeKeyNav ?? this.volumeKeyNav,
       letterSpacing: letterSpacing ?? this.letterSpacing,
-      fontFamily: fontFamily ?? this.fontFamily,
+      fontFamily: identical(fontFamily, _unset)
+          ? this.fontFamily
+          : fontFamily as String?,
+      prefetchAheadPx: prefetchAheadPx ?? this.prefetchAheadPx,
     );
   }
 
@@ -374,24 +408,32 @@ class ReaderSettings {
           brightness == other.brightness &&
           keepScreenOn == other.keepScreenOn &&
           enableHaptic == other.enableHaptic &&
+          volumeKeyNav == other.volumeKeyNav &&
           letterSpacing == other.letterSpacing &&
-          fontFamily == other.fontFamily;
+          fontFamily == other.fontFamily &&
+          prefetchAheadPx == other.prefetchAheadPx;
 
   @override
-  int get hashCode => Object.hash(
-        fontSize,
-        lineHeight,
-        themeMode,
-        brightness,
-        keepScreenOn,
-        enableHaptic,
-        letterSpacing,
-        fontFamily,
-      );
+  int get hashCode =>
+      fontSize.hashCode ^
+      lineHeight.hashCode ^
+      themeMode.hashCode ^
+      brightness.hashCode ^
+      keepScreenOn.hashCode ^
+      enableHaptic.hashCode ^
+      volumeKeyNav.hashCode ^
+      letterSpacing.hashCode ^
+      fontFamily.hashCode ^
+      prefetchAheadPx.hashCode;
 
   @override
   String toString() =>
-      'ReaderSettings(fontSize: $fontSize, lineHeight: $lineHeight, themeMode: $themeMode, brightness: $brightness, keepScreenOn: $keepScreenOn, enableHaptic: $enableHaptic)';
+      'ReaderSettings(fontSize: $fontSize, lineHeight: $lineHeight, '
+      'themeMode: $themeMode, brightness: $brightness, '
+      'keepScreenOn: $keepScreenOn, enableHaptic: $enableHaptic, '
+      'volumeKeyNav: $volumeKeyNav, '
+      'letterSpacing: $letterSpacing, fontFamily: $fontFamily, '
+      'prefetchAheadPx: $prefetchAheadPx)';
 
   Map<String, dynamic> toJson() => {
         'fontSize': fontSize,
@@ -400,8 +442,10 @@ class ReaderSettings {
         'brightness': brightness,
         'keepScreenOn': keepScreenOn,
         'enableHaptic': enableHaptic,
+        'volumeKeyNav': volumeKeyNav,
         'letterSpacing': letterSpacing,
         'fontFamily': fontFamily,
+        'prefetchAheadPx': prefetchAheadPx,
       };
 
   factory ReaderSettings.fromJson(Map<String, dynamic> json) {
@@ -418,8 +462,11 @@ class ReaderSettings {
       brightness: (json['brightness'] as num?)?.toDouble() ?? 1.0,
       keepScreenOn: json['keepScreenOn'] as bool? ?? false,
       enableHaptic: json['enableHaptic'] as bool? ?? true,
+      volumeKeyNav: json['volumeKeyNav'] as bool? ?? false,
       letterSpacing: (json['letterSpacing'] as num?)?.toDouble() ?? 0.0,
       fontFamily: json['fontFamily'] as String?,
+      prefetchAheadPx:
+          (json['prefetchAheadPx'] as num?)?.toDouble() ?? 2000.0,
     );
   }
 }

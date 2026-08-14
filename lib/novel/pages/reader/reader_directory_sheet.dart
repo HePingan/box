@@ -28,13 +28,14 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
 
-  // 👉 性能优化绝招：使用极轻量的 Notifier 单独控制滚动条位置，彻底脱离复杂的组件树重绘
+  // 轻量监听滚动比例，独立于列表重建（拖动时暂停更新，避免闪烁）
   final ValueNotifier<double> _scrollRatioNotifier = ValueNotifier(0.0);
 
   bool _reversed = false;
   bool _jumpScheduled = false;
-  bool _isDragging = false; // 标记是否正在被手指拖拽，拖动时挂起列表自身的重绘通知
+  bool _isDragging = false; // 拖动时暂停更新滚动比例（避免闪烁），列表自身仍正常 rebuild
   String _searchQuery = '';
+  Timer? _searchDebounce;
 
   AnimationController? _fadeController;
   Timer? _hideIndicatorTimer;
@@ -68,6 +69,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _hideIndicatorTimer?.cancel();
     _fadeController?.dispose();
     _scrollController.dispose();
@@ -318,7 +320,13 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                   child: TextField(
                     controller: _searchController,
-                    onChanged: (v) => setState(() => _searchQuery = v),
+                    onChanged: (v) {
+                      // 防抖：避免每次按键都重建目录列表
+                      _searchDebounce?.cancel();
+                      _searchDebounce = Timer(const Duration(milliseconds: 200), () {
+                        if (mounted) setState(() => _searchQuery = v);
+                      });
+                    },
                     style: TextStyle(
                       color: widget.textColor.withValues(alpha: 0.85),
                       fontSize: 13,
@@ -338,6 +346,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet>
                           ? GestureDetector(
                               onTap: () {
                                 _searchController.clear();
+                                _searchDebounce?.cancel();
                                 setState(() => _searchQuery = '');
                               },
                               child: Icon(
