@@ -12,15 +12,16 @@ enum AdminResourceType {
   videoSource('video-source', '视频源', 2),
 
   /// 题库管理 — 远程题目与待审核投稿
-    quizBank('quiz-bank', '题库', 3),
+  quizBank('quiz-bank', '题库', 3),
 
-    /// 插件远程策略 — 全局/分插件/用户级禁用
-      pluginPolicy('plugin-policy', '插件策略', 4),
+  /// 插件远程策略 — 全局/分插件/用户级禁用
+  pluginPolicy('plugin-policy', '插件策略', 4),
 
-      /// 插件市场审核 — 用户投稿 / 发布 / 下架
-      pluginMarket('plugin-market', '插件市场', 5)
-      /// 更多扩展...
-      ;
+  /// 插件市场审核 — 用户投稿 / 发布 / 下架
+  pluginMarket('plugin-market', '插件市场', 5),
+
+  /// 更多扩展...
+  ;
 
   const AdminResourceType(this.type, this.displayName, this.order);
 
