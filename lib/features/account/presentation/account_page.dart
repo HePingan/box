@@ -334,6 +334,9 @@ class _AccountPageState extends State<AccountPage> {
                     onRefresh: _loadSession,
                     onLogout: _logout,
                     onAdminTap: _openAdmin,
+                    onPersonalCenterTap: () => Navigator.of(
+                      context,
+                    ).pushNamed(AppRoutes.personalCenter),
                   ),
                 if (session != null) ...[
                   const SizedBox(height: 12),

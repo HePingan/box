@@ -12,6 +12,7 @@ class AccountStatusCard extends StatelessWidget {
     required this.onRefresh,
     required this.onLogout,
     required this.onAdminTap,
+    required this.onPersonalCenterTap,
   });
 
   final BoxAccountSession session;
@@ -19,6 +20,7 @@ class AccountStatusCard extends StatelessWidget {
   final VoidCallback onRefresh;
   final VoidCallback onLogout;
   final VoidCallback onAdminTap;
+  final VoidCallback onPersonalCenterTap;
 
   @override
   Widget build(BuildContext context) {
@@ -105,6 +107,15 @@ class AccountStatusCard extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onPersonalCenterTap,
+              icon: const Icon(Icons.person_outline_rounded, size: 18),
+              label: const Text('进入个人中心'),
+            ),
           ),
           if (user.isAdmin) ...[
             const SizedBox(height: 10),
