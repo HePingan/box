@@ -59,6 +59,22 @@ class BoxAccountClient {
     );
   }
 
+  Future<BoxAccountUser> updateMyProfile({
+    required String serverUrl,
+    required String token,
+    required String nickname,
+  }) async {
+    final response = await _httpClient.patch(
+      _uri(normalizeServerUrl(serverUrl), '/api/me/profile'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({'nickname': nickname.trim()}),
+    );
+    return BoxAccountUser.fromJson(_decodeResponse(response));
+  }
+
   Future<BoxAccountUser> me({
     required String serverUrl,
     required String token,

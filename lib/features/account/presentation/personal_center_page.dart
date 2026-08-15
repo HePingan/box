@@ -357,6 +357,58 @@ class _SettingsTab extends StatefulWidget {
 
 class _SettingsTabState extends State<_SettingsTab> {
   bool _clearing = false;
+  bool _savingNickname = false;
+
+  Future<void> _editNickname() async {
+    final controller = context.read<PersonalCenterController>();
+    final user = controller.session?.user;
+    if (user == null) return;
+    final field = TextEditingController(text: user.nickname);
+    final nickname = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('编辑昵称'),
+        content: TextField(
+          controller: field,
+          autofocus: true,
+          maxLength: 32,
+          decoration: const InputDecoration(labelText: '昵称'),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, field.text),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    field.dispose();
+    if (nickname == null || !mounted || nickname.trim() == user.nickname) {
+      return;
+    }
+    setState(() => _savingNickname = true);
+    try {
+      await controller.updateNickname(nickname);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('昵称已更新')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('更新昵称失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => _savingNickname = false);
+    }
+  }
 
   Future<void> _clearCache() async {
     final confirmed = await showDialog<bool>(
@@ -446,10 +498,22 @@ class _SettingsTabState extends State<_SettingsTab> {
                     : '?',
               ),
             ),
-            title: Text(user?.username ?? '未登录'),
+            title: Text(user?.nickname ?? user?.username ?? '未登录'),
             subtitle: Text(
-              user == null ? '请先登录账号' : '${user.role} · ${user.status}',
+              user == null
+                  ? '请先登录账号'
+                  : '${user.username} · ${user.role} · ${user.status}',
             ),
+            trailing: user == null
+                ? null
+                : _savingNickname
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.edit_outlined),
+            onTap: user == null || _savingNickname ? null : _editNickname,
           ),
         ),
         const SizedBox(height: 12),

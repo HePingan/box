@@ -20,6 +20,7 @@ class BoxAccountUser {
   const BoxAccountUser({
     required this.id,
     required this.username,
+    this.nickname = '',
     required this.role,
     required this.status,
     this.createdAt,
@@ -30,6 +31,8 @@ class BoxAccountUser {
     return BoxAccountUser(
       id: json['id']?.toString() ?? '',
       username: json['username']?.toString() ?? '',
+      nickname:
+          json['nickname']?.toString() ?? json['username']?.toString() ?? '',
       role: json['role']?.toString() ?? 'user',
       status: json['status']?.toString() ?? 'normal',
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
@@ -39,16 +42,35 @@ class BoxAccountUser {
 
   final String id;
   final String username;
+  final String nickname;
   final String role;
   final String status;
   final DateTime? createdAt;
   final DateTime? lastLoginAt;
+
+  BoxAccountUser copyWith({
+    String? username,
+    String? nickname,
+    String? role,
+    String? status,
+  }) {
+    return BoxAccountUser(
+      id: id,
+      username: username ?? this.username,
+      nickname: nickname ?? this.nickname,
+      role: role ?? this.role,
+      status: status ?? this.status,
+      createdAt: createdAt,
+      lastLoginAt: lastLoginAt,
+    );
+  }
 
   bool get isAdmin => role == 'admin';
 
   Map<String, dynamic> toJson() => {
     'id': id,
     'username': username,
+    'nickname': nickname,
     'role': role,
     'status': status,
     'createdAt': createdAt?.toIso8601String(),

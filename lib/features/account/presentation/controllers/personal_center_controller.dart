@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../../data/account_client.dart';
 import '../../data/account_store.dart';
 import '../../domain/account_models.dart';
 import '../../data/personal_center_client.dart';
@@ -87,6 +88,37 @@ class PersonalCenterController extends ChangeNotifier {
       loading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> updateNickname(String nickname) async {
+    final current = session;
+    if (current == null) {
+      throw const PersonalCenterException('请先登录账号');
+    }
+    final value = nickname.trim();
+    if (value.isEmpty || value.length > 32) {
+      throw const PersonalCenterException('昵称不能为空且长度不能超过 32 个字符');
+    }
+    final user = await BoxAccountClient().updateMyProfile(
+      serverUrl: current.serverUrl,
+      token: current.token,
+      nickname: value,
+    );
+    final updated = BoxAccountSession(
+      serverUrl: current.serverUrl,
+      token: current.token,
+      user: user,
+    );
+    await _accountStore.saveSession(updated);
+    session = updated;
+    if (overview != null) {
+      overview = PersonalOverview(
+        user: PersonalUser.fromJson(user.toJson()),
+        quota: overview!.quota,
+        stats: overview!.stats,
+      );
+    }
+    notifyListeners();
   }
 
   Future<void> loadQuizzes({String? status}) async {
