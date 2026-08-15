@@ -28,6 +28,7 @@ class QuizCloudSyncService {
   static const _cursorPrefix = 'quiz_cloud_cursor_v1';
   static const _syncPageLimit = 100;
   static const _maxSyncPages = 100;
+  static const _maxSubmissionPages = 50;
   static const _apiTimeout = Duration(seconds: 15);
   static const _imageTimeout = Duration(seconds: 20);
   static const _maxImageBytes = 5 * 1024 * 1024;
@@ -264,6 +265,43 @@ class QuizCloudSyncService {
         )
         .timeout(_apiTimeout);
     return QuizCloudSubmission.fromJson(_decode(response));
+  }
+
+  /// 拉取「当前登录账号自己的投稿」及其审核结果。
+  ///
+  /// 服务端按 token 绑定用户（`GET /api/me/quiz/questions`），
+  /// 客户端不传 userId，避免越权读取他人投稿。
+  Future<List<QuizCloudSubmission>> fetchMySubmissions({
+    required String serverUrl,
+    required String token,
+    int pageSize = 100,
+  }) async {
+    final limit = pageSize.clamp(1, 100);
+    final all = <QuizCloudSubmission>[];
+    var offset = 0;
+    for (var page = 0; page < _maxSubmissionPages; page++) {
+      final uri = _uri(serverUrl, '/api/me/quiz/questions').replace(
+        queryParameters: {
+          'status': 'all',
+          'offset': '$offset',
+          'limit': '$limit',
+        },
+      );
+      final response = await _httpClient
+          .get(uri, headers: {'Authorization': 'Bearer $token'})
+          .timeout(_apiTimeout);
+      final body = _decode(response);
+      final rows = body['questions'] ?? body['submissions'] ?? body['items'];
+      if (rows is! List || rows.isEmpty) break;
+      all.addAll(
+        rows.whereType<Map>().map(
+          (row) => QuizCloudSubmission.fromJson(Map<String, dynamic>.from(row)),
+        ),
+      );
+      offset += rows.length;
+      if (body['hasMore'] != true) break;
+    }
+    return List<QuizCloudSubmission>.unmodifiable(all);
   }
 
   static Uri _uri(String serverUrl, String path) =>
@@ -504,14 +542,69 @@ class QuizCloudImageRepairResult {
 }
 
 class QuizCloudSubmission {
-  const QuizCloudSubmission({required this.id, required this.status});
-  factory QuizCloudSubmission.fromJson(Map<String, dynamic> json) =>
-      QuizCloudSubmission(
-        id: '${json['id'] ?? ''}',
-        status: '${json['status'] ?? ''}',
-      );
+  const QuizCloudSubmission({
+    required this.id,
+    required this.status,
+    this.reviewNote = '',
+    this.linkedQuestionId,
+    this.reviewedAt,
+    this.question = '',
+    this.options = const <String>[],
+  });
+
+  factory QuizCloudSubmission.fromJson(Map<String, dynamic> json) {
+    final nested = json['question'];
+    final questionMap = nested is Map
+        ? Map<String, dynamic>.from(nested)
+        : const <String, dynamic>{};
+    final rawOptions = questionMap['options'];
+    return QuizCloudSubmission(
+      id: '${json['id'] ?? ''}',
+      status: '${json['status'] ?? ''}',
+      reviewNote: '${json['reviewNote'] ?? ''}',
+      linkedQuestionId: _optional(json['linkedQuestionId']),
+      reviewedAt: DateTime.tryParse('${json['reviewedAt'] ?? ''}'),
+      question: nested is Map
+          ? '${questionMap['question'] ?? ''}'
+          : '${nested ?? ''}',
+      options: rawOptions is List
+          ? rawOptions.map((e) => '$e').toList(growable: false)
+          : const <String>[],
+    );
+  }
+
+  static String? _optional(Object? value) {
+    final text = value?.toString().trim();
+    return text == null || text.isEmpty ? null : text;
+  }
+
   final String id;
   final String status;
+  final String reviewNote;
+  final String? linkedQuestionId;
+  final DateTime? reviewedAt;
+
+  /// 云端回传的题干与选项，用于历史投稿（无 remoteSubmissionId）的兜底匹配。
+  final String question;
+  final List<String> options;
+
+  /// 审核已产生终态（不再是排队中）。
+  bool get isSettled => localSyncStatus != null;
+
+  /// 云端审核状态 → 本地 syncStatus；仍在排队时返回 null。
+  String? get localSyncStatus {
+    switch (status.trim().toLowerCase()) {
+      case 'approved':
+      case 'published':
+        return QuizSyncStatus.published;
+      case 'merged':
+        return QuizSyncStatus.merged;
+      case 'rejected':
+        return QuizSyncStatus.rejected;
+      default:
+        return null;
+    }
+  }
 }
 
 class QuizCloudSyncException implements Exception {

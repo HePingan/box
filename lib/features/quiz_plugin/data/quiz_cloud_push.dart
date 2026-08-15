@@ -163,6 +163,135 @@ class QuizCloudPushCoordinator {
   }
 }
 
+/// 把云端审核终态回写到本地题库。
+/// 仅使用当前登录态接口，不接受也不发送 userId。
+class QuizSubmissionReconciler {
+  QuizSubmissionReconciler({
+    QuizCloudSyncService? syncService,
+    BoxAccountStore? accountStore,
+    Future<List<QuizBankItem>> Function()? loadLocalItems,
+    Future<void> Function(
+      String id, {
+      required String syncStatus,
+      String? lastSubmitError,
+      String? remoteSubmissionId,
+      bool clearLastSubmitError,
+    })?
+    updateSyncMeta,
+  }) : _sync = syncService ?? QuizCloudSyncService(),
+       _accountStore = accountStore ?? BoxAccountStore(),
+       _loadLocalItems = loadLocalItems ?? QuizBankStorage.loadAll,
+       _updateSyncMeta = updateSyncMeta ?? QuizBankStorage.updateSyncMeta;
+
+  final QuizCloudSyncService _sync;
+  final BoxAccountStore _accountStore;
+  final Future<List<QuizBankItem>> Function() _loadLocalItems;
+  final Future<void> Function(
+    String id, {
+    required String syncStatus,
+    String? lastSubmitError,
+    String? remoteSubmissionId,
+    bool clearLastSubmitError,
+  })
+  _updateSyncMeta;
+
+  Future<QuizSubmissionReconcileResult> reconcile() async {
+    final session = await _accountStore.loadSession();
+    if (session == null || session.token.trim().isEmpty) {
+      throw const QuizCloudSyncException('未登录，无法刷新投稿审核状态');
+    }
+    final remotes = await _sync.fetchMySubmissions(
+      serverUrl: BoxAccountDefaults.normalizeServerUrl(session.serverUrl),
+      token: session.token,
+    );
+    final decisions = decide(locals: await _loadLocalItems(), remotes: remotes);
+    for (final decision in decisions) {
+      await _updateSyncMeta(
+        decision.localId,
+        syncStatus: decision.syncStatus,
+        lastSubmitError: decision.reviewNote,
+        remoteSubmissionId: decision.remoteSubmissionId,
+        clearLastSubmitError: decision.reviewNote.trim().isEmpty,
+      );
+    }
+    return QuizSubmissionReconcileResult(
+      checked: remotes.length,
+      updated: decisions.length,
+      decisions: decisions,
+    );
+  }
+
+  static List<QuizSubmissionReconcileDecision> decide({
+    required List<QuizBankItem> locals,
+    required List<QuizCloudSubmission> remotes,
+  }) {
+    final byRemoteId = <String, QuizCloudSubmission>{
+      for (final item in remotes)
+        if (item.id.trim().isNotEmpty && item.isSettled) item.id.trim(): item,
+    };
+    final byFingerprint = <String, QuizCloudSubmission>{
+      for (final item in remotes)
+        if (item.isSettled &&
+            _fingerprint(item.question, item.options).isNotEmpty)
+          _fingerprint(item.question, item.options): item,
+    };
+    final decisions = <QuizSubmissionReconcileDecision>[];
+    for (final local in locals) {
+      if (local.isCloud || local.syncStatus != QuizSyncStatus.pendingReview)
+        continue;
+      final id = local.remoteSubmissionId?.trim() ?? '';
+      final remote =
+          (id.isEmpty ? null : byRemoteId[id]) ??
+          byFingerprint[_fingerprint(local.question, local.options)];
+      final status = remote?.localSyncStatus;
+      if (remote == null || status == null) continue;
+      decisions.add(
+        QuizSubmissionReconcileDecision(
+          localId: local.id,
+          syncStatus: status,
+          remoteSubmissionId: remote.id,
+          reviewNote: remote.reviewNote,
+        ),
+      );
+    }
+    return List<QuizSubmissionReconcileDecision>.unmodifiable(decisions);
+  }
+
+  static String _fingerprint(String question, List<String> options) {
+    String normalize(String value) =>
+        value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '');
+    final q = normalize(question);
+    if (q.isEmpty) return '';
+    return '$q|${options.map(normalize).join('|')}';
+  }
+
+  void dispose() => _sync.dispose();
+}
+
+class QuizSubmissionReconcileDecision {
+  const QuizSubmissionReconcileDecision({
+    required this.localId,
+    required this.syncStatus,
+    required this.remoteSubmissionId,
+    this.reviewNote = '',
+  });
+  final String localId;
+  final String syncStatus;
+  final String remoteSubmissionId;
+  final String reviewNote;
+}
+
+class QuizSubmissionReconcileResult {
+  const QuizSubmissionReconcileResult({
+    required this.checked,
+    required this.updated,
+    required this.decisions,
+  });
+  final int checked;
+  final int updated;
+  final List<QuizSubmissionReconcileDecision> decisions;
+}
+
 class QuizCloudPushResult {
   const QuizCloudPushResult({
     required this.serverUrl,

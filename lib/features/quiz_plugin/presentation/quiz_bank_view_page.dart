@@ -25,6 +25,7 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
   final TextEditingController _searchController = TextEditingController();
   final QuizCloudPullCoordinator _cloudPull = QuizCloudPullCoordinator();
   final QuizCloudPushCoordinator _cloudPush = QuizCloudPushCoordinator();
+  final QuizSubmissionReconciler _reconciler = QuizSubmissionReconciler();
   final Set<String> _selectedIds = <String>{};
   bool _selectMode = false;
   bool _busy = false;
@@ -35,7 +36,7 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
   @override
   void initState() {
     super.initState();
-    _load();
+    _load().then((_) => _autoReconcileSubmissions());
     _searchController.addListener(_applyFilter);
   }
 
@@ -44,6 +45,7 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
     _searchController.dispose();
     _cloudPull.dispose();
     _cloudPush.dispose();
+    _reconciler.dispose();
     super.dispose();
   }
 
@@ -59,6 +61,62 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
           '云端：${status.lastSyncLabel} · ${status.lastSummary.isEmpty ? "点右上角云图标更新" : status.lastSummary}';
       _applyFilter();
     });
+  }
+
+  /// 进入页面时静默对账「审核中」的本地投稿，避免永远停留在审核中。
+  Future<void> _autoReconcileSubmissions() async {
+    if (!_items.any(
+      (e) => !e.isCloud && e.syncStatus == QuizSyncStatus.pendingReview,
+    )) {
+      return;
+    }
+    try {
+      final result = await _reconciler.reconcile();
+      if (!mounted || result.updated == 0) return;
+      await _load();
+    } catch (_) {
+      // 静默失败：未登录/离线时不打扰用户，手动「刷新审核」会给出明确提示。
+    }
+  }
+
+  /// 手动刷新自己投稿的审核状态（登录态绑定，服务端按 token 过滤）。
+  Future<void> _refreshReviewStatus() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final result = await _reconciler.reconcile();
+      await _load();
+      if (!mounted) return;
+      final approved = result.decisions
+          .where((e) => e.syncStatus == QuizSyncStatus.published)
+          .length;
+      final merged = result.decisions
+          .where((e) => e.syncStatus == QuizSyncStatus.merged)
+          .length;
+      final rejected = result.decisions
+          .where((e) => e.syncStatus == QuizSyncStatus.rejected)
+          .length;
+      final detail = result.updated == 0
+          ? '云端投稿 ${result.checked} 条，本地状态已是最新'
+          : [
+              if (approved > 0) '已上云 $approved',
+              if (merged > 0) '云端已有 $merged',
+              if (rejected > 0) '被驳回 $rejected',
+            ].join(' · ');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('审核状态已刷新：$detail'),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('刷新审核状态失败：$e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   void _applyFilter() {
@@ -445,6 +503,8 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
         },
       );
       await _load();
+      // 拉取正式题库的同时对账自己投稿的审核结果，避免本地长期停留「审核中」。
+      await _autoReconcileSubmissions();
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -622,6 +682,11 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
   @override
   Widget build(BuildContext context) {
     final pushableCount = _pushTargets.where((e) => e.canPushToCloud).length;
+    final pendingReviewCount = _items
+        .where(
+          (e) => !e.isCloud && e.syncStatus == QuizSyncStatus.pendingReview,
+        )
+        .length;
     return Scaffold(
       appBar: AppBar(
         // 窄屏：标题可收缩，避免与 actions 抢宽导致图标叠/裁切。
@@ -792,6 +857,14 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
                           _selectMode
                               ? '推送已选(${_selectedIds.length})'
                               : '推送云端($pushableCount)',
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _busy ? null : _refreshReviewStatus,
+                        child: Text(
+                          pendingReviewCount > 0
+                              ? '刷新审核($pendingReviewCount)'
+                              : '刷新审核',
                         ),
                       ),
                       TextButton(
