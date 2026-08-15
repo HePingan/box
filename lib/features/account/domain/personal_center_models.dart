@@ -1,3 +1,49 @@
+/// 单条生图用量记录（对应服务端 UsageRecord.toJson）。
+class PersonalUsageRecord {
+  const PersonalUsageRecord({
+    required this.createdAt,
+    required this.model,
+    required this.cost,
+    required this.success,
+    this.statusCode,
+    this.errorPreview = '',
+  });
+
+  factory PersonalUsageRecord.fromJson(Map<String, dynamic> json) =>
+      PersonalUsageRecord(
+        createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
+        model: json['model']?.toString() ?? '',
+        cost: _asInt(json['cost']),
+        success: json['success'] == true,
+        statusCode: json['statusCode'] == null
+            ? null
+            : _asInt(json['statusCode']),
+        errorPreview: json['errorPreview']?.toString() ?? '',
+      );
+
+  final DateTime? createdAt;
+  final String model;
+  final int cost;
+  final bool success;
+  final int? statusCode;
+  final String errorPreview;
+
+  String get modelLabel => model.isEmpty ? '未知模型' : model;
+
+  /// `2026-08-15 09:24` 形式的本地时间，缺失时返回占位符。
+  String get timeLabel {
+    final value = createdAt;
+    if (value == null) return '时间未知';
+    final local = value.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${local.year}-${two(local.month)}-${two(local.day)} '
+        '${two(local.hour)}:${two(local.minute)}';
+  }
+
+  static int _asInt(Object? value) =>
+      value is num ? value.round() : int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
 class PersonalQuotaSummary {
   const PersonalQuotaSummary({
     required this.total,
@@ -5,28 +51,42 @@ class PersonalQuotaSummary {
     required this.totalSuccess,
     required this.totalFailed,
     required this.transactions,
+    this.returned = 0,
   });
 
   factory PersonalQuotaSummary.fromJson(Map<String, dynamic> json) {
-    // Server wraps data under 'summary' key: { transactions: [...], summary: { total, totalCost, totalSuccess, totalFailed } }
+    // Server shape: { transactions: [...],
+    //   summary: { total, returned, totalCost, totalSuccess, totalFailed } }
     final summary = (json['summary'] ?? json) as Map<String, dynamic>;
+    final records = (json['transactions'] as List<dynamic>? ?? [])
+        .whereType<Map>()
+        .map((e) => PersonalUsageRecord.fromJson(Map<String, dynamic>.from(e)))
+        .toList(growable: false);
+    // 旧版服务端没有 returned 字段，用实际条数兜底。
+    final returned = summary.containsKey('returned')
+        ? _asInt(summary['returned'])
+        : records.length;
     return PersonalQuotaSummary(
       total: _asInt(summary['total']),
       totalCost: _asInt(summary['totalCost']),
       totalSuccess: _asInt(summary['totalSuccess']),
       totalFailed: _asInt(summary['totalFailed']),
-      transactions: (json['transactions'] as List<dynamic>? ?? [])
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList(growable: false),
+      transactions: records,
+      returned: returned,
     );
   }
 
+  /// 过滤后的记录总数（未被 limit 截断）。
   final int total;
+
+  /// 本次响应实际返回的条数。
+  final int returned;
   final int totalCost;
   final int totalSuccess;
   final int totalFailed;
-  final List<Map<String, dynamic>> transactions;
+  final List<PersonalUsageRecord> transactions;
+
+  bool get truncated => total > returned;
 
   static int _asInt(Object? value) =>
       value is num ? value.round() : int.tryParse(value?.toString() ?? '') ?? 0;
@@ -104,7 +164,8 @@ class PersonalQuizItem {
     final questionData = json['question'];
     final String questionText;
     final String category;
-    if (questionData is Map<String, dynamic> && questionData['question'] != null) {
+    if (questionData is Map<String, dynamic> &&
+        questionData['question'] != null) {
       questionText = questionData['question'].toString();
       category = questionData['category']?.toString() ?? '';
     } else {
@@ -210,6 +271,7 @@ class PersonalUser {
   const PersonalUser({
     required this.id,
     required this.username,
+    this.nickname = '',
     required this.role,
     required this.status,
     this.createdAt,
@@ -219,6 +281,9 @@ class PersonalUser {
   factory PersonalUser.fromJson(Map<String, dynamic> json) => PersonalUser(
     id: json['id']?.toString() ?? '',
     username: json['username']?.toString() ?? '',
+    // 服务端 toPublicJson 始终返回 nickname，旧数据兜底 username。
+    nickname:
+        json['nickname']?.toString() ?? json['username']?.toString() ?? '',
     role: json['role']?.toString() ?? 'user',
     status: json['status']?.toString() ?? 'normal',
     createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
@@ -227,10 +292,25 @@ class PersonalUser {
 
   final String id;
   final String username;
+  final String nickname;
   final String role;
   final String status;
   final DateTime? createdAt;
   final DateTime? lastLoginAt;
+
+  /// 优先昵称，其次用户名。
+  String get displayName => nickname.isNotEmpty ? nickname : username;
+
+  PersonalUser copyWith({String? nickname, String? role, String? status}) =>
+      PersonalUser(
+        id: id,
+        username: username,
+        nickname: nickname ?? this.nickname,
+        role: role ?? this.role,
+        status: status ?? this.status,
+        createdAt: createdAt,
+        lastLoginAt: lastLoginAt,
+      );
 }
 
 class PersonalStats {

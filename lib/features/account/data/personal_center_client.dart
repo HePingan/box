@@ -18,11 +18,24 @@ class PersonalCenterClient {
     return PersonalOverview.fromJson(body);
   }
 
+  /// 拉取生图用量流水。
+  ///
+  /// [success] 为 null 时返回全部，true/false 分别只返回成功/失败记录。
+  /// 服务端 limit 上限为 200。
   Future<PersonalQuotaSummary> fetchQuotaSummary({
     required String serverUrl,
     required String token,
+    bool? success,
+    int limit = 50,
   }) async {
-    final body = await _get(serverUrl, token, '/api/me/quota/transactions');
+    final query = <String, String>{'limit': '${limit.clamp(1, 200)}'};
+    if (success != null) query['success'] = success ? 'true' : 'false';
+    final body = await _get(
+      serverUrl,
+      token,
+      '/api/me/quota/transactions',
+      query,
+    );
     return PersonalQuotaSummary.fromJson(body);
   }
 

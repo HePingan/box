@@ -6,7 +6,8 @@ import '../data/personal_center_cache_service.dart';
 import '../data/account_store.dart';
 import 'controllers/personal_center_controller.dart';
 import '../domain/personal_center_models.dart';
-import 'personal_resource_list_page.dart';
+import 'personal_quota_transactions_page.dart';
+import 'widgets/personal_activity_chart.dart';
 
 class PersonalCenterPage extends StatelessWidget {
   const PersonalCenterPage({super.key});
@@ -30,7 +31,6 @@ class _PersonalCenterView extends StatefulWidget {
 class _PersonalCenterViewState extends State<_PersonalCenterView>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  BuildContext? navigatorContext;
 
   @override
   void initState() {
@@ -49,22 +49,24 @@ class _PersonalCenterViewState extends State<_PersonalCenterView>
     super.dispose();
   }
 
+  /// 按需加载：切到哪个 Tab 只拉该 Tab 的数据，且已加载过不重复请求。
   void _onTabChanged() {
+    if (_tabController.indexIsChanging) return;
     final controller = context.read<PersonalCenterController>();
-    if (!_tabController.indexIsChanging) {
-      if (_tabController.index == 0) {
-        controller.load();
-      } else if (_tabController.index == 1) {
-        controller.load();
-      } else if (_tabController.index == 2) {
+    switch (_tabController.index) {
+      case 0:
+        controller.loadQuotaTab();
+      case 1:
+        controller.loadPlugins();
+      case 2:
         controller.loadQuizzes();
-      }
+      case 3:
+        break;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    navigatorContext = context;
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: AppBar(
@@ -84,27 +86,36 @@ class _PersonalCenterViewState extends State<_PersonalCenterView>
           if (controller.loading && controller.overview == null) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (controller.error != null) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                  const SizedBox(height: 16),
-                  Text(
-                    controller.error!,
-                    style: const TextStyle(color: Colors.red),
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: () => controller.load(),
-                    child: const Text('重试'),
-                  ),
-                ],
-              ),
+          // 只有会话级错误才整屏拦截，子模块失败走顶部降级横幅。
+          if (controller.fatalError != null) {
+            return _FatalErrorView(
+              message: controller.fatalError!,
+              onRetry: () => controller.load(force: true),
             );
           }
-          return _buildBody(controller);
+          return Column(
+            children: [
+              if (controller.hasWarnings)
+                MaterialBanner(
+                  content: Text(controller.warningMessage),
+                  leading: const Icon(Icons.info_outline),
+                  backgroundColor: Theme.of(
+                    context,
+                  ).colorScheme.secondaryContainer,
+                  actions: [
+                    TextButton(
+                      onPressed: () => controller.load(force: true),
+                      child: const Text('重试'),
+                    ),
+                    TextButton(
+                      onPressed: controller.dismissWarnings,
+                      child: const Text('忽略'),
+                    ),
+                  ],
+                ),
+              Expanded(child: _buildBody(controller)),
+            ],
+          );
         },
       ),
     );
@@ -114,236 +125,380 @@ class _PersonalCenterViewState extends State<_PersonalCenterView>
     return TabBarView(
       controller: _tabController,
       children: [
-        _QuotaTab(
-          overview: controller.overview,
-          quotaSummary: controller.quotaSummary,
-        ),
-        _PluginsTab(plugins: controller.plugins),
-        _QuizzesTab(
-          quizPage: controller.quizPage,
-          onRefresh: () => controller.loadQuizzes(),
-        ),
+        _QuotaTab(controller: controller),
+        _PluginsTab(controller: controller),
+        _QuizzesTab(controller: controller),
         const _SettingsTab(),
       ],
     );
   }
 }
 
-class _QuotaTab extends StatelessWidget {
-  const _QuotaTab({required this.overview, required this.quotaSummary});
+class _FatalErrorView extends StatelessWidget {
+  const _FatalErrorView({required this.message, required this.onRetry});
 
-  final PersonalOverview? overview;
-  final PersonalQuotaSummary? quotaSummary;
+  final String message;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
-    if (overview == null) return const SizedBox();
-
-    final quota = overview!.quota;
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+    return Center(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // 额度卡片
+          const Icon(Icons.error_outline, size: 48, color: Colors.red),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.red),
+            ),
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton(onPressed: onRetry, child: const Text('重试')),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuotaTab extends StatelessWidget {
+  const _QuotaTab({required this.controller});
+
+  final PersonalCenterController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final overview = controller.overview;
+    final quotaSummary = controller.quotaSummary;
+    return RefreshIndicator(
+      onRefresh: () => controller.loadQuotaTab(force: true),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (overview == null)
+            const _EmptySection(
+              icon: Icons.speed_outlined,
+              message: '额度数据暂不可用，下拉可重试',
+            )
+          else ...[
+            _QuotaCard(quota: overview.quota),
+            const SizedBox(height: 16),
+            _TodayStatsCard(stats: overview.stats),
+          ],
+          const SizedBox(height: 16),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.image, color: Colors.blue),
-                      const SizedBox(width: 8),
-                      Text(
-                        '生图额度',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                    ],
-                  ),
-                  const Divider(height: 24),
-                  _buildQuotaRow(context, '总可用', quota.remaining.toString()),
-                  _buildQuotaRow(context, '已用今日', quota.usedToday.toString()),
-                  _buildQuotaRow(context, '日限额', quota.dailyLimit.toString()),
-                  if (quota.totalLimit != null)
-                    _buildQuotaRow(context, '总限额', quota.totalLimit.toString()),
-                  const Divider(height: 24),
-                  LinearProgressIndicator(value: quota.progress),
-                  const SizedBox(height: 8),
                   Text(
-                    '使用进度 ${(quota.progress * 100).toStringAsFixed(1)}%',
-                    style: Theme.of(context).textTheme.bodySmall,
+                    '近 30 天生图活跃',
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
+                  const SizedBox(height: 12),
+                  PersonalActivityChart(days: controller.activity),
                 ],
               ),
             ),
           ),
           const SizedBox(height: 16),
-          // 统计卡片
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('今日统计', style: Theme.of(context).textTheme.titleMedium),
-                  const Divider(height: 24),
-                  _buildStatRow(
-                    context,
-                    '请求次数',
-                    '${overview!.stats.todayRequests}',
-                  ),
-                  _buildStatRow(
-                    context,
-                    '成功次数',
-                    '${overview!.stats.todaySuccess}',
-                  ),
-                  _buildStatRow(
-                    context,
-                    '消耗点数',
-                    '${overview!.stats.todayCost}',
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          // 额度流水入口
           if (quotaSummary != null)
             Card(
               child: ListTile(
                 leading: const Icon(Icons.history, color: Colors.blue),
                 title: const Text('额度流水'),
-                subtitle: Text('共 ${quotaSummary!.total} 条记录'),
+                subtitle: Text(
+                  '共 ${quotaSummary.total} 条 · 消耗 ${quotaSummary.totalCost} 点',
+                ),
                 trailing: const Icon(Icons.chevron_right),
-                onTap: () => _showTransactions(context),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => PersonalQuotaTransactionsPage(
+                      controller: controller,
+                      initialSummary: quotaSummary,
+                    ),
+                  ),
+                ),
               ),
             ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildQuotaRow(BuildContext context, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: Theme.of(context).textTheme.bodyMedium),
-          Text(
-            value,
-            style: Theme.of(
-              context,
-            ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
-    );
-  }
+class _QuotaCard extends StatelessWidget {
+  const _QuotaCard({required this.quota});
 
-  Widget _buildStatRow(BuildContext context, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: Theme.of(context).textTheme.bodyMedium),
-          Text(
-            value,
-            style: Theme.of(
-              context,
-            ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
-    );
-  }
+  final PersonalQuota quota;
 
-  void _showTransactions(BuildContext context) {
-    final quotaSummary = context.read<PersonalCenterController>().quotaSummary;
-    if (quotaSummary == null) return;
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => PersonalResourceListPage.quizzes(
-          items: quotaSummary.transactions
-              .map(
-                (e) => PersonalQuizItem(
-                  id: e['userId']?.toString() ?? '',
-                  title: '${e['model'] ?? ''} · ${e['cost'] ?? 0} 点',
-                  status: e['success'] == true ? 'approved' : 'rejected',
-                ),
-              )
-              .toList(),
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.image, color: Colors.blue),
+                const SizedBox(width: 8),
+                Text('生图额度', style: Theme.of(context).textTheme.titleLarge),
+              ],
+            ),
+            const Divider(height: 24),
+            _LabelValueRow(label: '总可用', value: '${quota.remaining}'),
+            _LabelValueRow(label: '已用今日', value: '${quota.usedToday}'),
+            _LabelValueRow(label: '日限额', value: '${quota.dailyLimit}'),
+            if (quota.totalLimit != null)
+              _LabelValueRow(label: '总限额', value: '${quota.totalLimit}'),
+            const Divider(height: 24),
+            LinearProgressIndicator(value: quota.progress),
+            const SizedBox(height: 8),
+            Text(
+              '使用进度 ${(quota.progress * 100).toStringAsFixed(1)}%',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _PluginsTab extends StatelessWidget {
-  const _PluginsTab({required this.plugins});
+class _TodayStatsCard extends StatelessWidget {
+  const _TodayStatsCard({required this.stats});
 
-  final List<Map<String, dynamic>> plugins;
+  final PersonalStats stats;
 
   @override
   Widget build(BuildContext context) {
-    if (plugins.isEmpty) {
-      return const Center(child: Text('暂无插件'));
-    }
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: plugins.length,
-      itemBuilder: (context, index) {
-        final plugin = plugins[index];
-        return Card(
-          child: ListTile(
-            title: Text(
-              plugin['name']?.toString() ??
-                  plugin['title']?.toString() ??
-                  '未知插件',
-            ),
-            subtitle: Text(plugin['description']?.toString() ?? ''),
-            trailing: Text(plugin['status']?.toString() ?? ''),
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('今日统计', style: Theme.of(context).textTheme.titleMedium),
+            const Divider(height: 24),
+            _LabelValueRow(label: '请求次数', value: '${stats.todayRequests}'),
+            _LabelValueRow(label: '成功次数', value: '${stats.todaySuccess}'),
+            _LabelValueRow(label: '消耗点数', value: '${stats.todayCost}'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LabelValueRow extends StatelessWidget {
+  const _LabelValueRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: Theme.of(context).textTheme.bodyMedium),
+          Text(
+            value,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
           ),
-        );
-      },
+        ],
+      ),
+    );
+  }
+}
+
+class _PluginsTab extends StatelessWidget {
+  const _PluginsTab({required this.controller});
+
+  final PersonalCenterController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final plugins = controller.plugins;
+    if (controller.pluginsLoading && plugins.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return RefreshIndicator(
+      onRefresh: () => controller.loadPlugins(force: true),
+      child: plugins.isEmpty
+          ? ListView(
+              children: const [
+                SizedBox(height: 80),
+                _EmptySection(
+                  icon: Icons.extension_outlined,
+                  message: '还没有投稿过插件',
+                ),
+              ],
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: plugins.length,
+              itemBuilder: (context, index) {
+                final plugin = plugins[index];
+                return Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.extension_outlined),
+                    title: Text(
+                      plugin['name']?.toString() ??
+                          plugin['title']?.toString() ??
+                          plugin['pluginId']?.toString() ??
+                          '未知插件',
+                    ),
+                    subtitle: Text(
+                      plugin['description']?.toString() ??
+                          plugin['summary']?.toString() ??
+                          '',
+                    ),
+                    trailing: Text(plugin['status']?.toString() ?? ''),
+                  ),
+                );
+              },
+            ),
     );
   }
 }
 
 class _QuizzesTab extends StatelessWidget {
-  const _QuizzesTab({required this.quizPage, required this.onRefresh});
+  const _QuizzesTab({required this.controller});
 
-  final PersonalQuizPage? quizPage;
-  final VoidCallback onRefresh;
+  final PersonalCenterController controller;
 
   @override
   Widget build(BuildContext context) {
-    if (quizPage == null) {
+    final quizPage = controller.quizPage;
+    final stats = controller.overview?.stats;
+    if (controller.quizLoading && quizPage == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (quizPage!.questions.isEmpty) {
-      return const Center(child: Text('暂无题库'));
-    }
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: quizPage!.questions.length,
-      itemBuilder: (context, index) {
-        final item = quizPage!.questions[index];
-        return Card(
-          child: ListTile(
-            title: Text(
-              item.title.length > 30
-                  ? '${item.title.substring(0, 30)}...'
-                  : item.title,
+    return RefreshIndicator(
+      onRefresh: () => controller.loadQuizzes(force: true),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (stats != null) _QuizStatsCard(stats: stats),
+          const SizedBox(height: 12),
+          if (quizPage == null || quizPage.questions.isEmpty)
+            const _EmptySection(icon: Icons.quiz_outlined, message: '还没有提交过题目')
+          else
+            ...quizPage.questions.map(
+              (item) => Card(
+                child: ListTile(
+                  leading: const Icon(Icons.quiz_outlined),
+                  title: Text(
+                    item.title.isEmpty ? '未命名题目' : item.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    item.category.isEmpty
+                        ? item.statusLabel
+                        : '${item.statusLabel} · ${item.category}',
+                  ),
+                  trailing: Text(
+                    _shortId(item.id),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ),
             ),
-            subtitle: Text('${item.statusLabel} · ${item.category}'),
-            trailing: Text(item.id.substring(0, 8)),
-          ),
-        );
-      },
+        ],
+      ),
+    );
+  }
+
+  /// 安全截断：id 短于 8 位时直接返回，避免 substring 越界。
+  static String _shortId(String id) => id.length <= 8 ? id : id.substring(0, 8);
+}
+
+class _QuizStatsCard extends StatelessWidget {
+  const _QuizStatsCard({required this.stats});
+
+  final PersonalStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('我的贡献', style: Theme.of(context).textTheme.titleMedium),
+            const Divider(height: 20),
+            Wrap(
+              spacing: 20,
+              runSpacing: 12,
+              children: [
+                _StatChip(label: '累计提交', value: stats.mySubmissions),
+                _StatChip(label: '审核中', value: stats.myPendingSubmissions),
+                _StatChip(label: '已通过', value: stats.myApprovedSubmissions),
+                _StatChip(label: '已合并', value: stats.myMergedSubmissions),
+                _StatChip(label: '题库已发布', value: stats.publishedQuestions),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatChip extends StatelessWidget {
+  const _StatChip({required this.label, required this.value});
+
+  final String label;
+  final int value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '$value',
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
+      ],
+    );
+  }
+}
+
+class _EmptySection extends StatelessWidget {
+  const _EmptySection({required this.icon, required this.message});
+
+  final IconData icon;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 32),
+      child: Column(
+        children: [
+          Icon(icon, size: 40, color: Theme.of(context).disabledColor),
+          const SizedBox(height: 12),
+          Text(message, style: Theme.of(context).textTheme.bodyMedium),
+        ],
+      ),
     );
   }
 }
@@ -484,7 +639,8 @@ class _SettingsTabState extends State<_SettingsTab> {
 
   @override
   Widget build(BuildContext context) {
-    final session = context.read<PersonalCenterController>().session;
+    // watch：昵称更新后由控制器 notifyListeners 驱动重建，不依赖本地 setState。
+    final session = context.watch<PersonalCenterController>().session;
     final user = session?.user;
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -498,7 +654,11 @@ class _SettingsTabState extends State<_SettingsTab> {
                     : '?',
               ),
             ),
-            title: Text(user?.nickname ?? user?.username ?? '未登录'),
+            title: Text(
+              user == null
+                  ? '未登录'
+                  : (user.nickname.isNotEmpty ? user.nickname : user.username),
+            ),
             subtitle: Text(
               user == null
                   ? '请先登录账号'
