@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
+import '../data/personal_center_cache_service.dart';
+import '../data/account_store.dart';
 import 'controllers/personal_center_controller.dart';
 import '../domain/personal_center_models.dart';
 import 'personal_resource_list_page.dart';
@@ -34,6 +37,9 @@ class _PersonalCenterViewState extends State<_PersonalCenterView>
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
     _tabController.addListener(_onTabChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<PersonalCenterController>().load();
+    });
   }
 
   @override
@@ -342,11 +348,146 @@ class _QuizzesTab extends StatelessWidget {
   }
 }
 
-class _SettingsTab extends StatelessWidget {
+class _SettingsTab extends StatefulWidget {
   const _SettingsTab();
 
   @override
+  State<_SettingsTab> createState() => _SettingsTabState();
+}
+
+class _SettingsTabState extends State<_SettingsTab> {
+  bool _clearing = false;
+
+  Future<void> _clearCache() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('清除缓存'),
+        content: const Text('仅清除图片和阅读器临时缓存，不会删除登录信息、离线书籍或题库数据。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('清除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _clearing = true);
+    try {
+      await PersonalCenterCacheService().clearRegenerableCaches();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('缓存已清除')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('清除缓存失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => _clearing = false);
+    }
+  }
+
+  Future<void> _logout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('退出登录'),
+        content: const Text('退出后仍会保留服务器地址，下次可重新登录。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('退出登录'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await BoxAccountStore().clearSession();
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  Future<void> _showAbout() async {
+    final info = await PackageInfo.fromPlatform();
+    if (!mounted) return;
+    showAboutDialog(
+      context: context,
+      applicationName: 'Geek工具箱 Pro',
+      applicationVersion: '${info.version} (${info.buildNumber})',
+      applicationLegalese: '智能工具集，为极客而生。',
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return const Center(child: Text('设置页面（Phase B）'));
+    final session = context.read<PersonalCenterController>().session;
+    final user = session?.user;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Card(
+          child: ListTile(
+            leading: CircleAvatar(
+              child: Text(
+                user?.username.isNotEmpty == true
+                    ? user!.username[0].toUpperCase()
+                    : '?',
+              ),
+            ),
+            title: Text(user?.username ?? '未登录'),
+            subtitle: Text(
+              user == null ? '请先登录账号' : '${user.role} · ${user.status}',
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Column(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.cleaning_services_outlined),
+                title: const Text('清除缓存'),
+                subtitle: const Text('清除图片与阅读器临时缓存'),
+                trailing: _clearing
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.chevron_right),
+                onTap: _clearing ? null : _clearCache,
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: const Text('关于我们'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _showAbout,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.logout, color: Colors.red),
+            title: const Text('退出登录', style: TextStyle(color: Colors.red)),
+            onTap: _logout,
+          ),
+        ),
+      ],
+    );
   }
 }
