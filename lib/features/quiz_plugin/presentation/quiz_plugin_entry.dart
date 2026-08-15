@@ -1188,9 +1188,9 @@ class QuizPluginEntry {
       highRisk: false,
     );
     if (denial != null && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(denial)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(denial)));
     }
     final config = await loadConfig();
     if (!context.mounted) return;
@@ -1210,9 +1210,9 @@ class QuizPluginEntry {
         feature: PluginFeature.overlay,
       );
       if (remoteDenial != null && result!.enabled && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(remoteDenial)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(remoteDenial)));
         result = result!.copyWith(enabled: false);
       }
       await saveConfig(result!);
@@ -1307,4 +1307,3 @@ class QuizPluginEntry {
 // ================================================
 // 配置 Sheet
 // ================================================
-

@@ -31,7 +31,9 @@ class QuizCloudAutoSync {
 
   /// App 启动后延迟触发，避免阻塞首屏。
   void scheduleStartup() {
-    unawaited(Future<void>.delayed(_startupDelay, () => maybeSync(reason: 'startup')));
+    unawaited(
+      Future<void>.delayed(_startupDelay, () => maybeSync(reason: 'startup')),
+    );
   }
 
   /// 回前台时触发（由 lifecycle 调用）。

@@ -14,7 +14,11 @@ class QuizSyncStatus {
   static const rejected = 'rejected';
   static const merged = 'merged';
 
-  static String normalize(String? raw, {required String origin, String source = ''}) {
+  static String normalize(
+    String? raw, {
+    required String origin,
+    String source = '',
+  }) {
     final value = (raw ?? '').trim();
     final isCloud = origin == 'cloud' || source.contains('云端');
     if (value.isEmpty) return isCloud ? published : localOnly;
@@ -68,10 +72,13 @@ class QuizBankItem {
   final String source;
   final DateTime? createdAt;
   final String? imageUrl;
+
   /// 题库分类（云端 catalog / 本地标签）。
   final String category;
+
   /// 来源归属：`local` 本地录入/OCR，`cloud` 云端正式库。
   final String origin;
+
   /// 云端投稿状态：local_only / pending_review / published / rejected / merged。
   final String syncStatus;
   final DateTime? lastSubmitAt;
@@ -80,13 +87,11 @@ class QuizBankItem {
 
   bool get isCloud => origin == 'cloud' || source.contains('云端');
 
-  /// 本地题可投稿（云端镜像不重复投稿）。
+  /// 本地题可投稿（云端镜像、审核中和已合并的题不重复投稿）。
   bool get canPushToCloud =>
       !isCloud &&
       (syncStatus == QuizSyncStatus.localOnly ||
-          syncStatus == QuizSyncStatus.rejected ||
-          syncStatus == QuizSyncStatus.pendingReview ||
-          syncStatus == QuizSyncStatus.merged);
+          syncStatus == QuizSyncStatus.rejected);
 
   bool get isUnpushedLocal =>
       !isCloud &&
@@ -163,7 +168,9 @@ class QuizBankItem {
         .toString();
     final analysis = (json['analysis'] ?? json['解析'] ?? '').toString();
     final question = (json['question'] ?? '').toString();
-    final imageUrl = (json['image'] ?? json['imageUrl'] ?? '').toString().trim();
+    final imageUrl = (json['image'] ?? json['imageUrl'] ?? '')
+        .toString()
+        .trim();
     final source = (json['source'] ?? '录入').toString();
     final category = (json['category'] ?? '').toString().trim();
     final originRaw = (json['origin'] ?? '').toString().trim();
@@ -171,7 +178,9 @@ class QuizBankItem {
         ? originRaw
         : (source.contains('云端') ? 'cloud' : 'local');
     final lastSubmitError =
-        (json['lastSubmitError'] ?? json['submitError'] ?? '').toString().trim();
+        (json['lastSubmitError'] ?? json['submitError'] ?? '')
+            .toString()
+            .trim();
     final remoteSubmissionId =
         (json['remoteSubmissionId'] ?? json['submissionId'] ?? '')
             .toString()
@@ -201,8 +210,9 @@ class QuizBankItem {
           ? null
           : DateTime.tryParse(json['lastSubmitAt'].toString()),
       lastSubmitError: lastSubmitError.isEmpty ? null : lastSubmitError,
-      remoteSubmissionId:
-          remoteSubmissionId.isEmpty ? null : remoteSubmissionId,
+      remoteSubmissionId: remoteSubmissionId.isEmpty
+          ? null
+          : remoteSubmissionId,
     );
   }
 
@@ -215,8 +225,8 @@ class QuizBankItem {
         ? originRaw
         : (source.contains('云端') ? 'cloud' : 'local');
     final lastSubmitError = (row['lastSubmitError']?.toString() ?? '').trim();
-    final remoteSubmissionId =
-        (row['remoteSubmissionId']?.toString() ?? '').trim();
+    final remoteSubmissionId = (row['remoteSubmissionId']?.toString() ?? '')
+        .trim();
     return QuizBankItem(
       id: row['id']?.toString() ?? '',
       question: row['question']?.toString() ?? '',
@@ -244,8 +254,9 @@ class QuizBankItem {
           ? null
           : DateTime.tryParse(row['lastSubmitAt'].toString()),
       lastSubmitError: lastSubmitError.isEmpty ? null : lastSubmitError,
-      remoteSubmissionId:
-          remoteSubmissionId.isEmpty ? null : remoteSubmissionId,
+      remoteSubmissionId: remoteSubmissionId.isEmpty
+          ? null
+          : remoteSubmissionId,
     );
   }
 
@@ -906,7 +917,9 @@ CREATE TABLE $_table (
           await database.execute('ALTER TABLE $_table ADD COLUMN image TEXT');
         }
         if (oldVersion < 3) {
-          await database.execute('ALTER TABLE $_table ADD COLUMN category TEXT');
+          await database.execute(
+            'ALTER TABLE $_table ADD COLUMN category TEXT',
+          );
           await database.execute('ALTER TABLE $_table ADD COLUMN origin TEXT');
           await database.execute(
             "UPDATE $_table SET origin = CASE WHEN source LIKE '%云端%' THEN 'cloud' ELSE 'local' END WHERE origin IS NULL OR origin = ''",
@@ -1075,10 +1088,7 @@ CREATE TABLE $_table (
     final db = await _database();
     final affected = await db.update(
       _table,
-      {
-        'image': imagePath,
-        'updatedAt': DateTime.now().toIso8601String(),
-      },
+      {'image': imagePath, 'updatedAt': DateTime.now().toIso8601String()},
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -1225,6 +1235,22 @@ CREATE TABLE $_table (
     final result = await loadAll();
     QuizBankCache.instance.assign(result);
     return result;
+  }
+
+  /// Applies a cloud tombstone only to the cloud-owned local mirror.
+  /// A local OCR/manual record is never deleted merely because a cloud item
+  /// with a coincident identity was withdrawn.
+  static Future<int> deleteCloudItem(String id) async {
+    final db = await _database();
+    final removed = await db.delete(
+      _table,
+      where: 'id = ? AND origin = ?',
+      whereArgs: [id, 'cloud'],
+    );
+    if (removed > 0) {
+      QuizBankCache.instance.assign(await loadAll());
+    }
+    return removed;
   }
 
   /// Removes legacy duplicates in one atomic rewrite and refreshes the cache.

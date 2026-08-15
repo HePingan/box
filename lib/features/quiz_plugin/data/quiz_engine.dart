@@ -175,7 +175,8 @@ class QuizEngine {
         : parsed.options;
     final hay = QuizBankTextNormalizer.cleanForMatch(searchQuestion);
     if (hay.isEmpty) return null;
-    final stemLooksImage = _stemLooksLikeImageQuestion(searchQuestion) ||
+    final stemLooksImage =
+        _stemLooksLikeImageQuestion(searchQuestion) ||
         _stemLooksLikeImageQuestion(question);
 
     final candidates = QuizBankCache.instance.candidatesFor(hay);
@@ -238,11 +239,18 @@ class QuizEngine {
     // ③ 有试捕选项时始终计算：单候选也用于补偿 OCR 截断后的展示分。
     final useOptions = probeOptNorm.isNotEmpty;
 
-    final scored = <({QuizBankItem item, int score, int qScore, int oScore, int shapeBonus})>[];
+    final scored =
+        <
+          ({
+            QuizBankItem item,
+            int score,
+            int qScore,
+            int oScore,
+            int shapeBonus,
+          })
+        >[];
     for (final e in pool) {
-      var oScore = useOptions
-          ? _optionsScore(probeOptNorm, e.item.options)
-          : 0;
+      var oScore = useOptions ? _optionsScore(probeOptNorm, e.item.options) : 0;
       // 无试捕选项时，用题库自身选项形态做弱偏好：同题干优先文字版，避免落到图选题。
       final shapeBonus = useOptions
           ? (probeTextLike && _isTextLikeOptionSet(e.item.options)
@@ -376,73 +384,77 @@ class QuizEngine {
     // 卷面文字题却只命中图选题答案（图1/图2）：当作未命中，避免误导
     if (_isImageLikeAnswer(top.first.item.correctAnswer) &&
         (probeTextLike ||
-            (!_isImageLikeOptionSet(top.first.item.options) &&
-                useOptions))) {
+            (!_isImageLikeOptionSet(top.first.item.options) && useOptions))) {
       // keep if bank options themselves are image and probe also image
       if (!(probeImageLike && _isImageLikeOptionSet(top.first.item.options))) {
         if (useOptions && top.first.oScore < 80) return null;
       }
     }
 
-    final mapped = top.map((entry) {
-      final item = entry.item;
-      final alignment = QuizAnswerAligner.align(
-        bankAnswer: item.correctAnswer,
-        bankOptions: item.options,
-        probeOptions: effectiveOptions,
-      );
-      // 对齐结果仍是图N且卷面非看图：丢弃
-      if (!stemLooksImage &&
-          !probeImageLike &&
-          _isImageLikeAnswer(alignment.displayAnswer)) {
-        return null;
-      }
-      var adjustedScore = useOptions
-          ? (entry.score * alignment.confidenceFactor).round().clamp(0, 100)
-          : entry.score;
-      // 答案仍是「图N」且卷面是文字题：强制降置信
-      if (_isImageLikeAnswer(alignment.displayAnswer) && probeTextLike) {
-        adjustedScore = min(adjustedScore, 40);
-      }
-      if (!useOptions &&
-          (_isImageLikeAnswer(alignment.displayAnswer) ||
-              _isImageLikeOptionSet(item.options))) {
-        adjustedScore = min(adjustedScore, 40);
-      }
-      final displayAnswer = alignment.displayAnswer.isNotEmpty
-          ? alignment.displayAnswer
-          : item.correctAnswer;
-      // correctAnswer 存裸答案（不含 A/B/C 字母前缀），供 UI 首行直接展示；
-      // 带字母前缀的对齐详情保留在 text 中。对齐命中时用 probeOption（裸选项正文），
-      // 未对齐 (bank_raw) 时退回题库原文。
-      final bareAnswer = alignment.probeOption.trim().isNotEmpty
-          ? alignment.probeOption.trim()
-          : (item.correctAnswer.trim().isNotEmpty
-              ? item.correctAnswer.trim()
-              : displayAnswer);
-      final formatted = _formatBankAnswer(
-        item,
-        adjustedScore,
-        questionScore: entry.qScore,
-        optionsScore: entry.oScore,
-        hasProbeOptions: useOptions,
-        optionTieBreak: useOptions,
-        displayAnswer: displayAnswer,
-        aligned: alignment.aligned,
-        alignmentMethod: alignment.method,
-      );
-      return QuizAnswer(
-        text: formatted,
-        confidence: adjustedScore / 100,
-        source: '本地题库',
-        options: effectiveOptions.isNotEmpty ? effectiveOptions : item.options,
-        correctAnswer: bareAnswer,
-        analysis: item.analysis,
-        imageUrl: item.imageUrl,
-        alignedToProbe: alignment.aligned,
-        alignmentMethod: alignment.method,
-      );
-    }).whereType<QuizAnswer>().toList();
+    final mapped = top
+        .map((entry) {
+          final item = entry.item;
+          final alignment = QuizAnswerAligner.align(
+            bankAnswer: item.correctAnswer,
+            bankOptions: item.options,
+            probeOptions: effectiveOptions,
+          );
+          // 对齐结果仍是图N且卷面非看图：丢弃
+          if (!stemLooksImage &&
+              !probeImageLike &&
+              _isImageLikeAnswer(alignment.displayAnswer)) {
+            return null;
+          }
+          var adjustedScore = useOptions
+              ? (entry.score * alignment.confidenceFactor).round().clamp(0, 100)
+              : entry.score;
+          // 答案仍是「图N」且卷面是文字题：强制降置信
+          if (_isImageLikeAnswer(alignment.displayAnswer) && probeTextLike) {
+            adjustedScore = min(adjustedScore, 40);
+          }
+          if (!useOptions &&
+              (_isImageLikeAnswer(alignment.displayAnswer) ||
+                  _isImageLikeOptionSet(item.options))) {
+            adjustedScore = min(adjustedScore, 40);
+          }
+          final displayAnswer = alignment.displayAnswer.isNotEmpty
+              ? alignment.displayAnswer
+              : item.correctAnswer;
+          // correctAnswer 存裸答案（不含 A/B/C 字母前缀），供 UI 首行直接展示；
+          // 带字母前缀的对齐详情保留在 text 中。对齐命中时用 probeOption（裸选项正文），
+          // 未对齐 (bank_raw) 时退回题库原文。
+          final bareAnswer = alignment.probeOption.trim().isNotEmpty
+              ? alignment.probeOption.trim()
+              : (item.correctAnswer.trim().isNotEmpty
+                    ? item.correctAnswer.trim()
+                    : displayAnswer);
+          final formatted = _formatBankAnswer(
+            item,
+            adjustedScore,
+            questionScore: entry.qScore,
+            optionsScore: entry.oScore,
+            hasProbeOptions: useOptions,
+            optionTieBreak: useOptions,
+            displayAnswer: displayAnswer,
+            aligned: alignment.aligned,
+            alignmentMethod: alignment.method,
+          );
+          return QuizAnswer(
+            text: formatted,
+            confidence: adjustedScore / 100,
+            source: '本地题库',
+            options: effectiveOptions.isNotEmpty
+                ? effectiveOptions
+                : item.options,
+            correctAnswer: bareAnswer,
+            analysis: item.analysis,
+            imageUrl: item.imageUrl,
+            alignedToProbe: alignment.aligned,
+            alignmentMethod: alignment.method,
+          );
+        })
+        .whereType<QuizAnswer>()
+        .toList();
     if (mapped.isEmpty) return null;
     return mapped;
   }
@@ -493,7 +505,8 @@ class QuizEngine {
         .toList();
     if (cleaned.length < 2) return false;
     if (_isImageLikeOptionSet(cleaned)) return false;
-    final avgLen = cleaned
+    final avgLen =
+        cleaned
             .map((e) => QuizBankTextNormalizer.normalizeOption(e).length)
             .fold<int>(0, (a, b) => a + b) /
         cleaned.length;

@@ -23,21 +23,21 @@ class _OverlayDimensionSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Row(
-        children: [
-          Icon(icon, size: 18),
-          const SizedBox(width: 8),
-          SizedBox(width: 36, child: Text(label)),
-          Expanded(
-            child: Slider(
-              value: value,
-              min: min,
-              max: max,
-              divisions: ((max - min) / 10).round(),
-              label: '${value.round()}dp',
-              onChanged: onChanged,
-            ),
-          ),
-          SizedBox(width: 54, child: Text('${value.round()}dp')),
-        ],
-      );
+    children: [
+      Icon(icon, size: 18),
+      const SizedBox(width: 8),
+      SizedBox(width: 36, child: Text(label)),
+      Expanded(
+        child: Slider(
+          value: value,
+          min: min,
+          max: max,
+          divisions: ((max - min) / 10).round(),
+          label: '${value.round()}dp',
+          onChanged: onChanged,
+        ),
+      ),
+      SizedBox(width: 54, child: Text('${value.round()}dp')),
+    ],
+  );
 }

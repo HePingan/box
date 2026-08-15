@@ -48,8 +48,14 @@ class _CloudQuizBankCardState extends State<_CloudQuizBankCard> {
             '不会删除你本地 OCR/手工录入的题。',
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('开始')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('开始'),
+            ),
           ],
         ),
       );
@@ -69,14 +75,14 @@ class _CloudQuizBankCardState extends State<_CloudQuizBankCard> {
       );
       await _refreshStatus();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('云端同步完成：${result.summaryText}')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('云端同步完成：${result.summaryText}')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('云端同步失败：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('云端同步失败：$e')));
     } finally {
       if (mounted) {
         setState(() {
@@ -111,9 +117,9 @@ class _CloudQuizBankCardState extends State<_CloudQuizBankCard> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('补图失败：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('补图失败：$e')));
     } finally {
       if (mounted) {
         setState(() {
@@ -153,30 +159,31 @@ class _CloudQuizBankCardState extends State<_CloudQuizBankCard> {
       await _pull.saveSubscribedCategories(result);
       await _refreshStatus();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已保存订阅 ${result.length} 个分类')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已保存订阅 ${result.length} 个分类')));
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _busy = false;
         _progress = null;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('加载分类失败：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('加载分类失败：$e')));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final status = _status;
-    final subtitle = _progress ??
+    final subtitle =
+        _progress ??
         (status == null
             ? '读取同步状态…'
             : '${status.lastSyncLabel} · 本地 ${status.localCount} 题'
-                '${status.subscribedCategories.isEmpty ? '' : ' · 已订 ${status.subscribedCategories.length} 类'}'
-                '${status.lastSummary.isEmpty ? '' : '\n${status.lastSummary}'}');
+                  '${status.subscribedCategories.isEmpty ? '' : ' · 已订 ${status.subscribedCategories.length} 类'}'
+                  '${status.lastSummary.isEmpty ? '' : '\n${status.lastSummary}'}');
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
@@ -245,9 +252,7 @@ class _CloudQuizBankCardState extends State<_CloudQuizBankCard> {
                     },
             ),
             Text(
-              status == null
-                  ? '同步正式发布题到本机，供离线搜题'
-                  : '服务：${status.serverUrl}',
+              status == null ? '同步正式发布题到本机，供离线搜题' : '服务：${status.serverUrl}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 11, color: Colors.black45),
@@ -346,7 +351,8 @@ class _CloudCategoryPickerState extends State<_CloudCategoryPicker> {
                         ..clear()
                         ..addAll(
                           catalogs.map(
-                            (c) => '${c.id}'.isNotEmpty ? '${c.id}' : '${c.name}',
+                            (c) =>
+                                '${c.id}'.isNotEmpty ? '${c.id}' : '${c.name}',
                           ),
                         );
                     });

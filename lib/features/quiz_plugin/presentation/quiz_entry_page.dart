@@ -288,7 +288,10 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
                 labelText: '题目',
                 hintText: '请输入题目内容',
                 border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
               ),
             ),
 
@@ -297,7 +300,10 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
             // 选项 — 紧凑行：输入框 + 单选按钮 + 标签
             const Row(
               children: [
-                Text('选项', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                Text(
+                  '选项',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                ),
                 Spacer(),
                 Text(
                   '点击 ● 标记正确答案',
@@ -331,7 +337,10 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
                               hintText: '选项 ${(index + 1)}',
                               border: const OutlineInputBorder(),
                               isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
                             ),
                           ),
                         ),
@@ -352,7 +361,10 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
                 labelText: '解析（可选）',
                 hintText: '请输入解析内容',
                 border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
               ),
             ),
 

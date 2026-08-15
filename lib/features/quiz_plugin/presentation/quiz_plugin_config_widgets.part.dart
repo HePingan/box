@@ -121,10 +121,10 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
       label: Text(label),
       selected: selected,
       onSelected: (_) {
-        setState(() => _cfg = _cfg.copyWith(
-              overlayWidth: width,
-              overlayHeight: height,
-            ));
+        setState(
+          () =>
+              _cfg = _cfg.copyWith(overlayWidth: width, overlayHeight: height),
+        );
         QuizPluginEntry.setOverlaySize(width, height);
       },
     );
@@ -219,12 +219,13 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
               onChanged: _remoteDenial != null
                   ? null
                   : (v) => setState(
-                        () => _cfg = _cfg.copyWith(
-                          enabled: v,
-                          accessibilityCapture:
-                              v ? true : _cfg.accessibilityCapture,
-                        ),
+                      () => _cfg = _cfg.copyWith(
+                        enabled: v,
+                        accessibilityCapture: v
+                            ? true
+                            : _cfg.accessibilityCapture,
                       ),
+                    ),
             ),
             const SizedBox(height: AppTokens.spaceSm),
 
@@ -247,7 +248,9 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('无障碍读屏搜题'),
-                  subtitle: const Text('由无障碍服务读取屏幕题目文本后搜题（抗屏蔽，推荐）。关闭后改用 OCR 截图搜题。'),
+                  subtitle: const Text(
+                    '由无障碍服务读取屏幕题目文本后搜题（抗屏蔽，推荐）。关闭后改用 OCR 截图搜题。',
+                  ),
                   value: _cfg.accessibilityCapture,
                   onChanged: (v) => setState(
                     () => _cfg = _cfg.copyWith(
@@ -370,8 +373,9 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                       isDense: true,
                     ),
                     maxLines: 2,
-                    onChanged: (v) =>
-                        setState(() => _cfg = _cfg.copyWith(autoExamPackages: v)),
+                    onChanged: (v) => setState(
+                      () => _cfg = _cfg.copyWith(autoExamPackages: v),
+                    ),
                   ),
                   const SizedBox(height: 10),
                   const Text('考试模式悬浮窗大小'),
@@ -385,7 +389,9 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                     selected: {_cfg.examOverlaySize},
                     onSelectionChanged: (value) async {
                       final size = value.first;
-                      setState(() => _cfg = _cfg.copyWith(examOverlaySize: size));
+                      setState(
+                        () => _cfg = _cfg.copyWith(examOverlaySize: size),
+                      );
                       // 立即落盘并通知原生：当前考试窗立刻换尺寸。
                       await QuizPluginEntry.saveConfig(_cfg);
                     },
@@ -462,15 +468,17 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                   ],
                   selected: {_cfg.displayMode},
                   onSelectionChanged: (values) {
-                    setState(() => _cfg = _cfg.copyWith(displayMode: values.first));
+                    setState(
+                      () => _cfg = _cfg.copyWith(displayMode: values.first),
+                    );
                   },
                 ),
                 const SizedBox(height: 6),
                 Text(
                   _displayModeHint(_cfg.displayMode),
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: AppTokens.textSecondary),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppTokens.textSecondary,
+                  ),
                 ),
                 const SizedBox(height: AppTokens.spaceMd),
                 Text('主题色', style: Theme.of(context).textTheme.titleSmall),
@@ -524,7 +532,9 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                         divisions: 14,
                         label: '${(_cfg.overlayOpacity * 100).round()}%',
                         onChanged: (v) {
-                          setState(() => _cfg = _cfg.copyWith(overlayOpacity: v));
+                          setState(
+                            () => _cfg = _cfg.copyWith(overlayOpacity: v),
+                          );
                           QuizPluginEntry.setOverlayOpacity(v);
                         },
                       ),
@@ -573,10 +583,12 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                       onPressed: () async {
                         await QuizPluginEntry.resetOverlaySize();
                         if (mounted) {
-                          setState(() => _cfg = _cfg.copyWith(
-                                overlayWidth: 320,
-                                overlayHeight: 300,
-                              ));
+                          setState(
+                            () => _cfg = _cfg.copyWith(
+                              overlayWidth: 320,
+                              overlayHeight: 300,
+                            ),
+                          );
                         }
                       },
                       icon: const Icon(Icons.restart_alt, size: 16),
@@ -587,7 +599,9 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                 const SizedBox(height: AppTokens.spaceSm),
                 Text(
                   '标题栏可拖动；右下角手柄可微调长宽。眼睛按钮可把整个悬浮窗隐藏为可拖动的半透明小圆点，点圆点立即恢复。宽高、位置和透明度会记住。',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppTokens.textSecondary),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppTokens.textSecondary,
+                  ),
                 ),
               ],
             ),
@@ -613,9 +627,7 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                               } else {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(
-                                    content: Text(
-                                      '请先开启无障碍服务，再框选识别区域',
-                                    ),
+                                    content: Text('请先开启无障碍服务，再框选识别区域'),
                                   ),
                                 );
                               }

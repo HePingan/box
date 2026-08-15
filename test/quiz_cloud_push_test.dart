@@ -70,7 +70,7 @@ void main() {
     final restored = QuizBankItem.fromJson(json);
     expect(restored.syncStatus, QuizSyncStatus.pendingReview);
     expect(restored.remoteSubmissionId, 'sub_1');
-    expect(restored.canPushToCloud, isTrue);
+    expect(restored.canPushToCloud, isFalse);
     expect(restored.isUnpushedLocal, isFalse);
 
     final inferredCloud = QuizBankItem.fromJson({
@@ -138,7 +138,7 @@ void main() {
       origin: 'local',
     );
 
-    // Avoid SQLite in this pure HTTP test by catching storage errors? 
+    // Avoid SQLite in this pure HTTP test by catching storage errors?
     // updateSyncMeta will try open DB. Use a dry path via validate only if DB fails.
     // Instead mock by only testing validate + submit endpoint with empty storage patch:
     try {
@@ -147,7 +147,10 @@ void main() {
       expect(result.invalid, 1);
       // submitted may be 0 if SQLite unavailable before/after HTTP; if HTTP ran:
       if (requests.isNotEmpty) {
-        expect(requests.any((r) => r.url.path == '/api/quiz/submissions'), isTrue);
+        expect(
+          requests.any((r) => r.url.path == '/api/quiz/submissions'),
+          isTrue,
+        );
         expect(requests.first.headers['authorization'], 'Bearer tok-1');
         final body = jsonDecode(requests.first.body) as Map;
         expect(body['question'], '可投稿题');

@@ -46,7 +46,9 @@ class OcrQuizParser {
   );
 
   /// 进入解析/技巧区
-  static final _analysisStart = RegExp(r'^\s*(解析|说明|详解|题目解析|本题技巧|本题口诀|技巧|试题详解|相关法规)');
+  static final _analysisStart = RegExp(
+    r'^\s*(解析|说明|详解|题目解析|本题技巧|本题口诀|技巧|试题详解|相关法规)',
+  );
 
   static final _tfOnly = RegExp(r'^\s*(正确|错误|对|错)\s*$');
   static final _imageOpt = RegExp(r'^图\s*[1-4１２３４]$');
@@ -94,7 +96,10 @@ class OcrQuizParser {
         .replaceAll(RegExp(r'[·•・]'), '\n')
         .replaceAllMapped(
           // 无障碍树有时把选项字母和正文拆成相邻节点：A\n选项 → A. 选项。
-          RegExp(r'^\s*([A-DＡ-Ｄ])\s*\n\s*(?!答案|正确答案)([^\n]+)$', multiLine: true),
+          RegExp(
+            r'^\s*([A-DＡ-Ｄ])\s*\n\s*(?!答案|正确答案)([^\n]+)$',
+            multiLine: true,
+          ),
           (m) => '${m.group(1)}. ${m.group(2)}',
         )
         .replaceAllMapped(
@@ -349,7 +354,9 @@ class OcrQuizParser {
           // 填空式题干：OCR 常丢问号，「（）」是强题干信号。
           head.contains('（）') ||
           head.contains('()') ||
-          RegExp(r'(属于|是什么|哪些|哪种|哪个|如何|为什么|错误的是|正确的是|以下|表示|含义|行为是|的是)').hasMatch(head);
+          RegExp(
+            r'(属于|是什么|哪些|哪种|哪个|如何|为什么|错误的是|正确的是|以下|表示|含义|行为是|的是)',
+          ).hasMatch(head);
       if (!isQuestionLike) continue;
       final opts = <String>[];
       for (var j = i + 1; j < lines.length && opts.length < 6; j++) {

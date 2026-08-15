@@ -10,6 +10,7 @@ import '../../account/data/account_client.dart';
 import '../domain/quiz_bank.dart';
 
 typedef QuizCloudImportItems = Future<int> Function(List<QuizBankItem> items);
+typedef QuizCloudDeleteItem = Future<int> Function(String id);
 
 /// 云端正式题库的离线增量同步。
 ///
@@ -19,21 +20,27 @@ class QuizCloudSyncService {
   QuizCloudSyncService({
     http.Client? httpClient,
     QuizCloudImportItems? importItems,
+    QuizCloudDeleteItem? deleteCloudItem,
   }) : _httpClient = httpClient ?? http.Client(),
-       _importItems = importItems ?? _importIntoBank;
+       _importItems = importItems ?? _importIntoBank,
+       _deleteCloudItem = deleteCloudItem ?? QuizBankStorage.deleteCloudItem;
 
   static const _cursorPrefix = 'quiz_cloud_cursor_v1';
   static const _syncPageLimit = 100;
   static const _maxSyncPages = 100;
+  static const _apiTimeout = Duration(seconds: 15);
+  static const _imageTimeout = Duration(seconds: 20);
+  static const _maxImageBytes = 5 * 1024 * 1024;
   final http.Client _httpClient;
   final QuizCloudImportItems _importItems;
+  final QuizCloudDeleteItem _deleteCloudItem;
 
   Future<List<QuizCloudCatalog>> fetchCatalogs({
     required String serverUrl,
   }) async {
-    final response = await _httpClient.get(
-      _uri(serverUrl, '/api/quiz/catalogs'),
-    );
+    final response = await _httpClient
+        .get(_uri(serverUrl, '/api/quiz/catalogs'))
+        .timeout(_apiTimeout);
     final json = _decode(response);
     final rows = json['catalogs'];
     if (rows is! List) return const [];
@@ -76,12 +83,14 @@ class QuizCloudSyncService {
       if (afterSequence != null) {
         queryParameters['afterSequence'] = afterSequence;
       }
-      final response = await _httpClient.get(
-        _uri(
-          normalizedServer,
-          '/api/quiz/sync',
-        ).replace(queryParameters: queryParameters),
-      );
+      final response = await _httpClient
+          .get(
+            _uri(
+              normalizedServer,
+              '/api/quiz/sync',
+            ).replace(queryParameters: queryParameters),
+          )
+          .timeout(_apiTimeout);
       final body = _decode(response);
       final changes = body['changes'];
       if (changes is List) {
@@ -89,23 +98,25 @@ class QuizCloudSyncService {
         for (final raw in changes.whereType<Map>()) {
           final change = Map<String, dynamic>.from(raw);
           if (change['operation']?.toString() == 'delete') {
-            // 云端下架不删除本机题，防止误伤 OCR 私有题；本轮仅统计。
-            deleted++;
+            final id = change['id']?.toString().trim() ?? '';
+            if (id.isNotEmpty) deleted += await _deleteCloudItem(id);
             continue;
           }
           final question = change['question'];
           if (question is Map) {
-            final rawCategory =
-                (question['category']?.toString() ?? '').trim();
-            final item = QuizBankItem.fromJson(
-              Map<String, dynamic>.from(question),
-            ).copyWith(
-              source: '云端题库',
-              origin: 'cloud',
-              category: rawCategory.isNotEmpty ? rawCategory : category.trim(),
-              syncStatus: QuizSyncStatus.published,
-              clearLastSubmitError: true,
-            );
+            final rawCategory = (question['category']?.toString() ?? '').trim();
+            final item =
+                QuizBankItem.fromJson(
+                  Map<String, dynamic>.from(question),
+                ).copyWith(
+                  source: '云端题库',
+                  origin: 'cloud',
+                  category: rawCategory.isNotEmpty
+                      ? rawCategory
+                      : category.trim(),
+                  syncStatus: QuizSyncStatus.published,
+                  clearLastSubmitError: true,
+                );
             if (item.question.trim().isNotEmpty) incoming.add(item);
           }
         }
@@ -173,6 +184,7 @@ class QuizCloudSyncService {
       imagesCached: imagesCached,
       imageFailures: imageFailures,
       pages: pages,
+      reachedPageLimit: true,
     );
   }
 
@@ -238,17 +250,19 @@ class QuizCloudSyncService {
     required QuizBankItem item,
     String category = '',
   }) async {
-    final response = await _httpClient.post(
-      _uri(serverUrl, '/api/quiz/submissions'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $token',
-      },
-      body: jsonEncode({
-        ...item.toJson(),
-        if (category.trim().isNotEmpty) 'category': category.trim(),
-      }),
-    );
+    final response = await _httpClient
+        .post(
+          _uri(serverUrl, '/api/quiz/submissions'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({
+            ...item.toJson(),
+            if (category.trim().isNotEmpty) 'category': category.trim(),
+          }),
+        )
+        .timeout(_apiTimeout);
     return QuizCloudSubmission.fromJson(_decode(response));
   }
 
@@ -349,16 +363,34 @@ class QuizCloudSyncService {
           cached++;
           continue;
         }
-        final response = await _httpClient.get(uri);
-        if (response.statusCode < 200 || response.statusCode >= 300) {
+        final request = http.Request('GET', uri);
+        final response = await _httpClient.send(request).timeout(_imageTimeout);
+        if (response.statusCode < 200 ||
+            response.statusCode >= 300 ||
+            !_isAllowedImageContentType(response.headers['content-type'])) {
           failed++;
           continue;
         }
-        if (response.bodyBytes.isEmpty) {
+        final declaredLength = int.tryParse(
+          response.headers['content-length'] ?? '',
+        );
+        if (declaredLength != null &&
+            (declaredLength <= 0 || declaredLength > _maxImageBytes)) {
           failed++;
           continue;
         }
-        await file.writeAsBytes(response.bodyBytes, flush: true);
+        final bytes = <int>[];
+        await for (final chunk in response.stream) {
+          if (bytes.length + chunk.length > _maxImageBytes) {
+            throw const QuizCloudSyncException('题图超过 5MB 限制');
+          }
+          bytes.addAll(chunk);
+        }
+        if (bytes.isEmpty) {
+          failed++;
+          continue;
+        }
+        await file.writeAsBytes(bytes, flush: true);
         await _rewriteLocalImagePath(item, file.path);
         cached++;
       } catch (_) {
@@ -375,7 +407,9 @@ class QuizCloudSyncService {
     if (value.startsWith('http://') || value.startsWith('https://')) {
       return Uri.tryParse(value);
     }
-    if (value.startsWith('file://') || value.startsWith('/data/') || value.startsWith('/storage/')) {
+    if (value.startsWith('file://') ||
+        value.startsWith('/data/') ||
+        value.startsWith('/storage/')) {
       return null; // 已是本地路径
     }
     if (serverUrl.isEmpty) return null;
@@ -392,6 +426,14 @@ class QuizCloudSyncService {
     if (lower.endsWith('.webp')) return '.webp';
     if (lower.endsWith('.gif')) return '.gif';
     return '.png';
+  }
+
+  static bool _isAllowedImageContentType(String? contentType) {
+    final mime = (contentType ?? '').split(';').first.trim().toLowerCase();
+    return mime == 'image/jpeg' ||
+        mime == 'image/png' ||
+        mime == 'image/webp' ||
+        mime == 'image/gif';
   }
 
   static Future<void> _rewriteLocalImagePath(
@@ -439,6 +481,7 @@ class QuizCloudSyncResult {
     this.imagesCached = 0,
     this.imageFailures = 0,
     this.pages = 0,
+    this.reachedPageLimit = false,
   });
   final int cursor;
   final int inserted;
@@ -446,6 +489,7 @@ class QuizCloudSyncResult {
   final int imagesCached;
   final int imageFailures;
   final int pages;
+  final bool reachedPageLimit;
 }
 
 class QuizCloudImageRepairResult {

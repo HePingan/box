@@ -36,12 +36,13 @@ class QuizCloudPullCoordinator {
 
   Future<void> saveSubscribedCategories(List<String> categories) async {
     final prefs = await SharedPreferences.getInstance();
-    final normalized = categories
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort();
+    final normalized =
+        categories
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
     await prefs.setStringList(_subscribedKey, normalized);
   }
 
@@ -96,10 +97,8 @@ class QuizCloudPullCoordinator {
     onProgress?.call(resetCursor ? '重置游标并获取目录…' : '获取题库目录…');
     final catalogs = await _sync.fetchCatalogs(serverUrl: url);
 
-    var targets = categories
-            ?.map((e) => e.trim())
-            .where((e) => e.isNotEmpty)
-            .toList() ??
+    var targets =
+        categories?.map((e) => e.trim()).where((e) => e.isNotEmpty).toList() ??
         await loadSubscribedCategories();
 
     if (targets.isEmpty) {
@@ -115,10 +114,7 @@ class QuizCloudPullCoordinator {
     // 云端若暂时没有分类目录，仍尝试一次“全库增量”（不带 category）。
     if (targets.isEmpty) {
       onProgress?.call(resetCursor ? '全量重拉全库…' : '同步全库增量…');
-      final single = await _sync.sync(
-        serverUrl: url,
-        resetCursor: resetCursor,
-      );
+      final single = await _sync.sync(serverUrl: url, resetCursor: resetCursor);
       final localCount = await _reloadAndCount(fallback: single.inserted);
       final result = QuizCloudPullResult(
         serverUrl: url,
@@ -128,6 +124,7 @@ class QuizCloudPullCoordinator {
         imagesCached: single.imagesCached,
         imageFailures: single.imageFailures,
         pages: single.pages,
+        reachedPageLimit: single.reachedPageLimit,
         catalogCount: catalogs.length,
         localCount: localCount,
         resetCursor: resetCursor,
@@ -141,6 +138,7 @@ class QuizCloudPullCoordinator {
     var imagesCached = 0;
     var imageFailures = 0;
     var pages = 0;
+    var reachedPageLimit = false;
     for (var i = 0; i < targets.length; i++) {
       final category = targets[i];
       onProgress?.call(
@@ -158,6 +156,7 @@ class QuizCloudPullCoordinator {
       imagesCached += part.imagesCached;
       imageFailures += part.imageFailures;
       pages += part.pages;
+      reachedPageLimit = reachedPageLimit || part.reachedPageLimit;
     }
 
     final localCount = await _reloadAndCount(fallback: inserted);
@@ -169,6 +168,7 @@ class QuizCloudPullCoordinator {
       imagesCached: imagesCached,
       imageFailures: imageFailures,
       pages: pages,
+      reachedPageLimit: reachedPageLimit,
       catalogCount: catalogs.length,
       localCount: localCount,
       resetCursor: resetCursor,
@@ -266,6 +266,7 @@ class QuizCloudPullResult {
     this.imageFailures = 0,
     this.pages = 0,
     this.resetCursor = false,
+    this.reachedPageLimit = false,
   });
 
   final String serverUrl;
@@ -278,6 +279,7 @@ class QuizCloudPullResult {
   final int catalogCount;
   final int localCount;
   final bool resetCursor;
+  final bool reachedPageLimit;
 
   String get summaryText {
     final cat = categories.where((e) => e.isNotEmpty).join('、');
@@ -285,6 +287,7 @@ class QuizCloudPullResult {
     final mode = resetCursor ? '全量' : '增量';
     return '$mode · 新增 $inserted · 补图 $imagesCached'
         '${imageFailures > 0 ? " · 图失败 $imageFailures" : ""}'
+        '${reachedPageLimit ? " · 已达 10,000 条安全上限，请继续更新" : ""}'
         ' · 本地 $localCount · $scope';
   }
 }

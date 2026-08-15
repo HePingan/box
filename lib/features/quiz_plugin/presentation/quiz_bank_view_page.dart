@@ -227,9 +227,9 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
     final session = await _cloudPush.loadSession();
     if (!mounted) return;
     if (session == null || session.token.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('未登录：请先在账号页登录后再推送云端')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('未登录：请先在账号页登录后再推送云端')));
       return;
     }
 
@@ -282,9 +282,9 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('推送失败：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('推送失败：$e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -373,30 +373,41 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
       showDragHandle: true,
       builder: (ctx) => _QuizBankEditSheet(item: item),
     );
-    if (result == null) return;
-    // 编辑后按 题干+选项 重算 id；若 id 变化则删旧插新
-    final newId = UniqueQuizKeyGenerator.key(
-      result.question,
-      options: result.options,
-    );
-    final updated = result.copyWith(
-      id: newId,
-      createdAt: item.createdAt ?? result.createdAt,
-      // 本地改过内容后，已上云/审核中的状态回到未推送，避免脏态。
-      syncStatus: item.isCloud
-          ? item.syncStatus
-          : (newId == item.id &&
+    if (result == null || _busy) return;
+    setState(() => _busy = true);
+    try {
+      // 云端镜像是只读快照：编辑必须另存为本地题，不能篡改其云端归属。
+      final newId = UniqueQuizKeyGenerator.key(
+        result.question,
+        options: result.options,
+      );
+      final updated = result.copyWith(
+        id: newId,
+        createdAt: item.createdAt ?? result.createdAt,
+        origin: item.isCloud ? 'local' : item.origin,
+        source: item.isCloud ? '云端题库（本地修改）' : result.source,
+        syncStatus: item.isCloud
+            ? QuizSyncStatus.localOnly
+            : (newId == item.id &&
                   item.syncStatus == QuizSyncStatus.pendingReview)
-              ? QuizSyncStatus.pendingReview
-              : QuizSyncStatus.localOnly,
-      clearLastSubmitError: true,
-    );
-    await QuizBankStorage.replaceItem(item.id, updated);
-    await _load();
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('已保存修改')));
+            ? QuizSyncStatus.pendingReview
+            : QuizSyncStatus.localOnly,
+        clearLastSubmitError: true,
+        clearRemoteSubmissionId: item.isCloud,
+      );
+      if (item.isCloud) {
+        await QuizBankStorage.insertIfAbsent(updated);
+      } else {
+        await QuizBankStorage.replaceItem(item.id, updated);
+      }
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(item.isCloud ? '已另存为本地修改副本' : '已保存修改')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _pullCloud({bool resetCursor = false}) async {
@@ -435,14 +446,14 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
       );
       await _load();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('云端同步完成：${result.summaryText}')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('云端同步完成：${result.summaryText}')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('云端同步失败：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('云端同步失败：$e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -469,9 +480,9 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('补图失败：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('补图失败：$e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -498,14 +509,14 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
       await _cloudPull.saveSubscribedCategories(result);
       await _load();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已保存订阅 ${result.length} 个分类')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已保存订阅 ${result.length} 个分类')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('加载分类失败：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('加载分类失败：$e')));
       setState(() => _busy = false);
     }
   }
@@ -792,8 +803,9 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
                         child: const Text('仅补图'),
                       ),
                       TextButton(
-                        onPressed:
-                            _busy ? null : () => _pullCloud(resetCursor: true),
+                        onPressed: _busy
+                            ? null
+                            : () => _pullCloud(resetCursor: true),
                         child: const Text('全量重拉'),
                       ),
                     ],
@@ -907,7 +919,9 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
                               });
                             }
                           },
-                          onTap: _selectMode ? () => _toggleSelected(item) : null,
+                          onTap: _selectMode
+                              ? () => _toggleSelected(item)
+                              : null,
                           child: Padding(
                             padding: const EdgeInsets.all(12),
                             child: Column(
@@ -950,7 +964,8 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
                                         vertical: 2,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: item.type ==
+                                        color:
+                                            item.type ==
                                                 QuizQuestionType.trueFalse
                                             ? Colors.orange.shade50
                                             : Colors.blue.shade50,
@@ -962,7 +977,8 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
                                             : '单选',
                                         style: TextStyle(
                                           fontSize: 11,
-                                          color: item.type ==
+                                          color:
+                                              item.type ==
                                                   QuizQuestionType.trueFalse
                                               ? Colors.orange.shade700
                                               : Colors.blue.shade700,
@@ -1191,9 +1207,14 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
       ).showSnackBar(const SnackBar(content: Text('题目不能为空')));
       return;
     }
-    final options = _opts
-        .map((e) => e.text.trim())
-        .where((e) => e.isNotEmpty)
+    final correctIndex = _correctIndex;
+    final optionEntries = _opts
+        .asMap()
+        .entries
+        .where((entry) => entry.value.text.trim().isNotEmpty)
+        .toList();
+    final options = optionEntries
+        .map((entry) => entry.value.text.trim())
         .toList();
     if (options.isEmpty) {
       ScaffoldMessenger.of(
@@ -1201,13 +1222,18 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
       ).showSnackBar(const SnackBar(content: Text('请至少填写一个选项')));
       return;
     }
-    if (_correctIndex == null || _correctIndex! >= options.length) {
+    if (correctIndex == null ||
+        !optionEntries.any((entry) => entry.key == correctIndex)) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('请选择正确答案')));
       return;
     }
-    final correct = options[_correctIndex!];
+    final correct = optionEntries
+        .firstWhere((entry) => entry.key == correctIndex)
+        .value
+        .text
+        .trim();
     final analysis = _analysis.text.trim();
     Navigator.pop(
       context,
@@ -1304,9 +1330,7 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
                   for (var i = 0; i < _opts.length; i++) ...[
                     Row(
                       children: [
-                        Radio<int>(
-                          value: i,
-                        ),
+                        Radio<int>(value: i),
                         Expanded(
                           child: TextField(
                             controller: _opts[i],
@@ -1352,7 +1376,8 @@ class _CloudSubscriptionSheet extends StatefulWidget {
   final Set<String> initiallySelected;
 
   @override
-  State<_CloudSubscriptionSheet> createState() => _CloudSubscriptionSheetState();
+  State<_CloudSubscriptionSheet> createState() =>
+      _CloudSubscriptionSheetState();
 }
 
 class _CloudSubscriptionSheetState extends State<_CloudSubscriptionSheet> {
@@ -1445,7 +1470,8 @@ class _CloudSubscriptionSheetState extends State<_CloudSubscriptionSheet> {
                 ),
                 const SizedBox(width: 8),
                 FilledButton(
-                  onPressed: () => Navigator.pop(context, _selected.toList()..sort()),
+                  onPressed: () =>
+                      Navigator.pop(context, _selected.toList()..sort()),
                   child: const Text('保存'),
                 ),
               ],

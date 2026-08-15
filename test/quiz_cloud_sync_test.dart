@@ -83,15 +83,38 @@ void main() {
     },
   );
 
+  test('sync deletes only the matching cloud mirror', () async {
+    SharedPreferences.setMockInitialValues({});
+    final deletedIds = <String>[];
+    final service = QuizCloudSyncService(
+      httpClient: _PagedSyncClient([
+        {
+          'cursor': 1,
+          'hasMore': false,
+          'changes': [
+            {'operation': 'delete', 'id': 'cloud-q1'},
+          ],
+        },
+      ]),
+      importItems: (_) async => 0,
+      deleteCloudItem: (id) async {
+        deletedIds.add(id);
+        return 1;
+      },
+    );
+
+    final result = await service.sync(serverUrl: 'https://box.example');
+    expect(deletedIds, ['cloud-q1']);
+    expect(result.cloudDeletes, 1);
+  });
+
   test('sync keeps image field from cloud changes', () async {
     SharedPreferences.setMockInitialValues({});
     final client = _PagedSyncClient([
       {
         'cursor': 3,
         'hasMore': false,
-        'changes': [
-          _upsertChange('如图所示题', image: '/api/quiz/images/demo.png'),
-        ],
+        'changes': [_upsertChange('如图所示题', image: '/api/quiz/images/demo.png')],
       },
     ]);
     final imported = <QuizBankItem>[];
@@ -110,16 +133,16 @@ void main() {
 }
 
 Map<String, Object?> _upsertChange(String question, {String? image}) => {
-      'operation': 'upsert',
-      'question': {
-        'id': question,
-        'question': question,
-        'type': 'single_choice',
-        'options': ['甲', '乙'],
-        'correctAnswer': '甲',
-        'image': ?image,
-      },
-    };
+  'operation': 'upsert',
+  'question': {
+    'id': question,
+    'question': question,
+    'type': 'single_choice',
+    'options': ['甲', '乙'],
+    'correctAnswer': '甲',
+    'image': ?image,
+  },
+};
 
 class _Client extends http.BaseClient {
   _Client(this.requests);

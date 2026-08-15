@@ -26,10 +26,13 @@ class QuizConfig {
     this.ocrEndpoint = 'https://ocr.hpa888.top',
     this.ocrToken = '',
     this.overlayOpacity = 1.0,
+
     /// 离开 box 进入第三方 App 时是否自动考试模式
     this.autoExamOnLeaveApp = true,
+
     /// 仅对这些包名自动考试模式（逗号/换行分隔）；空=对所有非系统 App 生效
     this.autoExamPackages = '',
+
     /// 考试模式悬浮窗尺寸：small / standard / large。
     this.examOverlaySize = 'standard',
   });
@@ -206,7 +209,9 @@ class QuizConfig {
           .clamp(0.3, 1.0),
       autoExamOnLeaveApp: (json['autoExamOnLeaveApp'] as bool?) ?? true,
       autoExamPackages: (json['autoExamPackages'] as String?) ?? '',
-      examOverlaySize: _parseExamOverlaySize(json['examOverlaySize'] as String?),
+      examOverlaySize: _parseExamOverlaySize(
+        json['examOverlaySize'] as String?,
+      ),
     );
   }
 
