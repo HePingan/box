@@ -28,13 +28,19 @@ class PersonalCenterController extends ChangeNotifier {
   PersonalOverview? overview;
   PersonalQuotaSummary? quotaSummary;
   PersonalQuizPage? quizPage;
+  PersonalPluginPage? pluginPage;
   List<PersonalActivityDay> activity = const [];
-  List<Map<String, dynamic>> plugins = const [];
 
   bool loading = false;
   bool quotaLoading = false;
   bool pluginsLoading = false;
+  bool pluginsLoadingMore = false;
   bool quizLoading = false;
+  bool quizLoadingMore = false;
+
+  static const int _pageSize = 20;
+  String? pluginStatus;
+  String? quizStatus;
 
   /// 阻断性错误（未登录 / 会话失效）。
   String? fatalError;
@@ -121,16 +127,21 @@ class PersonalCenterController extends ChangeNotifier {
     _quotaTabLoaded = true;
   }
 
-  Future<void> loadPlugins({bool force = false}) async {
+  /// 我的插件首页数据。[status] 变化时强制重新拉取第一页。
+  Future<void> loadPlugins({String? status, bool force = false}) async {
     final current = session;
     if (current == null) return;
-    if (_pluginsLoaded && !force) return;
+    final statusChanged = status != pluginStatus;
+    if (_pluginsLoaded && !force && !statusChanged) return;
+    pluginStatus = status;
     pluginsLoading = true;
     notifyListeners();
     await _guard('我的插件', () async {
-      plugins = await _client.fetchMyPlugins(
+      pluginPage = await _client.fetchMyPlugins(
         serverUrl: current.serverUrl,
         token: current.token,
+        status: status,
+        limit: _pageSize,
       );
     });
     _pluginsLoaded = true;
@@ -138,10 +149,40 @@ class PersonalCenterController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 加载下一页插件，追加到当前列表。
+  Future<void> loadMorePlugins() async {
+    final current = session;
+    final loaded = pluginPage;
+    if (current == null || loaded == null) return;
+    if (pluginsLoadingMore || !loaded.hasMore) return;
+    pluginsLoadingMore = true;
+    notifyListeners();
+    await _guard('我的插件', () async {
+      final next = await _client.fetchMyPlugins(
+        serverUrl: current.serverUrl,
+        token: current.token,
+        status: pluginStatus,
+        offset: loaded.items.length,
+        limit: _pageSize,
+      );
+      pluginPage = PersonalPluginPage(
+        items: [...loaded.items, ...next.items],
+        total: next.total,
+        offset: next.offset,
+        limit: next.limit,
+        hasMore: next.hasMore,
+      );
+    });
+    pluginsLoadingMore = false;
+    notifyListeners();
+  }
+
   Future<void> loadQuizzes({String? status, bool force = false}) async {
     final current = session;
     if (current == null) return;
-    if (_quizLoaded && !force && status == null) return;
+    final statusChanged = status != quizStatus;
+    if (_quizLoaded && !force && !statusChanged) return;
+    quizStatus = status;
     quizLoading = true;
     notifyListeners();
     await _guard('我的题库', () async {
@@ -149,10 +190,39 @@ class PersonalCenterController extends ChangeNotifier {
         serverUrl: current.serverUrl,
         token: current.token,
         status: status,
+        limit: _pageSize,
       );
     });
     _quizLoaded = true;
     quizLoading = false;
+    notifyListeners();
+  }
+
+  /// 加载下一页题目，追加到当前列表。
+  Future<void> loadMoreQuizzes() async {
+    final current = session;
+    final loaded = quizPage;
+    if (current == null || loaded == null) return;
+    if (quizLoadingMore || !loaded.hasMore) return;
+    quizLoadingMore = true;
+    notifyListeners();
+    await _guard('我的题库', () async {
+      final next = await _client.fetchMyQuizzes(
+        serverUrl: current.serverUrl,
+        token: current.token,
+        status: quizStatus,
+        offset: loaded.questions.length,
+        limit: _pageSize,
+      );
+      quizPage = PersonalQuizPage(
+        questions: [...loaded.questions, ...next.questions],
+        total: next.total,
+        offset: next.offset,
+        limit: next.limit,
+        hasMore: next.hasMore,
+      );
+    });
+    quizLoadingMore = false;
     notifyListeners();
   }
 

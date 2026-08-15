@@ -329,53 +329,111 @@ class _PluginsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final plugins = controller.plugins;
-    if (controller.pluginsLoading && plugins.isEmpty) {
+    final page = controller.pluginPage;
+    if (controller.pluginsLoading && page == null) {
       return const Center(child: CircularProgressIndicator());
     }
+    final items = page?.items ?? const <PersonalPluginItem>[];
     return RefreshIndicator(
-      onRefresh: () => controller.loadPlugins(force: true),
-      child: plugins.isEmpty
-          ? ListView(
-              children: const [
-                SizedBox(height: 80),
-                _EmptySection(
-                  icon: Icons.extension_outlined,
-                  message: '还没有投稿过插件',
-                ),
-              ],
+      onRefresh: () =>
+          controller.loadPlugins(status: controller.pluginStatus, force: true),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _StatusFilters(
+            value: controller.pluginStatus,
+            statuses: const {
+              '审核中': 'pending_review',
+              '已发布': 'published',
+              '已拒绝': 'rejected',
+            },
+            onChanged: (value) => controller.loadPlugins(status: value),
+          ),
+          const SizedBox(height: 8),
+          if (items.isEmpty)
+            const _EmptySection(
+              icon: Icons.extension_outlined,
+              message: '还没有投稿过插件',
             )
-          : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: plugins.length,
-              itemBuilder: (context, index) {
-                final plugin = plugins[index];
-                return Card(
-                  child: ListTile(
-                    leading: const Icon(Icons.extension_outlined),
-                    title: Text(
-                      plugin['name']?.toString() ??
-                          plugin['title']?.toString() ??
-                          plugin['pluginId']?.toString() ??
-                          '未知插件',
-                    ),
-                    subtitle: Text(
-                      plugin['description']?.toString() ??
-                          plugin['summary']?.toString() ??
-                          '',
-                    ),
-                    trailing: Text(plugin['status']?.toString() ?? ''),
-                  ),
-                );
-              },
+          else ...[
+            Text(
+              '共 ${page!.total} 个投稿',
+              style: Theme.of(context).textTheme.bodySmall,
             ),
+            const SizedBox(height: 8),
+            ...items.map((item) => _PluginCard(item: item)),
+            _LoadMoreButton(
+              visible: page.hasMore,
+              loading: controller.pluginsLoadingMore,
+              onPressed: controller.loadMorePlugins,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PluginCard extends StatelessWidget {
+  const _PluginCard({required this.item});
+  final PersonalPluginItem item;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => _showPluginDetail(context, item),
+      child: ListTile(
+        leading: const Icon(Icons.extension_outlined),
+        title: Text(item.title.isEmpty ? '未命名插件' : item.title),
+        subtitle: Text(
+          [
+            item.statusLabel,
+            if (item.version.isNotEmpty) 'v${item.version}',
+            if (item.subtitle.isNotEmpty) item.subtitle,
+          ].join(' · '),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: const Icon(Icons.chevron_right),
+      ),
+    ),
+  );
+
+  void _showPluginDetail(BuildContext context, PersonalPluginItem item) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(item.title.isEmpty ? '插件详情' : item.title),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _DetailLine('状态', item.statusLabel),
+              if (item.version.isNotEmpty) _DetailLine('版本', item.version),
+              if (item.subtitle.isNotEmpty) _DetailLine('说明', item.subtitle),
+              if (item.tags.isNotEmpty) _DetailLine('标签', item.tags.join('、')),
+              if (item.permissions.isNotEmpty)
+                _DetailLine('申请权限', item.permissions.join('、')),
+              if (item.reviewNote.isNotEmpty)
+                _DetailLine('审核反馈', item.reviewNote),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
     );
   }
 }
 
 class _QuizzesTab extends StatelessWidget {
   const _QuizzesTab({required this.controller});
-
   final PersonalCenterController controller;
 
   @override
@@ -385,44 +443,163 @@ class _QuizzesTab extends StatelessWidget {
     if (controller.quizLoading && quizPage == null) {
       return const Center(child: CircularProgressIndicator());
     }
+    final questions = quizPage?.questions ?? const <PersonalQuizItem>[];
     return RefreshIndicator(
-      onRefresh: () => controller.loadQuizzes(force: true),
+      onRefresh: () =>
+          controller.loadQuizzes(status: controller.quizStatus, force: true),
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           if (stats != null) _QuizStatsCard(stats: stats),
           const SizedBox(height: 12),
-          if (quizPage == null || quizPage.questions.isEmpty)
+          _StatusFilters(
+            value: controller.quizStatus,
+            statuses: const {
+              '审核中': 'pending',
+              '已合并': 'merged',
+              '已发布': 'approved',
+            },
+            onChanged: (value) => controller.loadQuizzes(status: value),
+          ),
+          const SizedBox(height: 8),
+          if (questions.isEmpty)
             const _EmptySection(icon: Icons.quiz_outlined, message: '还没有提交过题目')
-          else
-            ...quizPage.questions.map(
-              (item) => Card(
-                child: ListTile(
-                  leading: const Icon(Icons.quiz_outlined),
-                  title: Text(
-                    item.title.isEmpty ? '未命名题目' : item.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text(
-                    item.category.isEmpty
-                        ? item.statusLabel
-                        : '${item.statusLabel} · ${item.category}',
-                  ),
-                  trailing: Text(
-                    _shortId(item.id),
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              ),
+          else ...[
+            Text(
+              '共 ${quizPage!.total} 道题目',
+              style: Theme.of(context).textTheme.bodySmall,
             ),
+            const SizedBox(height: 8),
+            ...questions.map((item) => _QuizCard(item: item)),
+            _LoadMoreButton(
+              visible: quizPage.hasMore,
+              loading: controller.quizLoadingMore,
+              onPressed: controller.loadMoreQuizzes,
+            ),
+          ],
         ],
       ),
     );
   }
+}
 
-  /// 安全截断：id 短于 8 位时直接返回，避免 substring 越界。
-  static String _shortId(String id) => id.length <= 8 ? id : id.substring(0, 8);
+class _QuizCard extends StatelessWidget {
+  const _QuizCard({required this.item});
+  final PersonalQuizItem item;
+  @override
+  Widget build(BuildContext context) => Card(
+    child: InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('题目审核详情'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _DetailLine('状态', item.statusLabel),
+                _DetailLine('题干', item.title.isEmpty ? '未命名题目' : item.title),
+                if (item.category.isNotEmpty) _DetailLine('分类', item.category),
+                if (item.reviewNote.isNotEmpty)
+                  _DetailLine('审核反馈', item.reviewNote),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('关闭'),
+            ),
+          ],
+        ),
+      ),
+      child: ListTile(
+        leading: const Icon(Icons.quiz_outlined),
+        title: Text(
+          item.title.isEmpty ? '未命名题目' : item.title,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          item.category.isEmpty
+              ? item.statusLabel
+              : '${item.statusLabel} · ${item.category}',
+        ),
+        trailing: const Icon(Icons.chevron_right),
+      ),
+    ),
+  );
+}
+
+class _StatusFilters extends StatelessWidget {
+  const _StatusFilters({
+    required this.value,
+    required this.statuses,
+    required this.onChanged,
+  });
+  final String? value;
+  final Map<String, String> statuses;
+  final ValueChanged<String?> onChanged;
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    child: Row(
+      children: [
+        ChoiceChip(
+          label: const Text('全部'),
+          selected: value == null,
+          onSelected: (_) => onChanged(null),
+        ),
+        const SizedBox(width: 8),
+        ...statuses.entries.expand(
+          (entry) => [
+            ChoiceChip(
+              label: Text(entry.key),
+              selected: value == entry.value,
+              onSelected: (_) => onChanged(entry.value),
+            ),
+            const SizedBox(width: 8),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+class _LoadMoreButton extends StatelessWidget {
+  const _LoadMoreButton({
+    required this.visible,
+    required this.loading,
+    required this.onPressed,
+  });
+  final bool visible;
+  final bool loading;
+  final VoidCallback onPressed;
+  @override
+  Widget build(BuildContext context) {
+    if (!visible) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Center(
+        child: loading
+            ? const CircularProgressIndicator()
+            : OutlinedButton(onPressed: onPressed, child: const Text('加载更多')),
+      ),
+    );
+  }
+}
+
+class _DetailLine extends StatelessWidget {
+  const _DetailLine(this.label, this.value);
+  final String label;
+  final String value;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Text('$label：$value'),
+  );
 }
 
 class _QuizStatsCard extends StatelessWidget {

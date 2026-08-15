@@ -144,12 +144,14 @@ void main() {
           },
         ],
         'total': 2,
+        'offset': 0,
         'limit': 50,
         'hasMore': false,
       });
 
       expect(page.questions.length, 2);
       expect(page.total, 2);
+      expect(page.offset, 0);
       expect(page.hasMore, false);
       expect(page.questions[0].title, '题1');
       expect(page.questions[0].statusLabel, '已发布');

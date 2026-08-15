@@ -121,6 +121,7 @@ class PersonalQuizPage {
   const PersonalQuizPage({
     required this.questions,
     required this.total,
+    required this.offset,
     required this.limit,
     required this.hasMore,
   });
@@ -133,6 +134,7 @@ class PersonalQuizPage {
     return PersonalQuizPage(
       questions: items,
       total: _asInt(json['total']),
+      offset: _asInt(json['offset']),
       limit: _asInt(json['limit']),
       hasMore: json['hasMore'] == true,
     );
@@ -140,11 +142,109 @@ class PersonalQuizPage {
 
   final List<PersonalQuizItem> questions;
   final int total;
+  final int offset;
   final int limit;
   final bool hasMore;
 
   static int _asInt(Object? value) =>
       value is num ? value.round() : int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+class PersonalPluginPage {
+  const PersonalPluginPage({
+    required this.items,
+    required this.total,
+    required this.offset,
+    required this.limit,
+    required this.hasMore,
+  });
+
+  factory PersonalPluginPage.fromJson(Map<String, dynamic> json) {
+    final items = (json['items'] as List<dynamic>? ?? [])
+        .whereType<Map>()
+        .map(
+          (item) =>
+              PersonalPluginItem.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .toList(growable: false);
+    return PersonalPluginPage(
+      items: items,
+      total: _asInt(json['total'] ?? json['count']),
+      offset: _asInt(json['offset']),
+      limit: _asInt(json['limit']),
+      hasMore: json['hasMore'] == true,
+    );
+  }
+
+  final List<PersonalPluginItem> items;
+  final int total;
+  final int offset;
+  final int limit;
+  final bool hasMore;
+
+  static int _asInt(Object? value) =>
+      value is num ? value.round() : int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+class PersonalPluginItem {
+  const PersonalPluginItem({
+    required this.id,
+    required this.pluginId,
+    required this.title,
+    required this.subtitle,
+    required this.version,
+    required this.status,
+    required this.permissions,
+    required this.tags,
+    required this.reviewNote,
+    this.createdAt,
+    this.reviewedAt,
+  });
+
+  factory PersonalPluginItem.fromJson(Map<String, dynamic> json) =>
+      PersonalPluginItem(
+        id: json['id']?.toString() ?? '',
+        pluginId: json['pluginId']?.toString() ?? '',
+        title: json['title']?.toString() ?? json['name']?.toString() ?? '',
+        subtitle:
+            json['subtitle']?.toString() ??
+            json['description']?.toString() ??
+            '',
+        version: json['version']?.toString() ?? '',
+        status: json['status']?.toString() ?? 'pending_review',
+        permissions: _strings(json['permissions']),
+        tags: _strings(json['tags']),
+        reviewNote: json['reviewNote']?.toString() ?? '',
+        createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
+        reviewedAt: DateTime.tryParse(json['reviewedAt']?.toString() ?? ''),
+      );
+
+  final String id;
+  final String pluginId;
+  final String title;
+  final String subtitle;
+  final String version;
+  final String status;
+  final List<String> permissions;
+  final List<String> tags;
+  final String reviewNote;
+  final DateTime? createdAt;
+  final DateTime? reviewedAt;
+
+  String get statusLabel => switch (status) {
+    'published' || 'approved' => '已发布',
+    'rejected' => '已拒绝',
+    'yanked' => '已下架',
+    'draft' => '草稿',
+    _ => '审核中',
+  };
+
+  static List<String> _strings(Object? value) => value is List
+      ? value
+            .map((item) => item.toString())
+            .where((item) => item.isNotEmpty)
+            .toList(growable: false)
+      : const [];
 }
 
 class PersonalQuizItem {

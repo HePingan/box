@@ -43,9 +43,13 @@ class PersonalCenterClient {
     required String serverUrl,
     required String token,
     String? status,
+    int offset = 0,
     int limit = 50,
   }) async {
-    final query = <String, String>{'limit': '$limit'};
+    final query = <String, String>{
+      'offset': '${offset.clamp(0, 100000)}',
+      'limit': '${limit.clamp(1, 100)}',
+    };
     if (status != null && status.isNotEmpty) query['status'] = status;
     final body = await _get(serverUrl, token, '/api/me/quiz/questions', query);
     return PersonalQuizPage.fromJson(body);
@@ -63,20 +67,21 @@ class PersonalCenterClient {
         .toList(growable: false);
   }
 
-  Future<List<Map<String, dynamic>>> fetchMyPlugins({
+  Future<PersonalPluginPage> fetchMyPlugins({
     required String serverUrl,
     required String token,
+    String? status,
+    int offset = 0,
+    int limit = 50,
   }) async {
-    final body = await _get(serverUrl, token, '/api/plugins/mine');
-    return _list(body['items']);
+    final query = <String, String>{
+      'offset': '${offset.clamp(0, 100000)}',
+      'limit': '${limit.clamp(1, 100)}',
+    };
+    if (status != null && status.isNotEmpty) query['status'] = status;
+    final body = await _get(serverUrl, token, '/api/me/plugins', query);
+    return PersonalPluginPage.fromJson(body);
   }
-
-  List<Map<String, dynamic>> _list(Object? value) => value is List
-      ? value
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList(growable: false)
-      : const [];
 
   Future<Map<String, dynamic>> _get(
     String serverUrl,
