@@ -3,7 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import 'app/app_routes.dart';
+import 'config/app_config.dart';
 import 'design_system/app_tokens.dart';
+import 'update/update_dialog.dart';
+import 'update/update_service.dart';
 import 'features/account/data/account_store.dart';
 import 'features/account/domain/account_models.dart';
 
@@ -273,10 +276,72 @@ class _DrawerContent extends StatelessWidget {
         ),
         actions: [
           TextButton(
+            onPressed: () => _checkUpdateManually(context, info),
+            child: const Text('检查更新'),
+          ),
+          TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
             child: const Text('关闭'),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 手动检查更新（A4）。
+  ///
+  /// 原先只有启动时那一次静默检查，用户既没有主动入口，出问题也看不到原因
+  /// （service 里是 catch(_)，加上 allowProceedOnCheckFailure 默认 true）。
+  /// 这里用 checkUpdateDiagnostic，如实把失败原因显示出来。
+  Future<void> _checkUpdateManually(
+    BuildContext context,
+    PackageInfo info,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('正在检查更新…'),
+        duration: Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+
+    final outcome = await UpdateService.instance.checkUpdateDiagnostic(
+      checkUrl: AppConfig.updateCheckUrl,
+      appId: AppConfig.appId,
+      platform: AppConfig.updatePlatform,
+      channel: AppConfig.appChannel,
+      versionCode: int.tryParse(info.buildNumber) ?? 0,
+      packageName: info.packageName,
+      security: AppConfig.updateSecurityConfig,
+    );
+
+    if (!context.mounted) return;
+
+    final manifest = outcome.manifest;
+    if (outcome.hasUpdate && manifest != null) {
+      navigator.pop();
+      if (!context.mounted) return;
+      await showDialog(
+        context: context,
+        builder: (_) => UpdateDialog(
+          manifest: manifest,
+          currentVersionName: info.version,
+          currentVersionCode: int.tryParse(info.buildNumber) ?? 0,
+          force: manifest.needForceUpdate(int.tryParse(info.buildNumber) ?? 0),
+          security: AppConfig.updateSecurityConfig,
+        ),
+      );
+      return;
+    }
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(outcome.describe()),
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: outcome.isFailure ? 6 : 2),
       ),
     );
   }

@@ -133,6 +133,7 @@ class _UpdateBootstrapPageState extends State<UpdateBootstrapPage> {
           currentVersionName: info.version,
           currentVersionCode: int.tryParse(info.buildNumber) ?? 0,
           force: force,
+          security: widget.updateSecurity,
         );
       },
     );

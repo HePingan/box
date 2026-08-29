@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'update_models.dart';
 import 'update_response_parser.dart';
 import 'update_security.dart';
+import 'update_check_outcome.dart';
 
 class UpdateService {
   UpdateService._();
@@ -88,6 +89,89 @@ class UpdateService {
 
       return cached;
     }
+  }
+
+  /// 带诊断信息的检查，供「手动检查更新」使用（A4）。
+  ///
+  /// 与 [checkUpdate] 的区别：不吞异常、不做缓存兜底，如实告诉调用方失败在哪一步。
+  /// 启动流程仍然走 [checkUpdate]（要缓存兜底、要静默放行），这里只服务于用户
+  /// 主动点击的场景——出问题时需要看到真实原因，而不是一句「暂无更新」。
+  Future<UpdateCheckOutcome> checkUpdateDiagnostic({
+    required String checkUrl,
+    required String appId,
+    required String platform,
+    required String channel,
+    required int versionCode,
+    required String packageName,
+    String? deviceId,
+    String? userId,
+    UpdateManifestSecurityConfig security = const UpdateManifestSecurityConfig(),
+  }) async {
+    final validatedUrl = _validateUpdateUrl(checkUrl);
+    if (validatedUrl == null) {
+      return UpdateCheckOutcome.failure(
+        UpdateCheckStatus.notConfigured,
+        detail: checkUrl.trim().isEmpty ? '地址为空' : '必须是 https 地址',
+      );
+    }
+
+    Response<dynamic> res;
+    try {
+      res = await _dio.get(
+        validatedUrl,
+        queryParameters: {
+          'app_id': appId,
+          'platform': platform,
+          'channel': channel,
+          'version_code': versionCode,
+          'package_name': packageName,
+          if (deviceId != null && deviceId.isNotEmpty) 'device_id': deviceId,
+          if (userId != null && userId.isNotEmpty) 'user_id': userId,
+          'ts': DateTime.now().millisecondsSinceEpoch,
+        },
+      );
+    } on DioException catch (e) {
+      return UpdateCheckOutcome.failure(
+        UpdateCheckStatus.networkError,
+        detail: e.message ?? e.type.name,
+      );
+    } catch (e) {
+      return UpdateCheckOutcome.failure(
+        UpdateCheckStatus.networkError,
+        detail: e.toString(),
+      );
+    }
+
+    Map<String, dynamic> map;
+    UpdateManifest manifest;
+    try {
+      map = extractUpdateDataMap(res.data);
+      manifest = UpdateManifest.fromJson(map);
+    } catch (e) {
+      return UpdateCheckOutcome.failure(
+        UpdateCheckStatus.badResponse,
+        detail: e.toString(),
+      );
+    }
+
+    try {
+      validateUpdateManifestSecurity(
+        manifest: manifest,
+        rawManifestJson: map,
+        security: security,
+      );
+    } catch (e) {
+      return UpdateCheckOutcome.failure(
+        UpdateCheckStatus.signatureRejected,
+        detail: e.toString().replaceFirst('Exception: ', ''),
+      );
+    }
+
+    await _saveCache(manifest);
+    return UpdateCheckOutcome.fromManifest(
+      manifest: manifest,
+      currentVersionCode: versionCode,
+    );
   }
 
   Future<void> _saveCache(UpdateManifest manifest) async {

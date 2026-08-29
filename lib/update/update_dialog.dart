@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app_installer.dart';
 import 'update_models.dart';
+import 'update_security.dart';
 
 class UpdateDialog extends StatefulWidget {
   final UpdateManifest manifest;
@@ -15,7 +16,12 @@ class UpdateDialog extends StatefulWidget {
     required this.currentVersionName,
     required this.currentVersionCode,
     required this.force,
+    this.security = const UpdateManifestSecurityConfig(),
   });
+
+  /// 下载阶段同样要用到白名单等约束，必须从 bootstrap 一路传进来，
+  /// 否则安装器只能用默认空白名单（等于全放通）。
+  final UpdateManifestSecurityConfig security;
 
   @override
   State<UpdateDialog> createState() => _UpdateDialogState();
@@ -44,6 +50,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
     try {
       await AppInstaller.downloadAndInstall(
         manifest: widget.manifest,
+        security: widget.security,
         onProgress: (p) {
           if (!mounted) return;
           setState(() => _progress = p);
