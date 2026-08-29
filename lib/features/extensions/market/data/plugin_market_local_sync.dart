@@ -35,6 +35,9 @@ class PluginMarketLocalSync {
     await _host.bootstrap();
     final marketPlugins = _host.allPlugins.where((p) {
       if (p.builtIn) return false;
+      // 内置模板服务端没有发布记录，查了必然回 unknown，
+      // 会被下面的 unknown 分支标风险并禁用 —— 装上又被自动关掉。
+      if (isBuiltInTemplateId(p.id)) return false;
       final origin = p.customConfig?.origin ?? '';
       return origin == 'user_market' || origin == 'market';
     }).toList(growable: false);
@@ -167,7 +170,14 @@ class PluginMarketLocalSync {
     );
   }
 
-  /// 安装/更新：优先下载 zip 校验 sha，再写本地配置。
+  /// 内置模板前缀。这些条目由 App 自带（plugin_market_manifest.dart 里硬编码），
+  /// 服务端不存在对应的发布记录 —— 服务端反而明确禁止用这两个前缀投稿。
+  static bool isBuiltInTemplateId(String id) {
+    final s = id.trim();
+    return s.startsWith('market_') || s.startsWith('builtin_');
+  }
+
+  /// 安装/更新：内置模板走本地，投稿插件优先下载 zip 校验 sha，再写本地配置。
   /// 支持进度回调与失败重试。
   Future<HomeCustomPluginConfig> installFromTemplate(
     MarketPluginTemplate template, {
@@ -175,6 +185,23 @@ class PluginMarketLocalSync {
     int retries = 1,
   }) async {
     var config = HomeCustomPluginConfig.fromMarketTemplate(template);
+
+    // 0) 内置模板：纯本地安装。
+    //
+    // 服务端的 /install 接口只认投稿发布记录，对 market_*/builtin_* 一律回
+    // 404 plugin_not_installable，而下面的 catch 又把这个异常 rethrow，
+    // 导致所有内置插件都装不上（不只是某一个）。内置条目的 action/payload
+    // 都在本地代码里，本来就不需要联网，直接短路。
+    if (isBuiltInTemplateId(template.id)) {
+      config = config.copyWith(
+        marketStatus: 'builtin',
+        marketRisk: false,
+        marketRiskNote: '',
+        enabled: true,
+      );
+      await _host.addCustomPlugin(config);
+      return config;
+    }
 
     // 1) 若清单声明了 packageUrl/zip，下载并校验
     final hasZipHint = template.packageFormat == 'zip' ||
