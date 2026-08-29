@@ -8,6 +8,7 @@ import '../core/models.dart';
 import '../core/novel_exceptions.dart';
 import 'novel_source.dart';
 import 'rules/css_selector_parser.dart';
+import 'text_cleaner.dart';
 
 /// 快眼看书（优+）专用书源实现
 ///
@@ -362,7 +363,9 @@ class KuaiYanNovelSource implements NovelSource {
 
     return ChapterContent(
       title: ch.title,
-      content: content.trim(),
+      // 走共享的分段归一化：_parseBodyText 会在块级元素后插入 \n，
+      // 但 _extractHtml / _parseTextNodes 分支可能返回压平文本，需兜底断段。
+      content: TextCleaner.normalizeParagraphs(content),
       chapterIndex: chapterIndex,
       sourceUrl: ch.url,
     );

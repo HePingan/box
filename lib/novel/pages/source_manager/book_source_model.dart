@@ -38,6 +38,24 @@ class BookSourceModel {
     return 'rule';
   }
 
+  /// 该源实际由哪个适配器处理：wtzw / maoyan / kuaiyan / rule。
+  /// 同名源（如两份「猫眼看书（优++）」）靠它区分走原生还是通用规则引擎。
+  String get sourceKind => _sourceKind;
+
+  /// 适配器的中文短标签，供书源管理页在同名源之间做视觉区分。
+  String get sourceKindLabel {
+    switch (_sourceKind) {
+      case 'wtzw':
+        return '番茄内置';
+      case 'maoyan':
+        return '猫眼内置';
+      case 'kuaiyan':
+        return '快眼内置';
+      default:
+        return '通用规则';
+    }
+  }
+
   String get id => '${_norm(bookSourceUrl)}|${_norm(bookSourceName)}|$_sourceKind';
 
   static String _norm(String v) => v.trim();

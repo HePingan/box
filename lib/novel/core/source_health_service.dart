@@ -170,15 +170,32 @@ class SourceHealthService {
     }
   }
 
-  /// 批量检测所有书源，返回 sourceId → 快照 映射
+  /// 同时最多探测几个书源。
+  ///
+  /// 原实现完全串行，10 个书源全超时要等 10×probeTimeoutMs（≈50s）才出结果，
+  /// 书源管理页整段时间只能转圈。放开到无限并发会瞬间打爆连接池并让每个探测的
+  /// 延迟数字互相污染（都在抢带宽，测出来的 latency 偏大导致误判 degraded），
+  /// 所以取一个小的上限：3 路并发把最差耗时压到 ~1/3，瞬时连接数仍然可控。
+  ///
+  /// 调大：更快但延迟数字更不准、更容易被对端限流。调小：更准更慢，1 即回到串行。
+  static const int maxConcurrentProbes = 3;
+
+  /// 批量检测所有书源，返回 sourceId → 快照 映射。
+  ///
+  /// 以 [maxConcurrentProbes] 为上限分批并发。单个源的失败已在 [ping] 内部
+  /// 收敛成 down 快照，不会抛出，因此这里不需要额外的错误兜底。
   Future<Map<String, SourceHealthSnapshot>> pingAll(
     List<BookSourceModel> sources,
   ) async {
     final results = <String, SourceHealthSnapshot>{};
 
-    // 串行检测，避免同时大量网络请求
-    for (final source in sources) {
-      results[source.id] = await ping(source);
+    for (var i = 0; i < sources.length; i += maxConcurrentProbes) {
+      final end = (i + maxConcurrentProbes).clamp(0, sources.length);
+      final batch = sources.sublist(i, end);
+      final snapshots = await Future.wait(batch.map(ping));
+      for (var j = 0; j < batch.length; j++) {
+        results[batch[j].id] = snapshots[j];
+      }
     }
 
     return results;

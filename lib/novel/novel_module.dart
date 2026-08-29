@@ -1,4 +1,6 @@
 import 'package:box/core/storage/cache_store.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import 'core/bookshelf_manager.dart';
 import 'core/models.dart';
 import 'core/novel_repository.dart';
@@ -56,6 +58,16 @@ class NovelModule {
       detailTtl: detailTtl ?? NovelRepository.defaultDetailTtl,
       chapterTtl: chapterTtl ?? NovelRepository.defaultChapterTtl,
     );
+  }
+
+  /// 直接注入一个 repository（仅测试用）。
+  ///
+  /// [configureRuleSource] 只能从书源 JSON 经 factory 造 source，无法塞入假 source，
+  /// 于是 controller/页面层一直没法在无网络环境下测——这也是 pages/ 与 controllers/
+  /// 长期零测试覆盖的直接原因。这个入口专门补上它。
+  @visibleForTesting
+  static void injectRepositoryForTest(NovelRepository repository) {
+    _repository = repository;
   }
 
   static void resetForTest() {

@@ -267,6 +267,10 @@ class ReaderPaginator {
       request.lineHeight.toStringAsFixed(2),
       request.letterSpacing.toStringAsFixed(2),
       request.fontFamily ?? 'sysdefault',
+      // textDirection 参与 TextPainter 布局，必须进键：否则同一章在 ltr/rtl 下
+      // 会命中同一份缓存，拿到按另一个方向算出的页边界。当前只用 ltr，但键遗漏
+      // 属于「加了参数忘了加键」的经典漂移，先堵住。
+      request.textDirection.name,
       signature,
     ].join('|');
   }

@@ -209,8 +209,15 @@ class WtzwNovelSource implements NovelSource {
     return _str(value);
   }
 
+  /// 简介、标签等**单行**字段的清洗（不需要分段）。
   String _cleanText(String input) {
     return TextCleaner.stripHtml(input);
+  }
+
+  /// 章节正文清洗：必须走共享的分段归一化，否则整章会压平成一行。
+  /// 见 [TextCleaner.normalizeParagraphs] 的历史缺陷说明。
+  String _cleanChapterContent(String input) {
+    return TextCleaner.normalizeParagraphs(input);
   }
 
   String _buildIntro({required String intro, String tags = ''}) {
@@ -574,7 +581,7 @@ class WtzwNovelSource implements NovelSource {
 
     final encryptedContent = _str(_readPath(json, ['data', 'content']));
     final plainText = _decryptChapterContent(encryptedContent);
-    final content = _cleanText(plainText);
+    final content = _cleanChapterContent(plainText);
 
     return ChapterContent(
       title: chapter.title,

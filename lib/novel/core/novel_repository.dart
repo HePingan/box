@@ -23,6 +23,10 @@ class NovelRepository {
   static const Duration defaultDetailTtl = Duration(hours: 8);
   static const Duration defaultChapterTtl = Duration(days: 30);
 
+  /// 判定「正文被压平」的最小长度阈值。低于此长度的无换行正文视为正常
+  /// （空章节提示、极短章节），不触发缓存失效。
+  static const int _flatContentMinLength = 200;
+
   final Duration searchTtl;
   final Duration pathListTtl;
   final Duration detailTtl;
@@ -50,8 +54,11 @@ class NovelRepository {
       await cache.write(key, encoder(result), ttl: ttl);
       return result;
     } catch (_) {
+      // 回退路径**不套用 validate**：走到这里说明数据源已经失败，
+      // 此时哪怕是质量不佳的旧缓存（例如被压平的正文）也比空屏报错好。
+      // validate 只用于决定「是否值得回源」，不该在无源可回时封杀兜底。
       final cached = decoder(await cache.read(key));
-      if (cached != null && (validate == null || validate(cached))) {
+      if (cached != null) {
         return cached;
       }
       rethrow;
@@ -160,9 +167,24 @@ class NovelRepository {
       forceRefresh: forceRefresh,
       decoder: _decodeChapter,
       encoder: (content) => content.toJson(),
+      validate: _chapterContentIsUsable,
       source: () =>
           source.fetchChapter(detail: detail, chapterIndex: chapterIndex),
     );
+  }
+
+  /// 章节缓存有效性校验。
+  ///
+  /// 历史上 `_cleanContent` 误用 `TextCleaner.cleanRaw`（把 `\s+` 折叠成空格，
+  /// 而 `\s` 含 `\n`），把整章正文压成一行写进了 30 天 TTL 的缓存。解析逻辑
+  /// 修好后，这些坏缓存仍会命中，用户永远看不到分段 —— 必须主动判失效回源。
+  ///
+  /// 判据保守：只有「长正文 + 完全没有换行」才算坏。短正文（提示语、极短章节）
+  /// 无换行属正常，不误伤。
+  static bool _chapterContentIsUsable(ChapterContent content) {
+    final text = content.content;
+    if (text.length < _flatContentMinLength) return true;
+    return text.contains('\n');
   }
 
   Future<void> prefetchChapter({

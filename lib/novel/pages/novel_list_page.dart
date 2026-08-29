@@ -8,6 +8,7 @@ import '../../design_system/widgets/shimmer_skeleton.dart';
 import '../../design_system/widgets/empty_error_states.dart';
 import '../../../design_system/widgets/app_page_scaffold.dart';
 import '../core/book_deduplicator.dart';
+import '../core/load_generation.dart';
 import '../core/models.dart';
 import '../core/rule_novel_source.dart';
 import '../novel_module.dart';
@@ -51,6 +52,11 @@ class _NovelListPageState extends State<NovelListPage> {
   bool _loadingMore = false;
   bool _searchMode = false;
   bool _hasMore = true;
+
+  /// 请求身份守卫：`mounted` 只防 dispose 后写状态，防不住「后发先至」。
+  /// 搜索、发现页切换、取消搜索都会并发触碰同一批 `_books`，必须靠代号
+  /// 丢弃过期响应。见 test/novel/core/load_generation_test.dart。
+  final LoadGeneration _loadGen = LoadGeneration();
 
   int _page = 1;
   int _selectedExploreIndex = 0;
@@ -275,6 +281,9 @@ class _NovelListPageState extends State<NovelListPage> {
     _keyword = '';
     _searchMode = false;
 
+    // 作废在途搜索，否则慢搜索响应会盖掉取消后的发现页内容。
+    _loadGen.invalidate();
+
     if (_supportsExplore) {
       await _loadExplorePage(1, reset: true);
     } else {
@@ -317,6 +326,11 @@ class _NovelListPageState extends State<NovelListPage> {
   Future<void> _loadSearchPage(int page, {required bool reset}) async {
     if (!_configured || !NovelModule.isConfigured) return;
 
+    // reset 表示「换了搜索目标」，作废在途请求；加载下一页沿用当前代号。
+    final token = reset
+        ? _loadGen.begin('search:$_keyword')
+        : LoadToken(_loadGen.current, _loadGen.intent);
+
     setState(() {
       if (reset) {
         _loading = true;
@@ -332,7 +346,7 @@ class _NovelListPageState extends State<NovelListPage> {
         page: page,
       );
 
-      if (!mounted) return;
+      if (!mounted || !_loadGen.isCurrent(token)) return;
 
       setState(() {
         if (reset) {
@@ -343,10 +357,12 @@ class _NovelListPageState extends State<NovelListPage> {
           _appendUniqueBooks(result);
         }
         _page = page;
+        // 只有「本页确实拿到数据」才认为可能还有下一页；空结果一律停止翻页。
         _hasMore = result.isNotEmpty;
       });
     } catch (e) {
-      if (!mounted) return;
+      // 过期请求的失败不得污染新请求的 UI（否则新结果旁边挂着旧报错）。
+      if (!mounted || !_loadGen.isCurrent(token)) return;
       setState(() {
         _error = '加载失败：$e';
         if (reset) {
@@ -355,7 +371,7 @@ class _NovelListPageState extends State<NovelListPage> {
         _hasMore = false;
       });
     } finally {
-      if (mounted) {
+      if (mounted && _loadGen.isCurrent(token)) {
         setState(() {
           _loading = false;
           _loadingMore = false;
@@ -381,6 +397,11 @@ class _NovelListPageState extends State<NovelListPage> {
       return;
     }
 
+    // 与 _loadSearchPage 同一套守卫：切换发现页分类时作废在途请求。
+    final token = reset
+        ? _loadGen.begin('explore:$_selectedExploreIndex')
+        : LoadToken(_loadGen.current, _loadGen.intent);
+
     setState(() {
       if (reset) {
         _loading = true;
@@ -393,7 +414,7 @@ class _NovelListPageState extends State<NovelListPage> {
     try {
       final result = await NovelModule.repository.source.fetchByPath(path);
 
-      if (!mounted) return;
+      if (!mounted || !_loadGen.isCurrent(token)) return;
 
       setState(() {
         if (reset) {
@@ -407,7 +428,7 @@ class _NovelListPageState extends State<NovelListPage> {
         _hasMore = result.isNotEmpty;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || !_loadGen.isCurrent(token)) return;
       setState(() {
         _error = '加载失败：$e';
         if (reset) {
@@ -416,7 +437,7 @@ class _NovelListPageState extends State<NovelListPage> {
         _hasMore = false;
       });
     } finally {
-      if (mounted) {
+      if (mounted && _loadGen.isCurrent(token)) {
         setState(() {
           _loading = false;
           _loadingMore = false;

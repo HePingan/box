@@ -70,6 +70,14 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
     }
   }
 
+  /// 截断超长字段，避免单个值（如几百行的发现菜单数组）挤爆剪贴板报告。
+  /// 保留头部并标注省略字符数，便于判断是否为超长配置。
+  static String _abbrev(String value, int max) {
+    final one = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (one.length <= max) return one;
+    return '${one.substring(0, max)}…(共 ${one.length} 字符，已截断)';
+  }
+
   Future<void> _copyReport() async {
     if (_runtimeResult == null) return;
     final buf = StringBuffer()
@@ -92,12 +100,15 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
       ..writeln(
         '搜索地址：${_staticResult?['searchUrl'] ?? widget.source.searchUrl}',
       )
+      // 发现地址常是几百行的菜单数组（男/女频榜单+分类），整段贴出来会把
+      // 后面真正用于排查的规则段挤出剪贴板，因此这里截断。
       ..writeln(
-        '发现地址：${_staticResult?['exploreUrl'] ?? widget.source.exploreUrl}',
+        '发现地址：${_abbrev(_staticResult?['exploreUrl'] ?? widget.source.exploreUrl, 160)}',
       )
       ..writeln();
 
-    // 规则摘要
+    // 规则明细：只打印 key 名不足以排查（看不出 tocUrl 指向哪、chapterList
+    // 是什么路径），所以连值一起输出，单值过长再截断。
     for (final label in [
       ('搜索规则', 'ruleSearch'),
       ('发现规则', 'ruleExplore'),
@@ -107,8 +118,10 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
     ]) {
       final rule = _staticResult?[label.$2] as Map<String, dynamic>?;
       if (rule != null && rule.isNotEmpty) {
-        final keys = rule.keys.take(6).join(', ');
-        buf.writeln('${label.$1} ($keys${rule.length > 6 ? ', ...' : ''})');
+        buf.writeln('${label.$1}:');
+        for (final entry in rule.entries) {
+          buf.writeln('  ${entry.key} = ${_abbrev('${entry.value}', 200)}');
+        }
       } else {
         buf.writeln('${label.$1}: (空)');
       }

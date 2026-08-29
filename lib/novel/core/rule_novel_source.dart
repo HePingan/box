@@ -4,6 +4,7 @@ import 'models.dart';
 import 'novel_source.dart';
 import 'rule_engine.dart';
 import 'rules/rule_engine_v2.dart';
+import 'text_cleaner.dart';
 
 class RuleNovelSource implements NovelSource {
   RuleNovelSource({
@@ -489,9 +490,67 @@ class RuleNovelSource implements NovelSource {
 
     // 目录解析需要完整的 decoded 根对象（因为 ruleToc.chapterList = "$.data.list[*]" 是绝对路径），
     // 同时章节字段提取需要 init（已 scope 到 $.data）作为回退上下文。
-    final chapters = _parseChapters(decoded, init: init, itemBaseUrl: path);
+    var chapters = _parseChapters(decoded, init: init, itemBaseUrl: path);
+
+    // 有些书源把目录放在独立接口上（ruleBookInfo.tocUrl），详情响应里根本没有
+    // 章节数据 —— 此时必须再请求一次目录接口，否则章节列表永远为空。
+    // 实例：猫眼看书（优++）http://api.lfdapengu.com，搜索/详情均正常但目录空。
+    if (chapters.isEmpty) {
+      final tocChapters = await _fetchTocChapters(
+        init: init,
+        root: decoded,
+        detailPath: path,
+      );
+      if (tocChapters.isNotEmpty) chapters = tocChapters;
+    }
 
     return NovelDetail(book: book, chapters: chapters);
+  }
+
+  /// 请求 `ruleBookInfo.tocUrl` 指向的独立目录接口并解析章节。
+  ///
+  /// 适用于详情与目录分离的书源：详情响应只含书籍元信息，章节列表需要另取。
+  /// tocUrl 支持模板变量（如 `/toc?novelId={{$.tocId}}`），用详情响应渲染。
+  /// 目录接口失败不应让整个详情页报错，因此这里吞掉异常返回空列表。
+  Future<List<NovelChapter>> _fetchTocChapters({
+    required dynamic init,
+    required dynamic root,
+    required String detailPath,
+  }) async {
+    // tocUrl 按 Legado 约定只出现在 ruleBookInfo；不查 ruleToc，避免误取
+    // ruleToc.chapterUrl（那是单章链接规则）当作目录接口。
+    final tocRule = _pickRuleString([ruleBookInfo], fieldTocUrl);
+    if (tocRule.isEmpty) return const [];
+
+    try {
+      // tocUrl 是 URL 模板（如 /toc?novelId={{$.tocId}}），先渲染 {{}} 占位符。
+      var tocPath = _engine.renderTemplate(tocRule, init, root);
+
+      // 若整条规则本身就是纯 JSONPath（如 $.tocUrl，服务端直接给出目录地址），
+      // 渲染后仍是原样，此时按 JSONPath 求值。
+      if (tocPath == tocRule && tocRule.startsWith(r'$')) {
+        tocPath = _resolveStr(tocRule, context: init, root: root);
+      }
+      if (tocPath.trim().isEmpty) return const [];
+
+      final tocBody = await _engine.request(
+        tocPath,
+        defaultBaseUrl: baseUrl,
+        headers: headers,
+      );
+      final tocDecoded = _engine.tryDecodeJson(tocBody);
+      if (tocDecoded == null) return const [];
+
+      final tocInit = _engine.extractInit(tocDecoded, ruleToc);
+      return _parseChapters(
+        tocDecoded,
+        init: tocInit,
+        itemBaseUrl: tocPath,
+      );
+    } catch (_) {
+      // 目录接口不可用时优雅退化：保留书籍信息，章节留空
+      return const [];
+    }
   }
 
   // ── 章节内容 ──
@@ -568,7 +627,11 @@ class RuleNovelSource implements NovelSource {
       }
     }
 
-    text = _engine.cleanText(text);
+    // 注意：不能用 _engine.cleanText（TextCleaner.cleanRaw），它把 `\s+`
+    // 折叠成单空格，而 `\s` 包含 `\n` —— 正文的段落换行会被全部消灭，
+    // 整章挤成一行。正文必须走 stripHtml/normalizeWhitespace 这条保留换行的
+    // 路径（cleanRaw 只适合书名、作者这类单行字段）。
+    text = TextCleaner.normalizeParagraphs(text);
 
     final lines = text
         .split('\n')

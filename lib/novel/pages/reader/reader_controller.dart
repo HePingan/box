@@ -45,12 +45,21 @@ class ReaderController extends ChangeNotifier {
   final NovelDetail detail;
   final NovelRepository? repository;
   final OfflineCacheService? offlineCacheService;
+
+  /// dispose 后置位，用于让后台预取立刻停手（见 prefetchNext 的 isCancelled）。
+  bool _disposed = false;
   final ReaderProgressService progressService;
   ReaderBookmarkService bookmarkService;
 
-  /// 设置真实书签服务（初始化时异步获取 SharedPreferences 后调用）
+  /// 设置真实书签服务（初始化时异步获取 SharedPreferences 后调用）。
+  ///
+  /// 必须让 [_cachedBookmarks] 失效：启动瞬间 bookmarkService 还是
+  /// NoopReaderBookmarkService（恒返回空），若 UI 在这个窗口内读过一次
+  /// bookmarks，缓存就被钉成空，换成真服务后也不会重读 ——
+  /// 表现为「有书签的书打开阅读器却看不到书签」。
   void initBookmarkService(ReaderBookmarkService service) {
     bookmarkService = service;
+    _cachedBookmarks = null;
     notifyListeners();
   }
 
@@ -310,12 +319,17 @@ class ReaderController extends ChangeNotifier {
 
   // --- 书签相关 ---
 
-  /// 乐观更新时缓存的书签列表（持久化失败时回滚）
-  List<ReaderBookmark> _cachedBookmarks = const [];
+  /// 乐观更新时缓存的书签列表（持久化失败时回滚）。
+  ///
+  /// null 表示「还没从 storage 读过」，空列表表示「读过，本书确实没有书签」。
+  /// 这两个状态必须区分：以前用 `_cachedBookmarks.isNotEmpty` 当有效性判据，
+  /// 于是删掉最后一条后缓存变空 → 被当成「未加载」→ 回落读磁盘 → 书签复活，
+  /// 且判重拿到旧数据后连「重新添加同一章」都会被拒。
+  List<ReaderBookmark>? _cachedBookmarks;
 
-  /// 当前书籍的书签列表（优先返回缓存，兜底从 storage 读取）
+  /// 当前书籍的书签列表（首次访问时从 storage 装载，之后走缓存）
   List<ReaderBookmark> get bookmarks =>
-      _cachedBookmarks.isNotEmpty ? _cachedBookmarks : bookmarkService.loadForBook(detail.book.id);
+      _cachedBookmarks ??= bookmarkService.loadForBook(detail.book.id);
 
   /// 当前章节是否已收藏
   bool get hasBookmarkForCurrent {
@@ -325,7 +339,8 @@ class ReaderController extends ChangeNotifier {
   /// 添加书签（乐观更新：先更新 UI，持久化失败时回滚）
   /// 返回是否成功（false 表示重复或持久化失败）
   Future<bool> addBookmark({int? pageIndex}) async {
-    final existing = bookmarks;
+    // 独立副本，理由同 removeBookmark：直接持有 bookmarks 的引用会让回滚失效。
+    final existing = List<ReaderBookmark>.of(bookmarks);
     final alreadyHas = existing.any(
       (b) => b.chapterIndex == chapterIndex,
     );
@@ -355,23 +370,39 @@ class ReaderController extends ChangeNotifier {
 
   /// 删除书签（乐观更新 + 失败回滚）
   Future<bool> removeBookmark(String bookmarkId) async {
-    final existing = bookmarks;
-    final before = existing;
+    // before 必须是独立副本：以前 `before = existing` 与下一行的源列表同引用，
+    // 回滚等于把「已经删掉那条的列表」赋回去，是空操作。
+    final before = List<ReaderBookmark>.of(bookmarks);
 
     // 乐观更新 UI
-    _cachedBookmarks = existing.where((b) => b.id != bookmarkId).toList();
+    _cachedBookmarks = before.where((b) => b.id != bookmarkId).toList();
     notifyListeners();
 
-    // 异步持久化，失败时回滚
     await bookmarkService.remove(detail.book.id, bookmarkId);
-    // 注意：remove 不返回 success 标志，失败时静默回滚
-    // 由于 SharedPreferences 是同步写入，实际失败概率极低
-    final stillExists = existing.any((b) => b.id == bookmarkId);
+
+    // remove 不返回成功标志，只能回读磁盘核实。
+    // 以前这里查的是 `existing`（删除前的旧列表），那条必然还在，于是
+    // stillExists 恒为 true —— 每次删除都误判失败、回滚、返回 false，
+    // 表现为「书签删掉后立刻弹回来」。
+    final stillExists = bookmarkService
+        .loadForBook(detail.book.id)
+        .any((b) => b.id == bookmarkId);
     if (stillExists) {
       _cachedBookmarks = before;
       notifyListeners();
+      return false;
     }
-    return !stillExists;
+    return true;
+  }
+
+  /// 清空本书所有书签。
+  ///
+  /// UI 层不要直接调 `bookmarkService.clear()`：那样 [_cachedBookmarks] 不会失效，
+  /// 列表靠 setState 重建时读到的仍是旧缓存。
+  Future<void> clearBookmarks() async {
+    await bookmarkService.clear(detail.book.id);
+    _cachedBookmarks = <ReaderBookmark>[];
+    notifyListeners();
   }
 
   /// 跳转到指定书签章节
@@ -510,11 +541,18 @@ class ReaderController extends ChangeNotifier {
         );
       }
 
-      // 如果该书标记了离线缓存，后台批量预取后续 30 章
+      // 如果该书标记了离线缓存，后台批量预取后续 30 章。
+      // 必须传 isCancelled：controller dispose 后剩余请求要立刻停，
+      // 否则用户翻一页就退出，30 个请求仍会跑完，白耗流量。
       if (offlineCacheService != null) {
         unawaited(
           offlineCacheService!
-              .prefetchNext(detail, chapterIndex + 1, count: 30)
+              .prefetchNext(
+            detail,
+            chapterIndex + 1,
+            count: 30,
+            isCancelled: () => _disposed,
+          )
               .catchError((Object e) {
             _prefetchFailCount++;
             debugPrint('批量预取失败: $e');
@@ -644,7 +682,9 @@ class ReaderController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _settingsSaveDebounce?.cancel();
+    // debounce 被取消后仍要落盘一次，否则用户刚调的字号/亮度在退出时丢失。
     unawaited(_repo.saveReaderSettings(settings).catchError((_) {}));
     super.dispose();
   }

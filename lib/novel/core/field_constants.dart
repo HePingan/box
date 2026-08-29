@@ -71,6 +71,15 @@ const List<String> fieldWordCount = [
   'size',
 ];
 
+/// 独立目录接口地址字段别名。
+/// 详情与目录分离的书源把目录地址放在 ruleBookInfo.tocUrl，需要二次请求。
+/// 注意：不要把 'chapterUrl' 列进来 —— ruleToc.chapterUrl 是**单章正文链接**的
+/// 提取规则，不是目录接口地址，混用会把每章链接当成目录端点去请求。
+const List<String> fieldTocUrl = [
+  'tocUrl',
+  'catalogUrl',
+];
+
 /// 章节列表字段别名
 const List<String> fieldChapterList = [
   'chapterList',

@@ -270,6 +270,15 @@ class BookSourceCard extends StatelessWidget {
                     color: reportColor,
                     backgroundColor: reportColor.withValues(alpha: 0.10),
                   ),
+                  const SizedBox(width: 4),
+                  // 适配器标签：同名书源（如两份「猫眼看书（优++）」）靠它区分
+                  // 走原生内置实现还是通用规则引擎。
+                  BookSourceSimpleChip(
+                    text: source.sourceKindLabel,
+                    color: source.sourceKind == 'rule'
+                        ? Colors.blueGrey
+                        : Colors.indigo,
+                  ),
                 ],
               ),
               // 第三行：分组 + 搜索 URL（如果有）

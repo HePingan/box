@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:box/core/storage/cache_store.dart';
@@ -39,6 +40,29 @@ class OfflineCacheService {
   /// 同一字段出现 1024 倍差异，列表页体积显示忽大忽小；统一到此常量。
   static const int _bytesPerChapter = 3072;
 
+  /// 正在后台预下载的书 ID。
+  ///
+  /// `markForOffline` 用 `unawaited` 发射 `_prefetchAll`，句柄无人持有，取消
+  /// 离线标记时那批下载会一路跑到底：既白耗流量，又在 `_clearChapterCache`
+  /// 删完之后把缓存重新写回（磁盘占用降不下去）。取消离线时从这里移除书 ID，
+  /// `_prefetchAll` 每批开始前查一次就会停手。
+  ///
+  /// static：同一本书可能由书架页和详情页各自 new 一个 Service 实例操作，
+  /// 取消信号必须跨实例可见。
+  static final Set<String> _activePrefetches = <String>{};
+
+  /// 取消该书在途的后台预下载（若有）。
+  static void cancelPrefetch(String bookId) {
+    _activePrefetches.remove(bookId);
+  }
+
+  @visibleForTesting
+  static bool isPrefetching(String bookId) =>
+      _activePrefetches.contains(bookId);
+
+  @visibleForTesting
+  static void resetPrefetchesForTest() => _activePrefetches.clear();
+
   // ---------------------------------------------------------------------------
   // 标记管理
   // ---------------------------------------------------------------------------
@@ -56,20 +80,35 @@ class OfflineCacheService {
     // 2) 写入元数据
     await _upsertMeta(prefs, OfflineBookInfo.fromNovelDetail(detail));
 
-    // 3) 异步预下载
-    unawaited(_prefetchAll(detail).catchError((_) {}));
+    // 3) 异步预下载：登记在途，取消离线时可中断
+    _activePrefetches.add(bookId);
+    unawaited(
+      _prefetchAll(
+        detail,
+        isCancelled: () => !_activePrefetches.contains(bookId),
+      ).whenComplete(() => _activePrefetches.remove(bookId)).catchError((_) {}),
+    );
   }
 
   /// 取消离线标记，并清除所有已缓存的章节
   Future<void> unmarkOffline(NovelDetail detail) async {
+    // 顺序关键：先停在途下载再清缓存，否则预下载会把刚删的章节写回，
+    // 用户看到「已取消缓存」但磁盘占用不降。
+    cancelPrefetch(detail.book.id);
     final prefs = await SharedPreferences.getInstance();
     await _removeFromOfflineSet(prefs, detail.book.id);
     await _removeMetaById(prefs, detail.book.id);
     await _clearChapterCache(detail);
   }
 
-  /// 仅取消离线标记，不清除缓存（书架场景：不持有 NovelDetail）
+  /// 仅取消离线标记，不清除章节缓存（书架场景：不持有 NovelDetail）。
+  ///
+  /// 注意与 [unmarkOffline] 的语义差异：本方法**不删磁盘缓存**，因为没有
+  /// NovelDetail 就拿不到章节 URL 列表。需要连缓存一起清的调用方必须自己再调
+  /// [clearCacheById]（`offline_cache_manage_page._removeBook` 就是这么做的）。
   Future<void> unmarkOfflineById(String bookId) async {
+    // 即使不清缓存，也必须停掉在途预下载：标记已移除，继续下载纯属浪费流量。
+    cancelPrefetch(bookId);
     final prefs = await SharedPreferences.getInstance();
     await _removeFromOfflineSet(prefs, bookId);
     await _removeMetaById(prefs, bookId);
@@ -78,6 +117,10 @@ class OfflineCacheService {
   /// 批量取消多本书的离线标记
   Future<void> unmarkMultiple(Iterable<NovelDetail> details) async {
     final ids = details.map((d) => d.book.id).toSet();
+    // 先统一停掉在途预下载，再清缓存（同 unmarkOffline 的顺序要求）。
+    for (final id in ids) {
+      cancelPrefetch(id);
+    }
     final prefs = await SharedPreferences.getInstance();
 
     final current = _loadSet(prefs, _offlineKey);
@@ -234,14 +277,20 @@ class OfflineCacheService {
   // 预下载
   // ---------------------------------------------------------------------------
 
-  /// 预下载后续 N 章（阅读器触发，后台逐步执行）
+  /// 预下载后续 N 章（阅读器触发，后台逐步执行）。
+  ///
+  /// [isCancelled] 每章开始前检查一次：返回 true 就立刻停止剩余下载。
+  /// 阅读器退出时必须传这个回调，否则用户点开一章后马上返回，这 30 个请求
+  /// 仍会跑完，白耗流量并挤占前台请求带宽。
   Future<void> prefetchNext(
     NovelDetail detail,
     int fromIndex, {
     int count = 30,
+    bool Function()? isCancelled,
   }) async {
     final end = (fromIndex + count).clamp(0, detail.chapters.length);
     for (int i = fromIndex; i < end; i++) {
+      if (isCancelled?.call() ?? false) return;
       await _downloadSilently(detail, i);
     }
   }
@@ -261,9 +310,16 @@ class OfflineCacheService {
     }
   }
 
-  /// 预下载所有章节（分批并发 + 间隔）
-  Future<void> _prefetchAll(NovelDetail detail) async {
+  /// 预下载所有章节（分批并发 + 间隔）。
+  ///
+  /// [isCancelled] 每批开始前检查一次。整本书可能上千章，没有取消开关时
+  /// 用户取消缓存后下载仍会跑到底，并把刚清掉的缓存重新写回。
+  Future<void> _prefetchAll(
+    NovelDetail detail, {
+    bool Function()? isCancelled,
+  }) async {
     for (int start = 0; start < detail.chapters.length; start += 5) {
+      if (isCancelled?.call() ?? false) return;
       final end = (start + 5).clamp(0, detail.chapters.length);
       await Future.wait(
         List.generate(
@@ -321,7 +377,10 @@ class OfflineCacheService {
             .map((e) => OfflineBookInfo.fromJson(Map<String, dynamic>.from(e)))
             .toList();
       }
-    } catch (_) {}
+    } catch (e) {
+      // 失败表现为「离线书架里的书全没了」，静默会让这类故障无从定性。
+      debugPrint('[OfflineCacheService] 离线书单解析失败，已降级为空列表: $e');
+    }
     return [];
   }
 

@@ -75,10 +75,9 @@ class _ReaderBookmarkSheetState extends State<ReaderBookmarkSheet> {
                                   FilledButton(
                                     onPressed: () async {
                                       Navigator.pop(ctx);
-                                      await controller.bookmarkService
-                                          .clear(controller.detail.book.id);
-                                      if (!mounted) return;
-                                      setState(() {});
+                                      // 走 controller 而非 bookmarkService：
+                                      // 后者不会让 controller 的书签缓存失效
+                                      await controller.clearBookmarks();
                                     },
                                     child: const Text('清空'),
                                   ),

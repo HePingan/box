@@ -77,11 +77,26 @@ class MaoYanNovelSource implements NovelSource {
     );
   }
 
+  /// 是否为内置猫眼源（YSFly 格式）。
+  ///
+  /// 判据只看认证特征，**不能**用 bookSourceName 含「猫眼」来判定：本适配器
+  /// 硬编码 `/search` 路径，且只遍历 bookSourceComment 里提取的域名表发请求，
+  /// 用户填的 bookSourceUrl / searchUrl 一概不用。若靠名字匹配，任何第三方
+  /// 同名源都会被劫持到这里，因 domains 为空而请求发不出去（搜索/发现全空）。
+  /// 这类明文 URL + 声明式规则的源应落到通用 RuleNovelSource。
   static bool supportsBookSourceJson(Map<String, dynamic> json) {
+    // YSFly 源的 searchUrl / 规则里带 {"type":"maoyankanshu"} 标记，这是最强特征。
+    final searchUrl = '${json['searchUrl'] ?? ''}';
+    if (searchUrl.contains('maoyankanshu')) return true;
+
     final comment = '${json['bookSourceComment'] ?? ''}';
-    return comment.contains('maoyankanshu') ||
-        comment.contains('myweipin') ||
-        '${json['bookSourceName'] ?? ''}'.contains('猫眼');
+
+    // 关键：不能用 comment.contains('myweipin') 这类字符串嗅探。第三方明文源
+    // 常在 comment 里列一串备用接口（含 api.myweipin.com）作为纯文本说明，
+    // 那种源没有域名表也没有 token，被劫持进来只会请求发不出去。
+    // 判据改为：能否真正提取出本适配器运行所必需的认证素材。
+    final (domains, aesKeys, authTokens) = extractAuthFromComment(comment);
+    return domains.isNotEmpty && aesKeys.isNotEmpty && authTokens.isNotEmpty;
   }
 
   final String baseUrl;
@@ -516,8 +531,10 @@ class MaoYanNovelSource implements NovelSource {
       text = _extractTextWithNewlines(body);
     }
 
-    // 3. 合并多余换行和空白
-    text = TextCleaner.normalizeWhitespace(text);
+    // 3. 合并多余换行和空白 + 压平正文兜底分段
+    //    _extractTextWithNewlines 已在块级元素后插入 \n，但若源直接返回
+    //    无标签的一整行纯文本，这里仍需兜底断段，否则整章只有一段。
+    text = TextCleaner.normalizeParagraphs(text);
 
     return text;
   }

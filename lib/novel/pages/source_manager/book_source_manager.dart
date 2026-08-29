@@ -224,7 +224,16 @@ class BookSourceManager extends ChangeNotifier {
     return addMany(sources);
   }
 
-  List<BookSourceModel> _parseSources(String text) {
+  List<BookSourceModel> _parseSources(String text) => parseSources(text);
+
+  /// 解析导入文本为书源列表。
+  ///
+  /// 逐条容错：数组里某一条畸形只跳过那一条，其余照常导入。
+  /// 历史缺陷：`.map(fromJson)` 懒惰求值 + 外层 `catch (_)`，一条坏数据会让
+  /// 整个 JSON 数组掉进「按段解析」兜底并得到 0 条 —— 用户导入 50 个源因为第 3
+  /// 条字段类型错误导致一个都没进，且界面无任何提示。
+  @visibleForTesting
+  static List<BookSourceModel> parseSources(String text) {
     final t = text.trim();
     if (t.isEmpty) return [];
 
@@ -232,12 +241,17 @@ class BookSourceManager extends ChangeNotifier {
       if (t.startsWith('[')) {
         final decoded = jsonDecode(t);
         if (decoded is List) {
-          return decoded
-              .whereType<Map>()
-              .map(
-                (e) => BookSourceModel.fromJson(Map<String, dynamic>.from(e)),
-              )
-              .toList();
+          // 逐条 try：跳过畸形条目而不是放弃整批。
+          final parsed = <BookSourceModel>[];
+          for (final e in decoded) {
+            if (e is! Map) continue;
+            try {
+              parsed.add(BookSourceModel.fromJson(Map<String, dynamic>.from(e)));
+            } catch (_) {
+              // 单条畸形，跳过，不影响其余条目
+            }
+          }
+          if (parsed.isNotEmpty) return parsed;
         }
       } else if (t.startsWith('{')) {
         final decoded = jsonDecode(t);
@@ -262,7 +276,11 @@ class BookSourceManager extends ChangeNotifier {
             BookSourceModel.fromJson(Map<String, dynamic>.from(decoded)),
           );
         }
-      } catch (_) {}
+      } catch (e) {
+        // 单条书源损坏只跳过这一条（不能让一条坏数据废掉整个书源列表），
+        // 但要留线索：否则用户只看到「书源少了一个」而无从排查。
+        debugPrint('[BookSourceManager] 跳过一条损坏的书源记录: $e');
+      }
     }
 
     return result;

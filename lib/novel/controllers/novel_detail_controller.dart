@@ -19,6 +19,16 @@ class NovelDetailController extends ChangeNotifier {
   int _cacheCurrent = 0;
   int _cacheTotal = 0;
 
+  /// 本轮缓存中下载失败的章节数（进度走完但未必全部成功）。
+  int _cacheFailed = 0;
+
+  /// dispose 是否已发生。
+  ///
+  /// 本类多处「await 之后 notifyListeners()」，而 await 期间用户可能已退出页面。
+  /// ChangeNotifier 在 dispose 后调用 notifyListeners() 会直接抛异常，所以每个
+  /// 跨 await 的通知点都要先查这个标志。
+  bool _disposed = false;
+
   NovelDetailController({required this.entryBook}) {
     _load(forceRefresh: false);
     _checkInBookshelf();
@@ -34,11 +44,15 @@ class NovelDetailController extends ChangeNotifier {
   bool get isCaching => _isCaching;
   int get cacheCurrent => _cacheCurrent;
   int get cacheTotal => _cacheTotal;
+
+  /// 本轮下载失败的章节数。UI 应在收尾时提示，别让用户误以为整本都下好了。
+  int get cacheFailed => _cacheFailed;
   bool get hasDetail => _detail != null;
 
   Future<void> _checkInBookshelf() async {
     final bookId = _detail?.book.id ?? entryBook.id;
     final inShelf = await NovelModule.bookshelf.isInBookshelf(bookId);
+    if (_disposed) return;
     _inBookshelf = inShelf;
     notifyListeners();
   }
@@ -72,6 +86,7 @@ class NovelDetailController extends ChangeNotifier {
       final progress = await NovelModule.repository.getProgress(merged.book.id);
       await _checkInBookshelf();
 
+      if (_disposed) return;
       _detail = merged;
       _progress = progress;
       _loading = false;
@@ -88,6 +103,7 @@ class NovelDetailController extends ChangeNotifier {
     } on NovelException {
       await _tryRemapOrError();
     } catch (e) {
+      if (_disposed) return;
       _error = '加载失败：$e';
       _loading = false;
       notifyListeners();
@@ -97,6 +113,7 @@ class NovelDetailController extends ChangeNotifier {
   /// 书源不兼容时，尝试按书名搜索重新匹配；失败则显示友好提示
   Future<void> _tryRemapOrError() async {
     final remapped = await _tryRemapByTitle();
+    if (_disposed) return;
     if (remapped != null) {
       _detail = remapped;
       _loading = false;
@@ -203,6 +220,7 @@ class NovelDetailController extends ChangeNotifier {
           ),
           chapters: _detail!.chapters,
         );
+        if (_disposed) return;
         notifyListeners();
       }
     } catch (_) {}
@@ -217,6 +235,7 @@ class NovelDetailController extends ChangeNotifier {
       await NovelModule.bookshelf.addToBookshelf(bookToSave);
       _inBookshelf = true;
     }
+    if (_disposed) return;
     notifyListeners();
   }
 
@@ -242,6 +261,7 @@ class NovelDetailController extends ChangeNotifier {
       await toggleBookshelf();
     }
 
+    _cacheFailed = 0;
     for (int i = 0; i < detail.chapters.length; i++) {
       if (_cancelCache) break;
       try {
@@ -250,14 +270,25 @@ class NovelDetailController extends ChangeNotifier {
           chapterIndex: i,
           forceRefresh: false,
         );
-      } catch (_) {}
+      } catch (_) {
+        // 单章失败不中断整本缓存，但必须计数：以前这里静默吞掉，
+        // 进度条照样走到 300/300，用户以为下完了，进阅读器才发现章节空白。
+        _cacheFailed++;
+      }
 
       if (i % 10 == 0) await Future.delayed(const Duration(milliseconds: 20));
+
+      // dispose 可能发生在上面任意一个 await 期间：_cancelCache 已被置位，
+      // 但本轮循环还没走到下一次判断。此时 notifyListeners() 会抛
+      // 「A NovelDetailController was used after being disposed」——
+      // 表现为「缓存中退出详情页直接崩」。所以这里要立刻退出，不再通知。
+      if (_disposed || _cancelCache) break;
+
       _cacheCurrent = i + 1;
       notifyListeners();
     }
 
-    if (!_cancelCache) {
+    if (!_cancelCache && !_disposed) {
       _isCaching = false;
       _cacheCurrent = 0;
       notifyListeners();
@@ -272,12 +303,14 @@ class NovelDetailController extends ChangeNotifier {
   Future<void> refreshProgress() async {
     if (_detail == null) return;
     final p = await NovelModule.repository.getProgress(_detail!.book.id);
+    if (_disposed) return;
     _progress = p;
     notifyListeners();
   }
 
   @override
   void dispose() {
+    _disposed = true;
     _cancelCache = true;
     super.dispose();
   }

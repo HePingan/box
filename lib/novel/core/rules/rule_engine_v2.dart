@@ -209,18 +209,36 @@ class RuleEngineV2 {
 
   dynamic extractInit(dynamic decoded, Map<String, dynamic> rule) {
     if (rule['init'] == null && rule['eval'] == null) return decoded;
-    final data = resolveStringRule(
-      rule['init'] ?? '',
+
+    final initRule = (rule['init'] ?? '').toString();
+    if (initRule.trim().isEmpty) return decoded;
+
+    // init 规则（如 "$.data"）通常直接指向响应里的一个对象/数组。
+    // 先按「动态求值」拿原生对象 —— 绝不能先 toString()：Dart 的 Map.toString()
+    // 产出 `{novelName: 斗罗大陆}` 这种键值无引号的字面量，不是合法 JSON，
+    // 再 tryDecodeJson 必然失败并静默回退成整个 decoded，导致 init 形同虚设。
+    final resolved = resolveDynamic(
+      initRule,
       context: decoded,
       root: decoded,
     );
-    final cleaned = data.replaceAll(RegExp(r'[\(（][^)]*[\)）]'), '').trim();
-    if (cleaned.isEmpty) return decoded;
-    try {
-      return jsonParser.tryDecodeJson(cleaned) ?? decoded;
-    } catch (_) {
-      return decoded;
+    if (resolved is Map || resolved is List) return resolved;
+
+    // 少数源把 init 指向一个「内嵌 JSON 字符串」字段（常见于加密/转义响应），
+    // 这种才需要走字符串二次解析。
+    if (resolved is String) {
+      final cleaned =
+          resolved.replaceAll(RegExp(r'[\(（][^)]*[\)）]'), '').trim();
+      if (cleaned.isEmpty) return decoded;
+      try {
+        final reparsed = jsonParser.tryDecodeJson(cleaned);
+        if (reparsed is Map || reparsed is List) return reparsed;
+      } catch (_) {
+        // 落到下面统一回退
+      }
     }
+
+    return decoded;
   }
 
   String cleanText(String? text) {

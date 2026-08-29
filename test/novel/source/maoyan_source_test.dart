@@ -134,18 +134,33 @@ var domains = [["longchunbajiao", 0],["xingliangglobal", 1]];
     });
 
     test('supportsBookSourceJson 识别猫眼书源', () {
+      // 契约变更：光靠 bookSourceName 含「猫眼」不再命中本适配器。
+      // 本适配器硬编码 /search 路径 + 只用 comment 里的域名表，任何第三方
+      // 同名源被劫持进来都会因 domains 为空而请求发不出去（搜索/发现全空）。
+      // 这类源应落到通用 RuleNovelSource。详见 source_routing_test.dart。
       expect(
         MaoYanNovelSource.supportsBookSourceJson({
           'bookSourceName': '猫眼看书（优++）',
         }),
+        isFalse,
+        reason: '无认证特征的同名第三方源必须交给通用规则引擎',
+      );
+      // 带真实认证特征（内置源形态）才命中：searchUrl 的 maoyankanshu 标记
+      expect(
+        MaoYanNovelSource.supportsBookSourceJson({
+          'bookSourceName': '猫眼看书（优++）',
+          'searchUrl':
+              'data:;base64,{{java.base64Encode("/search")}},{"type":"maoyankanshu"}',
+        }),
         isTrue,
       );
+      // 光有 myweipin 字样但没有域名表/token → 不命中（适配器跑不起来）
       expect(
         MaoYanNovelSource.supportsBookSourceJson({
           'bookSourceName': '其他书源',
           'bookSourceComment': 'myweipin',
         }),
-        isTrue,
+        isFalse,
       );
       expect(
         MaoYanNovelSource.supportsBookSourceJson({

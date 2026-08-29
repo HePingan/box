@@ -71,6 +71,7 @@ class BookSourceDiagnosticRunner {
       List<dynamic> books = const [];
       String firstBookTitle = '';
       String firstBookId = '';
+      String firstBookDetailUrl = '';
       {
         final sw = Stopwatch()..start();
         try {
@@ -95,6 +96,10 @@ class BookSourceDiagnosticRunner {
             final first = books.first;
             firstBookTitle = (first.title ?? '').toString();
             firstBookId = (first.id ?? '').toString();
+            // 搜索规则的 bookUrl 已经解析出了真正的详情地址，必须用它。
+            // 否则 fetchDetail 会退化成 path = bookId（如 "aQ7lQ7"），
+            // 请求 <base>/aQ7lQ7 这种不存在的端点，详情解析必然全空、章节恒为 0。
+            firstBookDetailUrl = (first.detailUrl ?? '').toString().trim();
 
             steps.add(RuntimeDiagnosticStep(
               title: '搜索测试',
@@ -124,18 +129,40 @@ class BookSourceDiagnosticRunner {
         {
           final sw = Stopwatch()..start();
           try {
+            // 优先用外部显式传入的 detailUrl，其次用搜索结果解析出的地址。
+            final effectiveDetailUrl =
+                (detailUrl != null && detailUrl.trim().isNotEmpty)
+                    ? detailUrl.trim()
+                    : (firstBookDetailUrl.isNotEmpty
+                        ? firstBookDetailUrl
+                        : null);
             detail = await sourceImpl.fetchDetail(
               bookId: firstBookId,
-              detailUrl: detailUrl,
+              detailUrl: effectiveDetailUrl,
             );
             sw.stop();
 
             if (detail.chapters.isEmpty) {
+              // 注意：firstBookTitle 来自**搜索结果**，不是详情响应解析的。
+              // 因此必须单独回显详情解析出的书名/作者，否则详情规则整体失效时
+              // 报告仍会显示正确书名，把排查带偏。
+              final parsedTitle = detail.book.title;
+              final parsedAuthor = detail.book.author;
+              final parseHint = parsedTitle.isEmpty
+                  ? '⚠️ 详情响应未解析出书名 —— 详情规则（含 init）可能整体未命中'
+                  : (parsedTitle == firstBookTitle
+                      ? '详情规则解析出的书名与搜索一致'
+                      : '⚠️ 详情解析书名与搜索不一致');
               steps.add(RuntimeDiagnosticStep(
                 title: '详情页测试',
                 state: RuntimeDiagnosticStepState.warning,
                 summary: '获取详情成功，但章节列表为空',
-                detail: '书名：$firstBookTitle（$firstBookId）\n'
+                detail: '搜索传入书名：$firstBookTitle（$firstBookId）\n'
+                    '详情解析书名：'
+                    '${parsedTitle.isEmpty ? "(空)" : parsedTitle}\n'
+                    '详情解析作者：'
+                    '${parsedAuthor.isEmpty ? "(空)" : parsedAuthor}\n'
+                    '$parseHint\n'
                     '章节数：${detail.chapters.length}',
                 durationMs: sw.elapsedMilliseconds,
               ));

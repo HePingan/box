@@ -263,8 +263,11 @@ class _ReaderPageState extends State<ReaderPage> {
   @override
   void dispose() {
     _paginateCancelFlag = true;
-    // 清理所有 Timer
+    // 清理所有 Timer。_pagedScrollDebounce 以前漏了 cancel：它的回调虽有
+    // mounted/hasClients 双守卫不会崩，但 Timer 会存活到 dispose 之后才空转一次，
+    // 且持有 State 引用妨碍回收。注释说「所有」就得真的是所有。
     _saveDebounce?.cancel();
+    _pagedScrollDebounce?.cancel();
     
     // 退出时立即保存进度。关键：使用 _currentViewPage（onPageChanged 已确认的页码），
     // 而不是 _pageController.page（可能还在动画中途、未 settle 到最终值）。

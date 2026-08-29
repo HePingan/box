@@ -98,10 +98,17 @@ class SharedPreferencesReaderBookmarkService extends ReaderBookmarkService {
 
   const SharedPreferencesReaderBookmarkService(this._prefs);
 
+  /// 读取某本书的书签。
+  ///
+  /// 返回值必须是**可变**列表：调用方 [add] 会 `.add(...)`、[remove] 会
+  /// `.removeWhere(...)`，直接改这个返回值。空路径以前返回 `const []`，
+  /// 于是「给一本从未加过书签的书添加第一个书签」必然抛
+  /// `UnsupportedError: Cannot add to an unmodifiable list`——书签功能对新书
+  /// 完全不可用，且 JSON 一旦损坏就永久瘫痪（catch 分支同样返回 const）。
   @override
   List<ReaderBookmark> loadForBook(String bookId) {
     final raw = _prefs.getString('$_kPrefix$bookId');
-    if (raw == null) return const [];
+    if (raw == null) return <ReaderBookmark>[];
     try {
       final list = (jsonDecode(raw) as List)
           .map((e) => ReaderBookmark.fromJson(e as Map<String, dynamic>))
@@ -109,7 +116,7 @@ class SharedPreferencesReaderBookmarkService extends ReaderBookmarkService {
       list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return list;
     } catch (_) {
-      return const [];
+      return <ReaderBookmark>[];
     }
   }
 

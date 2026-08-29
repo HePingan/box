@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
 import 'novel_cache_keys.dart';
@@ -14,12 +15,43 @@ class BookshelfManager {
   SharedPreferences? _prefs;
   List<NovelBook>? _bookshelfCache;
 
+  /// 串行化「读-改-写」的尾链。
+  ///
+  /// 书架的每个写操作都是 `await 读` → 改 → `await 写`，中间有 await 间隙。
+  /// 两个并发写会各自基于同一份快照修改，后写的覆盖先写的（用户同时收藏两本
+  /// 书只进一本）。把写操作串成链，保证同一时刻只有一个读-改-写在跑。
+  Future<void> _writeChain = Future<void>.value();
+
+  /// 把一个读-改-写操作排到串行链尾，返回它自己的完成态。
+  Future<void> _serialize(Future<void> Function() action) {
+    final next = _writeChain.then((_) => action(), onError: (_) => action());
+    // 链本身要吞掉异常，否则一次失败会毒化后续所有写操作。
+    _writeChain = next.catchError((_) {});
+    return next;
+  }
+
+  /// 仅供测试：清空内存缓存与串行链，模拟冷启动。
+  @visibleForTesting
+  void resetForTest() {
+    _prefs = null;
+    _bookshelfCache = null;
+    _writeChain = Future<void>.value();
+  }
+
   Future<SharedPreferences> get _prefsAsync async {
     _prefs ??= await SharedPreferences.getInstance();
     return _prefs!;
   }
 
+  /// 读取书架。返回**副本**：调用方常做 removeWhere/insert，若返回缓存本体
+  /// 会就地污染内存态（即使随后 _save 失败，UI 也已显示错误内容）。
   Future<List<NovelBook>> getBookshelf() async {
+    final cached = await _loadCache();
+    return List<NovelBook>.of(cached);
+  }
+
+  /// 内部读取：返回缓存本体，仅供本类在串行链内使用。
+  Future<List<NovelBook>> _loadCache() async {
     if (_bookshelfCache != null) return _bookshelfCache!;
 
     final prefs = await _prefsAsync;
@@ -44,7 +76,11 @@ class BookshelfManager {
         }
       }
       _bookshelfCache = _dedupe(books);
-    } catch (_) {
+    } catch (e, st) {
+      // 这里失败意味着整个书架 JSON 损坏，用户会看到「书架空了」。
+      // 控制流保持降级（不能因为存储损坏就崩），但必须留下线索，
+      // 否则这类故障在用户侧完全无法定性。
+      debugPrint('[BookshelfManager] 书架数据解析失败，已降级为空书架: $e\n$st');
       _bookshelfCache = [];
     }
     return _bookshelfCache!;
@@ -62,28 +98,36 @@ class BookshelfManager {
     return books.any((b) => b.id == bookId || b.detailUrl == bookId);
   }
 
-  Future<void> addToBookshelf(NovelBook book) async {
-    final books = await getBookshelf();
-    final key = _bookKey(book);
-    books.removeWhere((b) => _bookKey(b) == key);
-    books.insert(0, book);
-    await _save(books);
+  Future<void> addToBookshelf(NovelBook book) {
+    return _serialize(() async {
+      // 必须在串行链内重新读，不能用链外的旧快照，否则又变回丢写。
+      final books = List<NovelBook>.of(await _loadCache());
+      final key = _bookKey(book);
+      books.removeWhere((b) => _bookKey(b) == key);
+      books.insert(0, book);
+      await _save(books);
+    });
   }
 
-  Future<void> replaceBookshelf(List<NovelBook> books) async {
-    await _save(books);
+  Future<void> replaceBookshelf(List<NovelBook> books) {
+    final snapshot = List<NovelBook>.of(books);
+    return _serialize(() => _save(snapshot));
   }
 
-  Future<void> removeFromBookshelf(String bookId) async {
-    final books = await getBookshelf();
-    books.removeWhere((b) => b.id == bookId || b.detailUrl == bookId);
-    await _save(books);
+  Future<void> removeFromBookshelf(String bookId) {
+    return _serialize(() async {
+      final books = List<NovelBook>.of(await _loadCache());
+      books.removeWhere((b) => b.id == bookId || b.detailUrl == bookId);
+      await _save(books);
+    });
   }
 
-  Future<void> clearBookshelf() async {
-    final prefs = await _prefsAsync;
-    await prefs.remove(_storageKey);
-    _bookshelfCache = [];
+  Future<void> clearBookshelf() {
+    return _serialize(() async {
+      final prefs = await _prefsAsync;
+      await prefs.remove(_storageKey);
+      _bookshelfCache = [];
+    });
   }
 
   static String _bookKey(NovelBook book) {
