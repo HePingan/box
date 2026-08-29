@@ -2,11 +2,21 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import 'update_check_outcome.dart';
 import 'update_dialog.dart';
-import 'update_service.dart';
-import 'update_models.dart';
 import 'update_security.dart';
+import 'update_service.dart';
 
+/// 启动时的更新检查（B2：非阻塞）。
+///
+/// 旧行为是「先白屏等检查，再进主界面」：本页是 `home:`，网络超时配置为
+/// connect 8s + receive 10s，最坏情况用户要盯着近 20 秒的加载圈。而
+/// allowProceedOnCheckFailure 默认 true，意味着任何失败都被静默放行——
+/// 验签口径 bug 能长期存活没被发现，缺少可见失败原因是主因之一。
+///
+/// 新行为：主界面立即渲染，检查在后台进行；只有确实存在新版本才弹窗。
+/// 强制更新依然拦得住（弹窗不可绕过），只是拦截点从「进门前」变成
+/// 「进门后立刻」——这样即使更新服务整体挂掉，用户也不会被关在门外。
 class UpdateBootstrapPage extends StatefulWidget {
   final Widget nextPage;
   final String appId;
@@ -14,9 +24,22 @@ class UpdateBootstrapPage extends StatefulWidget {
   final String platform;
   final String channel;
 
-  /// 强更检查失败时是否允许进入主界面
-  final bool allowProceedOnCheckFailure;
   final UpdateManifestSecurityConfig updateSecurity;
+
+  /// 保留该参数仅为兼容既有调用方。非阻塞模式下检查失败一律放行，
+  /// 因为主界面早已显示，不存在"卡在门外"的情形。
+  final bool allowProceedOnCheckFailure;
+
+  /// 测试注入：跳过真实网络请求。
+  @visibleForTesting
+  final Future<UpdateCheckOutcome> Function()? checkOverride;
+
+  /// 测试注入：跳过 PackageInfo 平台调用。
+  @visibleForTesting
+  final int? currentVersionCodeOverride;
+
+  /// 检查诊断信息回调。失败原因走这里，不再被静默吞掉。
+  final void Function(String message)? onCheckDiagnostic;
 
   const UpdateBootstrapPage({
     super.key,
@@ -27,6 +50,9 @@ class UpdateBootstrapPage extends StatefulWidget {
     required this.channel,
     this.allowProceedOnCheckFailure = true,
     this.updateSecurity = const UpdateManifestSecurityConfig(),
+    this.checkOverride,
+    this.currentVersionCodeOverride,
+    this.onCheckDiagnostic,
   });
 
   @override
@@ -34,172 +60,92 @@ class UpdateBootstrapPage extends StatefulWidget {
 }
 
 class _UpdateBootstrapPageState extends State<UpdateBootstrapPage> {
-  bool _loading = true;
-  String? _error;
-  bool _navigated = false;
-
-  PackageInfo? _packageInfo;
-  UpdateManifest? _manifest;
+  bool _dialogShown = false;
 
   @override
   void initState() {
     super.initState();
+    // 不 await：主界面这一帧就渲染，检查在后台跑。
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _bootstrap();
+      _checkInBackground();
     });
   }
 
-  Future<void> _bootstrap() async {
-    if (kIsWeb) {
-      _goNext();
-      return;
-    }
+  Future<void> _checkInBackground() async {
+    if (kIsWeb) return;
 
     try {
-      final info = await PackageInfo.fromPlatform();
-      _packageInfo = info;
+      final int currentCode;
+      final String versionName;
+      final String packageName;
 
-      final currentCode = int.tryParse(info.buildNumber) ?? 0;
+      final override = widget.currentVersionCodeOverride;
+      if (override != null) {
+        currentCode = override;
+        versionName = '$override';
+        packageName = 'com.example.box';
+      } else {
+        final info = await PackageInfo.fromPlatform();
+        currentCode = int.tryParse(info.buildNumber) ?? 0;
+        versionName = info.version;
+        packageName = info.packageName;
+      }
 
-      final manifest = await UpdateService.instance.checkUpdate(
-        checkUrl: widget.checkUrl,
-        appId: widget.appId,
-        platform: widget.platform,
-        channel: widget.channel,
-        versionCode: currentCode,
-        packageName: info.packageName,
-        security: widget.updateSecurity,
-      );
+      final outcome = widget.checkOverride != null
+          ? await widget.checkOverride!()
+          : await UpdateService.instance.checkUpdateDiagnostic(
+              checkUrl: widget.checkUrl,
+              appId: widget.appId,
+              platform: widget.platform,
+              channel: widget.channel,
+              versionCode: currentCode,
+              packageName: packageName,
+              security: widget.updateSecurity,
+            );
 
       if (!mounted) return;
 
-      if (manifest == null) {
-        if (widget.allowProceedOnCheckFailure) {
-          _goNext();
-        } else {
-          setState(() {
-            _loading = false;
-            _error = '无法获取更新信息';
-          });
-        }
+      if (outcome.isFailure) {
+        // 不再 catch(_) 静默：把原因交出去，至少 debug 日志能看到。
+        _report('更新检查失败：${outcome.describe()}');
         return;
       }
-      _manifest = manifest;
 
-      // ==========================================
-      // 🔥 终极铁门：硬性物理拦截！
-      // 只要服务端的版本号 <= 手机自己现在的版本号，
-      // 直接假装无事发生，放行进首页，绝不允许后续的弹窗判断运行！
-      // ==========================================
-      if (manifest.latestVersionCode <= currentCode) {
-        _goNext();
+      final manifest = outcome.manifest;
+      if (!outcome.hasUpdate || manifest == null) {
+        _report('更新检查完成：${outcome.describe()}');
         return;
       }
 
       final force = manifest.needForceUpdate(currentCode);
-      final hasNew = manifest.hasNewVersion(currentCode);
+      if (_dialogShown) return;
+      _dialogShown = true;
 
-      if (force || hasNew) {
-        await _showUpdateDialog(force: force);
-        return;
-      }
-
-      _goNext();
-    } catch (e) {
-      if (!mounted) return;
-
-      if (widget.allowProceedOnCheckFailure) {
-        _goNext();
-      } else {
-        setState(() {
-          _loading = false;
-          _error = e.toString();
-        });
-      }
-    }
-  }
-
-  Future<void> _showUpdateDialog({required bool force}) async {
-    if (!mounted) return;
-    final info = _packageInfo!;
-    final manifest = _manifest!;
-
-    await showDialog(
-      context: context,
-      barrierDismissible: !force,
-      builder: (_) {
-        return UpdateDialog(
+      await showDialog(
+        context: context,
+        barrierDismissible: !force,
+        builder: (_) => UpdateDialog(
           manifest: manifest,
-          currentVersionName: info.version,
-          currentVersionCode: int.tryParse(info.buildNumber) ?? 0,
+          currentVersionName: versionName,
+          currentVersionCode: currentCode,
           force: force,
           security: widget.updateSecurity,
-        );
-      },
-    );
-
-    // 非强制更新时，关闭后进入
-    if (!force) {
-      _goNext();
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _report('更新检查异常：$e');
     }
   }
 
-  void _goNext() {
-    if (_navigated || !mounted) return;
-    _navigated = true;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      Navigator.of(
-        context,
-      ).pushReplacement(MaterialPageRoute(builder: (_) => widget.nextPage));
-    });
+  void _report(String message) {
+    widget.onCheckDiagnostic?.call(message);
+    if (kDebugMode) debugPrint(message);
   }
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      child: Scaffold(
-        backgroundColor: const Color(0xFFF4F8FC),
-        body: Center(
-          child: _loading
-              ? const Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(height: 14),
-                    Text('正在检查版本...'),
-                  ],
-                )
-              : _error == null
-              ? const SizedBox.shrink()
-              : Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _error!,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.red),
-                      ),
-                      const SizedBox(height: 16),
-                      FilledButton(
-                        onPressed: () {
-                          setState(() {
-                            _loading = true;
-                            _error = null;
-                          });
-                          _bootstrap();
-                        },
-                        child: const Text('重试'),
-                      ),
-                    ],
-                  ),
-                ),
-        ),
-      ),
-    );
+    // 直接就是主界面：没有中间加载页，也就没有白屏等待。
+    return widget.nextPage;
   }
 }
