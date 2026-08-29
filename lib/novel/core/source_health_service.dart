@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import 'novel_source.dart';
 import 'novel_source_factory.dart';
 import '../pages/source_manager/book_source_model.dart';
@@ -70,8 +72,13 @@ class SourceHealthService {
   /// 健康快照缓存，key = source id
   final Map<String, SourceHealthSnapshot> _cache = {};
 
-  /// 正在检查中的 source id 集合，防止并发重复检测
-  final Set<String> _inProgress = {};
+  /// 正在进行中的探测，key = source id。
+  ///
+  /// 存的是 Future 本身而不是单纯的 id 标记：后到的调用方直接 await 同一个
+  /// Future，必然拿到本源本轮的真实结果。旧实现只存 id、然后固定睡 100ms
+  /// 再读缓存 —— 真实探测最长 8s，睡醒缓存通常还是空的，于是返回一个
+  /// sourceId 为空串的 unknown 快照，调用方拿到的根本不是自己请求的那个源。
+  final Map<String, Future<SourceHealthSnapshot>> _inFlight = {};
 
   /// 探测超时（毫秒）
   int probeTimeoutMs = 8000;
@@ -98,30 +105,34 @@ class SourceHealthService {
       if (age < cacheTtl) return cached;
     }
 
-    // 防并发
-    if (_inProgress.contains(id)) {
-      // 等待正在进行的探测完成
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-      return _cache[id] ??
-          const SourceHealthSnapshot(
-            sourceId: '',
-            status: SourceHealthStatus.unknown,
-            latencyMs: -1,
-            lastChecked: null,
-          );
-    }
+    // 同源已在探测中：复用同一个 Future，不重复打网络，
+    // 且保证拿到的是本源本轮的真实快照。
+    final pending = _inFlight[id];
+    if (pending != null) return pending;
 
-    _inProgress.add(id);
+    final future = _probeAndCache(source);
+    _inFlight[id] = future;
     try {
-      final snapshot = await _doPing(source);
-      _cache[id] = snapshot;
-      return snapshot;
+      return await future;
     } finally {
-      _inProgress.remove(id);
+      // 无论成功还是抛异常都要摘掉，否则一次失败会让这个源
+      // 永久复用那个已 completed-with-error 的 Future，再也探测不了。
+      _inFlight.remove(id);
     }
   }
 
-  Future<SourceHealthSnapshot> _doPing(BookSourceModel source) async {
+  Future<SourceHealthSnapshot> _probeAndCache(BookSourceModel source) async {
+    final snapshot = await doProbe(source);
+    _cache[source.id] = snapshot;
+    return snapshot;
+  }
+
+  /// 实际探测动作。
+  ///
+  /// 单独开成受保护的钩子，测试可以覆写它来绕开真实网络，
+  /// 同时让 [ping] 里的缓存与去重逻辑保持被测状态。
+  @visibleForTesting
+  Future<SourceHealthSnapshot> doProbe(BookSourceModel source) async {
     final stopwatch = Stopwatch()..start();
 
     try {
@@ -189,9 +200,16 @@ class SourceHealthService {
   ) async {
     final results = <String, SourceHealthSnapshot>{};
 
-    for (var i = 0; i < sources.length; i += maxConcurrentProbes) {
-      final end = (i + maxConcurrentProbes).clamp(0, sources.length);
-      final batch = sources.sublist(i, end);
+    // 先按 id 去重：结果本来就按 id 归并，重复源留着只会白占并发额度。
+    final unique = <String, BookSourceModel>{};
+    for (final s in sources) {
+      unique.putIfAbsent(s.id, () => s);
+    }
+    final deduped = unique.values.toList(growable: false);
+
+    for (var i = 0; i < deduped.length; i += maxConcurrentProbes) {
+      final end = (i + maxConcurrentProbes).clamp(0, deduped.length);
+      final batch = deduped.sublist(i, end);
       final snapshots = await Future.wait(batch.map(ping));
       for (var j = 0; j < batch.length; j++) {
         results[batch[j].id] = snapshots[j];

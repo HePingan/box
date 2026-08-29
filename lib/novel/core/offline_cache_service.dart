@@ -238,7 +238,10 @@ class OfflineCacheService {
       );
       await _clearChapterCache(detail);
       return true;
-    } catch (_) {}
+    } catch (e, st) {
+      // 静默 false 会让「清除缓存」按钮看起来没反应，用户只能反复点。
+      debugPrint('[OfflineCacheService] 清除缓存失败 bookId=$bookId: $e\n$st');
+    }
     return false;
   }
 
@@ -341,7 +344,11 @@ class OfflineCacheService {
       if (ch.url.trim().isEmpty) continue;
       try {
         await cache.remove(NovelCacheKeys.chapter(ch.url.trim()));
-      } catch (_) {}
+      } catch (e) {
+        // 单章删不掉不该中断整本清理，但要留痕：
+        // 静默会让「已清除」与磁盘实际占用长期不一致。
+        debugPrint('[OfflineCacheService] 章节缓存删除失败 url=${ch.url}: $e');
+      }
     }
   }
 
@@ -414,7 +421,11 @@ class OfflineCacheService {
         totalChapters: detail.chapters.length,
         estimatedBytes: cached * _bytesPerChapter,
       );
-    } catch (_) {}
+    } catch (e) {
+      // 统计失败就退回未补全的 meta：书架卡片会显示旧的缓存章节数。
+      // 数字对不上时能从日志看出是统计炸了，而不是真的没缓存。
+      debugPrint('[OfflineCacheService] 缓存统计失败 bookId=${meta.id}: $e');
+    }
     return meta;
   }
 

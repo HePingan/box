@@ -534,13 +534,18 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
       builder: (_) => _HealthCheckDialog(enabledCount: enabled.length),
     );
 
-    for (int i = 0; i < enabled.length; i++) {
-      if (!mounted) return;
-      await manager.ping(enabled[i]);
+    // 走 pingAll 的有界并发（上限 SourceHealthService.maxConcurrentProbes），
+    // 别在这里逐个 await —— 那样会绕开并发、退回 N×probeTimeout 的最差耗时：
+    // 10 个源全超时要等 ≈80s，整段时间对话框只能转圈。
+    try {
+      await manager.pingAll();
+    } finally {
+      // 探测抛异常也必须关掉对话框，否则 barrierDismissible: false
+      // 会把用户永久锁在转圈界面上，只能杀进程。
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
     }
-
-    if (!mounted) return;
-    Navigator.of(context, rootNavigator: true).pop();
 
     if (!mounted) return;
     _showSnack('检测完成：${enabled.length} 个书源');
@@ -797,7 +802,7 @@ class _HealthCheckDialog extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              '请稍候，正在逐源测试连通性',
+              '请稍候，正在并发测试连通性',
               style: TextStyle(
                 fontSize: 12.5,
                 color: Colors.grey.shade600,

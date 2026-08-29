@@ -223,7 +223,11 @@ class NovelDetailController extends ChangeNotifier {
         if (_disposed) return;
         notifyListeners();
       }
-    } catch (_) {}
+    } catch (e) {
+      // 书架元数据补全失败只影响「字数/最新章节」这类附加信息展示，
+      // 详情页主体照常可用，所以不上抛；但静默会让字段空缺无从排查。
+      debugPrint('[NovelDetailController] 书架元数据补全失败: $e');
+    }
   }
 
   Future<void> toggleBookshelf() async {

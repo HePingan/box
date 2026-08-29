@@ -72,7 +72,11 @@ class BookshelfManager {
         if (item is Map) {
           try {
             books.add(NovelBook.fromJson(Map<String, dynamic>.from(item)));
-          } catch (_) {}
+          } catch (e) {
+            // 跳过坏条目而不是整架报废，但要留痕 ——
+            // 静默会让「书莫名消失」查不出原因。
+            debugPrint('[BookshelfManager] 跳过无法解析的书架条目: $e');
+          }
         }
       }
       _bookshelfCache = _dedupe(books);
