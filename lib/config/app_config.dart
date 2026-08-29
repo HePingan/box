@@ -34,9 +34,11 @@ class AppConfig {
     defaultValue: true,
   );
 
+  /// 默认对齐服务端：`build_manifest()` 只会产出 `HMAC-SHA256` 或不签名。
+  /// 之前默认 `sha256` 与服务端不匹配，验签在算 HMAC 之前就因算法不符失败。
   static const String updateSignatureAlgorithm = String.fromEnvironment(
     'UPDATE_SIGNATURE_ALGORITHM',
-    defaultValue: 'sha256',
+    defaultValue: 'hmac_sha256',
   );
 
   static const String updateSignatureSecret = String.fromEnvironment(

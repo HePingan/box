@@ -99,12 +99,30 @@ String updateManifestHmacSha256Hex(String text, String secret) {
   return mac.convert(utf8.encode(text)).toString();
 }
 
+/// check 接口在**签名之后**追加的运行时字段，不参与 HMAC 正文。
+///
+/// 服务端 `build_manifest()` 只对发布字段算 HMAC，随后 check 接口按当前
+/// 请求方的版本号补上这些结论字段。客户端若对整个响应算 HMAC，必然算出
+/// 不同的值，导致「更新清单签名不匹配」。
+///
+/// 这里用**固定白名单**而不是「差集」：如果按「服务端没签的就剥掉」来实现，
+/// 攻击者只要多塞一个字段就能把它排除在校验之外。
+const Set<String> updateManifestRuntimeFields = <String>{
+  'currentVersionCode',
+  'hasNewVersion',
+  'updateRequired',
+  'effectiveForceUpdate',
+  'deviceId',
+  'userId',
+};
+
 Map<String, dynamic> updateManifestSignaturePayload(
   Map<String, dynamic> manifestJson,
 ) {
   final payload = Map<String, dynamic>.from(manifestJson)
     ..remove('signature')
-    ..remove('signatureAlgorithm');
+    ..remove('signatureAlgorithm')
+    ..removeWhere((key, _) => updateManifestRuntimeFields.contains(key));
   return payload;
 }
 
