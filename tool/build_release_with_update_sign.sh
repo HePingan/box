@@ -72,3 +72,32 @@ echo
 echo "==> 构建完成"
 ls -lh "$APK" | awk '{print "    "$5"  "$9}'
 echo "    SHA-256: $(sha256sum "$APK" | cut -d" " -f1)"
+
+# ---- 签名闸门 --------------------------------------------------------------
+# 为什么必须卡这一道：key.properties 缺失时 build.gradle.kts 会静默 fallback
+# 到 debug 签名，产出一个"看起来正常、装到老机器上必失败"的包。线上 1.1.8
+# 与本机构建就是两把不同的 debug key（4f5fa752… vs 8daac29e…），跨签名无法
+# 覆盖安装，用户会拿到 INSTALL_FAILED_UPDATE_INCOMPATIBLE。
+APKSIGNER="$(ls -d /root/android-sdk/build-tools/*/apksigner 2>/dev/null | sort -r | head -1 || true)"
+if [[ -z "$APKSIGNER" ]]; then
+  echo "    [警告] 未找到 apksigner，跳过签名核对" >&2
+else
+  CERTS="$("$APKSIGNER" verify --print-certs "$APK" 2>&1 || true)"
+  if grep -q 'CN=Android Debug' <<<"$CERTS"; then
+    cat >&2 <<EOF
+
+[错误] 这个包是 debug 签名，不能对外发布。
+
+原因：android/key.properties 缺失或 storeFile 为空，Gradle 回退到了 debug
+签名。debug 签名的包无法覆盖安装到用正式证书签过的机器上，老用户会看到
+INSTALL_FAILED_UPDATE_INCOMPATIBLE。
+
+请配置 android/key.properties（storeFile/storePassword/keyAlias/keyPassword），
+keystore 位置：/root/.secrets/box-release.p12
+EOF
+    exit 1
+  fi
+  FPR="$(grep -oiE 'certificate SHA-256 digest: [0-9a-f]+' <<<"$CERTS" | head -1 | awk '{print $NF}')"
+  echo "    签名证书    : $(grep -oE 'certificate DN: .*' <<<"$CERTS" | head -1 | cut -c17-)"
+  echo "    证书指纹    : ${FPR:-未取到}"
+fi
