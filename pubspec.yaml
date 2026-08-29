@@ -70,6 +70,11 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  # 分页协调器的时序测试需要虚拟时钟（见
+  # test/novel/reader/reader_pagination_coordinator_test.dart）。
+  # 本来就作为 flutter_test 的传递依赖存在，这里按 lock 里已有的
+  # 版本显式声明，避免直接 import 传递依赖。
+  fake_async: 1.3.3
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

@@ -20,8 +20,11 @@ import 'reader/reader_navigation_controller.dart';
 import 'reader/reader_paginator.dart';
 import 'reader/reader_paged_view.dart';
 import 'reader/reader_progress_service.dart';
+import 'reader/reader_pagination_coordinator.dart';
 import 'reader/reader_search_sheet.dart';
 import 'reader/reader_settings_sheet.dart';
+import 'reader/reader_status_views.dart';
+import 'reader/reader_theme.dart';
 import 'reader/reader_keyboard_intents.dart';
 import 'reader/reader_progress_locator.dart';
 import 'reader/reader_top_bar.dart';
@@ -78,20 +81,13 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _scrollJumpScheduled = false;
   bool _paginatingRemaining = false;
 
-  /// 分页轮次代号。
+  /// 分页轮次仲裁 + 后台补页节奏。
   ///
-  /// LayoutBuilder 会在首帧（fitWidth 还是 0）和稳定帧各触发一次
-  /// _calculatePages，因此同一章可能连续开启多轮后台分页。旧实现里
-  /// 所有轮次共用 _paginateCancelFlag，后一轮把前一轮 cancel 掉之后，
-  /// 前一轮会在 _paginateRemaining 中途 return —— 而「恢复阅读位置」
-  /// 恰好挂在那个循环的末尾，于是恢复永远不执行，用户停在第 1 页。
-  ///
-  /// 每轮启动时自增并记下自己的代号，收尾时只有代号仍是最新的那轮
-  /// 才继续执行；过期轮次安静退出，不再连带取消恢复。
-  int _paginateGeneration = 0;
-
-  // 背景增量分页取消标志
-  bool _paginateCancelFlag = false;
+  /// 代数计数器、取消标志、刷新节奏都在 [ReaderPaginationCoordinator] 里，
+  /// 由 test/novel/reader/reader_pagination_coordinator_test.dart 锁死行为
+  /// （含「首帧 + 稳定帧连开两轮导致恢复位置丢失」那个历史 bug 的回归）。
+  final ReaderPaginationCoordinator _paginationCoordinator =
+      ReaderPaginationCoordinator();
 
   /// 屏幕常亮策略：进入按持久化设置应用，离开无条件释放。
   final ReaderWakelockController _wakelock = ReaderWakelockController(
@@ -262,7 +258,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override
   void dispose() {
-    _paginateCancelFlag = true;
+    _paginationCoordinator.cancel();
     // 清理所有 Timer。_pagedScrollDebounce 以前漏了 cancel：它的回调虽有
     // mounted/hasClients 双守卫不会崩，但 Timer 会存活到 dispose 之后才空转一次，
     // 且持有 State 引用妨碍回收。注释说「所有」就得真的是所有。
@@ -306,27 +302,13 @@ class _ReaderPageState extends State<ReaderPage> {
     super.dispose();
   }
 
-  Color get _bgColor {
-    switch (_controller.settings.themeMode) {
-      case ReaderThemeMode.warm:
-        return const Color(0xFFDDEBD2);
-      case ReaderThemeMode.paper:
-        return const Color(0xFFF6EFD8);
-      case ReaderThemeMode.dark:
-        return const Color(0xFF1E2028);
-    }
-  }
+  /// 当前主题配色。色值本身在 [ReaderPalette]，这里只做取用。
+  ReaderPalette get _palette =>
+      ReaderPalette.of(_controller.settings.themeMode);
 
-  Color get _textColor {
-    switch (_controller.settings.themeMode) {
-      case ReaderThemeMode.dark:
-        return const Color(0xFFD0C8B8);
-      case ReaderThemeMode.warm:
-        return const Color(0xFF161F1A);
-      case ReaderThemeMode.paper:
-        return const Color(0xFF2C2C2C);
-    }
-  }
+  Color get _bgColor => _palette.background;
+
+  Color get _textColor => _palette.text;
 
   double _encodeProgressOffset(double raw) {
     return _controller.isScrollMode ? raw : -(raw + 1.0);
@@ -344,7 +326,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   void _resetPagedState(ReaderJumpTarget target) {
     _navigationController.setJumpTarget(target);
-    _paginateCancelFlag = true;
+    _paginationCoordinator.cancel();
     _pendingRestore = false;
     setState(() {
       _textPages = <String>[];
@@ -766,8 +748,7 @@ class _ReaderPageState extends State<ReaderPage> {
     if (_controller.content.isEmpty || _controller.isScrollMode) return;
 
     // 取消之前的后台分页，并开启新一轮（代号自增让过期轮次自行退出）
-    _paginateCancelFlag = true;
-    final generation = ++_paginateGeneration;
+    final generation = _paginationCoordinator.beginRound();
 
     final request = ReaderPaginationRequest(
       bookId: widget.detail.book.id,
@@ -803,7 +784,7 @@ class _ReaderPageState extends State<ReaderPage> {
       // 内容太短，一次性出完了。这条早返回路径也必须关掉闸门，
       // 否则 _pendingRestore 永远为 true，此后所有进度都存不下来。
       WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (generation != _paginateGeneration) return;
+        if (!_paginationCoordinator.isCurrent(generation)) return;
         await _restorePagePositionAfterPaginate();
         if (!mounted) return;
         setState(() => _pendingRestore = false);
@@ -812,8 +793,8 @@ class _ReaderPageState extends State<ReaderPage> {
     }
 
     // 后台异步补齐剩余页码
-    _paginateCancelFlag = false;
-    _paginateRemaining(result.remaining, generation);
+    _paginationCoordinator.armBackgroundRound();
+    unawaited(_paginateRemaining(result.remaining, generation));
   }
 
   /// 后台逐块补齐分页
@@ -823,54 +804,34 @@ class _ReaderPageState extends State<ReaderPage> {
     IncrementalPageIterator iterator,
     int generation,
   ) async {
-    final accumulatedPages = <String>[..._textPages];
-    int chunkCount = 0;
-
-    // 过期判定：只要有新一轮 _calculatePages 启动，本轮立即让位。
-    bool isStale() =>
-        !mounted || generation != _paginateGeneration || _paginateCancelFlag;
-
-    while (!iterator.isDone) {
-      // 每次微任务只算一个 chunk
-      await Future<void>.delayed(const Duration(milliseconds: 1));
-
-      if (isStale()) return;
-
-      final chunk = iterator.nextChunk();
-      if (chunk.isEmpty) break;
-
-      accumulatedPages.addAll(chunk);
-      chunkCount++;
-
-      // 每 2 个 chunk 更新一次 UI，减少 setState 频率
-      if (chunkCount >= 2) {
-        if (isStale()) return;
+    // 循环、代数仲裁、刷新节奏都在协调器里；这里只负责把结果落到
+    // State 上，以及做 Flutter 特有的收尾（postFrameCallback + 恢复位置）。
+    await _paginationCoordinator.drain(
+      source: ReaderChunkSource.fromIterator(iterator),
+      generation: generation,
+      initialPages: _textPages,
+      mounted: () => mounted,
+      onFlush: (pages) {
+        setState(() => _textPages = List<String>.from(pages));
+      },
+      onComplete: (pages) {
         setState(() {
-          _textPages = List<String>.from(accumulatedPages);
+          _textPages = List<String>.from(pages);
+          _paginatingRemaining = false;
         });
-        chunkCount = 0;
-      }
-    }
 
-    if (isStale()) return;
-
-    // 循环退出时可能还有 1 个未刷新的 chunk（chunkCount == 1），
-    // 必须在这里一并写回，否则本章最后几页会丢失、翻不到章末。
-    setState(() {
-      _textPages = List<String>.from(accumulatedPages);
-      _paginatingRemaining = false;
-    });
-
-    // 全部分页完成后再恢复阅读位置
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (generation != _paginateGeneration) return;
-      await _restorePagePositionAfterPaginate();
-      // 恢复完成，闸门关闭，后续 _saveProgress 可以正常写盘。
-      // 必须 await 恢复再关闸门：jumpToPage 会同步触发 _onProgressChanged，
-      // 若提前关闸，320ms debounce 后存下的仍是旧页码。
-      if (!mounted) return;
-      setState(() => _pendingRestore = false);
-    });
+        // 全部分页完成后再恢复阅读位置
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          if (!_paginationCoordinator.isCurrent(generation)) return;
+          await _restorePagePositionAfterPaginate();
+          // 恢复完成，闸门关闭，后续 _saveProgress 可以正常写盘。
+          // 必须 await 恢复再关闸门：jumpToPage 会同步触发 _onProgressChanged，
+          // 若提前关闸，320ms debounce 后存下的仍是旧页码。
+          if (!mounted) return;
+          setState(() => _pendingRestore = false);
+        });
+      },
+    );
   }
 
   Future<void> _restorePagePositionAfterPaginate() async {
@@ -1018,36 +979,9 @@ class _ReaderPageState extends State<ReaderPage> {
           Positioned(
             top: 8.0,
             right: 8.0,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: _bgColor.withValues(alpha: 0.85),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: _textColor.withValues(alpha: 0.2),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 10,
-                    height: 10,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.5,
-                      color: _textColor.withValues(alpha: 0.6),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '排版中…',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: _textColor.withValues(alpha: 0.6),
-                    ),
-                  ),
-                ],
-              ),
+            child: ReaderPaginatingBadge(
+              bgColor: _bgColor,
+              textColor: _textColor,
             ),
           ),
       ],
@@ -1210,161 +1144,37 @@ class _ReaderPageState extends State<ReaderPage> {
 
   /// 加载骨架屏（模拟文字占位 + spinner）
   Widget _buildLoadingSkeleton() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 章节标题占位
-            Container(
-              width: 180,
-              height: 18,
-              decoration: BoxDecoration(
-                color: _textColor.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-            const SizedBox(height: 28),
-            // 文字行占位 ×5
-            for (int i = 0; i < 5; i++)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: Container(
-                  height: 14,
-                  width: 120.0 + (i * 40) % 160,
-                  decoration: BoxDecoration(
-                    color: _textColor.withValues(
-                      alpha: 0.08 + (i % 3) * 0.02,
-                    ),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
-              ),
-            const SizedBox(height: 20),
-            Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: _textColor.withValues(alpha: 0.35),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    return ReaderLoadingSkeleton(textColor: _textColor);
   }
 
   /// 错误状态（图标 + 文字 + 重试按钮）
   Widget _buildErrorState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.error_outline_rounded,
-              size: 52,
-              color: _textColor.withValues(alpha: 0.35),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              _controller.errorText,
-              style: TextStyle(
-                color: _textColor.withValues(alpha: 0.65),
-                fontSize: 15,
-                height: 1.5,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            FilledButton.tonal(
-              onPressed: () => _controller.retry(),
-              child: const Text('重试'),
-            ),
-          ],
-        ),
-      ),
+    return ReaderErrorState(
+      textColor: _textColor,
+      message: _controller.errorText,
+      onRetry: () => _controller.retry(),
     );
   }
 
   /// 顶部阅读进度条（薄线，显示章节在全书中的位置）
   Widget _buildTopProgressBar() {
-    final total = _controller.totalChapters;
-    if (total <= 1) return const SizedBox.shrink();
-
-    final current = _controller.chapterIndex;
-    final progress = (current + 1) / total;
-
-    return FractionallySizedBox(
-      widthFactor: progress.clamp(0.0, 1.0),
-      child: Container(
-        height: 2,
-        color: _textColor.withValues(alpha: 0.30),
-      ),
+    return ReaderTopProgressBar(
+      textColor: _textColor,
+      chapterIndex: _controller.chapterIndex,
+      totalChapters: _controller.totalChapters,
     );
   }
 
   Widget _buildChapterTransitionOverlay() {
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0.0, end: 1.0),
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeInOut,
-      builder: (context, value, child) {
-        return GestureDetector(
-          onTap: () {
-            // 允许用户在切章加载期间点击遮罩取消（返回上一章）
-            if (_controller.isTransitioning) {
-              _controller.cancelTransition();
-            }
-          },
-          child: Opacity(
-            opacity: value.clamp(0.0, 0.55),
-            child: Container(
-              color: _bgColor,
-              alignment: Alignment.center,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _controller.transitionTitle,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: _textColor.withValues(alpha: 0.7 * value),
-                      height: 1.5,
-                    ),
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.8,
-                      color: _textColor.withValues(alpha: 0.35 * value),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '点击取消',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: _textColor.withValues(alpha: 0.4 * value),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
+    return ReaderChapterTransitionOverlay(
+      bgColor: _bgColor,
+      textColor: _textColor,
+      title: _controller.transitionTitle,
+      onCancel: () {
+        // 允许用户在切章加载期间点击遮罩取消（返回上一章）
+        if (_controller.isTransitioning) {
+          _controller.cancelTransition();
+        }
       },
     );
   }
