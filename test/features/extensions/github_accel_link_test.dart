@@ -245,11 +245,20 @@ void main() {
   });
 
   group('API 查询地址', () {
-    test('按数字 ID 拼 repositories 接口，并走镜像避免直连不通', () {
+    test('按数字 ID 拼 repositories 接口，直连优先、镜像回退', () {
       final r = GithubAccelLink.parse(asset);
+      // 实测直连 api.github.com 是 200，镜像会间歇性 403 限流，
+      // 所以先试直连，再回退 gh-proxy。
       expect(
         r.repoLookupUrl,
-        'https://gh-proxy.com/https://api.github.com/repositories/1333629201',
+        'https://api.github.com/repositories/1333629201',
+      );
+      expect(
+        r.repoLookupUrls,
+        containsAll([
+          'https://api.github.com/repositories/1333629201',
+          'https://gh-proxy.com/https://api.github.com/repositories/1333629201',
+        ]),
       );
     });
 

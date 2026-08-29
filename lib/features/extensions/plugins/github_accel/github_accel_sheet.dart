@@ -81,7 +81,14 @@ class _GithubAccelSheetState extends State<GithubAccelSheet> {
       url,
       options: Options(
         responseType: ResponseType.plain,
-        headers: const {'Accept': 'application/vnd.github+json'},
+        // GitHub API 对没有 User-Agent 的请求直接拒；镜像转发时也需要。
+        headers: const {
+          'Accept': 'application/vnd.github+json',
+          'User-Agent': 'box-app',
+        },
+        // 不让 Dio 因 4xx 抛异常 —— 限流响应体里有 "API rate limit" 信息，
+        // 交给 service 判断（没有 full_name 就换通道），比抛英文堆栈有用。
+        validateStatus: (_) => true,
       ),
     );
     return resp.data ?? '';
@@ -417,7 +424,23 @@ class _GithubAccelSheetState extends State<GithubAccelSheet> {
           ),
           if (r.message.isNotEmpty) ...[
             const SizedBox(height: 6),
-            Text(r.message, style: theme.textTheme.bodySmall),
+            // 失败提示里带着可手填的链接模板，做成可选中方便复制。
+            SelectableText(
+              r.message,
+              style: theme.textTheme.bodySmall?.copyWith(height: 1.45),
+            ),
+          ],
+          if (!ok && r.link.kind == GithubLinkKind.signedAsset) ...[
+            const SizedBox(height: 8),
+            // 镜像限流是间歇性的，重试很可能直接成功，给个一键入口。
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: _resolving ? null : _resolve,
+                icon: const Icon(Icons.refresh_rounded, size: 15),
+                label: const Text('重试转换'),
+              ),
+            ),
           ],
           if (ok) ...[
             const SizedBox(height: 10),

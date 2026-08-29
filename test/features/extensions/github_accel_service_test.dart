@@ -53,19 +53,28 @@ void main() {
       expect(r.accelUrl, 'https://gh-proxy.com/$stable');
     });
 
-    test('请求地址走镜像，避免直连 api.github.com 不通', () async {
-      var requested = '';
+    test('先直连 api，失败后自动回退镜像通道', () async {
+      final requested = <String>[];
       final svc = GithubAccelService(
+        retryDelay: Duration.zero,
         fetch: (url) async {
-          requested = url;
+          requested.add(url);
+          // 直连不通时（手机常见），必须还能走镜像成功。
+          if (url.startsWith('https://api.github.com/')) {
+            throw Exception('连接超时');
+          }
           return apiBody;
         },
       );
-      await svc.resolve(signed);
+      final r = await svc.resolve(signed);
 
+      expect(r.ok, isTrue);
+      expect(requested.first, 'https://api.github.com/repositories/1333629201');
       expect(
         requested,
-        'https://gh-proxy.com/https://api.github.com/repositories/1333629201',
+        contains(
+          'https://gh-proxy.com/https://api.github.com/repositories/1333629201',
+        ),
       );
     });
 
@@ -85,20 +94,29 @@ void main() {
       expect(r.stableUrl, stable);
     });
 
-    test('返回体缺 full_name 时明确失败', () async {
-      final svc = GithubAccelService(fetch: (_) async => '{"id":1}');
+    test('所有通道都缺 full_name 时失败，并给出限流说明', () async {
+      final svc = GithubAccelService(
+        retryDelay: Duration.zero,
+        fetch: (_) async => '{"id":1}',
+      );
       final r = await svc.resolve(signed);
       expect(r.ok, isFalse);
-      expect(r.message, contains('full_name'));
+      // 限流响应常是 200 + {"message":"API rate limit exceeded"}，
+      // 对用户讲「限流 + 怎么办」比讲「缺 full_name」有用。
+      expect(r.message, contains('限流'));
+      expect(r.message, contains('/releases/latest/download/'));
     });
 
-    test('网络异常时不抛，返回失败原因', () async {
+    test('网络异常时不抛，返回可操作的失败提示', () async {
       final svc = GithubAccelService(
+        retryDelay: Duration.zero,
         fetch: (_) async => throw Exception('连接超时'),
       );
       final r = await svc.resolve(signed);
       expect(r.ok, isFalse);
-      expect(r.message, contains('连接超时'));
+      expect(r.message, contains('查不到这个仓库的名字'));
+      // 不把 Dio/Exception 的英文堆栈原样丢给用户。
+      expect(r.message, isNot(contains('Exception')));
     });
 
     test('无 fetch 注入时给出可操作提示', () async {
@@ -152,18 +170,21 @@ void main() {
   });
 
   group('镜像切换', () {
-    test('服务级镜像贯穿到加速链接和查询地址', () async {
-      var requested = '';
+    test('选了 ghfast 时下载走 ghfast，但查询不用它（实测不支持 api 子域）', () async {
+      final requested = <String>[];
       final svc = GithubAccelService(
         mirror: 'https://ghfast.top',
+        retryDelay: Duration.zero,
         fetch: (url) async {
-          requested = url;
+          requested.add(url);
           return apiBody;
         },
       );
       final r = await svc.resolve(signed);
 
-      expect(requested, startsWith('https://ghfast.top/https://api.github.com'));
+      // ghfast.top 代理 api.github.com 实测回 403 "Invalid input."，
+      // 放进查询通道只会白等，所以排除；但下载前缀仍尊重用户选择。
+      expect(requested.any((u) => u.contains('ghfast.top')), isFalse);
       expect(r.accelUrl, 'https://ghfast.top/$stable');
     });
 

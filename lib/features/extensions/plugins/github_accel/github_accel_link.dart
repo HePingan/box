@@ -116,11 +116,44 @@ class GithubAccelLink {
     return '${_trimSlash(mirror)}/$stable';
   }
 
-  /// 查询 `owner/repo` 的接口地址（本身也走镜像，因为国内直连 api.github.com 常不通）。
+  /// 查询 `owner/repo` 的接口地址（保留单通道字段，向后兼容）。
   String? get repoLookupUrl {
-    if (repositoryId.isEmpty) return null;
-    return '${_trimSlash(mirror)}/https://api.github.com/repositories/$repositoryId';
+    final urls = repoLookupUrls;
+    return urls.isEmpty ? null : urls.first;
   }
+
+  /// 查 `owner/repo` 的候选通道，按实测可靠度排序。
+  ///
+  /// 实测结论（对线上逐个 curl）：
+  ///   - 直连 `api.github.com` → 200，最稳，优先。
+  ///   - `gh-proxy.com` 代理 → 可用，但它用共享 GitHub 账号回源，
+  ///     账号限额被打满时回 403；同一地址连打 6 次得到 403,403,403,200,403,403，
+  ///     属于**间歇性**限流，所以值得重试而不是判死。
+  ///   - `ghfast.top` → 403 "Invalid input."（不代理 api 子域）
+  ///   - `hk.gh-proxy.com` → 302 到 .org 域，拿不到 JSON
+  ///   - `ghproxy.net` → TLS 证书已过期
+  /// 因此只保留直连 + gh-proxy 两条，其余不浪费用户时间。
+  List<String> get repoLookupUrls {
+    if (repositoryId.isEmpty) return const [];
+    final api = 'https://api.github.com/repositories/$repositoryId';
+    final channels = <String>[
+      api, // 直连优先
+      'https://gh-proxy.com/$api',
+    ];
+    // 用户选的镜像若不在清单里，作为最后兜底也试一把。
+    final custom = '${_trimSlash(mirror)}/$api';
+    if (!channels.contains(custom) && !_lookupDeadHosts.any(custom.contains)) {
+      channels.add(custom);
+    }
+    return List.unmodifiable(channels);
+  }
+
+  /// 实测无法代理 api.github.com 的域名，不放进查询通道。
+  static const List<String> _lookupDeadHosts = [
+    'ghfast.top',
+    'hk.gh-proxy.com',
+    'ghproxy.net',
+  ];
 
   static String _trimSlash(String s) =>
       s.endsWith('/') ? s.substring(0, s.length - 1) : s;
