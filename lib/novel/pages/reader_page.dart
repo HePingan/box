@@ -892,7 +892,9 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Widget _buildTopBar() {
     return ReaderTopBar(
-      controller: _controller,
+      bookTitle: _controller.bookTitle,
+      chapterTitle: _controller.currentChapterTitle,
+      hasBookmark: _controller.hasBookmarkForCurrent,
       bgColor: _bgColor,
       textColor: _textColor,
       onBack: () => Navigator.pop(context),
@@ -1085,10 +1087,16 @@ class _ReaderPageState extends State<ReaderPage> {
                     ),
                   ),
 
-                // 顶部阅读进度条（不受亮度遮罩影响）
+                // 顶部阅读进度条（不受亮度遮罩影响）。
+                //
+                // 菜单展开时顶栏是不透明的整条，会把 top:0 的进度条完全盖住，
+                // 所以这时把进度条下移到顶栏下沿；菜单收起时仍贴屏幕顶边。
                 if (!_controller.loading && !_controller.isError)
                   Positioned(
-                    top: 0,
+                    top: _navigationController.menuVisible
+                        ? MediaQuery.of(context).padding.top +
+                              ReaderTopBar.contentHeight
+                        : 0,
                     left: 0,
                     right: 0,
                     child: _buildTopProgressBar(),
