@@ -607,6 +607,17 @@ class MarketPluginTemplate {
       sort: 12,
     ),
     const MarketPluginTemplate(
+      id: 'market_github_accel',
+      title: 'GitHub 加速下载',
+      subtitle: '链接自动转镜像加速，直接下载 Release 附件',
+      areaCode: 'recommend',
+      actionCode: 'openGithubAccel',
+      payload: '',
+      icon: Icons.rocket_launch_outlined,
+      color: Color(0xFF24292F),
+      sort: 13,
+    ),
+    const MarketPluginTemplate(
       id: 'market_quick_note',
       title: '快速便签',
       subtitle: '首页快捷记录灵感',

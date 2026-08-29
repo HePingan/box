@@ -16,6 +16,7 @@ import '../../quiz_plugin/presentation/quiz_plugin_entry.dart';
 import '../../quiz_plugin/presentation/quiz_bank_view_page.dart';
 import '../../policy/plugin_policy.dart';
 import '../plugins/plugin_toolbox.dart';
+import '../plugins/github_accel/github_accel_sheet.dart';
 
 String _asString(dynamic value, [String fallback = '']) {
   if (value == null) return fallback;
@@ -111,6 +112,7 @@ enum HomePluginActionType {
   openNovelList,
   openVideoList,
   openImageGenerator,
+  openGithubAccel,
 }
 
 extension HomePluginActionTypeX on HomePluginActionType {
@@ -126,6 +128,8 @@ extension HomePluginActionTypeX on HomePluginActionType {
         return '打开影视列表';
       case HomePluginActionType.openImageGenerator:
         return '打开 AI 生图';
+      case HomePluginActionType.openGithubAccel:
+        return '打开 GitHub 加速下载';
     }
   }
 }
@@ -199,6 +203,28 @@ String _payloadRouteCode(HomePluginActionContext actionContext) {
   return payload;
 }
 
+/// 从 payload 里取出链接。支持裸链接和 {"url": "..."} 两种形态。
+String _payloadUrl(HomePluginActionContext actionContext) {
+  final payload = actionContext.payload.trim();
+  if (payload.isEmpty) {
+    return actionContext.extra['url']?.toString().trim() ?? '';
+  }
+  if (payload.startsWith('{')) {
+    try {
+      final decoded = jsonDecode(payload);
+      if (decoded is Map) {
+        final url = decoded['url'] ?? decoded['link'] ?? decoded['href'];
+        final text = url?.toString().trim() ?? '';
+        if (text.isNotEmpty) return text;
+      }
+    } catch (e) {
+      debugPrint('[HomePlugin] GitHub 加速 payload 解析失败: $e');
+    }
+    return '';
+  }
+  return payload;
+}
+
 class HomePluginActionRegistry {
   HomePluginActionRegistry._();
 
@@ -249,6 +275,15 @@ class HomePluginActionRegistry {
           if (builder == null) return;
           await Navigator.push(context, MaterialPageRoute(builder: builder));
         },
+    // GitHub 加速下载是个底部面板而不是整页，所以走 show 而不是 Navigator.push。
+    // payload 若带链接就直接预填并自动转换，方便从别处「用加速下载打开」。
+    HomePluginActionType.openGithubAccel.name: (context, actionContext) async {
+      if (context == null) return;
+      await GithubAccelSheet.show(
+        context,
+        initialUrl: _payloadUrl(actionContext),
+      );
+    },
   };
 
   static bool contains(String actionCode) {
