@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'github_accel_link.dart';
+import 'github_accel_probe.dart';
 import 'github_accel_service.dart';
 
 /// GitHub 加速下载面板。
@@ -47,6 +48,25 @@ class _GithubAccelSheetState extends State<GithubAccelSheet> {
   );
 
   String _mirror = GithubAccelLink.defaultMirror;
+
+  /// 测速状态与结果（镜像 url -> 排名）。
+  bool _probing = false;
+  String _probeNote = '';
+  Map<String, MirrorRanking> _rankings = const {};
+
+  /// 每次探测的字节数。调大 → 测量更接近真实大文件吞吐但更耗流量；
+  /// 调小 → 省流量但容易被握手开销淹没。64KB 是实测能稳定分辨快慢的下限。
+  static const int _probeBytes = 65536;
+
+  /// 还没转换出稳定链接时的测速目标。
+  ///
+  /// 选**固定 tag** 的 release 资产（不是 latest）：latest 会随上游发版变化，
+  /// 文件名一变探测就 404。release 资产实测支持 Range（严格返回 65536 字节），
+  /// 而归档（/archive/）和 raw 文件会无视 Range 直接吐几 MB，不适合做探测。
+  /// 只用来比较线路快慢，不会下载给用户。
+  static const String _probeFallbackTarget =
+      'https://github.com/rikkahub/rikkahub/releases/download/2.4.15/'
+      'RikkaHub-2.4.15-arm64-v8a.apk';
   GithubAccelResolution? _result;
   bool _resolving = false;
 
@@ -359,25 +379,178 @@ class _GithubAccelSheetState extends State<GithubAccelSheet> {
   }
 
   Widget _mirrorPicker(ThemeData theme) {
-    return Wrap(
-      spacing: 6,
-      runSpacing: 6,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final m in GithubAccelLink.mirrors)
-          ChoiceChip(
-            label: Text(m.label, style: const TextStyle(fontSize: 11.5)),
-            selected: _mirror == m.url,
-            visualDensity: VisualDensity.compact,
-            onSelected: _downloading
-                ? null
-                : (_) {
-                    setState(() => _mirror = m.url);
-                    if (_result != null) _resolve();
-                  },
-          ),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final m in GithubAccelLink.mirrors)
+              ChoiceChip(
+                label: Text(
+                  _mirrorChipLabel(m),
+                  style: const TextStyle(fontSize: 11.5),
+                ),
+                selected: _mirror == m.url,
+                visualDensity: VisualDensity.compact,
+                // 测速结果里不可用的镜像置灰，避免用户白选。
+                onSelected: (_downloading || _probing || !_mirrorUsable(m.url))
+                    ? null
+                    : (_) {
+                        setState(() => _mirror = m.url);
+                        if (_result != null) _resolve();
+                      },
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            OutlinedButton.icon(
+              onPressed: (_probing || _downloading) ? null : _probeMirrors,
+              icon: _probing
+                  ? const SizedBox(
+                      width: 13,
+                      height: 13,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.speed_rounded, size: 15),
+              label: Text(_probing ? '测速中…' : '测速选最快'),
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (_probeNote.isNotEmpty)
+              Expanded(
+                child: Text(
+                  _probeNote,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.hintColor,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ],
     );
   }
+
+  String _mirrorChipLabel(GithubMirror m) {
+    final r = _rankings[m.url];
+    if (r == null) return m.label;
+    if (!r.usable) return '${m.label} ✗';
+    return '${m.label} ${r.medianMs}ms';
+  }
+
+  bool _mirrorUsable(String url) {
+    final r = _rankings[url];
+    return r == null || r.usable;
+  }
+
+  /// 对所有内置镜像并发测速，自动切到最快的那个。
+  ///
+  /// 探测目标优先用当前已转换出的稳定链接（最贴近真实下载路径）；
+  /// 还没转换时退回一个体积够小的公共文件，只为比较线路快慢。
+  Future<void> _probeMirrors() async {
+    final stable = _result?.link.stableUrl ?? _probeFallbackTarget;
+
+    setState(() {
+      _probing = true;
+      _probeNote = '';
+    });
+
+    final prober = MirrorProbe(probe: _probeOnce);
+    final ranked = await prober.rank(stable);
+
+    if (!mounted) return;
+
+    final best = ranked.where((r) => r.usable).toList();
+    setState(() {
+      _rankings = {for (final r in ranked) r.mirror: r};
+      _probing = false;
+      if (best.isEmpty) {
+        _probeNote = '所有线路都没测通，可能是当前网络不通';
+      } else {
+        _mirror = best.first.mirror;
+        _probeNote = '已选 ${best.first.label}（${best.first.summary}）';
+      }
+    });
+
+    // 换了镜像就重算加速地址，让下载按钮用上新线路。
+    if (best.isNotEmpty && _result != null) await _resolve();
+  }
+
+  /// 真实探测一次：只取前 64KB，量总耗时。
+  ///
+  /// 用流式读取并在收够字节后主动中断，而不是信任 Range：实测部分镜像
+  /// 对 raw 文件无视 Range（gh-proxy 返回 290KB 而非 64KB），归档更是
+  /// 直接吐 10MB。不设上限的话「测速」本身就变成了大流量下载。
+  Future<MirrorSample> _probeOnce(String mirror, String url) async {
+    final target = '${_trimSlash(mirror)}/$url';
+    final sw = Stopwatch()..start();
+    try {
+      final resp = await _dio.get<ResponseBody>(
+        target,
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: {
+            'Range': 'bytes=0-${_probeBytes - 1}',
+            'User-Agent': 'box-app',
+          },
+          followRedirects: true,
+          receiveTimeout: const Duration(seconds: 12),
+          sendTimeout: const Duration(seconds: 12),
+          validateStatus: (c) => c != null && c < 400,
+        ),
+      );
+
+      var got = 0;
+      final sub = resp.data!.stream;
+      await for (final chunk in sub) {
+        got += chunk.length;
+        // 收够就走，多余的字节没有测量价值，只是浪费用户流量。
+        if (got >= _probeBytes) break;
+      }
+      sw.stop();
+
+      if (got <= 0) {
+        return MirrorSample(mirror: mirror, ok: false, error: '没返回数据');
+      }
+      return MirrorSample(mirror: mirror, ok: true, elapsed: sw.elapsed);
+    } on DioException catch (e) {
+      sw.stop();
+      return MirrorSample(
+        mirror: mirror,
+        ok: false,
+        error: _shortDioError(e),
+      );
+    } catch (e) {
+      sw.stop();
+      return MirrorSample(mirror: mirror, ok: false, error: '$e');
+    }
+  }
+
+  static String _shortDioError(DioException e) {
+    switch (e.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.sendTimeout:
+        return '超时';
+      case DioExceptionType.badCertificate:
+        return '证书无效';
+      case DioExceptionType.badResponse:
+        return 'HTTP ${e.response?.statusCode ?? '?'}';
+      case DioExceptionType.connectionError:
+        return '连不上';
+      default:
+        return '失败';
+    }
+  }
+
+  static String _trimSlash(String s) =>
+      s.endsWith('/') ? s.substring(0, s.length - 1) : s;
 
   Widget _resultCard(ThemeData theme, GithubAccelResolution r) {
     final ok = r.ok && r.accelUrl != null;

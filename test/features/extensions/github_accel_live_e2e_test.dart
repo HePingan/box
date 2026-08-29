@@ -3,6 +3,7 @@ library;
 
 import 'dart:io';
 
+import 'package:box/features/extensions/plugins/github_accel/github_accel_probe.dart';
 import 'package:box/features/extensions/plugins/github_accel/github_accel_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -68,4 +69,59 @@ void main() {
       reason: '应下到真实 APK 字节',
     );
   }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test('真联网测速：选出的镜像确实是最快可用的那条', () async {
+    // 固定 tag 的 release 资产，支持 Range，不随上游发版变化。
+    const target =
+        'https://github.com/rikkahub/rikkahub/releases/download/2.4.15/'
+        'RikkaHub-2.4.15-arm64-v8a.apk';
+
+    Future<MirrorSample> probeOnce(String mirror, String url) async {
+      final m = mirror.endsWith('/')
+          ? mirror.substring(0, mirror.length - 1)
+          : mirror;
+      final sw = Stopwatch()..start();
+      try {
+        final req = await client.getUrl(Uri.parse('$m/$url'));
+        req.headers.set('Range', 'bytes=0-65535');
+        req.headers.set('User-Agent', 'box-app');
+        final resp = await req.close();
+        var got = 0;
+        await for (final chunk in resp) {
+          got += chunk.length;
+          if (got >= 65536) break;
+        }
+        sw.stop();
+        if (got <= 0) {
+          return MirrorSample(mirror: mirror, ok: false, error: '空响应');
+        }
+        return MirrorSample(mirror: mirror, ok: true, elapsed: sw.elapsed);
+      } catch (e) {
+        sw.stop();
+        return MirrorSample(mirror: mirror, ok: false, error: '$e');
+      }
+    }
+
+    final ranked = await MirrorProbe(rounds: 3, probe: probeOnce).rank(target);
+
+    for (final r in ranked) {
+      // ignore: avoid_print
+      print('  ${r.label.padRight(22)} ${r.summary}');
+    }
+
+    final usable = ranked.where((r) => r.usable).toList();
+    expect(usable, isNotEmpty, reason: '至少要有一条线路测通');
+
+    // 排序必须真的成立：可用的按中位耗时升序，不可用的垫底。
+    for (var i = 1; i < usable.length; i++) {
+      expect(
+        usable[i - 1].medianMs,
+        lessThanOrEqualTo(usable[i].medianMs),
+      );
+    }
+    expect(ranked.last.usable, anyOf(isTrue, isFalse));
+    if (ranked.any((r) => !r.usable)) {
+      expect(ranked.last.usable, isFalse, reason: '不可用的必须排最后');
+    }
+  }, timeout: const Timeout(Duration(minutes: 4)));
 }
