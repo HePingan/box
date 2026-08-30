@@ -182,14 +182,26 @@ class _DrawerContent extends StatelessWidget {
     _showSnack(context, '正在整理本地数据…');
     try {
       final file = await LocalBackupService.writeBackupToTemporaryFile();
+      // 导出后当场回读自检。只报总条数看不出「某一类整体缺失」，
+      // 分类计数能让用户在卸载重装**之前**发现备份不全。
+      String summaryText;
+      try {
+        final summary = LocalBackupService.summarize(
+          await file.readAsString(),
+        );
+        summaryText = summary.describe();
+      } catch (_) {
+        summaryText = '（自检未通过，请确认备份文件是否完整）';
+      }
       if (!context.mounted) return;
       await SharePlus.instance.share(
         ShareParams(
           files: [XFile(file.path, mimeType: 'application/json')],
           subject: 'Box 本地数据备份',
-          text: '请妥善保存此备份文件；重装后可通过“恢复本地数据”导入。',
+          text: '本次备份内容：$summaryText\n请妥善保存此备份文件；重装后可通过“恢复本地数据”导入。',
         ),
       );
+      if (context.mounted) _showSnack(context, '备份内容：$summaryText');
     } catch (_) {
       if (context.mounted) _showSnack(context, '备份失败，请稍后重试');
     }
@@ -671,7 +683,7 @@ class _DrawerContent extends StatelessWidget {
               context,
               icon: Icons.backup_outlined,
               title: '备份本地数据',
-              subtitle: '收藏、历史、下载任务与本地题库',
+              subtitle: '收藏、历史、下载、书架书源与阅读进度、本地题库',
               onTap: () => _backupLocalData(context),
             ),
             _buildMoreItem(

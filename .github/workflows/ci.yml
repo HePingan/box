@@ -1,0 +1,66 @@
+name: CI
+
+# 为什么要有这个：1197 个测试和 analyze 原来全靠手跑，漏跑一次就可能
+# 带病发布。包名一致性闸门（test/package_identity_test.dart）和备份覆盖面
+# 闸门（test/backup/backup_covers_novel_data_test.dart）这类"防回归"测试，
+# 只有在 CI 里强制执行才真正生效。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一分支连续推送时取消旧任务，省 CI 时间。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          # 钉死版本：本地 1197 个测试是在 3.44.6 上验证通过的，
+          # CI 跟着 stable 漂会让"CI 绿/本地红"这类问题无从判断。
+          flutter-version: 3.44.6
+          channel: stable
+          cache: true
+
+      - run: flutter --version
+
+      - name: 安装依赖
+        run: flutter pub get
+
+      - name: 静态分析（零容忍）
+        run: flutter analyze
+
+      - name: 单元与 Widget 测试
+        # 排除 live：那些用例要打真实后台，CI 里没有密钥也不该依赖外网。
+        run: flutter test --exclude-tags live --reporter expanded
+
+  # 单独一个 job 跑关键闸门，失败时一眼能看出是"防回归线被破了"，
+  # 而不是淹没在上千条测试输出里。
+  guardrails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.6
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: 包名一致性 + 备份覆盖面
+        run: |
+          flutter test \
+            test/package_identity_test.dart \
+            test/backup/ \
+            test/update/ \
+            --reporter expanded
