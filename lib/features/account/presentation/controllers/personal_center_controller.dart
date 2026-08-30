@@ -5,6 +5,8 @@ import '../../data/account_store.dart';
 import '../../domain/account_models.dart';
 import '../../data/personal_center_client.dart';
 import '../../domain/personal_center_models.dart';
+import '../../../cloud_sync/data/announcement_service.dart';
+import '../../../cloud_sync/data/cloud_sync_client.dart';
 
 /// 个人中心状态控制器。
 ///
@@ -16,13 +18,16 @@ class PersonalCenterController extends ChangeNotifier {
     PersonalCenterClient? client,
     BoxAccountStore? accountStore,
     BoxAccountClient? accountClient,
+    AnnouncementService? announcementService,
   }) : _client = client ?? PersonalCenterClient(),
        _accountStore = accountStore ?? BoxAccountStore(),
-       _accountClient = accountClient ?? BoxAccountClient();
+       _accountClient = accountClient ?? BoxAccountClient(),
+       _announcements = announcementService ?? AnnouncementService();
 
   final PersonalCenterClient _client;
   final BoxAccountStore _accountStore;
   final BoxAccountClient _accountClient;
+  final AnnouncementService _announcements;
 
   BoxAccountSession? session;
   PersonalOverview? overview;
@@ -30,6 +35,11 @@ class PersonalCenterController extends ChangeNotifier {
   PersonalQuizPage? quizPage;
   PersonalPluginPage? pluginPage;
   List<PersonalActivityDay> activity = const [];
+
+  /// 站内公告（公开接口，未登录也能看）。
+  AnnouncementState announcements = AnnouncementState.empty;
+  bool announcementsLoading = false;
+  String? announcementsError;
 
   bool loading = false;
   bool quotaLoading = false;
@@ -48,6 +58,7 @@ class PersonalCenterController extends ChangeNotifier {
   /// 子模块降级提示，键为模块名。
   final Map<String, String> warnings = {};
 
+  bool _announcementsLoaded = false;
   bool _quotaTabLoaded = false;
   bool _pluginsLoaded = false;
   bool _quizLoaded = false;
@@ -273,6 +284,64 @@ class PersonalCenterController extends ChangeNotifier {
         stats: loaded.stats,
       );
     }
+    notifyListeners();
+  }
+
+  // ── 公告 ──
+
+  /// 加载公告。公告是公开接口，不依赖登录态，因此即使 [session] 为空也能拉。
+  Future<void> loadAnnouncements({bool force = false}) async {
+    if (_announcementsLoaded && !force) return;
+    announcementsLoading = true;
+    announcementsError = null;
+    notifyListeners();
+    try {
+      announcements = await _announcements.load(force: force);
+      _announcementsLoaded = true;
+    } catch (e) {
+      announcementsError = e is CloudSyncException ? e.message : '公告加载失败：$e';
+    } finally {
+      announcementsLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// 只读缓存刷新红点，不打网络。
+  Future<void> refreshAnnouncementBadge() async {
+    try {
+      final cached = await _announcements.loadCachedOnly();
+      if (cached.items.isNotEmpty) {
+        announcements = cached;
+        notifyListeners();
+      }
+    } catch (_) {
+      // 红点是锦上添花，失败静默
+    }
+  }
+
+  Future<void> markAnnouncementRead(String id) async {
+    if (announcements.isRead(id)) return;
+    final ids = await _announcements.markRead(id);
+    announcements = AnnouncementState(
+      items: announcements.items,
+      readIds: ids,
+      fetchedAt: announcements.fetchedAt,
+      fromCache: announcements.fromCache,
+    );
+    notifyListeners();
+  }
+
+  Future<void> markAllAnnouncementsRead() async {
+    if (!announcements.hasUnread) return;
+    final ids = await _announcements.markAllRead(
+      announcements.items.map((e) => e.id),
+    );
+    announcements = AnnouncementState(
+      items: announcements.items,
+      readIds: ids,
+      fetchedAt: announcements.fetchedAt,
+      fromCache: announcements.fromCache,
+    );
     notifyListeners();
   }
 

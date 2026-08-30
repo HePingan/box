@@ -8,6 +8,7 @@ import '../../../../design_system/app_tokens.dart';
 import '../../../../novel/novel_module.dart';
 import '../../domain/admin_resource.dart';
 import '../../domain/admin_resource_provider.dart';
+import '../../../cloud_sync/data/cloud_sync_client.dart';
 
 /// 小说书源资源提供者
 ///
@@ -83,6 +84,136 @@ class _BookSourceTabState extends State<_BookSourceTab> {
   }
 
   BookSourceManager get _manager => context.read<BookSourceManager>();
+
+  bool _publishing = false;
+
+  /// 发布书源到云端，全体用户下次同步时收到。
+  ///
+  /// 批量模式下只发布勾选项，否则发布全部本地书源。mode=merge 只增改，不会把
+  /// 未提交的云端书源转墓碑 —— 避免管理员在只装了 3 个源的设备上一键清空云端。
+  Future<void> _publishToCloud(List<BookSourceModel> visible) async {
+    if (widget.serverUrl.trim().isEmpty || widget.token.trim().isEmpty) {
+      _showSnack('未取到管理员会话，请重新登录后台');
+      return;
+    }
+
+    final selected = _batchMode && _selectedIds.isNotEmpty
+        ? visible.where((s) => _selectedIds.contains(s.id)).toList()
+        : _manager.items;
+
+    if (selected.isEmpty) {
+      _showSnack('没有可发布的书源');
+      return;
+    }
+
+    final titleController = TextEditingController(text: '书源已更新');
+    final bodyController = TextEditingController(
+      text: '本次更新了 ${selected.length} 个书源，重启或下拉刷新即可生效。',
+    );
+    var announce = true;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('发布到云端'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '将 ${selected.length} 个书源下发给全部用户（云端为准，会覆盖用户同名书源）。',
+                  style: const TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  value: announce,
+                  onChanged: (v) =>
+                      setDialogState(() => announce = v ?? false),
+                  title: const Text(
+                    '同时发布更新公告',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                ),
+                if (announce) ...[
+                  TextField(
+                    controller: titleController,
+                    decoration: const InputDecoration(
+                      labelText: '公告标题',
+                      isDense: true,
+                    ),
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: bodyController,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: '公告内容',
+                      isDense: true,
+                    ),
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('发布'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _publishing = true);
+    try {
+      final payload = selected
+          .map(
+            (s) => <String, dynamic>{
+              'name': s.bookSourceName,
+              'url': s.bookSourceUrl,
+              'group': s.bookSourceGroup,
+              'enabled': s.enabled,
+              'weight': s.weight,
+              'rawJson': jsonEncode(s.toJson()),
+            },
+          )
+          .toList(growable: false);
+
+      final result = await CloudSyncAdminClient().publishBookSources(
+        serverUrl: widget.serverUrl,
+        token: widget.token,
+        sources: payload,
+        mode: 'merge',
+        announce: announce,
+        announcementTitle: titleController.text,
+        announcementBody: bodyController.text,
+      );
+
+      if (!mounted) return;
+      final version = result['version'];
+      final created = result['created'] ?? 0;
+      final updated = result['updated'] ?? 0;
+      _showSnack('已发布：新增 $created，更新 $updated（云端版本 v$version）');
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack('发布失败：$e');
+    } finally {
+      if (mounted) setState(() => _publishing = false);
+    }
+  }
 
   void _exitBatch() {
     setState(() {
@@ -634,6 +765,40 @@ class _BookSourceTabState extends State<_BookSourceTab> {
                               ),
                             ),
                             const SizedBox(width: 8),
+                            // 发布到云端（下发给全体用户）
+                            if (items.isNotEmpty)
+                              SizedBox(
+                                height: 36,
+                                child: FilledButton.icon(
+                                  onPressed: _publishing
+                                      ? null
+                                      : () => _publishToCloud(filtered),
+                                  icon: _publishing
+                                      ? const SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.cloud_upload_rounded,
+                                          size: 16,
+                                        ),
+                                  label: Text(
+                                    _batchMode && _selectedIds.isNotEmpty
+                                        ? '发布 ${_selectedIds.length} 个'
+                                        : '发布到云端',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  style: FilledButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            if (items.isNotEmpty) const SizedBox(width: 8),
                             // 搜索栏
                             Expanded(
                               child: TextField(

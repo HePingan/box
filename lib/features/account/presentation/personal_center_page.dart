@@ -8,6 +8,7 @@ import 'controllers/personal_center_controller.dart';
 import '../domain/personal_center_models.dart';
 import 'personal_quota_transactions_page.dart';
 import 'widgets/personal_activity_chart.dart';
+import '../../cloud_sync/domain/cloud_sync_models.dart';
 
 class PersonalCenterPage extends StatelessWidget {
   const PersonalCenterPage({super.key});
@@ -35,10 +36,14 @@ class _PersonalCenterViewState extends State<_PersonalCenterView>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     _tabController.addListener(_onTabChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<PersonalCenterController>().load();
+      if (!mounted) return;
+      final controller = context.read<PersonalCenterController>();
+      controller.load();
+      // 公告是公开接口，和登录态无关：首屏就拉一次，让红点尽快出现。
+      controller.loadAnnouncements();
     });
   }
 
@@ -62,6 +67,8 @@ class _PersonalCenterViewState extends State<_PersonalCenterView>
         controller.loadQuizzes();
       case 3:
         break;
+      case 4:
+        controller.loadAnnouncements();
     }
   }
 
@@ -73,11 +80,20 @@ class _PersonalCenterViewState extends State<_PersonalCenterView>
         title: const Text('个人中心'),
         bottom: TabBar(
           controller: _tabController,
-          tabs: const [
-            Tab(text: '额度'),
-            Tab(text: '我的插件'),
-            Tab(text: '我的题库'),
-            Tab(text: '设置'),
+          tabs: [
+            const Tab(text: '额度'),
+            const Tab(text: '我的插件'),
+            const Tab(text: '我的题库'),
+            const Tab(text: '设置'),
+            Tab(
+              child: Selector<PersonalCenterController, int>(
+                selector: (_, c) => c.announcements.unreadCount,
+                builder: (context, unread, _) => _TabLabelWithBadge(
+                  label: '公告',
+                  count: unread,
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -86,13 +102,8 @@ class _PersonalCenterViewState extends State<_PersonalCenterView>
           if (controller.loading && controller.overview == null) {
             return const Center(child: CircularProgressIndicator());
           }
-          // 只有会话级错误才整屏拦截，子模块失败走顶部降级横幅。
-          if (controller.fatalError != null) {
-            return _FatalErrorView(
-              message: controller.fatalError!,
-              onRetry: () => controller.load(force: true),
-            );
-          }
+          // 会话级错误只拦截需要登录的 Tab；公告是公开的，未登录也要能看，
+          // 所以不再整屏 return，交给 _buildBody 按 Tab 决定。
           return Column(
             children: [
               if (controller.hasWarnings)
@@ -122,13 +133,24 @@ class _PersonalCenterViewState extends State<_PersonalCenterView>
   }
 
   Widget _buildBody(PersonalCenterController controller) {
+    // 需要登录的 Tab 在会话失效时显示重试视图；公告 Tab 始终可用。
+    Widget gated(Widget child) {
+      final fatal = controller.fatalError;
+      if (fatal == null) return child;
+      return _FatalErrorView(
+        message: fatal,
+        onRetry: () => controller.load(force: true),
+      );
+    }
+
     return TabBarView(
       controller: _tabController,
       children: [
-        _QuotaTab(controller: controller),
-        _PluginsTab(controller: controller),
-        _QuizzesTab(controller: controller),
-        const _SettingsTab(),
+        gated(_QuotaTab(controller: controller)),
+        gated(_PluginsTab(controller: controller)),
+        gated(_QuizzesTab(controller: controller)),
+        gated(const _SettingsTab()),
+        _AnnouncementsTab(controller: controller),
       ],
     );
   }
@@ -891,4 +913,230 @@ class _SettingsTabState extends State<_SettingsTab> {
       ],
     );
   }
+}
+
+
+/// Tab 标签 + 未读红点。
+class _TabLabelWithBadge extends StatelessWidget {
+  const _TabLabelWithBadge({required this.label, required this.count});
+
+  final String label;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    if (count <= 0) return Text(label);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label),
+        const SizedBox(width: 6),
+        Semantics(
+          label: '$count 条未读公告',
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            constraints: const BoxConstraints(minWidth: 16),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.error,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              count > 99 ? '99+' : '$count',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 10,
+                height: 1.4,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.onError,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 公告 Tab：未读带红点，点开即标记已读，历史公告可回看。
+class _AnnouncementsTab extends StatelessWidget {
+  const _AnnouncementsTab({required this.controller});
+
+  final PersonalCenterController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = controller.announcements;
+    if (controller.announcementsLoading && state.items.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final items = state.sorted;
+    return RefreshIndicator(
+      onRefresh: () => controller.loadAnnouncements(force: true),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (controller.announcementsError != null)
+            Card(
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: ListTile(
+                leading: const Icon(Icons.cloud_off_outlined),
+                title: Text(controller.announcementsError!),
+                trailing: TextButton(
+                  onPressed: () => controller.loadAnnouncements(force: true),
+                  child: const Text('重试'),
+                ),
+              ),
+            )
+          else if (state.fromCache && state.items.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                '当前显示缓存内容，下拉可重新获取',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          if (items.isEmpty)
+            const _EmptySection(
+              icon: Icons.campaign_outlined,
+              message: '暂无公告',
+            )
+          else ...[
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    state.hasUnread
+                        ? '${state.unreadCount} 条未读 / 共 ${items.length} 条'
+                        : '共 ${items.length} 条公告',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                if (state.hasUnread)
+                  TextButton(
+                    onPressed: controller.markAllAnnouncementsRead,
+                    child: const Text('全部标记已读'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            ...items.map(
+              (item) => _AnnouncementCard(
+                item: item,
+                read: state.isRead(item.id),
+                onOpen: () => _open(context, item),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _open(BuildContext context, AnnouncementEntry item) {
+    controller.markAnnouncementRead(item.id);
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(item.title.isEmpty ? '公告' : item.title),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _formatTime(item.publishedAt),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 12),
+              Text(item.body.isEmpty ? '（无正文）' : item.body),
+              if (item.linkUrl.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                SelectableText(
+                  item.linkUrl,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AnnouncementCard extends StatelessWidget {
+  const _AnnouncementCard({
+    required this.item,
+    required this.read,
+    required this.onOpen,
+  });
+
+  final AnnouncementEntry item;
+  final bool read;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final (icon, color) = switch (item.level) {
+      'warning' => (Icons.warning_amber_outlined, scheme.error),
+      'notice' => (Icons.campaign_outlined, scheme.primary),
+      _ => (Icons.info_outline, scheme.onSurfaceVariant),
+    };
+    return Card(
+      child: ListTile(
+        onTap: onOpen,
+        leading: Icon(icon, color: color),
+        title: Row(
+          children: [
+            if (item.pinned)
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: Icon(Icons.push_pin, size: 14, color: scheme.primary),
+              ),
+            Expanded(
+              child: Text(
+                item.title.isEmpty ? '未命名公告' : item.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: read ? FontWeight.normal : FontWeight.bold,
+                ),
+              ),
+            ),
+            if (!read)
+              Container(
+                width: 8,
+                height: 8,
+                margin: const EdgeInsets.only(left: 6),
+                decoration: BoxDecoration(
+                  color: scheme.error,
+                  shape: BoxShape.circle,
+                ),
+              ),
+          ],
+        ),
+        subtitle: Text(
+          '${_formatTime(item.publishedAt)}\n${item.body}',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: const Icon(Icons.chevron_right),
+      ),
+    );
+  }
+}
+
+String _formatTime(DateTime value) {
+  final local = value.toLocal();
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '${local.year}-${two(local.month)}-${two(local.day)} '
+      '${two(local.hour)}:${two(local.minute)}';
 }

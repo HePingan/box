@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_drawer.dart';
 import '../design_system/app_tokens.dart';
@@ -17,6 +18,7 @@ import '../video_module.dart';
 import '../features/quiz_plugin/data/quiz_cloud_auto_sync.dart';
 import '../features/policy/plugin_policy.dart';
 import '../features/extensions/market/data/plugin_market_local_sync.dart';
+import '../features/cloud_sync/data/book_source_cloud_sync.dart';
 
 /// 桌面端断点 — ≥800px 切换 NavigationRail
 const double _desktopBreakpoint = 800;
@@ -83,9 +85,16 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
       _maybePromptNovelSourceConfig();
     });
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      context.read<BookSourceManager>().load();
+      final manager = context.read<BookSourceManager>();
+      await manager.load();
+      // 本地书源就绪后再机会性同步云端（距上次不足 6h 直接跳过，失败静默）。
+      if (!mounted) return;
+      await BookSourceCloudSyncService().syncIfStale(
+        prefs: await SharedPreferences.getInstance(),
+        manager: manager,
+      );
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
