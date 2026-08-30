@@ -50,6 +50,9 @@ app.*.map.json
 *.zip
 *.jks
 *.keystore
+# 正式签名用的是 PKCS12（box-release.p12）。当前放在 /root/.secrets/
+# 仓库外，但漏掉这条 = 哪天有人把它拷进工程目录就会被提交上去。
+*.p12
 *.sha1
 key.properties
 artifacts/

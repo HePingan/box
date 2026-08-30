@@ -5,11 +5,13 @@ name: CI
 # 闸门（test/backup/backup_covers_novel_data_test.dart）这类"防回归"测试，
 # 只有在 CI 里强制执行才真正生效。
 
+# 分支名必须和远端实际的默认分支一致（这里是 master）。
+# 写错分支名的后果是静默的：workflow 文件在仓库里，但一次都不会触发。
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
 
 # 同一分支连续推送时取消旧任务，省 CI 时间。
