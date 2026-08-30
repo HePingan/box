@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'app/app_routes.dart';
 import 'config/app_config.dart';
@@ -9,6 +11,7 @@ import 'update/update_dialog.dart';
 import 'update/update_service.dart';
 import 'features/account/data/account_store.dart';
 import 'features/account/domain/account_models.dart';
+import 'features/backup/local_backup_service.dart';
 
 /// 应用侧滑菜单 — 风格与主页面完全一致
 class AppDrawer extends StatefulWidget {
@@ -18,11 +21,7 @@ class AppDrawer extends StatefulWidget {
   /// 当前高亮的 tab 索引，用于在抽屉中标记选中态
   final int currentIndex;
 
-  const AppDrawer({
-    super.key,
-    this.onSwitchTab,
-    this.currentIndex = 0,
-  });
+  const AppDrawer({super.key, this.onSwitchTab, this.currentIndex = 0});
 
   @override
   State<AppDrawer> createState() => _AppDrawerState();
@@ -178,6 +177,45 @@ class _DrawerContent extends StatelessWidget {
 
   // ─── 关于对话框 ───
 
+  Future<void> _backupLocalData(BuildContext context) async {
+    Navigator.of(context).pop();
+    _showSnack(context, '正在整理本地数据…');
+    try {
+      final file = await LocalBackupService.writeBackupToTemporaryFile();
+      if (!context.mounted) return;
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path, mimeType: 'application/json')],
+          subject: 'Box 本地数据备份',
+          text: '请妥善保存此备份文件；重装后可通过“恢复本地数据”导入。',
+        ),
+      );
+    } catch (_) {
+      if (context.mounted) _showSnack(context, '备份失败，请稍后重试');
+    }
+  }
+
+  Future<void> _restoreLocalData(BuildContext context) async {
+    Navigator.of(context).pop();
+    try {
+      final picked = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+      );
+      final file = picked?.files.single;
+      final bytes = await file?.readAsBytes();
+      if (bytes == null || bytes.isEmpty || !context.mounted) return;
+      final count = await LocalBackupService.restoreBackupBytes(bytes);
+      if (context.mounted) {
+        _showSnack(context, '已恢复 $count 条本地记录，请重启应用以刷新页面');
+      }
+    } on FormatException {
+      if (context.mounted) _showSnack(context, '不是有效的 Box 本地数据备份文件');
+    } catch (_) {
+      if (context.mounted) _showSnack(context, '恢复失败，原数据未被清空');
+    }
+  }
+
   Future<void> _showAboutDialog(BuildContext context) async {
     Navigator.of(context).pop();
 
@@ -228,10 +266,7 @@ class _DrawerContent extends StatelessWidget {
             const SizedBox(height: 12),
             const Text(
               '智能工具集，为极客而生。',
-              style: TextStyle(
-                fontSize: 13,
-                color: AppTokens.textSecondary,
-              ),
+              style: TextStyle(fontSize: 13, color: AppTokens.textSecondary),
             ),
             const SizedBox(height: 12),
             InkWell(
@@ -248,7 +283,10 @@ class _DrawerContent extends StatelessWidget {
                 );
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+                padding: const EdgeInsets.symmetric(
+                  vertical: 8,
+                  horizontal: 10,
+                ),
                 decoration: BoxDecoration(
                   color: AppTokens.surfaceMuted,
                   borderRadius: BorderRadius.circular(8),
@@ -256,7 +294,11 @@ class _DrawerContent extends StatelessWidget {
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.code_rounded, size: 16, color: AppTokens.textSecondary),
+                    Icon(
+                      Icons.code_rounded,
+                      size: 16,
+                      color: AppTokens.textSecondary,
+                    ),
                     SizedBox(width: 6),
                     Text(
                       'github.com/HePingan/box',
@@ -267,7 +309,11 @@ class _DrawerContent extends StatelessWidget {
                       ),
                     ),
                     SizedBox(width: 4),
-                    Icon(Icons.open_in_new, size: 14, color: AppTokens.primaryBlue),
+                    Icon(
+                      Icons.open_in_new,
+                      size: 14,
+                      color: AppTokens.primaryBlue,
+                    ),
                   ],
                 ),
               ),
@@ -417,7 +463,11 @@ class _DrawerContent extends StatelessWidget {
                         ),
                       ),
                     )
-                  : const Icon(Icons.person_rounded, size: 24, color: Colors.white),
+                  : const Icon(
+                      Icons.person_rounded,
+                      size: 24,
+                      color: Colors.white,
+                    ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -460,7 +510,11 @@ class _DrawerContent extends StatelessWidget {
     const tabs = [
       _NavTabData(title: '首页', icon: Icons.home_rounded, index: 0),
       _NavTabData(title: '工具', icon: Icons.handyman_rounded, index: 1),
-      _NavTabData(title: '内容', icon: Icons.collections_bookmark_rounded, index: 2),
+      _NavTabData(
+        title: '内容',
+        icon: Icons.collections_bookmark_rounded,
+        index: 2,
+      ),
       _NavTabData(title: '扩展', icon: Icons.extension_rounded, index: 3),
     ];
 
@@ -509,13 +563,17 @@ class _DrawerContent extends StatelessWidget {
                 height: 28,
                 decoration: BoxDecoration(
                   gradient: isActive ? AppTokens.blueGradient : null,
-                  color: isActive ? null : AppTokens.primaryBlue.withValues(alpha: 0.10),
+                  color: isActive
+                      ? null
+                      : AppTokens.primaryBlue.withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(
                   tab.icon,
                   size: 16,
-                  color: isActive ? Colors.white : AppTokens.primaryBlue.withValues(alpha: 0.70),
+                  color: isActive
+                      ? Colors.white
+                      : AppTokens.primaryBlue.withValues(alpha: 0.70),
                 ),
               ),
               const SizedBox(width: 8),
@@ -525,7 +583,9 @@ class _DrawerContent extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
-                    color: isActive ? AppTokens.primaryBlue : AppTokens.textPrimary,
+                    color: isActive
+                        ? AppTokens.primaryBlue
+                        : AppTokens.textPrimary,
                   ),
                 ),
               ),
@@ -602,6 +662,20 @@ class _DrawerContent extends StatelessWidget {
             ),
             _buildMoreItem(
               context,
+              icon: Icons.backup_outlined,
+              title: '备份本地数据',
+              subtitle: '收藏、历史、下载任务与本地题库',
+              onTap: () => _backupLocalData(context),
+            ),
+            _buildMoreItem(
+              context,
+              icon: Icons.settings_backup_restore_outlined,
+              title: '恢复本地数据',
+              subtitle: '重装后导入此前导出的备份',
+              onTap: () => _restoreLocalData(context),
+            ),
+            _buildMoreItem(
+              context,
               icon: Icons.info_outline_rounded,
               title: '关于',
               subtitle: null,
@@ -638,11 +712,7 @@ class _DrawerContent extends StatelessWidget {
                   color: AppTokens.primaryBlue.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(
-                  icon,
-                  size: 16,
-                  color: AppTokens.primaryBlue,
-                ),
+                child: Icon(icon, size: 16, color: AppTokens.primaryBlue),
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -760,10 +830,7 @@ class _DrawerContent extends StatelessWidget {
 
   void _showSnack(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-      ),
+      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
     );
   }
 }
