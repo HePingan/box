@@ -356,6 +356,10 @@ class _DrawerContent extends StatelessWidget {
   /// 原先只有启动时那一次静默检查，用户既没有主动入口，出问题也看不到原因
   /// （service 里是 catch(_)，加上 allowProceedOnCheckFailure 默认 true）。
   /// 这里用 checkUpdateDiagnostic，如实把失败原因显示出来。
+  ///
+  /// 刻意不查 UpdateIgnoreStore：用户主动点「检查更新」时必须看到结果，
+  /// 哪怕这个版本之前被忽略过。否则点了没反应会被当成功能坏了。
+  /// 这也是忽略之后唯一的找回入口。
   Future<void> _checkUpdateManually(
     BuildContext context,
     PackageInfo info,

@@ -4,6 +4,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import 'update_check_outcome.dart';
 import 'update_dialog.dart';
+import 'update_ignore_store.dart';
 import 'update_security.dart';
 import 'update_service.dart';
 
@@ -41,6 +42,9 @@ class UpdateBootstrapPage extends StatefulWidget {
   /// 检查诊断信息回调。失败原因走这里，不再被静默吞掉。
   final void Function(String message)? onCheckDiagnostic;
 
+  /// 忽略状态存储。测试可注入内存态，避免碰真实 SharedPreferences。
+  final UpdateIgnoreStore? ignoreStore;
+
   const UpdateBootstrapPage({
     super.key,
     required this.nextPage,
@@ -53,6 +57,7 @@ class UpdateBootstrapPage extends StatefulWidget {
     this.checkOverride,
     this.currentVersionCodeOverride,
     this.onCheckDiagnostic,
+    this.ignoreStore,
   });
 
   @override
@@ -120,6 +125,23 @@ class _UpdateBootstrapPageState extends State<UpdateBootstrapPage> {
       }
 
       final force = manifest.needForceUpdate(currentCode);
+
+      // 用户点过「忽略此版本」后，启动就不再打扰；服务端发布更高版本时自动恢复提示。
+      // 强更不受忽略影响。
+      final store = widget.ignoreStore ?? UpdateIgnoreStore.instance;
+      final shouldShow = await store.shouldShowForVersion(
+        manifest.latestVersionCode,
+        force: force,
+      );
+      if (!mounted) return;
+      if (!shouldShow) {
+        _report(
+          '已忽略该版本，不再弹窗：'
+          '${manifest.latestVersionName} (${manifest.latestVersionCode})',
+        );
+        return;
+      }
+
       if (_dialogShown) return;
       _dialogShown = true;
 
@@ -132,6 +154,7 @@ class _UpdateBootstrapPageState extends State<UpdateBootstrapPage> {
           currentVersionCode: currentCode,
           force: force,
           security: widget.updateSecurity,
+          ignoreStore: widget.ignoreStore,
         ),
       );
     } catch (e) {

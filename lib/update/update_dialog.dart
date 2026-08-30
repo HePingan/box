@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import '../features/backup/local_backup_service.dart';
 import 'app_installer.dart';
 import 'update_install_failure.dart';
+import 'update_ignore_store.dart';
 import 'update_models.dart';
 import 'update_security.dart';
 
@@ -23,6 +24,8 @@ class UpdateDialog extends StatefulWidget {
     this.security = const UpdateManifestSecurityConfig(),
     this.installOverride,
     this.backupOverride,
+    this.ignoreStore,
+    this.onIgnored,
   });
 
   /// 下载阶段同样要用到白名单等约束，必须从 bootstrap 一路传进来，
@@ -34,6 +37,12 @@ class UpdateDialog extends StatefulWidget {
 
   /// 仅测试注入：避免 widget 测试碰真实 Hive/文件系统。
   final Future<String> Function()? backupOverride;
+
+  /// 忽略状态存储，默认用全局单例；测试可注入内存态。
+  final UpdateIgnoreStore? ignoreStore;
+
+  /// 用户点「忽略此版本」后回调，便于调用方上报/埋点。
+  final void Function(int versionCode)? onIgnored;
 
   @override
   State<UpdateDialog> createState() => _UpdateDialogState();
@@ -117,6 +126,15 @@ class _UpdateDialogState extends State<UpdateDialog> {
       if (!mounted) return;
       messenger.showSnackBar(SnackBar(content: Text('导出备份失败：$e')));
     }
+  }
+
+  Future<void> _ignoreThisVersion() async {
+    final code = widget.manifest.latestVersionCode;
+    final store = widget.ignoreStore ?? UpdateIgnoreStore.instance;
+    await store.ignoreVersion(code);
+    widget.onIgnored?.call(code);
+    if (!mounted) return;
+    Navigator.of(context).maybePop();
   }
 
   Future<void> _copyDownloadUrl() async {
@@ -293,6 +311,26 @@ class _UpdateDialogState extends State<UpdateDialog> {
                               if (_downloading) ...[
                                 const SizedBox(height: 12),
                                 LinearProgressIndicator(value: _progress),
+                              ],
+                              // 「忽略此版本」：只在非强更、且安装未确定失败时给。
+                              // 强更不能被忽略；装不上时下面已有逃生门，不再叠加。
+                              if (blocked == null && !widget.force) ...[
+                                const SizedBox(height: 10),
+                                SizedBox(
+                                  height: 44,
+                                  child: TextButton(
+                                    onPressed: _downloading
+                                        ? null
+                                        : _ignoreThisVersion,
+                                    child: const Text(
+                                      '忽略此版本',
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        color: Color(0xFF888888),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ],
                               // 逃生门：装不上时给「先备份」→「手动下载」→「退出」三条路。
                               if (blocked != null) ...[

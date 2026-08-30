@@ -1,5 +1,6 @@
 import 'package:box/update/update_bootstrap_page.dart';
 import 'package:box/update/update_check_outcome.dart';
+import 'package:box/update/update_ignore_store.dart';
 import 'package:box/update/update_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -27,6 +28,11 @@ UpdateManifest manifest({required int code, bool forceUpdate = false}) {
 }
 
 void main() {
+  // 忽略状态走内存态：本文件测的是「启动不阻塞」，不该被 SharedPreferences
+  // 的 platform channel 牵连（真机有超时兜底，测试环境里没有 channel 会挂满超时）。
+  setUp(() => UpdateIgnoreStore.instance.debugUseInMemory());
+  tearDown(() => UpdateIgnoreStore.instance.debugReset());
+
   Widget harness({
     required Future<UpdateCheckOutcome> Function() check,
     Duration? delay,
@@ -39,6 +45,7 @@ void main() {
         platform: 'android',
         channel: 'release',
         currentVersionCodeOverride: 169,
+        ignoreStore: UpdateIgnoreStore.instance,
         checkOverride: () async {
           if (delay != null) await Future<void>.delayed(delay);
           return check();
