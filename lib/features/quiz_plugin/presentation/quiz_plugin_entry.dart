@@ -32,6 +32,18 @@ class _OcrEntrySaveResult {
   final String message;
 }
 
+class QuizOverlayDecision {
+  const QuizOverlayDecision({
+    required this.status,
+    this.answerKey,
+    this.lowConfidence = false,
+  });
+
+  final String status;
+  final String? answerKey;
+  final bool lowConfidence;
+}
+
 /// 答题插件入口
 ///
 /// 功能：
@@ -50,6 +62,53 @@ class QuizPluginEntry {
 
   /// 自动搜题引擎
   static QuizEngine? _engineForAutoSearch;
+
+  // B2: 题图区域 dHash 短期缓存。
+  //
+  // 搜题与「OCR 录入保存」是两次独立的异步链路，两者之间用户可能已翻页，
+  // 二次截屏拿到的会是下一题的题图。缓存让同一道题的搜题与入库共用同一枚指纹，
+  // 同时避免连续调用重复走 MethodChannel 截屏。
+  static String? _imageRegionHashCache;
+  static DateTime? _imageRegionHashCachedAt;
+  static const Duration _imageRegionHashTtl = Duration(milliseconds: 300);
+
+  /// 题图指纹缓存命中判定（TTL 内视为同一道题）。
+  static bool get _imageRegionHashCacheFresh {
+    final at = _imageRegionHashCachedAt;
+    if (at == null) return false;
+    return DateTime.now().difference(at) < _imageRegionHashTtl;
+  }
+
+  /// 清空题图指纹缓存（切题时调用，防止跨题复用）。
+  static void invalidateImageRegionHashCache() {
+    _imageRegionHashCache = null;
+    _imageRegionHashCachedAt = null;
+  }
+
+  /// 带 TTL 缓存的题图区域 dHash 捕获。
+  static Future<String?> captureImageRegionHashCached({
+    bool debug = false,
+  }) async {
+    if (_imageRegionHashCacheFresh) {
+      if (debug) {
+        debugPrint('[QuizImageHash] cache hit');
+      }
+      return _imageRegionHashCache;
+    }
+    final stopwatch = Stopwatch()..start();
+    final hash = await captureImageRegionHash();
+    stopwatch.stop();
+    _imageRegionHashCache = hash;
+    _imageRegionHashCachedAt = DateTime.now();
+    if (debug) {
+      final valid = RegExp(r'^[0-9a-f]{16}$').hasMatch(hash ?? '');
+      debugPrint(
+        '[QuizImageHash] capture ${stopwatch.elapsedMilliseconds}ms '
+        'valid=$valid',
+      );
+    }
+    return hash;
+  }
 
   /// 启动一键批量录入（Flutter侧触发）
   static Future<bool> startBatchEntry() async {
@@ -294,6 +353,16 @@ class QuizPluginEntry {
       final raw = await _channel.invokeMethod('captureRegionScreenshot', {
         'requestId': requestId,
       });
+      if (raw == null) return null;
+      // 原生侧返回 {bytes: Uint8List, dHash: String}
+      if (raw is Map) {
+        final bytes = _bytesFromRaw(raw['bytes']);
+        if (bytes == null || bytes.isEmpty) return null;
+        if (!_coordinator.accept(requestId, bytes)) return null;
+        final taken = _coordinator.take(requestId);
+        if (taken == null || taken.isEmpty) return null;
+        return Uint8List.fromList(taken);
+      }
       final bytes = _bytesFromRaw(raw);
       if (bytes == null || bytes.isEmpty) return null;
       if (!_coordinator.accept(requestId, bytes)) return null;
@@ -306,6 +375,30 @@ class QuizPluginEntry {
     return null;
   }
 
+  /// 请无障碍服务截屏识别区域，返回 PNG 字节 + dHash（失败返回 null）。
+  static Future<MapEntry<Uint8List?, String?>?>
+  captureRegionScreenshotWithHash() async {
+    final requestId = _coordinator.begin();
+    try {
+      final raw = await _channel.invokeMethod('captureRegionScreenshot', {
+        'requestId': requestId,
+      });
+      if (raw == null || raw is! Map) return null;
+      final bytesRaw = raw['bytes'];
+      final dHash = raw['dHash'] as String?;
+      final bytes = _bytesFromRaw(bytesRaw);
+      if (bytes == null || bytes.isEmpty) return null;
+      if (!_coordinator.accept(requestId, bytes)) return null;
+      final taken = _coordinator.take(requestId);
+      if (taken == null || taken.isEmpty) return null;
+      return MapEntry(Uint8List.fromList(taken), dHash);
+    } catch (_) {
+      // 截图不可用由调用方展示对应状态。
+    }
+    return null;
+  }
+
+  /// 更新识别区域。
   static Future<void> updateRegion(Rect region) async {
     try {
       await _channel.invokeMethod('updateRegion', {
@@ -469,18 +562,26 @@ class QuizPluginEntry {
     if (fingerprint.isEmpty) return;
     final parsedCapture = OcrQuizParser.parse(captured);
     final captureOptions = parsedCapture.options;
-    // 同题的可靠命中才抑制刷新；选项补齐/变化与用户手动刷新必须允许纠错。
+    // 图片题常有相同题干和选项，切题身份必须包含当前题图指纹。
+    // 捕获入口强制刷新一次，避免快速翻题复用上一题的短时缓存。
+    invalidateImageRegionHashCache();
+    final capturedImageHash = await _captureImageHashForDisambiguation(config);
+    final requestFingerprint = capturedImageHash == null
+        ? fingerprint
+        : '$fingerprint|image:$capturedImageHash';
+    // 同题的可靠命中才抑制刷新；选项补齐/变化、题图变化与手动刷新允许纠错。
     if (_searchPolicy.shouldSuppress(
       stem: fingerprint,
       options: captureOptions,
+      imageHash: capturedImageHash,
       manualRefresh: method == 'manualSearch',
     )) {
       return;
     }
-    final isNewQuestion = fingerprint != _activeQuestionFingerprint;
+    final isNewQuestion = requestFingerprint != _activeQuestionFingerprint;
     if (isNewQuestion) {
       // 新题立即让旧答案失效；任何旧请求回来都会因 generation 不一致被丢弃。
-      _activeQuestionFingerprint = fingerprint;
+      _activeQuestionFingerprint = requestFingerprint;
       final generation = ++_searchGeneration;
       _captureDebounce?.cancel();
       await _showNewQuestionSearching(captured, config);
@@ -491,8 +592,9 @@ class QuizPluginEntry {
           config: config,
           method: method,
           probeOptions: captureOptions,
+          imageHash: capturedImageHash,
           requestGeneration: generation,
-          requestFingerprint: fingerprint,
+          requestFingerprint: requestFingerprint,
         );
       });
       return;
@@ -503,7 +605,9 @@ class QuizPluginEntry {
       question: captured,
       config: config,
       method: method,
-      requestFingerprint: fingerprint,
+      probeOptions: captureOptions,
+      imageHash: capturedImageHash,
+      requestFingerprint: requestFingerprint,
     );
   }
 
@@ -511,6 +615,7 @@ class QuizPluginEntry {
     required String fingerprint,
     required List<String> probeOptions,
     required QuizResult result,
+    String? imageHash,
   }) {
     final detail = result.answers.isEmpty ? '' : result.answers.first.text;
     final qScore =
@@ -528,6 +633,7 @@ class QuizPluginEntry {
       source: source,
       questionScore: (int.tryParse(qScore) ?? 0).clamp(0, 100).toInt(),
       optionScore: (int.tryParse(optionScore) ?? 0).clamp(0, 100).toInt(),
+      imageHash: imageHash,
     );
   }
 
@@ -539,6 +645,7 @@ class QuizPluginEntry {
     required String method,
     bool fromOcr = false,
     List<String> probeOptions = const [],
+    String? imageHash,
     int? requestGeneration,
     String? requestFingerprint,
   }) async {
@@ -551,6 +658,8 @@ class QuizPluginEntry {
       // 手动/试捕入口也纳入版本控制，避免与自动捕获的旧请求串结果。
       if (fingerprint != _activeQuestionFingerprint) {
         _activeQuestionFingerprint = fingerprint;
+        // B2: 切题时失效题图 dHash 缓存，防止跨题复用上一题的指纹。
+        invalidateImageRegionHashCache();
         _searchGeneration++;
       }
       generation = _searchGeneration;
@@ -559,7 +668,7 @@ class QuizPluginEntry {
     if (!_isCurrentRequest(currentGeneration, fingerprint)) {
       return;
     }
-    if (_shouldSkipDuplicateSearch(captured, method)) return;
+    if (_shouldSkipDuplicateSearch(fingerprint, method)) return;
 
     if (!fromOcr) {
       // 试捕 / 手动搜 / 无障碍捕获：有文本就先走题库（题干+选项）
@@ -582,10 +691,13 @@ class QuizPluginEntry {
         );
         final engine = _engineForAutoSearch ??= QuizEngine(config: config);
         engine.config = config;
+        imageHash ??= await _captureImageHashForDisambiguation(config);
+        if (!_isCurrentRequest(currentGeneration, fingerprint)) return;
         final result = await engine.search(
           captured,
           forceExternalSearch: method == 'manualSearch',
           probeOptions: probeOptions,
+          imagePerceptualHash: imageHash,
         );
         // 搜题期间已经切到新题：禁止旧结果覆盖当前“新题检索中”。
         if (!_isCurrentRequest(currentGeneration, fingerprint)) return;
@@ -596,30 +708,41 @@ class QuizPluginEntry {
             return;
           }
           _recordSuccessfulResult(
-            fingerprint: fingerprint,
+            fingerprint: _questionFingerprint(captured),
             probeOptions: probeOptions,
             result: result,
+            imageHash: imageHash,
           );
           final list = _answersListForOverlay(result);
+          final ambiguity = overlayDecisionForResult(result, list);
+          final ambiguousText = ambiguity.status == 'ambiguous'
+              ? ambiguousCandidatesForOverlay(result)
+              : null;
+          final overlayList = ambiguousText == null
+              ? list
+              : <String>[ambiguousText];
+          final overlayAnswers =
+              ambiguousText ??
+              (overlayList.isNotEmpty
+                  ? _withSimilarityMarker(overlayList.first, result)
+                  : _withSimilarityMarker(
+                      _formatResultForOverlay(result),
+                      result,
+                    ));
           await _pushOverlay(
             question: captured,
             answers: config.debugCapture
-                ? '${_formatResultForOverlay(result)}\n\n--- 调试捕获文本 ---\n${_formatDebugCapture(captured)}'
-                : (list.isNotEmpty
-                      ? _withSimilarityMarker(list.first, result)
-                      : _withSimilarityMarker(
-                          _formatResultForOverlay(result),
-                          result,
-                        )),
+                ? '$overlayAnswers\n\n--- 调试捕获文本 ---\n${_formatDebugCapture(captured)}'
+                : overlayAnswers,
             displayMode: config.displayMode,
-            status: 'hit',
-            answerKey: _extractAnswerKey(result),
+            status: ambiguity.status,
+            answerKey: ambiguity.answerKey,
             similarity: _similarityForResult(result),
             matchIndex: 0,
-            matchCount: list.isNotEmpty
-                ? list.length
+            matchCount: overlayList.isNotEmpty
+                ? overlayList.length
                 : result.answers.length.clamp(1, 9),
-            answersList: list,
+            answersList: overlayList,
           );
           return;
         }
@@ -661,29 +784,41 @@ class QuizPluginEntry {
             return;
           }
           _recordSuccessfulResult(
-            fingerprint: fingerprint,
+            fingerprint: _questionFingerprint(captured),
             probeOptions: probeOptions,
             result: ocrResult,
+            imageHash: imageHash,
           );
         }
         final list = _answersListForOverlay(ocrResult);
+        final ambiguity = overlayDecisionForResult(ocrResult, list);
+        final ambiguousText =
+            ocrResult.isSuccess && ambiguity.status == 'ambiguous'
+            ? ambiguousCandidatesForOverlay(ocrResult)
+            : null;
+        final overlayList = ambiguousText == null
+            ? list
+            : <String>[ambiguousText];
+        final overlayAnswers =
+            ambiguousText ??
+            (overlayList.isNotEmpty
+                ? _withSimilarityMarker(overlayList.first, ocrResult)
+                : _withSimilarityMarker(
+                    _formatResultForOverlay(ocrResult),
+                    ocrResult,
+                  ));
         await _pushOverlay(
           question: ocrResult.question,
-          answers: list.isNotEmpty
-              ? _withSimilarityMarker(list.first, ocrResult)
-              : _withSimilarityMarker(
-                  _formatResultForOverlay(ocrResult),
-                  ocrResult,
-                ),
+          answers: overlayAnswers,
           displayMode: config.displayMode,
-          status: ocrResult.isSuccess ? 'hit' : 'miss',
-          answerKey: _extractAnswerKey(ocrResult),
+          status: ocrResult.isSuccess ? ambiguity.status : 'miss',
+          answerKey: ocrResult.isSuccess ? ambiguity.answerKey : null,
           similarity: _similarityForResult(ocrResult),
           matchIndex: 0,
-          matchCount: list.isNotEmpty
-              ? list.length
+          matchCount: overlayList.isNotEmpty
+              ? overlayList.length
               : ocrResult.answers.length.clamp(1, 9),
-          answersList: list,
+          answersList: overlayList,
         );
         return;
       }
@@ -711,6 +846,78 @@ class QuizPluginEntry {
       method: 'manualSearch',
       probeOptions: probeOptions,
     );
+  }
+
+  /// 歧义结果是待确认候选，不是可自动作答的答案。
+  ///
+  /// 这里刻意不复用普通答案格式化：普通格式会产生「答案：…」前缀，
+  /// 一旦展示在歧义窗口里，用户仍会把第一项误认为系统已确认的答案。
+  static String ambiguousCandidatesForOverlay(QuizResult result) {
+    return _ambiguousCandidatesForOverlay(result);
+  }
+
+  static QuizOverlayDecision overlayDecisionForResult(
+    QuizResult result,
+    List<String> answers,
+  ) {
+    if (!result.isSuccess || result.answers.isEmpty) {
+      return const QuizOverlayDecision(status: 'miss');
+    }
+    // imageMatchHint 仅供 UI 展示；不再用它驱动 ambiguous 逻辑：
+    // 引擎已在多候选未消歧时收窄 top 列表；此处只看最终候选数量和置信度差距。
+    final confidence = result.answers.first.confidence;
+    final ambiguous =
+        answers.length > 1 ||
+        (result.answers.length > 1 &&
+            (result.answers[0].confidence - result.answers[1].confidence)
+                    .abs() <
+                0.08);
+    final lowConfidence = confidence < 0.70;
+    final needsConfirmation = ambiguous || lowConfidence;
+    final answerKey = needsConfirmation ? null : _extractAnswerKey(result);
+    return QuizOverlayDecision(
+      status: needsConfirmation ? 'ambiguous' : 'hit',
+      answerKey: answerKey,
+      lowConfidence: lowConfidence,
+    );
+  }
+
+  /// 打开「题图区域」框选器（独立于 OCR 识别区域）。
+  /// 打开时立即清除旧缓存：用户此时正在重新框选题图区域，旧指纹已失效。
+  static Future<bool> openImageRegionSelector() async {
+    invalidateImageRegionHashCache();
+    try {
+      final ok = await _channel.invokeMethod('openImageRegionSelector');
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 截取题图区域并返回 dHash。题图区域未配置时返回 null。
+  static Future<String?> captureImageRegionHash() async {
+    final requestId = _coordinator.begin();
+    try {
+      final raw = await _channel.invokeMethod('captureImageRegionScreenshot', {
+        'requestId': requestId,
+      });
+      if (raw == null || raw is! Map) return null;
+      return (raw['dHash'] as String?)?.trim().toLowerCase();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 题图指纹只认独立框选的题图区域。
+  ///
+  /// 不回退到 OCR 整块区域：题干+选项占绝大多数像素，整块 dHash 对
+  /// 「同题干同选项、仅题图不同」几乎无区分度，会把两道题判成 100% 相似。
+  static Future<String?> _captureImageHashForDisambiguation(
+    QuizConfig config,
+  ) async {
+    final hash =
+        await captureImageRegionHashCached(debug: config.debugCapture) ?? '';
+    return RegExp(r'^[0-9a-f]{16}$').hasMatch(hash) ? hash : null;
   }
 
   /// 截屏识别区域 → OCR → 用识别文本再搜一次。返回 null 表示 OCR 链路未产出。
@@ -781,10 +988,13 @@ class QuizPluginEntry {
     );
 
     engine.config = config;
+    final imageHash = await _captureImageHashForDisambiguation(config);
+    if (!_isCurrentRequest(requestGeneration, requestFingerprint)) return null;
     final result = await engine.search(
       q,
       forceExternalSearch: false,
       probeOptions: opts,
+      imagePerceptualHash: imageHash,
     );
     if (!_isCurrentRequest(requestGeneration, requestFingerprint)) return null;
     return result.copyWith(
@@ -848,6 +1058,23 @@ class QuizPluginEntry {
             await manualSearch(q, probeOptions: parsed.options);
           } catch (_) {}
         }
+      } else if (call.method == 'examQuickEntry') {
+        // 考试模式悬浮窗入口：打开可编辑录入窗并立即 OCR 当前题。
+        // 保存仍需用户核对后点按，避免把 OCR/页面答案识别错误静默写入题库。
+        final opened = await showOcrEntryOverlay();
+        if (!opened) {
+          throw PlatformException(
+            code: 'OCR_ENTRY_UNAVAILABLE',
+            message: '录入悬浮窗未打开，请确认无障碍服务和 box 已启动',
+          );
+        }
+        await _ocrEntrySetStatus('正在读取当前题目…');
+        try {
+          await _handleOcrEntryRecognize();
+        } catch (e) {
+          await _ocrEntrySetStatus('读取失败：$e；可手动点 OCR识别重试');
+        }
+        return {'ok': true};
       } else if (call.method == 'ocrEntryRecognize') {
         try {
           await _handleOcrEntryRecognize(
@@ -875,8 +1102,12 @@ class QuizPluginEntry {
               Map<String, dynamic>.from(args),
               batchMode: batchMode,
             );
+            final ok =
+                result.status != QuizBankWriteStatus.duplicateSkipped &&
+                result.status !=
+                    QuizBankWriteStatus.incompleteVariantNeedsRetry;
             return {
-              'ok': true,
+              'ok': ok,
               'message': result.message,
               'status': result.status.name,
             };
@@ -1071,6 +1302,11 @@ class QuizPluginEntry {
                 options.any((o) => o.contains('错误') || o == '错'))
         ? QuizQuestionType.trueFalse
         : QuizQuestionType.singleChoice;
+
+    // B1: OCR 录入时，若已配置题图区域，捕获 imageRegionHash。
+    // 走 B2 缓存：与本题搜题阶段共用同一枚指纹，避免用户已翻页后截到下一题题图。
+    final imageRegionHash = await captureImageRegionHashCached();
+
     final item = QuizBankItem(
       id: UniqueQuizKeyGenerator.key(question, options: options),
       question: question,
@@ -1082,6 +1318,7 @@ class QuizPluginEntry {
           ? args['source'].toString()
           : 'OCR录入',
       createdAt: DateTime.now(),
+      imageRegionHash: imageRegionHash,
     );
     final status = await QuizBankStorage.insertIfAbsent(
       item,

@@ -172,12 +172,40 @@ class MainActivity : FlutterActivity() {
                     val opened = QuizAccessibilityService.enterRegionModeIfRunning()
                     result.success(opened)
                 }
+                "openImageRegionSelector" -> {
+                    val opened = QuizAccessibilityService.enterImageRegionModeIfRunning()
+                    result.success(opened)
+                }
+                "captureImageRegionScreenshot" -> {
+                    val requestId = call.argument<Int>("requestId") ?: 0
+                    val started = QuizAccessibilityService.captureImageRegionIfRunning(
+                        requestId = requestId,
+                        callback = { bytes ->
+                            runOnUiThread {
+                                if (bytes != null) {
+                                    val dHash = QuizAccessibilityService.computeDHashFromPng(bytes)
+                                    result.success(mapOf("bytes" to bytes, "dHash" to dHash))
+                                } else {
+                                    result.success(null)
+                                }
+                            }
+                        },
+                    )
+                    if (!started) result.success(null)
+                }
                 "captureRegionScreenshot" -> {
                     val requestId = call.argument<Int>("requestId") ?: 0
                     val started = QuizAccessibilityService.captureRegionIfRunningWithRequestId(
                         requestId = requestId,
                         callback = { bytes ->
-                            runOnUiThread { result.success(bytes) }
+                            runOnUiThread {
+                                if (bytes != null) {
+                                    val dHash = QuizAccessibilityService.computeDHashFromPng(bytes)
+                                    result.success(mapOf("bytes" to bytes, "dHash" to dHash))
+                                } else {
+                                    result.success(null)
+                                }
+                            }
                         },
                     )
                     if (!started) result.success(null)

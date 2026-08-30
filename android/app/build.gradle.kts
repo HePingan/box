@@ -75,6 +75,15 @@ android {
             } else {
                 signingConfigs.getByName("release")
             }
+
+            // R8 代码压缩 + 资源压缩。keep 规则见 proguard-rules.pro：
+            // manifest 声明的组件、Flutter/Media3 反射入口都必须显式保留。
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
@@ -87,8 +96,6 @@ android {
 }
 
 dependencies {
-    // Local-only MobileNetV3-Small image embedding for quiz-image disambiguation.
-    implementation("org.tensorflow:tensorflow-lite:2.14.0")
     // Media3 Download — background HLS/MP4 downloads via DownloadService
     implementation("androidx.media3:media3-exoplayer:1.2.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.2.1")
