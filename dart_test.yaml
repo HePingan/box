@@ -1,3 +1,5 @@
 # 真实网络测试默认不运行（会被外部 API 限流/超时，导致测试不稳定）。
 # 需要调试书源时显式运行：flutter test --run-tags network
-exclude_tags: network
+# visual 是人眼核对用的截图工具（会往 goldens/ 写 PNG），不是断言测试，
+# 默认也不跑。需要看改版后的真实渲染时：flutter test --run-tags visual
+exclude_tags: network || visual

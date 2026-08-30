@@ -46,8 +46,15 @@ class AppTokens {
   static const double space2Xl = 32;
 
   // Radius.
+  //
+  // 首页改版时发现原阶梯缺 14/16 两档，导致卡片各写各的字面量
+  // （实测出现过 9/10/14/15/16/28 六种野值）。补齐后卡片类圆角
+  // 统一走 radiusCard(16)，卡内小图标走 radiusChip(10)。
   static const double radiusXs = 8;
+  static const double radiusChip = 10;
   static const double radiusSm = 12;
+  static const double radiusInner = 14;
+  static const double radiusCard = 16;
   static const double radiusMd = 18;
   static const double radiusLg = 24;
   static const double radiusXl = 30;

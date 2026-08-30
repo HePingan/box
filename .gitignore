@@ -80,3 +80,7 @@ local_ai.md
 # Git bundle / transfer temp files
 *.bundle
 *.tar
+
+# 人眼核对用的渲染截图产物（visual 标签测试生成），不入库。
+test/features/home/goldens/
+test/features/home/failures/
