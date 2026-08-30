@@ -14,6 +14,12 @@ import 'package:box/features/image_generator/presentation/image_generator_page.d
 
 import 'widgets/home_widgets.dart';
 
+/// 首页热闻预览条数。
+///
+/// 此前抓取写 `take(4)`、渲染写 `take(3)`，第 4 条永远抓到又永远不显示。
+/// 收敛成一个常量，避免两处再次漂移。想看全部走「更多」进 DailyNewsPage。
+const int _homeNewsPreviewCount = 3;
+
 /// 新闻条目（标题 + 详情链接）
 class _NewsItem {
   const _NewsItem({required this.title, this.url});
@@ -115,7 +121,7 @@ class _HomePageState extends State<HomePage>
         _newsItems = [const _NewsItem(title: '暂无热点新闻，下拉刷新重试')];
       } else {
         allItems.shuffle();
-        _newsItems = allItems.take(4).toList();
+        _newsItems = allItems.take(_homeNewsPreviewCount).toList();
       }
     } catch (e) {
       _newsItems = [const _NewsItem(title: '网络异常，请稍后重试')];
@@ -442,7 +448,7 @@ class _HomePageState extends State<HomePage>
                 ),
               )
             else
-              ..._newsItems.take(3).map(
+              ..._newsItems.map(
                     (item) => GestureDetector(
                       onTap: () {
                         Navigator.push(
@@ -662,8 +668,13 @@ class HomeContinueCard extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: item.onTap,
+      // 宽度按内容自适应而不是死钉 176：
+      // 176 时「聚合影片、剧集与播放源」这类副标题会被 ellipsis 截成
+      // 「聚合影片、剧集与播…」（真机截图证实）。这里给一个区间：
+      // 下限保证多张卡时视觉整齐，上限防止单条超长文案把卡拉过屏宽。
+      // 仍在横向 ListView 里，卡多了照旧可以滑。
       child: Container(
-        width: 176,
+        constraints: const BoxConstraints(minWidth: 176, maxWidth: 260),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           color: Colors.white,
@@ -689,7 +700,11 @@ class HomeContinueCard extends StatelessWidget {
               child: Icon(item.icon, color: item.color, size: 18),
             ),
             const SizedBox(width: 8),
-            Expanded(
+            // 用 Flexible 而不是 Expanded：Expanded 会强制占满父级最大宽度，
+            // 让上面的 maxWidth 变成"总是最宽"，文字照旧按最宽算再截断。
+            // Flexible 允许 Row 收缩到内容宽度，同时在超过 maxWidth 时
+            // 仍然让文字让位（ellipsis 兜底），不会溢出。
+            Flexible(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
