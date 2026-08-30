@@ -13,7 +13,6 @@ class UpdateService {
   static final UpdateService instance = UpdateService._();
 
   static const String _cacheKey = 'update_manifest_cache_v1';
-  static const String _cacheTimeKey = 'update_manifest_cache_time_v1';
 
   /// Validate that the update check URL is a well-formed HTTPS URL.
   /// Returns null if the URL is invalid or not HTTPS, preventing
@@ -35,68 +34,17 @@ class UpdateService {
     ),
   );
 
-  Future<UpdateManifest?> checkUpdate({
-    required String checkUrl,
-    required String appId,
-    required String platform,
-    required String channel,
-    required int versionCode,
-    required String packageName,
-    String? deviceId,
-    String? userId,
-    UpdateManifestSecurityConfig security =
-        const UpdateManifestSecurityConfig(),
-  }) async {
-    final validatedUrl = _validateUpdateUrl(checkUrl);
-    if (validatedUrl == null) {
-      return await loadCachedManifest();
-    }
-    try {
-      final res = await _dio.get(
-        validatedUrl,
-        queryParameters: {
-          'app_id': appId,
-          'platform': platform,
-          'channel': channel,
-          'version_code': versionCode,
-          'package_name': packageName,
-          if (deviceId != null && deviceId.isNotEmpty) 'device_id': deviceId,
-          if (userId != null && userId.isNotEmpty) 'user_id': userId,
-          'ts': DateTime.now().millisecondsSinceEpoch,
-        },
-      );
-
-      final map = extractUpdateDataMap(res.data);
-      final manifest = UpdateManifest.fromJson(map);
-      validateUpdateManifestSecurity(
-        manifest: manifest,
-        rawManifestJson: map,
-        security: security,
-      );
-
-      // 服务端返回的如果是“旧版本/同版本”，依然可以缓存，
-      // 但真正是否弹窗，由上层 bootstrap 兜底判断。
-      await _saveCache(manifest);
-      return manifest;
-    } catch (_) {
-      // 网络失败时使用缓存兜底，但必须保证缓存确实比当前版本新，
-      // 否则宁可当作没有更新，也不要拿旧缓存去误弹窗。
-      final cached = await loadCachedManifest();
-      if (cached == null) return null;
-
-      if (cached.latestVersionCode <= versionCode) {
-        return null;
-      }
-
-      return cached;
-    }
-  }
-
-  /// 带诊断信息的检查，供「手动检查更新」使用（A4）。
+  /// 检查更新。启动流程与「手动检查更新」都走这里。
   ///
-  /// 与 [checkUpdate] 的区别：不吞异常、不做缓存兜底，如实告诉调用方失败在哪一步。
-  /// 启动流程仍然走 [checkUpdate]（要缓存兜底、要静默放行），这里只服务于用户
-  /// 主动点击的场景——出问题时需要看到真实原因，而不是一句「暂无更新」。
+  /// 曾经还有一个静默版 `checkUpdate`（吞异常 + 网络失败回落缓存），在两个入口
+  /// 都改用本方法后已无任何调用方，遂删除，避免留着一段不生效的兜底逻辑误导人。
+  ///
+  /// 现状说明：成功路径会写缓存（[_saveCache]），但**没有**任何读缓存的降级路径——
+  /// 网络不通时本方法如实返回 [UpdateCheckStatus.networkError]，不会拿旧清单
+  /// 冒充"有新版本"。若将来要做离线提示，应在 bootstrap 层显式读
+  /// [loadCachedManifest] 并明确告知用户数据来自缓存，而不是藏在这里。
+  ///
+  /// 出问题时调用方需要看到真实原因，而不是一句「暂无更新」。
   Future<UpdateCheckOutcome> checkUpdateDiagnostic({
     required String checkUrl,
     required String appId,
@@ -179,7 +127,6 @@ class UpdateService {
   Future<void> _saveCache(UpdateManifest manifest) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_cacheKey, jsonEncode(manifest.toJson()));
-    await prefs.setInt(_cacheTimeKey, DateTime.now().millisecondsSinceEpoch);
   }
 
   Future<UpdateManifest?> loadCachedManifest() async {
@@ -198,8 +145,4 @@ class UpdateService {
     }
   }
 
-  Future<int?> getCacheTime() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt(_cacheTimeKey);
-  }
 }

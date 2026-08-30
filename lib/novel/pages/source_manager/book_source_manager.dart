@@ -191,6 +191,57 @@ class BookSourceManager extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 批量增删书源：全部改完只写盘一次、只通知一次。
+  ///
+  /// 为什么需要它：[save] 是把整张书源表 jsonEncode 后写 SharedPreferences，
+  /// 而 [addOrUpdate] / [deleteById] 每条都会调一次 save。云端同步 N 条时
+  /// 就是 N 次全量序列化写盘（O(N²)）外加 N 次 notifyListeners 让列表抖 N 次。
+  /// 实测 30 条 = 30 次写盘 / 12 条 = 12 次通知。
+  ///
+  /// [deleteIds] 先执行再应用 [upserts]，因为云端改名会让本地派生 id 变化，
+  /// 调用方需要"先删旧 id 再写新条目"的顺序语义。
+  ///
+  /// 单条修改仍应走 [addOrUpdate] / [deleteById]，语义更直白。
+  Future<void> applyBatch({
+    Iterable<String> deleteIds = const <String>[],
+    Iterable<BookSourceModel> upserts = const <BookSourceModel>[],
+  }) async {
+    final toDelete = deleteIds.toSet();
+    var changed = false;
+
+    if (toDelete.isNotEmpty) {
+      final before = _items.length;
+      _items.removeWhere((e) => toDelete.contains(e.id));
+      if (_items.length != before) changed = true;
+      if (_currentSourceId != null && toDelete.contains(_currentSourceId)) {
+        _currentSourceId = null;
+        changed = true;
+      }
+    }
+
+    for (final source in upserts) {
+      final index = _items.indexWhere((e) => e.id == source.id);
+      if (index >= 0) {
+        _items[index] = source;
+      } else {
+        _items.add(source);
+      }
+      changed = true;
+
+      // 与 addOrUpdate 保持一致：没有选中源时，第一条可用书源自动成为当前源。
+      if (_currentSourceId == null && source.enabled) {
+        _currentSourceId = source.id;
+      }
+    }
+
+    if (!changed) return;
+
+    _sort();
+    _repairCurrentSourceId();
+    await save();
+    notifyListeners();
+  }
+
   Future<void> setCurrentSource(String id, {bool ensureEnabled = true}) async {
     final index = _items.indexWhere((e) => e.id == id);
     if (index < 0) return;

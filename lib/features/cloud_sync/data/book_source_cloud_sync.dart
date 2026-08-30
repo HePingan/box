@@ -86,6 +86,12 @@ class BookSourceCloudSyncService {
     var removed = 0;
     var skipped = 0;
 
+    // 先在内存里算出完整的增删集合，最后一次性交给 manager.applyBatch。
+    // 逐条调 addOrUpdate/deleteById 会让每条都全量 jsonEncode 写盘一次
+    // （N 条 = O(N²) 写盘）并触发 N 次 notifyListeners 把列表抖 N 次。
+    final deleteIds = <String>[];
+    final upserts = <BookSourceModel>[];
+
     for (final entry in bundle.sources) {
       if (entry.id.isEmpty) {
         skipped++;
@@ -96,7 +102,7 @@ class BookSourceCloudSyncService {
       if (entry.removed) {
         if (previousLocalId != null &&
             existingLocalIds.contains(previousLocalId)) {
-          await manager.deleteById(previousLocalId);
+          deleteIds.add(previousLocalId);
           existingLocalIds.remove(previousLocalId);
           removed++;
         }
@@ -113,13 +119,13 @@ class BookSourceCloudSyncService {
       // 云端改名/换域名会让派生 id 变化：先清掉映射里的旧条目，避免残留重复。
       if (previousLocalId != null && previousLocalId != model.id) {
         if (existingLocalIds.contains(previousLocalId)) {
-          await manager.deleteById(previousLocalId);
+          deleteIds.add(previousLocalId);
           existingLocalIds.remove(previousLocalId);
         }
       }
 
       final isNew = !existingLocalIds.contains(model.id);
-      await manager.addOrUpdate(model);
+      upserts.add(model);
       existingLocalIds.add(model.id);
       idMap[entry.id] = model.id;
       if (isNew) {
@@ -128,6 +134,10 @@ class BookSourceCloudSyncService {
         updated++;
       }
     }
+
+    // applyBatch 内部保证「先删后写」，与上面累积的顺序语义一致：
+    // 改名场景下旧 id 在 deleteIds、新条目在 upserts，不会互相覆盖。
+    await manager.applyBatch(deleteIds: deleteIds, upserts: upserts);
 
     await _writeIdMap(prefs, idMap);
     await prefs.setInt(versionKey, bundle.version);

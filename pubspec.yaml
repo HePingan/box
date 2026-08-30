@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.7.5+175
+version: 1.7.6+176
 
 environment:
   sdk: ^3.11.1
@@ -75,6 +75,11 @@ dev_dependencies:
   # 本来就作为 flutter_test 的传递依赖存在，这里按 lock 里已有的
   # 版本显式声明，避免直接 import 传递依赖。
   fake_async: 1.3.3
+  # 云端书源批量落地的写盘次数测试需要替换 SharedPreferences 的存储后端，
+  # 以统计真实写入次数（见 test/cloud_sync/book_source_cloud_sync_batch_test.dart）。
+  # 同 fake_async 的处理方式：本就是 shared_preferences 的传递依赖，
+  # 按 lock 里已有版本显式声明，避免直接 import 传递依赖。
+  shared_preferences_platform_interface: 2.4.2
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
