@@ -39,8 +39,13 @@ jobs:
       - name: 安装依赖
         run: flutter pub get
 
-      - name: 静态分析（零容忍）
-        run: flutter analyze
+      # 只拦 error/warning。`flutter analyze` 只要有任何一条 info 就退出非零，
+      # 而本仓库存量有 226 条 info（203 条是测试文件里的 avoid_print）。
+      # 一上来就"零容忍"的结果是 CI 长红 → 没人看 → 闸门形同虚设，
+      # 还会把后面的测试步骤整个 skip 掉（首次运行就是这样）。
+      # 所以这里用 --no-fatal-infos，把 info 留作待清理的技术债。
+      - name: 静态分析（error/warning 零容忍）
+        run: flutter analyze --no-fatal-infos
 
       - name: 单元与 Widget 测试
         # 排除 live：那些用例要打真实后台，CI 里没有密钥也不该依赖外网。

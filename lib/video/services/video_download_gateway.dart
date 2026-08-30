@@ -17,7 +17,7 @@ class MethodChannelVideoDownloadGateway implements VideoDownloadGateway {
   MethodChannelVideoDownloadGateway({MethodChannel? channel})
     : _channel = channel ?? const MethodChannel(_channelName);
 
-  static const String _channelName = 'com.example.box/video_downloads';
+  static const String _channelName = 'top.hpa888.box/video_downloads';
   final MethodChannel _channel;
 
   @override

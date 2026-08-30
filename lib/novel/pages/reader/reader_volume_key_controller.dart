@@ -24,7 +24,7 @@ class ReaderVolumeKeyController {
     required this.onNavigate,
   }) : _channel = channel ?? const MethodChannel(_channelName);
 
-  static const String _channelName = 'com.example.box/reader_keys';
+  static const String _channelName = 'top.hpa888.box/reader_keys';
 
   final MethodChannel _channel;
 

@@ -23,7 +23,7 @@ part 'quiz_plugin_cloud_widgets.part.dart';
 part 'quiz_plugin_overlay_format.part.dart';
 
 /// 答题插件 - MethodChannel 名称
-const String _kChannel = 'com.example.box/quiz_plugin';
+const String _kChannel = 'top.hpa888.box/quiz_plugin';
 
 class _OcrEntrySaveResult {
   const _OcrEntrySaveResult({required this.status, required this.message});

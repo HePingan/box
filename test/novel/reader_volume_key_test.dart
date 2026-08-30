@@ -8,7 +8,7 @@ import 'package:box/novel/pages/reader/reader_volume_key_controller.dart';
 class _FakeKeyChannel {
   _FakeKeyChannel({this.throwOnSend = false});
 
-  static const String name = 'com.example.box/reader_keys';
+  static const String name = 'top.hpa888.box/reader_keys';
 
   final bool throwOnSend;
   final List<bool> sent = <bool>[];
