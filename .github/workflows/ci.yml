@@ -65,9 +65,16 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: 包名一致性 + 备份覆盖面
+        # --exclude-tags live 不能漏：test/update/update_live_backend_test.dart
+        # 标了 @Tags(['live'])，会真的去打 https://box.hpa888.top。
+        # 显式点名 test/update/ 这个目录时它也会被收进来，在 GitHub runner 上
+        # 就是外网依赖 → 随机失败。上面 analyze-and-test 有这个参数，这里漏了，
+        # 结果就是 analyze-and-test 绿、guardrails 红，而本机复现不出来
+        # （本机连得上后台）。
         run: |
           flutter test \
             test/package_identity_test.dart \
             test/backup/ \
             test/update/ \
+            --exclude-tags live \
             --reporter expanded
