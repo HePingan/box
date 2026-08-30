@@ -16,10 +16,15 @@ class LocalBackupService {
     'video_favorites_box',
     'play_history',
     'video_search_history_box',
+    // 源内搜索用的是独立 box（见 video_search_page.dart），漏掉会静默丢数据。
+    'video_source_search_history_box',
     'video_play_line_memory_box',
     'video_source_visibility_box',
     'video_download_tasks_v1',
   ];
+
+  /// 仅供测试断言备份清单完整性。
+  static List<String> get debugBoxNames => List.unmodifiable(_boxNames);
 
   /// 题库读写默认走 sqflite。测试环境没有 sqflite 平台实现，
   /// 因此这两个钩子可被替换，用于在纯 Dart 测试里验证 Hive 迁移链路。

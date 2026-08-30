@@ -21,6 +21,7 @@ void main() {
       'video_favorites_box',
       'play_history',
       'video_search_history_box',
+      'video_source_search_history_box',
       'video_play_line_memory_box',
       'video_source_visibility_box',
       'video_download_tasks_v1',
@@ -40,6 +41,13 @@ void main() {
     final count = await LocalBackupService.restoreBackup(raw);
     expect(count, 1);
     expect(box.get('source::1'), {'vodId': 1, 'vodName': '测试片'});
+  });
+
+  test('备份覆盖 lib 中出现的全部 Hive box 名', () async {
+    // 防止新增一个 box 却忘记加进备份清单 —— 那样重装即静默丢数据。
+    final declared = LocalBackupService.debugBoxNames.toSet();
+    expect(declared, contains('video_source_search_history_box'));
+    expect(declared.length, greaterThanOrEqualTo(7));
   });
 
   test('从字节恢复时中文不被拆成乱码', () async {
