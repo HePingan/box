@@ -70,42 +70,6 @@ enum HomePluginArea {
   }
 }
 
-extension HomePluginAreaX on HomePluginArea {
-  String get label {
-    switch (this) {
-      case HomePluginArea.recommend:
-        return '推荐';
-      case HomePluginArea.music:
-        return '音乐';
-      case HomePluginArea.video:
-        return '影视';
-      case HomePluginArea.comic:
-        return '漫画';
-      case HomePluginArea.novel:
-        return '小说';
-      case HomePluginArea.center:
-        return '插件中心';
-    }
-  }
-
-  IconData get icon {
-    switch (this) {
-      case HomePluginArea.recommend:
-        return Icons.local_fire_department_outlined;
-      case HomePluginArea.music:
-        return Icons.music_note_outlined;
-      case HomePluginArea.video:
-        return Icons.play_circle_outline;
-      case HomePluginArea.comic:
-        return Icons.image_outlined;
-      case HomePluginArea.novel:
-        return Icons.menu_book_outlined;
-      case HomePluginArea.center:
-        return Icons.extension_outlined;
-    }
-  }
-}
-
 enum HomePluginActionType {
   toast,
   openDailyNews,
@@ -113,25 +77,6 @@ enum HomePluginActionType {
   openVideoList,
   openImageGenerator,
   openGithubAccel,
-}
-
-extension HomePluginActionTypeX on HomePluginActionType {
-  String get label {
-    switch (this) {
-      case HomePluginActionType.toast:
-        return '弹出提示';
-      case HomePluginActionType.openDailyNews:
-        return '打开日报详情';
-      case HomePluginActionType.openNovelList:
-        return '打开小说列表';
-      case HomePluginActionType.openVideoList:
-        return '打开影视列表';
-      case HomePluginActionType.openImageGenerator:
-        return '打开 AI 生图';
-      case HomePluginActionType.openGithubAccel:
-        return '打开 GitHub 加速下载';
-    }
-  }
 }
 
 class HomePluginActionContext {
