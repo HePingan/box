@@ -65,6 +65,20 @@
                 android:alpha="0.95"
                 android:contentDescription="设置识别区域" />
 
+            <!-- 考试模式：一键进入题目录入，复用 OCR 校验/去重/保存链路 -->
+            <ImageButton
+                android:id="@+id/btn_quiz_entry"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginEnd="4dp"
+                android:padding="5dp"
+                android:src="@drawable/ic_quiz_entry_overlay"
+                android:background="@drawable/quiz_title_action_bg"
+                android:scaleType="fitCenter"
+                android:tint="#F8FAFC"
+                android:alpha="0.95"
+                android:contentDescription="一键录入并保存题目" />
+
             <ImageButton
                 android:id="@+id/btn_hide_overlay"
                 android:layout_width="26dp"
@@ -146,6 +160,7 @@
             android:layout_weight="1"
             android:fillViewport="false"
             android:overScrollMode="ifContentScrolls"
+            android:nestedScrollingEnabled="true"
             android:scrollbars="vertical">
 
             <TextView
@@ -244,7 +259,7 @@
             android:contentDescription="字号" />
 
         <!-- 识别区域调节层（默认隐藏） -->
-        <com.example.box.RegionSelectorView
+        <top.hpa888.box.RegionSelectorView
             android:id="@+id/region_selector"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
@@ -468,20 +483,40 @@
                             android:text="—" />
                     </ScrollView>
 
-                    <Button
-                        android:id="@+id/btn_probe_search"
-                        android:layout_width="wrap_content"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_gravity="end"
-                        android:text="用此文本搜题"
-                        android:textColor="#FDE68A"
-                        android:background="@android:color/transparent"
-                        android:minWidth="0dp"
-                        android:minHeight="0dp"
-                        android:paddingStart="8dp"
-                        android:paddingEnd="4dp"
-                        android:paddingTop="4dp"
-                        android:paddingBottom="2dp" />
+                        android:orientation="horizontal"
+                        android:gravity="end|center_vertical">
+
+                        <Button
+                            android:id="@+id/btn_probe_copy"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="一键复制"
+                            android:textColor="#FDE68A"
+                            android:background="@android:color/transparent"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="8dp"
+                            android:paddingTop="4dp"
+                            android:paddingBottom="2dp" />
+
+                        <Button
+                            android:id="@+id/btn_probe_search"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="用此文本搜题"
+                            android:textColor="#FDE68A"
+                            android:background="@android:color/transparent"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="4dp"
+                            android:paddingTop="4dp"
+                            android:paddingBottom="2dp" />
+                    </LinearLayout>
                 </LinearLayout>
             </LinearLayout>
         </LinearLayout>

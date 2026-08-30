@@ -39,11 +39,7 @@ void main() {
       final streamed = await sha256OfFile(f);
       final oneShot = sha256.convert(bytes).toString();
 
-      expect(
-        streamed,
-        oneShot,
-        reason: 'size=$size 时流式摘要与整体摘要不一致',
-      );
+      expect(streamed, oneShot, reason: 'size=$size 时流式摘要与整体摘要不一致');
     }
   });
 

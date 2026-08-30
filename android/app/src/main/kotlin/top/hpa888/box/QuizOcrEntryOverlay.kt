@@ -1,4 +1,4 @@
-package com.example.box
+package top.hpa888.box
 
 import android.content.Context
 import android.graphics.PixelFormat
@@ -28,7 +28,7 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
 
     companion object {
         private const val TAG = "QuizOcrEntry"
-        private const val CHANNEL = "com.example.box/quiz_plugin"
+        private const val CHANNEL = "top.hpa888.box/quiz_plugin"
         /** 与 MainActivity / QuizAccessibilityService 一致 */
         private const val ENGINE_ID = "quiz_engine"
         private const val PREFS = "quiz_plugin_prefs"

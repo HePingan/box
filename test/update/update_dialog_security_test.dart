@@ -9,16 +9,16 @@ import 'package:flutter_test/flutter_test.dart';
 /// 之前 dialog 根本没有这个参数，安装器只能用默认的空白名单（等于全放通）。
 void main() {
   UpdateManifest manifest() => UpdateManifest.fromJson(<String, dynamic>{
-        'appId': 'box',
-        'platform': 'android',
-        'channel': 'release',
-        'packageName': 'com.example.box',
-        'latestVersionCode': 200,
-        'latestVersionName': '2.0.0',
-        'downloadUrl': 'https://box.hpa888.top/a.apk',
-        'sha256': 'a' * 64,
-        'changelog': <String>['修复若干问题'],
-      });
+    'appId': 'box',
+    'platform': 'android',
+    'channel': 'release',
+    'packageName': 'top.hpa888.box',
+    'latestVersionCode': 200,
+    'latestVersionName': '2.0.0',
+    'downloadUrl': 'https://box.hpa888.top/a.apk',
+    'sha256': 'a' * 64,
+    'changelog': <String>['修复若干问题'],
+  });
 
   testWidgets('security 参数存在且被保留', (tester) async {
     const security = UpdateManifestSecurityConfig(

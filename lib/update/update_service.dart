@@ -44,7 +44,8 @@ class UpdateService {
     required String packageName,
     String? deviceId,
     String? userId,
-    UpdateManifestSecurityConfig security = const UpdateManifestSecurityConfig(),
+    UpdateManifestSecurityConfig security =
+        const UpdateManifestSecurityConfig(),
   }) async {
     final validatedUrl = _validateUpdateUrl(checkUrl);
     if (validatedUrl == null) {
@@ -105,7 +106,8 @@ class UpdateService {
     required String packageName,
     String? deviceId,
     String? userId,
-    UpdateManifestSecurityConfig security = const UpdateManifestSecurityConfig(),
+    UpdateManifestSecurityConfig security =
+        const UpdateManifestSecurityConfig(),
   }) async {
     final validatedUrl = _validateUpdateUrl(checkUrl);
     if (validatedUrl == null) {

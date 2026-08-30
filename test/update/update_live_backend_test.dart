@@ -36,7 +36,7 @@ void main() {
         'platform': 'android',
         'channel': 'release',
         'version_code': '$versionCode',
-        'package_name': 'com.example.box',
+        'package_name': 'top.hpa888.box',
       },
     );
 
@@ -58,11 +58,7 @@ void main() {
   test('线上 check 响应能用真实密钥验签通过', () async {
     final data = await fetchCheck(169);
 
-    expect(
-      data['signatureAlgorithm'],
-      'HMAC-SHA256',
-      reason: '服务端启用了 HMAC 签名',
-    );
+    expect(data['signatureAlgorithm'], 'HMAC-SHA256', reason: '服务端启用了 HMAC 签名');
 
     final security = UpdateManifestSecurityConfig(
       signatureMode: UpdateManifestSignatureMode.hmacSha256,
@@ -78,7 +74,8 @@ void main() {
     expect(
       result.passed,
       isTrue,
-      reason: '真实响应验签失败：${result.message}\n'
+      reason:
+          '真实响应验签失败：${result.message}\n'
           'expected=${result.expected}\nactual=${result.actual}',
     );
   }, timeout: const Timeout(Duration(seconds: 90)));

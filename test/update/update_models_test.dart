@@ -12,7 +12,7 @@ UpdateManifest manifest({
     appId: 'box',
     platform: 'android',
     channel: 'release',
-    packageName: 'com.example.box',
+    packageName: 'top.hpa888.box',
     latestVersionCode: latestVersionCode,
     latestVersionName: '1.0.$latestVersionCode',
     minSupportedVersionCode: minSupportedVersionCode,

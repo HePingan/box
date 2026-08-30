@@ -23,7 +23,7 @@ void main() {
     'appId': 'box',
     'platform': 'android',
     'channel': 'release',
-    'packageName': 'com.example.box',
+    'packageName': 'top.hpa888.box',
     'latestVersionCode': 118,
     'latestVersionName': '1.1.8',
     'minSupportedVersionCode': 0,
@@ -45,9 +45,10 @@ void main() {
   /// 用与服务端完全一致的口径签名。
   String signLikeServer(Map<String, dynamic> published) {
     final canonical = updateManifestCanonicalJson(published);
-    return Hmac(sha256, utf8.encode(secret))
-        .convert(utf8.encode(canonical))
-        .toString();
+    return Hmac(
+      sha256,
+      utf8.encode(secret),
+    ).convert(utf8.encode(canonical)).toString();
   }
 
   /// check 接口的真实响应：已签名字段 + 签名 + 事后追加的运行时字段。

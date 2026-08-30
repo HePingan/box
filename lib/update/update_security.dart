@@ -4,11 +4,7 @@ import 'package:crypto/crypto.dart';
 
 import 'update_models.dart';
 
-enum UpdateManifestSignatureMode {
-  none,
-  sha256,
-  hmacSha256,
-}
+enum UpdateManifestSignatureMode { none, sha256, hmacSha256 }
 
 class UpdateManifestSecurityConfig {
   const UpdateManifestSecurityConfig({
@@ -139,7 +135,8 @@ UpdateManifestVerificationResult verifyUpdateManifestSignature({
     );
   }
 
-  final actual = manifestJson['signature']?.toString().trim().toLowerCase() ?? '';
+  final actual =
+      manifestJson['signature']?.toString().trim().toLowerCase() ?? '';
   if (actual.isEmpty) {
     return const UpdateManifestVerificationResult(
       passed: false,
@@ -209,7 +206,9 @@ bool isValidUpdateDownloadUrl(
   final uri = Uri.tryParse(url.trim());
   if (uri == null || !uri.hasScheme || uri.host.isEmpty) return false;
   if (requireHttps && uri.scheme.toLowerCase() != 'https') return false;
-  if (!requireHttps && uri.scheme.toLowerCase() != 'https' && uri.scheme.toLowerCase() != 'http') {
+  if (!requireHttps &&
+      uri.scheme.toLowerCase() != 'https' &&
+      uri.scheme.toLowerCase() != 'http') {
     return false;
   }
 

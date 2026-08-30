@@ -29,9 +29,14 @@ class AppConfig {
     defaultValue: kIsWeb ? 'web' : 'android',
   );
 
+  /// 验签失败时是否仍然放行更新。
+  ///
+  /// 默认 `false`：多人使用场景下，「验签失败还照装」等于任何能插进这条链路的人
+  /// 都可以给用户推包。宁可不更新，也不装来源不明的安装包。
+  /// 之前默认 `true` 加上 `catch (_)` 的组合，正是验签 bug 能长期静默存活的原因。
   static const bool allowProceedOnCheckFailure = bool.fromEnvironment(
     'ALLOW_PROCEED_ON_UPDATE_CHECK_FAILURE',
-    defaultValue: true,
+    defaultValue: false,
   );
 
   /// 默认对齐服务端：`build_manifest()` 只会产出 `HMAC-SHA256` 或不签名。

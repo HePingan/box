@@ -8,4 +8,4 @@
     android:canTakeScreenshot="true"
     android:description="@string/quiz_accessibility_desc"
     android:notificationTimeout="600"
-    android:settingsActivity="com.example.box.MainActivity" />
+    android:settingsActivity="top.hpa888.box.MainActivity" />

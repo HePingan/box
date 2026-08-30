@@ -15,7 +15,8 @@ class AppInstaller {
   static Future<void> downloadAndInstall({
     required UpdateManifest manifest,
     void Function(double progress)? onProgress,
-    UpdateManifestSecurityConfig security = const UpdateManifestSecurityConfig(),
+    UpdateManifestSecurityConfig security =
+        const UpdateManifestSecurityConfig(),
     CancelToken? cancelToken,
   }) async {
     final expectedSha256 = normalizeSha256Hex(manifest.sha256 ?? '');
@@ -24,7 +25,10 @@ class AppInstaller {
     }
 
     // A2/A3：主地址 + 备用地址，且都过域名白名单。主地址不合法会直接抛。
-    final plan = buildUpdateDownloadPlan(manifest: manifest, security: security);
+    final plan = buildUpdateDownloadPlan(
+      manifest: manifest,
+      security: security,
+    );
 
     final dio = Dio(
       BaseOptions(

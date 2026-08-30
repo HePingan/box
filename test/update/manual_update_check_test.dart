@@ -12,7 +12,7 @@ UpdateManifest manifestWithCode(int code) {
     'appId': 'box',
     'platform': 'android',
     'channel': 'release',
-    'packageName': 'com.example.box',
+    'packageName': 'top.hpa888.box',
     'latestVersionCode': code,
     'latestVersionName': '1.$code.0',
     'downloadUrl': 'https://box.hpa888.top/a.apk',
@@ -75,7 +75,8 @@ void main() {
 
     test('每种状态都有非空描述', () {
       for (final s in UpdateCheckStatus.values) {
-        final o = s == UpdateCheckStatus.updateAvailable ||
+        final o =
+            s == UpdateCheckStatus.updateAvailable ||
                 s == UpdateCheckStatus.upToDate
             ? UpdateCheckOutcome.fromManifest(
                 manifest: manifestWithCode(

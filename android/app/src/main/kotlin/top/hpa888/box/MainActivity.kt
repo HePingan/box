@@ -1,4 +1,4 @@
-package com.example.box
+package top.hpa888.box
 
 import android.content.Intent
 import android.os.Build
@@ -12,13 +12,13 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
 
     companion object {
-        // 视频下载 MethodChannel — com.example.box/video_downloads
-        const val DOWNLOAD_CHANNEL = "com.example.box/video_downloads"
+        // 视频下载 MethodChannel — top.hpa888.box/video_downloads
+        const val DOWNLOAD_CHANNEL = "top.hpa888.box/video_downloads"
 
-        private const val CHANNEL = "com.example.box/quiz_plugin"
+        private const val CHANNEL = "top.hpa888.box/quiz_plugin"
 
         // 阅读器按键 MethodChannel — 音量键翻页
-        const val READER_KEYS_CHANNEL = "com.example.box/reader_keys"
+        const val READER_KEYS_CHANNEL = "top.hpa888.box/reader_keys"
 
         private const val REQUEST_OVERLAY_PERMISSION = 1001
         private const val REQUEST_NOTIFICATION_PERMISSION = 1002
@@ -469,7 +469,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
-        val service = "${packageName}/com.example.box.QuizAccessibilityService"
+        val service = "${packageName}/top.hpa888.box.QuizAccessibilityService"
         try {
             val enabled = Settings.Secure.getString(
                 contentResolver,
@@ -485,8 +485,8 @@ class MainActivity : FlutterActivity() {
         // 直接打开系统无障碍设置页（最稳，全 ROM 通用）。附带跳转到本服务的深链参数，
         // 部分 AOSP/原生 ROM 会直接定位到“答题助手”开关；不支持的 ROM 也只是停在列表页。
         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-            putExtra(":settings:fragment_args_key", "com.example.box/.QuizAccessibilityService")
-            putExtra(":settings:fragment_package", "com.example.box")
+            putExtra(":settings:fragment_args_key", "top.hpa888.box/.QuizAccessibilityService")
+            putExtra(":settings:fragment_package", "top.hpa888.box")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         try {

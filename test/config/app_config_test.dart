@@ -16,8 +16,10 @@ void main() {
       expect(uri.path, contains('/app-updates/check'));
     });
 
-    test('allows proceeding when update check fails by default', () {
-      expect(AppConfig.allowProceedOnCheckFailure, isTrue);
+    test('验签失败默认不放行（fail closed）', () {
+      // 多人使用场景下，验签失败还照装等于谁都能给用户推包。
+      // 原来默认 true + catch(_) 静默，正是验签 bug 长期存活的根因。
+      expect(AppConfig.allowProceedOnCheckFailure, isFalse);
     });
   });
 }

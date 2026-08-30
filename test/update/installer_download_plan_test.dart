@@ -21,7 +21,7 @@ UpdateManifest manifestWith({
     'appId': 'box',
     'platform': 'android',
     'channel': 'release',
-    'packageName': 'com.example.box',
+    'packageName': 'top.hpa888.box',
     'latestVersionCode': 170,
     'latestVersionName': '1.7.0',
     'minSupportedVersionCode': 0,
@@ -101,9 +101,7 @@ void main() {
     test('主地址不在白名单内时直接抛异常', () {
       expect(
         () => buildUpdateDownloadPlan(
-          manifest: manifestWith(
-            downloadUrl: 'https://evil.example.com/a.apk',
-          ),
+          manifest: manifestWith(downloadUrl: 'https://evil.example.com/a.apk'),
           security: security,
         ),
         throwsA(isA<Exception>()),

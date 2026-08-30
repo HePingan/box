@@ -1,4 +1,4 @@
-package com.example.box
+package top.hpa888.box
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
@@ -52,7 +52,7 @@ import kotlin.math.hypot
 class QuizAccessibilityService : AccessibilityService() {
 
     companion object {
-        private const val CHANNEL = "com.example.box/quiz_plugin"
+        private const val CHANNEL = "top.hpa888.box/quiz_plugin"
         private const val TAG = "QuizAccessibility"
         private const val PREFS_NAME = "quiz_plugin_prefs"
         private const val KEY_REGION = "quiz_region"
@@ -71,7 +71,7 @@ class QuizAccessibilityService : AccessibilityService() {
         private const val KEY_COLLAPSED = "quiz_overlay_collapsed"
         private const val CONFIG_PREFS_NAME = "FlutterSharedPreferences"
         private const val CONFIG_KEY = "flutter.quiz_plugin_config"
-        const val ACTION_UPDATE_REGION = "com.example.box.UPDATE_QUIZ_REGION"
+        const val ACTION_UPDATE_REGION = "top.hpa888.box.UPDATE_QUIZ_REGION"
 
         // 悬浮窗尺寸/字号约束（默认更宽，避免标题按钮挤压与文字被截断）
         private const val OVERLAY_MIN_WIDTH_DP = 240
@@ -3176,7 +3176,7 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
     private fun readCaptureConfig(): CaptureConfig {
         val raw = getSharedPreferences(CONFIG_PREFS_NAME, Context.MODE_PRIVATE)
             .getString(CONFIG_KEY, null)
-            ?: getSharedPreferences("com.example.box_preferences", Context.MODE_PRIVATE)
+            ?: getSharedPreferences("top.hpa888.box_preferences", Context.MODE_PRIVATE)
                 .getString("quiz_plugin_config", null)
             ?: return CaptureConfig()
         return CaptureConfig(

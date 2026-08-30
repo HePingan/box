@@ -12,15 +12,12 @@ import 'package:flutter_test/flutter_test.dart';
 /// 就是这样长期无人发现的。
 ///
 /// 新行为：主界面立刻显示，检查在后台跑；有新版本才弹窗；强更仍能拦住。
-UpdateManifest manifest({
-  required int code,
-  bool forceUpdate = false,
-}) {
+UpdateManifest manifest({required int code, bool forceUpdate = false}) {
   return UpdateManifest.fromJson(<String, dynamic>{
     'appId': 'box',
     'platform': 'android',
     'channel': 'release',
-    'packageName': 'com.example.box',
+    'packageName': 'top.hpa888.box',
     'latestVersionCode': code,
     'latestVersionName': '9.9.9',
     'forceUpdate': forceUpdate,

@@ -1,4 +1,4 @@
-package com.example.box
+package top.hpa888.box
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -44,7 +44,7 @@ private const val TAG = "QuizOverlayManager"
 class QuizOverlayManager(private val context: Context) {
 
     companion object {
-        private const val CHANNEL = "com.example.box/quiz_plugin"
+        private const val CHANNEL = "top.hpa888.box/quiz_plugin"
         private const val PREFS_NAME = "quiz_plugin_prefs"
         private const val KEY_REGION = "quiz_region"
         private const val NOTIFICATION_ID = 0x2024_11_07

@@ -43,7 +43,7 @@ void main() {
   setUp(() {
     PackageInfo.setMockInitialValues(
       appName: 'Box',
-      packageName: 'com.example.box',
+      packageName: 'top.hpa888.box',
       version: '1.0.0',
       buildNumber: '1',
       buildSignature: '',

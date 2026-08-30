@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- FrameLayout 根：标题/表单正常排版，缩放手柄叠在右下角，避免 LinearLayout 顶部留白 -->
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- 根用 TouchAwareFrameLayout：在 dispatchTouchEvent 层上报触摸开始/结束，
+     滑动期间暂停无障碍抓题扫描（扫描与本窗口渲染共用主线程）。 -->
+<top.hpa888.box.TouchAwareFrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/ocr_entry_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -55,6 +57,7 @@
             android:background="#F8FAFC" />
 
         <HorizontalScrollView
+            android:id="@+id/ocr_entry_toolbar_scroll"
             android:layout_width="match_parent"
             android:layout_height="36dp"
             android:scrollbars="none"
@@ -78,12 +81,15 @@
                     android:minHeight="0dp"
                     android:padding="8dp" />
 
+                <!-- 保存题库前移到「框选」之后：窄屏工具栏要横滑，
+                     保存是最高频终点动作，不该排在需要划动才够得着的位置。
+                     OCR识别与它交换，落到原「保存题库」的槽位。 -->
                 <Button
-                    android:id="@+id/btn_ocr_entry_capture"
+                    android:id="@+id/btn_ocr_entry_save"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="OCR识别"
-                    android:textColor="#4F46E5"
+                    android:text="保存题库"
+                    android:textColor="#059669"
                     android:background="@android:color/transparent"
                     android:minWidth="0dp"
                     android:minHeight="0dp"
@@ -101,6 +107,17 @@
                     android:padding="8dp" />
 
                 <Button
+                    android:id="@+id/btn_ocr_entry_copy"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="一键复制"
+                    android:textColor="#B45309"
+                    android:background="@android:color/transparent"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:padding="8dp" />
+
+                <Button
                     android:id="@+id/btn_ocr_entry_parse"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -112,11 +129,11 @@
                     android:padding="8dp" />
 
                 <Button
-                    android:id="@+id/btn_ocr_entry_save"
+                    android:id="@+id/btn_ocr_entry_capture"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="保存题库"
-                    android:textColor="#059669"
+                    android:text="OCR识别"
+                    android:textColor="#4F46E5"
                     android:background="@android:color/transparent"
                     android:minWidth="0dp"
                     android:minHeight="0dp"
@@ -148,6 +165,7 @@
         </HorizontalScrollView>
 
         <ScrollView
+            android:id="@+id/ocr_entry_form_scroll"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
@@ -156,7 +174,9 @@
             android:paddingEnd="10dp"
             android:paddingTop="6dp"
             android:paddingBottom="28dp"
-            android:overScrollMode="ifContentScrolls">
+            android:overScrollMode="ifContentScrolls"
+            android:scrollbars="vertical"
+            android:nestedScrollingEnabled="true">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -292,4 +312,4 @@
             android:layout_marginEnd="6dp"
             android:background="#664F46E5" />
     </FrameLayout>
-</FrameLayout>
+</top.hpa888.box.TouchAwareFrameLayout>

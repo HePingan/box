@@ -1,4 +1,4 @@
-package com.example.box
+package top.hpa888.box
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -32,13 +32,13 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class VideoDownloadService : Service() {
     companion object {
-        const val ACTION_ENQUEUE = "com.example.box.ACTION_ENQUEUE"
-        const val ACTION_PAUSE = "com.example.box.ACTION_PAUSE"
-        const val ACTION_RESUME = "com.example.box.ACTION_RESUME"
-        const val ACTION_CANCEL = "com.example.box.ACTION_CANCEL"
-        const val ACTION_REMOVE = "com.example.box.ACTION_REMOVE"
-        const val EXTRA_TASK_DATA = "com.example.box.EXTRA_TASK_DATA"
-        const val EXTRA_TASK_ID = "com.example.box.EXTRA_TASK_ID"
+        const val ACTION_ENQUEUE = "top.hpa888.box.ACTION_ENQUEUE"
+        const val ACTION_PAUSE = "top.hpa888.box.ACTION_PAUSE"
+        const val ACTION_RESUME = "top.hpa888.box.ACTION_RESUME"
+        const val ACTION_CANCEL = "top.hpa888.box.ACTION_CANCEL"
+        const val ACTION_REMOVE = "top.hpa888.box.ACTION_REMOVE"
+        const val EXTRA_TASK_DATA = "top.hpa888.box.EXTRA_TASK_DATA"
+        const val EXTRA_TASK_ID = "top.hpa888.box.EXTRA_TASK_ID"
         const val NOTIFICATION_CHANNEL_ID = "video_download_channel"
         const val NOTIFICATION_ID = 1001
         private const val CHUNK_SIZE = 8192 // 8KB chunks

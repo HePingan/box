@@ -83,7 +83,9 @@ class _UpdateBootstrapPageState extends State<UpdateBootstrapPage> {
       if (override != null) {
         currentCode = override;
         versionName = '$override';
-        packageName = 'com.example.box';
+        // 仅测试注入路径会走到这里。必须与 applicationId 一致，
+        // 否则服务端按 package_name 过滤会查不到发布版本。
+        packageName = 'top.hpa888.box';
       } else {
         final info = await PackageInfo.fromPlatform();
         currentCode = int.tryParse(info.buildNumber) ?? 0;

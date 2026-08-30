@@ -66,7 +66,9 @@ class UpdateCheckOutcome {
     switch (status) {
       case UpdateCheckStatus.updateAvailable:
         final m = manifest;
-        final name = m == null ? '' : '${m.latestVersionName} (${m.latestVersionCode})';
+        final name = m == null
+            ? ''
+            : '${m.latestVersionName} (${m.latestVersionCode})';
         return '发现新版本 $name';
       case UpdateCheckStatus.upToDate:
         return '已是最新版本';

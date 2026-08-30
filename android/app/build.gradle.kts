@@ -8,7 +8,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.box"
+    namespace = "top.hpa888.box"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -23,7 +23,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.box"
+        applicationId = "top.hpa888.box"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -87,6 +87,8 @@ android {
 }
 
 dependencies {
+    // Local-only MobileNetV3-Small image embedding for quiz-image disambiguation.
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
     // Media3 Download — background HLS/MP4 downloads via DownloadService
     implementation("androidx.media3:media3-exoplayer:1.2.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.2.1")
