@@ -322,7 +322,10 @@ class _DrawerContent extends StatelessWidget {
         ),
         actions: [
           TextButton(
-            onPressed: () => _checkUpdateManually(context, info),
+            // 必须用关于框自己的 ctx：抽屉的 context 在本方法第一行就被 pop
+            // 掉了，用它取 ScaffoldMessenger 再判 mounted 会静默返回，
+            // 表现就是「点检查更新没反应」。
+            onPressed: () => _checkUpdateManually(ctx, info),
             child: const Text('检查更新'),
           ),
           TextButton(
@@ -364,14 +367,18 @@ class _DrawerContent extends StatelessWidget {
       security: AppConfig.updateSecurityConfig,
     );
 
-    if (!context.mounted) return;
+    // 这里刻意不判 context.mounted：messenger / navigator 已在 await 之前
+    // 抓好，它们的生命周期挂在 App 上而不是这个弹窗上。之前判 mounted 的写法
+    // 会在弹窗被关掉后把结果整个丢掉，用户只看到「没反应」。
 
     final manifest = outcome.manifest;
     if (outcome.hasUpdate && manifest != null) {
       navigator.pop();
-      if (!context.mounted) return;
+      // 判 navigator 而不是判弹窗 context：navigator 活得和 App 一样久，
+      // 弹窗 context 刚被上一行 pop 掉，判它必然提前 return。
+      if (!navigator.mounted) return;
       await showDialog(
-        context: context,
+        context: navigator.context,
         builder: (_) => UpdateDialog(
           manifest: manifest,
           currentVersionName: info.version,
