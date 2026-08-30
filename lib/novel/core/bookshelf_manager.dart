@@ -30,6 +30,16 @@ class BookshelfManager {
     return next;
   }
 
+  /// 丢弃已解码的内存缓存，下次读取重新从 SharedPreferences 载入。
+  ///
+  /// 恢复备份后必须调用：本类是「读缓存 → 改 → 全量写回」的模式，
+  /// 若缓存还是恢复前的旧书架，用户随后任意一次增删都会把恢复的内容
+  /// 整个覆盖掉。故意**不动** `_writeChain` —— 那是串行锁，中途换掉会让
+  /// 在途写入与后续写入失去互斥，重新引入丢写。
+  void invalidateCache() {
+    _bookshelfCache = null;
+  }
+
   /// 仅供测试：清空内存缓存与串行链，模拟冷启动。
   @visibleForTesting
   void resetForTest() {

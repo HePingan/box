@@ -5,6 +5,9 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../novel/core/bookshelf_group.dart';
+import '../../novel/core/bookshelf_manager.dart';
+import '../../novel/pages/reader/reader_paginator.dart';
 import '../quiz_plugin/domain/quiz_bank.dart';
 import 'backup_pref_keys.dart';
 import 'local_backup_codec.dart';
@@ -80,11 +83,15 @@ class LocalBackupService {
 
   /// 题库读写默认走 sqflite。测试环境没有 sqflite 平台实现，
   /// 因此这两个钩子可被替换，用于在纯 Dart 测试里验证 Hive 迁移链路。
-  static Future<String> Function() exportQuizJson =
-      QuizBankStorage.exportJsonString;
-  static Future<int> Function(String raw) importQuizJson = _defaultQuizImport;
+  static Future<String> Function() exportQuizJson = defaultQuizExport;
+  static Future<int> Function(String raw) importQuizJson = defaultQuizImport;
 
-  static Future<int> _defaultQuizImport(String raw) async {
+  /// 默认实现暴露成公开名字，测试才能在 tearDown 里还原钩子。
+  /// 否则替换过的钩子会泄漏到后续用例，制造跨文件的诡异失败。
+  static Future<String> defaultQuizExport() =>
+      QuizBankStorage.exportJsonString();
+
+  static Future<int> defaultQuizImport(String raw) async {
     final result = await QuizBankStorage.importFromJsonString(raw, merge: true);
     return result.imported;
   }
@@ -106,6 +113,30 @@ class LocalBackupService {
       hiveBoxes: hive,
       prefs: await _readPrefsOrEmpty(),
     );
+  }
+
+  /// 恢复后让持有 prefs 快照的单例重新载入。
+  ///
+  /// 可替换：这些单例分布在 novel 模块，测试里不一定都能安全触达。
+  static Future<void> Function() invalidateCaches = defaultInvalidateCaches;
+
+  static Future<void> defaultInvalidateCaches() async {
+    BookshelfManager.instance.invalidateCache();
+    BookshelfGroupManager.instance.invalidateCache();
+    // 阅读器分页缓存按主题/字号缓存排版结果，恢复了 reader_settings
+    // 之后旧排版就不再对应当前设置。
+    ReaderPaginator.clearCache();
+  }
+
+  /// 单个缓存失效失败不该让整次恢复报错 —— 数据已经落盘了，
+  /// 最坏结果是用户重启一次；把异常抛出去反而会显示「恢复失败」，
+  /// 诱导用户重复恢复。
+  static Future<void> _invalidateInMemoryCaches() async {
+    try {
+      await invalidateCaches();
+    } catch (_) {
+      // 静默：落盘已成功，重启即生效。
+    }
   }
 
   /// 读 prefs 失败不能让整个备份失败。
@@ -221,6 +252,12 @@ class LocalBackupService {
         // 计数不含这部分，用户看到的恢复条数会偏小而不是虚报。
       }
     }
+    // prefs 已换了一批值，但内存里的单例还端着恢复前的旧快照。
+    // 不失效的后果不是「显示不刷新」这么轻——BookshelfManager 之类
+    // 是「读缓存 → 改 → 全量写回」的模式，用户恢复后随手加一本书就会
+    // 把刚恢复的书架整个覆盖掉，而提示语说的是恢复成功。
+    await _invalidateInMemoryCaches();
+
     return restored + await importQuizJson(data.quizJson);
   }
 

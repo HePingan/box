@@ -220,6 +220,16 @@ class BookshelfGroupManager {
     }
   }
 
+  /// 丢弃内存缓存，下次读取重新从 SharedPreferences 载入。
+  ///
+  /// 恢复备份后必须调用，理由同 [BookshelfManager.invalidateCache]：
+  /// 分组成员表也是全量写回的，旧缓存会覆盖掉恢复的分组。
+  /// 只清解码结果，不动 `_prefs`（它是全局单例，换掉没意义）。
+  void invalidateCache() {
+    _groupsCache = null;
+    _membersCache = null;
+  }
+
   /// 清空缓存（用于测试或强制重载）
   @visibleForTesting
   void clearCache() {

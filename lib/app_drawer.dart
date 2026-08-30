@@ -219,7 +219,9 @@ class _DrawerContent extends StatelessWidget {
       if (bytes == null || bytes.isEmpty || !context.mounted) return;
       final count = await LocalBackupService.restoreBackupBytes(bytes);
       if (context.mounted) {
-        _showSnack(context, '已恢复 $count 条本地记录，请重启应用以刷新页面');
+        // 仍然建议重启：内存缓存已失效，但已经建好的页面（列表、
+        // 阅读器）不会自己重建，用户看到的可能还是旧画面。
+        _showSnack(context, '已恢复 $count 条本地记录，建议重启应用以刷新界面');
       }
     } on FormatException {
       if (context.mounted) _showSnack(context, '不是有效的 Box 本地数据备份文件');
