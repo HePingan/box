@@ -589,7 +589,7 @@ class _RecentCollectionTile extends StatelessWidget {
                     i.subtitle.trim().isNotEmpty ? i.subtitle : i.sourceLabel,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontSize: 11,
                       color: Color(0xFF757575),
                       height: 1.15,
@@ -645,6 +645,7 @@ class ContentSearchBar extends StatelessWidget {
     required this.onClear,
     this.resultCount = 0,
     this.isSearching = false,
+    this.framed = true,
   });
 
   final TextEditingController controller;
@@ -653,15 +654,22 @@ class ContentSearchBar extends StatelessWidget {
   final int resultCount;
   final bool isSearching;
 
+  /// 是否自带卡片外观。放进外层卡片时传 false，避免卡里套卡出现双层边框。
+  final bool framed;
+
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE9EEF7)),
-      ),
+      padding: framed
+          ? const EdgeInsets.symmetric(horizontal: 14, vertical: 10)
+          : EdgeInsets.zero,
+      decoration: framed
+          ? BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFE9EEF7)),
+            )
+          : null,
       child: Row(
         children: [
           Icon(Icons.search_rounded, size: 20, color: Colors.grey.shade500),
@@ -836,7 +844,7 @@ class _WarehouseSectionState extends State<WarehouseSection>
                     if (!widget.isLoading)
                       Text(
                         '${widget.items.length}',
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 12,
                           color: Color(0xFF757575),
                         ),

@@ -5,9 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'package:box/design_system/app_tokens.dart';
+import 'package:box/design_system/widgets/app_cards.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import 'package:box/features/api_hub/presentation/api_hub_page.dart';
 import 'package:box/features/content/domain/warehouse_models.dart';
+import 'package:box/features/content/presentation/warehouse_search.dart';
 import 'package:box/novel/novel_module.dart';
 import 'package:box/video_module.dart';
 
@@ -238,14 +240,36 @@ class _WarehouseTabState extends State<WarehouseTab>
 
   // ── 搜索过滤 ──
 
-  List<WarehouseItem> _filtered(List<WarehouseItem> items) {
-    if (_searchQuery.isEmpty) return items;
-    final q = _searchQuery.toLowerCase();
-    return items.where((item) {
-      return item.title.toLowerCase().contains(q) ||
-          item.subtitle.toLowerCase().contains(q) ||
-          item.meta.toLowerCase().contains(q);
-    }).toList();
+  List<WarehouseItem> _filtered(List<WarehouseItem> items) =>
+      warehouseFilter(items, _searchQuery);
+
+  /// 搜到没有 != 一本都没有。前者要提示换词，后者走分区自己的空态引导。
+  bool get _isNoSearchResult => isWarehouseNoSearchResult(
+    query: _searchQuery,
+    totalItemsInLibrary: _totalItems,
+    totalMatched: _totalFiltered,
+  );
+
+  /// 搜索词变化时把选中集收敛到仍可见的项，避免删掉屏幕上看不见的收藏。
+  void _applySearchQuery(String query) {
+    setState(() {
+      _searchQuery = query;
+      if (_editMode && _selectedKeys.isNotEmpty) {
+        final visible = [
+          ..._filtered(_bookItems),
+          ..._filtered(_comicItems),
+          ..._filtered(_videoItems),
+          ..._filtered(_musicItems),
+        ];
+        final kept = retainVisibleSelection(
+          selected: _selectedKeys,
+          visibleItems: visible,
+        );
+        _selectedKeys
+          ..clear()
+          ..addAll(kept);
+      }
+    });
   }
 
   int get _totalFiltered =>
@@ -336,9 +360,13 @@ class _WarehouseTabState extends State<WarehouseTab>
       }
     }
 
+    // 先取快照：_exitEditMode() 会清空 _selectedKeys，
+    // 清空后再读 length 恒为 0，提示会变成「已删除 0 项」。
+    final deletedCount = _selectedKeys.length;
+
     _exitEditMode();
     await _refresh();
-    if (mounted) _showSnack('已删除 ${_selectedKeys.length} 项');
+    if (mounted) _showSnack('已删除 $deletedCount 项');
   }
 
   List<WarehouseItem> _itemsForCategory(WarehouseCategory category) {
@@ -767,6 +795,9 @@ class _WarehouseTabState extends State<WarehouseTab>
                           setState(() {
                             _showSearch = !_showSearch;
                             if (!_showSearch) {
+                              // 关闭搜索时同样要收敛选中集，否则残留的
+                              // 不可见选中项会被批量删除带走。
+                              _searchDebounce?.cancel();
                               _searchController.clear();
                               _searchQuery = '';
                             }
@@ -787,31 +818,15 @@ class _WarehouseTabState extends State<WarehouseTab>
                       ),
                     ],
                   ),
+                  // 同步按钮独占一行右对齐。
+                  // 这里原本还有一个常显的 ContentSearchBar，与下方受
+                  // _showSearch 控制的那个共用同一个 _searchController：
+                  // 两个搜索框同时挂同一 controller，放大镜按钮形同虚设，
+                  // 且层级上一个裸在卡片外、一个在卡片内，视觉不齐。
+                  // 现只保留 _showSearch 控制的那一个。
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      Expanded(
-                        child: ContentSearchBar(
-                          controller: _searchController,
-                          onChanged: (q) {
-                            _searchDebounce?.cancel();
-                            _searchDebounce = Timer(
-                              const Duration(milliseconds: 300),
-                              () {
-                                if (!mounted) return;
-                                setState(() => _searchQuery = q);
-                              },
-                            );
-                          },
-                          onClear: () {
-                            _searchDebounce?.cancel();
-                            _searchController.clear();
-                            setState(() => _searchQuery = '');
-                          },
-                          resultCount: _totalFiltered,
-                          isSearching: false,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
                       InkWell(
                         onTap: _syncing ? null : () => _syncFromCloud(),
                         borderRadius: BorderRadius.circular(8),
@@ -838,7 +853,7 @@ class _WarehouseTabState extends State<WarehouseTab>
                                   ),
                                 )
                               else
-                                Icon(
+                                const Icon(
                                   Icons.sync_rounded,
                                   size: 14,
                                   color: AppTokens.emerald,
@@ -862,28 +877,54 @@ class _WarehouseTabState extends State<WarehouseTab>
                   ),
                   if (_showSearch) ...[
                     const SizedBox(height: 6),
-                    ContentSearchBar(
-                      controller: _searchController,
-                      onChanged: (q) {
-                        _searchDebounce?.cancel();
-                        _searchDebounce = Timer(
-                          const Duration(milliseconds: 300),
-                          () {
-                            if (!mounted) return;
-                            setState(() => _searchQuery = q);
-                          },
-                        );
-                      },
-                      onClear: () {
-                        _searchDebounce?.cancel();
-                        _searchController.clear();
-                        setState(() => _searchQuery = '');
-                      },
-                      resultCount: _totalFiltered,
-                      isSearching: false,
+                    // 收进与「内容入口」「收藏分区」同规格的卡片容器
+                    // （白 0.94 / 圆角 16 / 边框 0xFFE9EEF7），
+                    // 原来搜索框自带一层边框却裸在卡片流之外，层级不齐。
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.94),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFE9EEF7)),
+                      ),
+                      child: ContentSearchBar(
+                        controller: _searchController,
+                        framed: false,
+                        onChanged: (q) {
+                          _searchDebounce?.cancel();
+                          _searchDebounce = Timer(
+                            const Duration(milliseconds: 300),
+                            () {
+                              if (!mounted) return;
+                              _applySearchQuery(q);
+                            },
+                          );
+                        },
+                        onClear: () {
+                          _searchDebounce?.cancel();
+                          _searchController.clear();
+                          _applySearchQuery('');
+                        },
+                        resultCount: _totalFiltered,
+                        isSearching: false,
+                      ),
                     ),
                   ],
                   const SizedBox(height: 10),
+                  // 搜索零命中：四个分区会全部隐藏，这里必须给出明确反馈，
+                  // 否则页面上只剩顶部卡片和搜索框，像是收藏被清空了。
+                  if (_isNoSearchResult)
+                    AppEmptyState(
+                      icon: Icons.search_off_rounded,
+                      title: '没有匹配「$_searchQuery」的收藏',
+                      message: '换个关键词试试，或清除搜索查看全部 $_totalItems 项收藏。',
+                      actionLabel: '清除搜索',
+                      onAction: () {
+                        _searchDebounce?.cancel();
+                        _searchController.clear();
+                        _applySearchQuery('');
+                      },
+                    ),
                   // 四个收藏分区（搜索模式下只显示有结果的分区）
                   if (_shouldShowSection(WarehouseCategory.books))
                     WarehouseSection(
