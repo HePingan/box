@@ -202,6 +202,7 @@ class AppPageScaffold extends StatelessWidget {
     this.safeBottom = false,
     this.padding,
     this.maxContentWidth,
+    this.shellInset = false,
   });
 
   final Widget child;
@@ -219,12 +220,40 @@ class AppPageScaffold extends StatelessWidget {
   /// 小屏上仍为全宽。
   final double? maxContentWidth;
 
+  /// 是否为悬浮胶囊导航栏预留底部避让。
+  ///
+  /// 置为 true 后，[AppTokens.shellBottomInset] 的结果会通过 MediaQuery 的
+  /// `padding.bottom` 下发给子树，页面用 [bottomInsetOf] 读取即可，不必各自
+  /// 重算一遍。**不在这里直接 wrap Padding**：四个主页面的 child 都是
+  /// 可滚动体，外层套 padding 会压缩 viewport、破坏内容滑到导航栏下方的
+  /// 边到边观感，正确做法是页面把该值用在自己最后一个 sliver / ListView 的
+  /// 底部留白上。
+  final bool shellInset;
+
+  /// 读取由 [AppPageScaffold] 下发的底部避让高度。
+  /// 未启用 [shellInset] 时回退为直接计算，保证任何调用点都拿得到正确值。
+  static double bottomInsetOf(BuildContext context, {double extra = 0}) {
+    return MediaQuery.paddingOf(context).bottom + extra;
+  }
+
   @override
   Widget build(BuildContext context) {
     Widget body = child;
-    if (maxContentWidth != null) {
+    if (shellInset) {
+      final media = MediaQuery.of(context);
+      body = MediaQuery(
+        data: media.copyWith(
+          padding: media.padding.copyWith(
+            bottom: AppTokens.shellBottomInset(context),
+          ),
+        ),
+        child: body,
+      );
+    }
+    final effectiveMaxWidth = maxContentWidth;
+    if (effectiveMaxWidth != null) {
       body = Center(
-        child: SizedBox(width: maxContentWidth, child: body),
+        child: SizedBox(width: effectiveMaxWidth, child: body),
       );
     }
     if (padding != null) {

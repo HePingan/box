@@ -65,6 +65,35 @@ class AppTokens {
   static const double shellBottomNavHeight = 68;
   static const double pageBottomPadding = 96;
 
+  /// 卡片统一描边色。此前四个主页面混用 0xFFE7ECF5 / 0xFFE9EEF7 两个值。
+  static const Color cardBorder = Color(0xFFE7ECF5);
+
+  /// 四个主页面（首页/工具/内容/扩展）共用的水平边距。
+  static const double shellPageGutter = 14;
+
+  /// 桌面/平板断点下四个主页面共用的内容最大宽度。
+  /// 移动端不触发（宽度不足时 SizedBox 仍为全宽）。
+  static const double shellMaxContentWidth = 720;
+
+  /// [shellBottomInset] 的默认额外留白。
+  static const double shellBottomInsetExtra = 28;
+
+  /// 主页面滚动内容的底部避让高度。
+  ///
+  /// 底部导航是**悬浮胶囊**（见 `app_shell.dart` 的 `_buildMobileLayout`），
+  /// 不占布局高度，且 [AppPageScaffold] 的 `safeBottom` 默认为 false，
+  /// 所以避让必须由页面自己给，并且**必须叠加 viewPadding.bottom**：
+  /// 写成常量（如 `pageBottomPadding + 32`）的页面在手势区大的机型上留白
+  /// 相对不足，在传统导航键机型上又过度留白，四个页面之间还会差出几十像素。
+  ///
+  /// [extra] 用于编辑态等底部另有浮层的场景加高。
+  static double shellBottomInset(
+    BuildContext context, {
+    double extra = shellBottomInsetExtra,
+  }) {
+    return shellBottomNavHeight + MediaQuery.viewPaddingOf(context).bottom + extra;
+  }
+
   static const double elevationLow = 0.5;
   static const double elevationNone = 0;
 

@@ -150,6 +150,8 @@ class _HomePageState extends State<HomePage>
     super.build(context);
 
     return AppPageScaffold(
+      maxContentWidth: AppTokens.shellMaxContentWidth,
+      shellInset: true,
       // 兜底文案一直写着「下拉刷新重试」，但此前页面没挂 RefreshIndicator，
       // 用户下拉不会有任何反应。补上，让那句提示名副其实。
       child: RefreshIndicator(
@@ -165,13 +167,11 @@ class _HomePageState extends State<HomePage>
             SliverToBoxAdapter(child: _buildPluginSection()),
             SliverToBoxAdapter(child: _buildContinueRail()),
             SliverToBoxAdapter(child: _buildDailyNewsCard()),
-            // 底部留白给悬浮胶囊导航栏避让：用真实导航高度 + 系统手势区，
-            // 不写死像素，否则不同机型要么留空要么压住最后一条内容。
+            // 底部留白给悬浮胶囊导航栏避让。数值由 AppPageScaffold
+            // (shellInset: true) 统一下发，四个主页面共用同一算法。
             SliverToBoxAdapter(
               child: SizedBox(
-                height: AppTokens.shellBottomNavHeight +
-                    MediaQuery.viewPaddingOf(context).bottom +
-                    28,
+                height: AppPageScaffold.bottomInsetOf(context),
               ),
             ),
           ],
@@ -225,7 +225,12 @@ class _HomePageState extends State<HomePage>
   // ── 顶部问候栏（单行紧凑） ─────────────────
   Widget _buildGreetingBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 8, 14, 6),
+      padding: const EdgeInsets.fromLTRB(
+        10,
+        8,
+        AppTokens.shellPageGutter,
+        6,
+      ),
       child: Row(
         children: [
           IconButton(
@@ -297,7 +302,12 @@ class _HomePageState extends State<HomePage>
     ];
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+      padding: const EdgeInsets.fromLTRB(
+        AppTokens.shellPageGutter,
+        0,
+        AppTokens.shellPageGutter,
+        14,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -345,7 +355,12 @@ class _HomePageState extends State<HomePage>
         }
 
         return Padding(
-          padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+          padding: const EdgeInsets.fromLTRB(
+            AppTokens.shellPageGutter,
+            0,
+            AppTokens.shellPageGutter,
+            14,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -412,7 +427,12 @@ class _HomePageState extends State<HomePage>
     return Padding(
       // 右侧不留 padding：让横向列表能滚到屏幕边缘，
       // 视觉上暗示「还有更多可以划」。
-      padding: const EdgeInsets.fromLTRB(14, 0, 0, 14),
+      padding: const EdgeInsets.fromLTRB(
+        AppTokens.shellPageGutter,
+        0,
+        0,
+        14,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -440,7 +460,12 @@ class _HomePageState extends State<HomePage>
   // ── 每日新闻 ───────────────────────────────
   Widget _buildDailyNewsCard() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+      padding: const EdgeInsets.fromLTRB(
+        AppTokens.shellPageGutter,
+        0,
+        AppTokens.shellPageGutter,
+        8,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

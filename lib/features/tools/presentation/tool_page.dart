@@ -78,6 +78,8 @@ class _ToolPageState extends State<ToolPage>
     super.build(context);
 
     return AppPageScaffold(
+      maxContentWidth: AppTokens.shellMaxContentWidth,
+      shellInset: true,
       child: CustomScrollView(
         physics: const BouncingScrollPhysics(),
         slivers: [
@@ -89,7 +91,9 @@ class _ToolPageState extends State<ToolPage>
 
           // ── 分类列表 ──
           SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppTokens.shellPageGutter,
+            ),
             sliver: SliverList(
               delegate: SliverChildBuilderDelegate(
                 (context, index) => ExpandableCategoryCard(
@@ -99,8 +103,12 @@ class _ToolPageState extends State<ToolPage>
               ),
             ),
           ),
-          const SliverToBoxAdapter(
-            child: SizedBox(height: AppTokens.pageBottomPadding + 20),
+          // 底部避让由 AppPageScaffold(shellInset: true) 统一下发。
+          // 原为 pageBottomPadding + 20 常量，不跟随机型手势区。
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: AppPageScaffold.bottomInsetOf(context),
+            ),
           ),
         ],
       ),
@@ -117,12 +125,17 @@ class _ToolPageState extends State<ToolPage>
         : '${_allCategories.length} 类 · $_totalTools 入口';
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(14, 8, 14, 6),
+      margin: const EdgeInsets.fromLTRB(
+        AppTokens.shellPageGutter,
+        8,
+        AppTokens.shellPageGutter,
+        6,
+      ),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.94),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        border: Border.all(color: AppTokens.cardBorder),
         boxShadow: AppTokens.shadowSm(color: AppTokens.violet),
       ),
       child: Column(
@@ -243,7 +256,12 @@ class _ToolPageState extends State<ToolPage>
     ];
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+      padding: const EdgeInsets.fromLTRB(
+        AppTokens.shellPageGutter,
+        0,
+        AppTokens.shellPageGutter,
+        8,
+      ),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         decoration: BoxDecoration(

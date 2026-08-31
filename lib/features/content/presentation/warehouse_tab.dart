@@ -723,6 +723,8 @@ class _WarehouseTabState extends State<WarehouseTab>
       child: Stack(
         children: [
           AppPageScaffold(
+            maxContentWidth: AppTokens.shellMaxContentWidth,
+            shellInset: true,
             child: RefreshIndicator(
               onRefresh: _refresh,
               child: ListView(
@@ -730,16 +732,15 @@ class _WarehouseTabState extends State<WarehouseTab>
                   parent: BouncingScrollPhysics(),
                 ),
                 padding: EdgeInsets.fromLTRB(
-                  14,
+                  AppTokens.shellPageGutter,
                   10,
-                  14,
-                  _editMode
-                      ? AppTokens.shellBottomNavHeight +
-                            MediaQuery.viewPaddingOf(context).bottom +
-                            96
-                      : AppTokens.shellBottomNavHeight +
-                            MediaQuery.viewPaddingOf(context).bottom +
-                            44,
+                  AppTokens.shellPageGutter,
+                  // 基础避让由 AppPageScaffold(shellInset: true) 下发；
+                  // 编辑态底部另有批量操作条，再加高 68。
+                  AppPageScaffold.bottomInsetOf(
+                    context,
+                    extra: _editMode ? 68 : 0,
+                  ),
                 ),
                 children: [
                   ContentHubTopCard(
@@ -878,14 +879,16 @@ class _WarehouseTabState extends State<WarehouseTab>
                   if (_showSearch) ...[
                     const SizedBox(height: 6),
                     // 收进与「内容入口」「收藏分区」同规格的卡片容器
-                    // （白 0.94 / 圆角 16 / 边框 0xFFE9EEF7），
+                    // （白 0.94 / radiusMd / AppTokens.cardBorder），
                     // 原来搜索框自带一层边框却裸在卡片流之外，层级不齐。
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: Colors.white.withValues(alpha: 0.94),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: const Color(0xFFE9EEF7)),
+                        borderRadius: BorderRadius.circular(
+                          AppTokens.radiusMd,
+                        ),
+                        border: Border.all(color: AppTokens.cardBorder),
                       ),
                       child: ContentSearchBar(
                         controller: _searchController,

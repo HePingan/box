@@ -1078,7 +1078,8 @@ class _PluginTabState extends State<PluginTab>
     super.build(context);
 
     return AppPageScaffold(
-      maxContentWidth: 720,
+      maxContentWidth: AppTokens.shellMaxContentWidth,
+      shellInset: true,
       child: SafeValueListenableBuilder<List<HomePlugin>>(
         valueListenable: _pluginHost.listenable,
         builder: (context, plugins, _) {
@@ -1123,11 +1124,13 @@ class _PluginTabState extends State<PluginTab>
 
           return ListView(
             physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(
-              16,
+            padding: EdgeInsets.fromLTRB(
+              AppTokens.shellPageGutter,
               10,
-              16,
-              AppTokens.pageBottomPadding + 32,
+              AppTokens.shellPageGutter,
+              // 原为 pageBottomPadding + 32 常量，不跟随机型手势区，
+              // 且比其余三页多出 30+ 像素空白。改走统一下发值。
+              AppPageScaffold.bottomInsetOf(context),
             ),
             children: [
               // 方案 B：紧凑 Hero → 快捷入口 → 搜索/列表优先；推荐下沉

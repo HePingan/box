@@ -38,9 +38,11 @@ class ExtensionHeroCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        // 与工具/内容 hero 对齐：半透明白，让页面渐变透上来，
+        // 原为不透明白会切断 pageGradient，视觉上比另两页「浮」得更高。
+        color: Colors.white.withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        border: Border.all(color: AppTokens.cardBorder),
         boxShadow: AppTokens.shadowSm(color: AppTokens.violet),
       ),
       child: Column(
