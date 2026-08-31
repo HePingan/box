@@ -311,8 +311,11 @@ class AppEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 用 minHeight 而不是固定 height：说明文字在窄屏折行后，
+    // 图标 + 标题 + 文案 + 按钮的自然高度会超过 168，固定高度会把按钮裁掉。
+    // 短文案时仍由 minHeight 撑到原来的视觉高度，不会变矮。
     return Container(
-      height: height,
+      constraints: BoxConstraints(minHeight: height),
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -321,6 +324,9 @@ class AppEmptyState extends StatelessWidget {
         border: Border.all(color: AppTokens.divider),
       ),
       child: Column(
+        // 配合上面的 minHeight：没有它 Column 会按 mainAxisSize.max 撑满父级可用高度
+        // （固定 height 时不会暴露，改成 minHeight 后会把卡片拉到满屏）。
+        mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
