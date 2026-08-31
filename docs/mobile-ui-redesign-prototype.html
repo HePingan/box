@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Geek工具箱 · 手机端UI重设计原型</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: '#101828',
+            muted: '#667085',
+            line: '#EAECF0',
+            brand: '#5B6CFF',
+            cyan: '#12D6C5',
+            violet: '#8B5CF6',
+            bg: '#F5F7FB'
+          },
+          boxShadow: {
+            soft: '0 18px 45px rgba(16,24,40,.10)',
+            card: '0 10px 30px rgba(16,24,40,.08)',
+            phone: '0 35px 80px rgba(15,23,42,.28)'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      min-height: 100vh;
+      color: #101828;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(91,108,255,.18), transparent 28%),
+        radial-gradient(circle at 85% 12%, rgba(18,214,197,.18), transparent 24%),
+        linear-gradient(180deg,#F8FBFF 0%,#EEF3FA 45%,#F7F8FC 100%);
+    }
+    .noise::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .22;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.18'/%3E%3C/svg%3E");
+      mix-blend-mode: multiply;
+    }
+    .phone-frame {
+      width: 390px;
+      height: 844px;
+      padding: 10px;
+      border-radius: 48px;
+      background: linear-gradient(145deg,#0B1220,#1F2937);
+      box-shadow: 0 35px 80px rgba(15,23,42,.32), inset 0 0 0 1px rgba(255,255,255,.07);
+      position: relative;
+      flex: none;
+    }
+    .phone-frame::before {
+      content: '';
+      position: absolute;
+      top: 9px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 118px;
+      height: 27px;
+      border-radius: 0 0 18px 18px;
+      background: #0B1220;
+      z-index: 20;
+    }
+    .phone-screen {
+      height: 100%;
+      overflow: hidden;
+      position: relative;
+      border-radius: 38px;
+      background: #F5F7FB;
+    }
+    .statusbar {
+      height: 34px;
+      padding: 0 22px;
+      padding-top: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .2px;
+      color: rgba(17,24,39,.88);
+      position: relative;
+      z-index: 30;
+    }
+    .dark .statusbar { color: rgba(255,255,255,.92); }
+    .screen-body { height: calc(100% - 34px); position: relative; overflow: hidden; }
+    .soft-scroll {
+      height: 100%;
+      overflow: hidden;
+      padding-bottom: 92px;
+    }
+    .soft-scroll::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 64px;
+      background: linear-gradient(180deg,rgba(245,247,251,0),#F5F7FB 72%);
+      pointer-events: none;
+      z-index: 2;
+    }
+    .bottom-nav {
+      position: absolute;
+      z-index: 10;
+      left: 14px;
+      right: 14px;
+      bottom: 12px;
+      height: 70px;
+      border-radius: 28px;
+      background: rgba(255,255,255,.86);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,255,255,.75);
+      box-shadow: 0 18px 35px rgba(16,24,40,.14);
+      display: grid;
+      grid-template-columns: repeat(5,1fr);
+      align-items: center;
+      padding: 0 8px;
+    }
+    .nav-item { text-align: center; font-size: 10px; color: #98A2B3; display: flex; flex-direction: column; gap: 4px; align-items: center; }
+    .nav-item i { font-size: 18px; }
+    .nav-item.active { color: #5B6CFF; font-weight: 800; }
+    .nav-item.active i { width: 34px; height: 28px; border-radius: 999px; display: grid; place-items: center; background: rgba(91,108,255,.12); }
+    .glass {
+      background: rgba(255,255,255,.72);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,255,255,.72);
+      box-shadow: 0 12px 30px rgba(16,24,40,.08);
+    }
+    .card { background: #fff; border: 1px solid rgba(234,236,240,.88); border-radius: 24px; box-shadow: 0 10px 28px rgba(16,24,40,.06); }
+    .chip { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 999px; background: #fff; border: 1px solid #EAECF0; color: #475467; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .chip.active { background: #EEF1FF; color: #4B5DFF; border-color: rgba(91,108,255,.26); }
+    .mini-btn { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 14px; background: #fff; color: #344054; border: 1px solid #EAECF0; }
+    .poster { aspect-ratio: 3/4; border-radius: 18px; object-fit: cover; width: 100%; box-shadow: 0 10px 22px rgba(16,24,40,.12); }
+    .book-cover { width: 64px; height: 88px; border-radius: 14px; object-fit: cover; box-shadow: 0 10px 18px rgba(16,24,40,.12); }
+    .prototype-title { background: linear-gradient(135deg,#101828 0%,#344054 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .screen-label { letter-spacing: .12em; }
+    .scrollbar-hide::-webkit-scrollbar { display:none; }
+    .hero-gradient { background: linear-gradient(135deg,#5967FF 0%,#8B5CF6 55%,#12D6C5 115%); }
+    .dark-panel { background: linear-gradient(145deg,#111827,#202B3F); color: #fff; }
+    .reader-paper { background: #F1E7C8; color: #2F2A22; }
+    .reader-warm { background: #CFE8D6; color: #152119; }
+    .phone-note { min-height: 64px; }
+    @media (max-width: 430px) {
+      .phone-frame { transform: scale(.92); transform-origin: top center; }
+    }
+  </style>
+</head>
+<body class="noise">
+  <main class="relative z-10 mx-auto max-w-[1480px] px-5 py-8 lg:px-8">
+    <header class="mb-10 overflow-hidden rounded-[36px] border border-white/70 bg-white/70 p-6 shadow-soft backdrop-blur-xl lg:p-9">
+      <div class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <div class="mb-4 inline-flex items-center gap-2 rounded-full bg-indigo-50 px-4 py-2 text-sm font-bold text-brand">
+            <i class="fa-solid fa-wand-magic-sparkles"></i>
+            根据仓库已完成能力重设计 · Mobile UI Prototype
+          </div>
+          <h1 class="prototype-title text-4xl font-black tracking-tight lg:text-6xl">Geek工具箱 手机端UI重设计</h1>
+          <p class="mt-4 max-w-3xl text-base leading-8 text-slate-600">
+            原型依据 <span class="font-bold text-slate-900">HePingan/box</span> 当前 Flutter 功能整理：底部五栏、首页日报/插件入口、工具箱、仓库、插件中心/市场、视频模块、小说阅读器/书源管理、更新与日志。设计方向以“清爽卡片 + 大搜索 + 单手可达 + 明确状态”为核心。
+          </p>
+        </div>
+        <div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:w-[520px]">
+          <div class="rounded-3xl bg-slate-900 p-4 text-white shadow-card"><div class="text-2xl font-black">18</div><div class="mt-1 text-white/70">关键页面</div></div>
+          <div class="rounded-3xl bg-white p-4 shadow-card"><div class="text-2xl font-black text-brand">5</div><div class="mt-1 text-slate-500">底部主导航</div></div>
+          <div class="rounded-3xl bg-white p-4 shadow-card"><div class="text-2xl font-black text-emerald-500">✔</div><div class="mt-1 text-slate-500">覆盖已完成功能</div></div>
+          <div class="rounded-3xl bg-white p-4 shadow-card"><div class="text-2xl font-black text-violet">M3</div><div class="mt-1 text-slate-500">现代移动审美</div></div>
+        </div>
+      </div>
+      <div class="mt-8 grid gap-3 md:grid-cols-4">
+        <div class="rounded-3xl bg-white/80 p-4 shadow-card"><div class="mb-2 text-sm font-black text-slate-900"><i class="fa-solid fa-compass mr-2 text-brand"></i>信息架构</div><p class="text-sm leading-6 text-slate-500">保留 5 个主 Tab，小说作为“首页/仓库/插件”中的高频入口，避免底栏过载。</p></div>
+        <div class="rounded-3xl bg-white/80 p-4 shadow-card"><div class="mb-2 text-sm font-black text-slate-900"><i class="fa-solid fa-hand-pointer mr-2 text-cyan"></i>单手操作</div><p class="text-sm leading-6 text-slate-500">核心动作放在底部、卡片右下或底部 Sheet，减少顶部小按钮依赖。</p></div>
+        <div class="rounded-3xl bg-white/80 p-4 shadow-card"><div class="mb-2 text-sm font-black text-slate-900"><i class="fa-solid fa-layer-group mr-2 text-violet"></i>统一组件</div><p class="text-sm leading-6 text-slate-500">搜索、分段控制、资源卡、状态 Chip、空状态、导入面板统一视觉语言。</p></div>
+        <div class="rounded-3xl bg-white/80 p-4 shadow-card"><div class="mb-2 text-sm font-black text-slate-900"><i class="fa-solid fa-shield-halved mr-2 text-emerald-500"></i>安全状态</div><p class="text-sm leading-6 text-slate-500">插件签名、书源可用性、视频安全过滤、更新状态以颜色和标签明确反馈。</p></div>
+      </div>
+    </header>
+
+    <section class="mb-8 grid gap-4 rounded-[32px] bg-white/70 p-5 shadow-soft backdrop-blur md:grid-cols-3">
+      <div>
+        <h2 class="mb-3 text-lg font-black">已识别的核心功能</h2>
+        <ul class="space-y-2 text-sm leading-6 text-slate-600">
+          <li><i class="fa-solid fa-circle-check mr-2 text-emerald-500"></i>启动更新检查、版本下载/继续体验</li>
+          <li><i class="fa-solid fa-circle-check mr-2 text-emerald-500"></i>首页日报、快捷入口、首页插件挂载</li>
+          <li><i class="fa-solid fa-circle-check mr-2 text-emerald-500"></i>工具分类搜索，在线PS WebView</li>
+          <li><i class="fa-solid fa-circle-check mr-2 text-emerald-500"></i>仓库收藏：书籍/漫画/影视/音乐</li>
+        </ul>
+      </div>
+      <div class="pt-9 md:pt-0">
+        <ul class="space-y-2 text-sm leading-6 text-slate-600 md:mt-10">
+          <li><i class="fa-solid fa-circle-check mr-2 text-emerald-500"></i>插件中心：内置/自定义/市场/JSON导入导出</li>
+          <li><i class="fa-solid fa-circle-check mr-2 text-emerald-500"></i>视频：片源、分类、搜索、聚合、播放历史</li>
+          <li><i class="fa-solid fa-circle-check mr-2 text-emerald-500"></i>视频详情：播放器、线路、选集、续播</li>
+          <li><i class="fa-solid fa-circle-check mr-2 text-emerald-500"></i>日志页、调试入口、异常捕获</li>
+        </ul>
+      </div>
+      <div class="pt-9 md:pt-0">
+        <ul class="space-y-2 text-sm leading-6 text-slate-600 md:mt-10">
+          <li><i class="fa-solid fa-circle-check mr-2 text-emerald-500"></i>小说：书源配置、发现页、搜索、无限加载</li>
+          <li><i class="fa-solid fa-circle-check mr-2 text-emerald-500"></i>小说详情：书架、全本缓存、章节列表</li>
+          <li><i class="fa-solid fa-circle-check mr-2 text-emerald-500"></i>阅读器：翻页/滚动、主题、字号、目录</li>
+          <li><i class="fa-solid fa-circle-check mr-2 text-emerald-500"></i>书源管理：导入、诊断、测试、启用、导出</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="grid grid-cols-1 gap-10 xl:grid-cols-2 2xl:grid-cols-3">
+      <!-- 01 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 01</div><h3 class="mt-1 text-xl font-black">启动 / 更新检查</h3><p class="mt-1 text-sm text-slate-500">对应 UpdateBootstrapPage：版本检查、下载更新、失败仍可进入。</p></div>
+          <span class="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-brand">Launch</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen dark hero-gradient text-white">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body p-6">
+            <div class="mt-8 flex items-center justify-between">
+              <div class="flex items-center gap-3"><div class="grid h-12 w-12 place-items-center rounded-2xl bg-white/18"><i class="fa-solid fa-cube text-2xl"></i></div><div><div class="text-2xl font-black">Geek工具箱</div><div class="text-sm text-white/70">Box · v1.1.8</div></div></div>
+              <div class="rounded-full bg-white/16 px-3 py-1 text-xs font-bold">Release</div>
+            </div>
+            <div class="mt-24 text-center">
+              <div class="mx-auto grid h-24 w-24 place-items-center rounded-[30px] bg-white/16 shadow-2xl ring-1 ring-white/20"><i class="fa-solid fa-rocket text-4xl"></i></div>
+              <h2 class="mt-8 text-3xl font-black">让工具触手可及</h2>
+              <p class="mx-auto mt-3 max-w-[280px] text-sm leading-6 text-white/72">正在同步书源、片源、插件与版本状态，为你准备今日工作台。</p>
+              <div class="mx-auto mt-8 h-2 w-56 overflow-hidden rounded-full bg-white/18"><div class="h-full w-[72%] rounded-full bg-white"></div></div>
+              <div class="mt-3 text-xs font-bold text-white/70">检查更新中 · 已完成 72%</div>
+            </div>
+            <div class="absolute bottom-6 left-5 right-5 rounded-[28px] bg-white p-5 text-slate-900 shadow-2xl">
+              <div class="flex items-start gap-3"><div class="grid h-11 w-11 place-items-center rounded-2xl bg-orange-50 text-orange-500"><i class="fa-solid fa-arrow-up-from-bracket"></i></div><div class="flex-1"><div class="flex items-center justify-between"><h4 class="font-black">发现新版本 1.1.9</h4><span class="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-600">推荐</span></div><p class="mt-1 text-xs leading-5 text-slate-500">优化视频搜索、书源诊断与插件市场签名校验。</p></div></div>
+              <div class="mt-4 grid grid-cols-2 gap-3"><button class="rounded-2xl border border-slate-200 py-3 text-sm font-black text-slate-600">继续体验</button><button class="rounded-2xl bg-slate-900 py-3 text-sm font-black text-white">立即更新</button></div>
+            </div>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 02 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 02</div><h3 class="mt-1 text-xl font-black">首页工作台</h3><p class="mt-1 text-sm text-slate-500">日报、快捷入口、继续阅读/观看、插件化功能卡。</p></div>
+          <span class="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-brand">Home</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body">
+            <div class="soft-scroll px-5 pt-3">
+              <div class="flex items-center justify-between"><button class="mini-btn"><i class="fa-solid fa-bars"></i></button><div class="text-center"><div class="text-[11px] font-bold text-slate-400">今天也要高效一点</div><div class="text-xl font-black">Geek 工具箱</div></div><button class="mini-btn"><i class="fa-solid fa-bell"></i></button></div>
+              <div class="mt-4 rounded-[26px] bg-white p-3 shadow-card"><div class="flex items-center gap-3"><i class="fa-solid fa-magnifying-glass ml-2 text-slate-400"></i><span class="text-sm font-medium text-slate-400">搜索工具、小说、影视或插件</span><span class="ml-auto rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500">⌘K</span></div></div>
+              <div class="relative mt-4 overflow-hidden rounded-[30px] bg-slate-950 p-5 text-white shadow-card">
+                <img class="absolute right-0 top-0 h-full w-40 object-cover opacity-30" src="https://ai.mayoubang.cn/chat/image?w=220&h=150&keyword=news" alt="news" />
+                <div class="relative"><div class="flex items-start justify-between"><div><div class="text-xl font-black">视界日报</div><div class="mt-1 text-xs text-white/60">Daily News · 06月07日</div></div><div class="flex gap-2"><span class="grid h-8 w-8 place-items-center rounded-full bg-white/12"><i class="fa-solid fa-rotate-right text-xs"></i></span><span class="grid h-8 w-8 place-items-center rounded-full bg-white/12"><i class="fa-regular fa-eye text-xs"></i></span></div></div>
+                <div class="mt-4 space-y-2 text-sm"><p class="truncate"><i class="fa-solid fa-circle text-[6px] mr-2 text-cyan"></i>AI 助手成为移动工具入口新趋势</p><p class="truncate"><i class="fa-solid fa-circle text-[6px] mr-2 text-cyan"></i>多个应用上线插件市场与源管理</p><p class="truncate"><i class="fa-solid fa-circle text-[6px] mr-2 text-cyan"></i>今日热榜：效率工具、阅读与影视</p></div></div>
+              </div>
+              <div class="mt-4 grid grid-cols-4 gap-3 text-center">
+                <div class="rounded-3xl bg-white p-3 shadow-card"><div class="mx-auto grid h-10 w-10 place-items-center rounded-2xl bg-orange-50 text-orange-500"><i class="fa-solid fa-book-open"></i></div><div class="mt-2 text-xs font-black">小说</div></div>
+                <div class="rounded-3xl bg-white p-3 shadow-card"><div class="mx-auto grid h-10 w-10 place-items-center rounded-2xl bg-indigo-50 text-brand"><i class="fa-solid fa-film"></i></div><div class="mt-2 text-xs font-black">影视</div></div>
+                <div class="rounded-3xl bg-white p-3 shadow-card"><div class="mx-auto grid h-10 w-10 place-items-center rounded-2xl bg-teal-50 text-teal-500"><i class="fa-solid fa-warehouse"></i></div><div class="mt-2 text-xs font-black">仓库</div></div>
+                <div class="rounded-3xl bg-white p-3 shadow-card"><div class="mx-auto grid h-10 w-10 place-items-center rounded-2xl bg-violet-50 text-violet"><i class="fa-solid fa-puzzle-piece"></i></div><div class="mt-2 text-xs font-black">插件</div></div>
+              </div>
+              <div class="mt-5 flex items-center justify-between"><h4 class="font-black">继续</h4><span class="text-xs font-bold text-brand">全部</span></div>
+              <div class="mt-3 grid grid-cols-2 gap-3"><div class="card p-3"><div class="flex gap-3"><img class="h-16 w-12 rounded-xl object-cover" src="https://ai.mayoubang.cn/chat/image?w=120&h=160&keyword=book" alt="book"><div class="min-w-0"><div class="truncate text-sm font-black">星河之上</div><div class="mt-1 text-[11px] text-slate-500">第 128 章</div><div class="mt-2 h-1.5 rounded-full bg-slate-100"><div class="h-full w-2/3 rounded-full bg-orange-400"></div></div></div></div></div><div class="card p-3"><div class="flex gap-3"><img class="h-16 w-12 rounded-xl object-cover" src="https://ai.mayoubang.cn/chat/image?w=120&h=160&keyword=movie" alt="movie"><div class="min-w-0"><div class="truncate text-sm font-black">城市光影</div><div class="mt-1 text-[11px] text-slate-500">第 06 集</div><div class="mt-2 h-1.5 rounded-full bg-slate-100"><div class="h-full w-1/2 rounded-full bg-brand"></div></div></div></div></div></div>
+              <div class="mt-5 flex gap-2 overflow-hidden"><span class="chip active"><i class="fa-solid fa-fire"></i>推荐</span><span class="chip"><i class="fa-solid fa-music"></i>音乐</span><span class="chip"><i class="fa-solid fa-play"></i>影视</span><span class="chip"><i class="fa-solid fa-image"></i>漫画</span></div>
+              <div class="mt-3 grid grid-cols-2 gap-3"><div class="card p-4"><div class="flex items-center justify-between"><div><h5 class="font-black">日报详情</h5><p class="mt-1 text-xs text-slate-500">完整热闻列表</p></div><div class="grid h-10 w-10 place-items-center rounded-2xl bg-violet-50 text-violet"><i class="fa-regular fa-newspaper"></i></div></div></div><div class="card p-4"><div class="flex items-center justify-between"><div><h5 class="font-black">快速找书</h5><p class="mt-1 text-xs text-slate-500">进入小说列表</p></div><div class="grid h-10 w-10 place-items-center rounded-2xl bg-orange-50 text-orange-500"><i class="fa-solid fa-magnifying-glass"></i></div></div></div></div>
+            </div>
+            <nav class="bottom-nav"><div class="nav-item active"><i class="fa-solid fa-house"></i>首页</div><div class="nav-item"><i class="fa-solid fa-border-all"></i>工具</div><div class="nav-item"><i class="fa-solid fa-box-archive"></i>仓库</div><div class="nav-item"><i class="fa-solid fa-puzzle-piece"></i>插件</div><div class="nav-item"><i class="fa-solid fa-tv"></i>视频</div></nav>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 03 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 03</div><h3 class="mt-1 text-xl font-black">工具箱</h3><p class="mt-1 text-sm text-slate-500">按类别聚合，突出搜索、收藏、最近使用，在线PS高亮可用。</p></div>
+          <span class="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-brand">Tools</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body">
+            <div class="soft-scroll px-5 pt-3">
+              <div class="flex items-center justify-between"><button class="mini-btn"><i class="fa-solid fa-bars"></i></button><div><div class="text-2xl font-black">工具箱</div><div class="text-xs font-semibold text-slate-400">96+ 工具 · 快速查找</div></div><button class="mini-btn"><i class="fa-solid fa-download"></i></button></div>
+              <div class="mt-4 rounded-[26px] bg-white p-3 shadow-card"><div class="flex items-center gap-3"><i class="fa-solid fa-magnifying-glass ml-2 text-slate-400"></i><span class="text-sm font-medium text-slate-400">搜索你需要的工具</span></div></div>
+              <div class="mt-4 grid grid-cols-2 gap-3"><div class="hero-gradient rounded-[26px] p-4 text-white shadow-card"><div class="flex items-center justify-between"><div><div class="text-lg font-black">我的收藏</div><p class="mt-1 text-xs text-white/72">高频工具一键打开</p></div><i class="fa-solid fa-star text-2xl text-white/70"></i></div></div><div class="rounded-[26px] bg-slate-900 p-4 text-white shadow-card"><div class="flex items-center justify-between"><div><div class="text-lg font-black">近期更新</div><p class="mt-1 text-xs text-white/62">查看新增与修复</p></div><i class="fa-solid fa-clock-rotate-left text-2xl text-white/70"></i></div></div></div>
+              <div class="mt-4 flex gap-2 overflow-hidden"><span class="chip active">常用</span><span class="chip">图片</span><span class="chip">系统</span><span class="chip">开发</span><span class="chip">趣味</span></div>
+              <div class="mt-4 space-y-3">
+                <div class="card p-4"><div class="flex items-center gap-3"><div class="grid h-12 w-12 place-items-center rounded-2xl bg-yellow-50 text-yellow-500"><i class="fa-solid fa-sun"></i></div><div class="flex-1"><div class="flex items-center justify-between"><h4 class="font-black">日常工具</h4><span class="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-500">9 个</span></div><p class="text-xs text-slate-500">每日资讯、翻译、菜谱、历史今天</p></div></div><div class="mt-3 flex flex-wrap gap-2"><span class="chip !py-2">每日早报</span><span class="chip !py-2">在线翻译</span><span class="chip !py-2">央视新闻</span></div></div>
+                <div class="rounded-[28px] bg-[#F1F5FF] p-4 shadow-card"><div class="flex items-center gap-3"><div class="grid h-12 w-12 place-items-center rounded-2xl bg-teal-500 text-white"><i class="fa-regular fa-image"></i></div><div class="flex-1"><h4 class="font-black">图片工具</h4><p class="text-xs text-slate-500">图片处理、格式转换与在线PS</p></div><i class="fa-solid fa-chevron-up text-slate-400"></i></div><div class="mt-4 grid grid-cols-2 gap-2"><div class="rounded-2xl bg-white p-3 shadow-sm"><div class="flex items-center gap-2"><i class="fa-solid fa-wand-magic-sparkles text-teal-500"></i><span class="text-sm font-black">在线PS</span></div><p class="mt-1 text-[11px] text-slate-500">Photopea Web</p></div><div class="rounded-2xl bg-white p-3 shadow-sm"><span class="text-sm font-black">图片压缩</span><p class="mt-1 text-[11px] text-slate-500">开发中</p></div><div class="rounded-2xl bg-white p-3 shadow-sm"><span class="text-sm font-black">格式转换</span><p class="mt-1 text-[11px] text-slate-500">开发中</p></div><div class="rounded-2xl bg-white p-3 shadow-sm"><span class="text-sm font-black">九宫格</span><p class="mt-1 text-[11px] text-slate-500">开发中</p></div></div></div>
+                <div class="card p-4"><div class="flex items-center gap-3"><div class="grid h-12 w-12 place-items-center rounded-2xl bg-violet-50 text-violet"><i class="fa-solid fa-code"></i></div><div class="flex-1"><h4 class="font-black">开发工具</h4><p class="text-xs text-slate-500">JSON、Base64、MD5、时间戳</p></div><i class="fa-solid fa-chevron-down text-slate-400"></i></div></div>
+              </div>
+            </div>
+            <nav class="bottom-nav"><div class="nav-item"><i class="fa-solid fa-house"></i>首页</div><div class="nav-item active"><i class="fa-solid fa-border-all"></i>工具</div><div class="nav-item"><i class="fa-solid fa-box-archive"></i>仓库</div><div class="nav-item"><i class="fa-solid fa-puzzle-piece"></i>插件</div><div class="nav-item"><i class="fa-solid fa-tv"></i>视频</div></nav>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 04 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 04</div><h3 class="mt-1 text-xl font-black">在线PS Web容器</h3><p class="mt-1 text-sm text-slate-500">对应 ToolWebPage：内嵌网页工具，提供返回、刷新、分享/更多。</p></div>
+          <span class="rounded-full bg-teal-50 px-3 py-1 text-xs font-bold text-teal-600">WebView</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen bg-white">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body">
+            <div class="flex items-center gap-3 border-b border-slate-100 px-4 py-3"><button class="mini-btn"><i class="fa-solid fa-arrow-left"></i></button><div class="min-w-0 flex-1"><div class="font-black">在线PS</div><div class="truncate text-xs text-slate-400">https://www.photopea.com/</div></div><button class="mini-btn"><i class="fa-solid fa-rotate-right"></i></button><button class="mini-btn"><i class="fa-solid fa-ellipsis-vertical"></i></button></div>
+            <div class="h-full bg-[#1E2430] text-white">
+              <div class="flex h-10 items-center gap-3 bg-[#151A23] px-3 text-xs text-white/70"><span>File</span><span>Edit</span><span>Image</span><span>Layer</span><span>Select</span><span>Filter</span></div>
+              <div class="flex h-[610px]"><div class="w-12 bg-[#111721] p-2"><div class="space-y-3 text-center text-white/50"><i class="fa-solid fa-mouse-pointer"></i><i class="fa-solid fa-crop-simple"></i><i class="fa-solid fa-brush"></i><i class="fa-solid fa-eraser"></i><i class="fa-solid fa-font"></i><i class="fa-solid fa-eye-dropper"></i></div></div><div class="flex-1 p-5"><div class="mb-3 flex items-center justify-between text-xs text-white/50"><span>未命名项目.psd</span><span>100%</span></div><div class="grid h-[420px] place-items-center rounded-2xl bg-[#2A3140] shadow-2xl"><div class="h-56 w-44 rounded-2xl bg-white p-3 text-slate-900"><img class="h-32 w-full rounded-xl object-cover" src="https://ai.mayoubang.cn/chat/image?w=220&h=150&keyword=photo" alt="photo"><div class="mt-3 h-3 rounded-full bg-slate-200"></div><div class="mt-2 h-3 w-2/3 rounded-full bg-slate-200"></div></div></div><div class="mt-4 rounded-2xl bg-white/8 p-3 text-xs text-white/70"><i class="fa-solid fa-circle-info mr-2 text-cyan"></i>网页工具容器：支持 JS、返回、刷新与沉浸浏览。</div></div><div class="w-16 bg-[#161D28] p-2"><div class="mb-3 rounded-xl bg-white/8 p-2 text-center text-[10px]">Layers</div><div class="space-y-2"><div class="h-12 rounded-xl bg-white/10"></div><div class="h-12 rounded-xl bg-white/5"></div></div></div></div>
+            </div>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 05 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 05</div><h3 class="mt-1 text-xl font-black">资源仓库</h3><p class="mt-1 text-sm text-slate-500">统一收纳书籍、漫画、影视、音乐；书籍自动读取书架。</p></div>
+          <span class="rounded-full bg-teal-50 px-3 py-1 text-xs font-bold text-teal-600">Warehouse</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body">
+            <div class="soft-scroll px-5 pt-3">
+              <div class="flex items-center justify-between"><div><div class="text-2xl font-black">资源仓库</div><div class="text-xs font-semibold text-slate-400">收藏统一管理 · 本地持久化</div></div><div class="flex gap-2"><button class="mini-btn"><i class="fa-solid fa-rotate-right"></i></button><button class="grid h-10 w-10 place-items-center rounded-2xl bg-slate-900 text-white"><i class="fa-solid fa-plus"></i></button></div></div>
+              <div class="mt-4 grid grid-cols-4 gap-2"><div class="rounded-3xl bg-white p-3 text-center shadow-card"><div class="text-xl font-black text-orange-500">12</div><div class="text-[11px] text-slate-500">书籍</div></div><div class="rounded-3xl bg-white p-3 text-center shadow-card"><div class="text-xl font-black text-pink-500">4</div><div class="text-[11px] text-slate-500">漫画</div></div><div class="rounded-3xl bg-white p-3 text-center shadow-card"><div class="text-xl font-black text-brand">6</div><div class="text-[11px] text-slate-500">影视</div></div><div class="rounded-3xl bg-white p-3 text-center shadow-card"><div class="text-xl font-black text-teal-500">0</div><div class="text-[11px] text-slate-500">音乐</div></div></div>
+              <div class="mt-4 flex gap-2 overflow-hidden"><span class="chip active">全部</span><span class="chip">书籍</span><span class="chip">漫画</span><span class="chip">影视</span><span class="chip">音乐</span></div>
+              <div class="mt-4 rounded-[28px] bg-white p-4 shadow-card"><div class="flex items-center justify-between"><div class="flex items-center gap-2"><i class="fa-solid fa-book-open text-orange-500"></i><h4 class="font-black">书籍</h4><span class="text-xs font-bold text-slate-400">12</span></div><button class="text-xs font-black text-brand">添加</button></div><div class="mt-4 flex gap-3 overflow-hidden"><div class="w-24 flex-none"><img class="poster" src="https://ai.mayoubang.cn/chat/image?w=150&h=200&keyword=book" alt="book"><div class="mt-2 truncate text-xs font-black">星河之上</div><div class="truncate text-[10px] text-slate-500">书架 · 已读 62%</div></div><div class="w-24 flex-none"><img class="poster" src="https://ai.mayoubang.cn/chat/image?w=150&h=200&keyword=novel" alt="novel"><div class="mt-2 truncate text-xs font-black">夜幕城</div><div class="truncate text-[10px] text-slate-500">玄幻 · 连载</div></div><div class="w-24 flex-none"><div class="grid aspect-[3/4] place-items-center rounded-[18px] bg-slate-100 text-slate-400"><i class="fa-solid fa-book text-2xl"></i></div><div class="mt-2 truncate text-xs font-black">手动收藏</div><div class="truncate text-[10px] text-slate-500">无封面</div></div></div></div>
+              <div class="mt-4 rounded-[28px] bg-white p-4 shadow-card"><div class="flex items-center justify-between"><div class="flex items-center gap-2"><i class="fa-solid fa-film text-brand"></i><h4 class="font-black">影视</h4><span class="text-xs font-bold text-slate-400">6</span></div><button class="text-xs font-black text-brand">添加</button></div><div class="mt-4 flex gap-3 overflow-hidden"><div class="w-24 flex-none"><img class="poster" src="https://ai.mayoubang.cn/chat/image?w=150&h=200&keyword=movie" alt="movie"><div class="mt-2 truncate text-xs font-black">城市光影</div><div class="truncate text-[10px] text-slate-500">手动收藏</div></div><div class="w-24 flex-none"><img class="poster" src="https://ai.mayoubang.cn/chat/image?w=150&h=200&keyword=cinema" alt="movie"><div class="mt-2 truncate text-xs font-black">海边旅人</div><div class="truncate text-[10px] text-slate-500">复制链接</div></div></div></div>
+              <div class="mt-4 rounded-[28px] border border-dashed border-slate-300 bg-white/70 p-6 text-center"><i class="fa-solid fa-music text-3xl text-slate-300"></i><div class="mt-3 font-black">音乐收藏为空</div><p class="mt-1 text-xs text-slate-500">添加歌单、专辑或音乐链接到仓库</p><button class="mt-3 rounded-2xl bg-slate-900 px-4 py-2 text-xs font-black text-white">添加一个</button></div>
+            </div>
+            <nav class="bottom-nav"><div class="nav-item"><i class="fa-solid fa-house"></i>首页</div><div class="nav-item"><i class="fa-solid fa-border-all"></i>工具</div><div class="nav-item active"><i class="fa-solid fa-box-archive"></i>仓库</div><div class="nav-item"><i class="fa-solid fa-puzzle-piece"></i>插件</div><div class="nav-item"><i class="fa-solid fa-tv"></i>视频</div></nav>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 06 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 06</div><h3 class="mt-1 text-xl font-black">新增收藏 Bottom Sheet</h3><p class="mt-1 text-sm text-slate-500">对应 WarehouseTab 的新增对话框，移动端改为底部表单。</p></div>
+          <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">Sheet</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body">
+            <div class="absolute inset-0 bg-[url('https://ai.mayoubang.cn/chat/image?w=390&h=844&keyword=library')] bg-cover opacity-20"></div>
+            <div class="absolute inset-0 bg-slate-950/45"></div>
+            <div class="absolute bottom-0 left-0 right-0 rounded-t-[36px] bg-white p-5 shadow-2xl">
+              <div class="mx-auto mb-5 h-1.5 w-12 rounded-full bg-slate-200"></div>
+              <div class="flex items-center justify-between"><div><h3 class="text-2xl font-black">新增收藏</h3><p class="mt-1 text-sm text-slate-500">收纳到资源仓库，支持封面与备注。</p></div><button class="mini-btn"><i class="fa-solid fa-xmark"></i></button></div>
+              <div class="mt-5 grid grid-cols-4 gap-2"><button class="rounded-2xl bg-orange-50 py-3 text-xs font-black text-orange-500"><i class="fa-solid fa-book-open mb-1 block"></i>书籍</button><button class="rounded-2xl bg-pink-50 py-3 text-xs font-black text-pink-500"><i class="fa-solid fa-book-atlas mb-1 block"></i>漫画</button><button class="rounded-2xl bg-indigo-600 py-3 text-xs font-black text-white"><i class="fa-solid fa-film mb-1 block"></i>影视</button><button class="rounded-2xl bg-teal-50 py-3 text-xs font-black text-teal-600"><i class="fa-solid fa-music mb-1 block"></i>音乐</button></div>
+              <div class="mt-5 space-y-3"><label class="block"><span class="mb-1 block text-xs font-black text-slate-500">名称</span><div class="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-400">请输入标题</div></label><label class="block"><span class="mb-1 block text-xs font-black text-slate-500">详情链接</span><div class="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-400">https://...</div></label><label class="block"><span class="mb-1 block text-xs font-black text-slate-500">封面地址</span><div class="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-400">可选，支持网络图片</div></label><label class="block"><span class="mb-1 block text-xs font-black text-slate-500">备注</span><div class="h-20 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-400">简介、状态、来源说明...</div></label></div>
+              <div class="mt-5 grid grid-cols-2 gap-3"><button class="rounded-2xl border border-slate-200 py-4 text-sm font-black text-slate-600">取消</button><button class="rounded-2xl bg-slate-900 py-4 text-sm font-black text-white">保存收藏</button></div>
+            </div>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 07 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 07</div><h3 class="mt-1 text-xl font-black">插件中心</h3><p class="mt-1 text-sm text-slate-500">自定义插件、启用开关、市场、JSON导入导出。</p></div>
+          <span class="rounded-full bg-violet-50 px-3 py-1 text-xs font-bold text-violet">Plugin</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body">
+            <div class="soft-scroll px-5 pt-3">
+              <div class="flex items-center justify-between"><div><div class="text-2xl font-black">插件中心</div><div class="text-xs font-semibold text-slate-400">运行时注册 · 持久化</div></div><button class="grid h-11 w-11 place-items-center rounded-2xl bg-violet text-white shadow-card"><i class="fa-solid fa-plus"></i></button></div>
+              <div class="mt-4 overflow-hidden rounded-[30px] bg-slate-950 p-5 text-white shadow-card"><div class="flex items-start justify-between"><div><div class="text-sm text-white/60">已启用插件</div><div class="mt-1 text-4xl font-black">6</div></div><i class="fa-solid fa-puzzle-piece text-5xl text-white/12"></i></div><div class="mt-4 grid grid-cols-2 gap-2"><button class="rounded-2xl bg-white py-3 text-xs font-black text-slate-900"><i class="fa-solid fa-store mr-1 text-brand"></i>插件市场</button><button class="rounded-2xl bg-white/12 py-3 text-xs font-black text-white"><i class="fa-solid fa-file-import mr-1"></i>导入/导出</button></div></div>
+              <div class="mt-4 flex gap-2 overflow-hidden"><span class="chip active">全部</span><span class="chip">推荐</span><span class="chip">影视</span><span class="chip">小说</span><span class="chip">中心</span></div>
+              <div class="mt-4 space-y-3">
+                <div class="card p-4"><div class="flex items-center justify-between"><div class="flex items-center gap-2"><i class="fa-solid fa-fire text-brand"></i><h4 class="font-black">推荐</h4></div><span class="text-xs font-bold text-slate-400">1 个</span></div><div class="mt-3 rounded-2xl bg-slate-50 p-3"><div class="flex items-center gap-3"><div class="grid h-11 w-11 place-items-center rounded-2xl bg-violet-50 text-violet"><i class="fa-regular fa-newspaper"></i></div><div class="min-w-0 flex-1"><div class="flex items-center gap-2"><h5 class="truncate font-black">日报详情</h5><span class="rounded-full bg-slate-200 px-2 py-0.5 text-[9px] font-black text-slate-600">内置</span></div><p class="truncate text-xs text-slate-500">查看完整热闻列表</p></div><div class="h-6 w-11 rounded-full bg-brand p-0.5"><div class="ml-auto h-5 w-5 rounded-full bg-white"></div></div></div></div></div>
+                <div class="card p-4"><div class="flex items-center justify-between"><div class="flex items-center gap-2"><i class="fa-solid fa-play text-brand"></i><h4 class="font-black">影视</h4></div><span class="text-xs font-bold text-slate-400">2 个</span></div><div class="mt-3 space-y-2"><div class="rounded-2xl bg-slate-50 p-3"><div class="flex items-center gap-3"><div class="grid h-11 w-11 place-items-center rounded-2xl bg-indigo-50 text-brand"><i class="fa-solid fa-video"></i></div><div class="min-w-0 flex-1"><h5 class="truncate font-black">公共影视搜索</h5><p class="truncate text-xs text-slate-500">合法免费片源检索</p></div><div class="h-6 w-11 rounded-full bg-brand p-0.5"><div class="ml-auto h-5 w-5 rounded-full bg-white"></div></div></div></div><div class="rounded-2xl bg-slate-50 p-3"><div class="flex items-center gap-3"><div class="grid h-11 w-11 place-items-center rounded-2xl bg-cyan-50 text-teal-500"><i class="fa-solid fa-globe"></i></div><div class="min-w-0 flex-1"><h5 class="truncate font-black">聚合入口</h5><p class="truncate text-xs text-slate-500">自定义插件</p></div><i class="fa-regular fa-trash-can text-slate-400"></i></div></div></div></div>
+                <div class="card p-4"><div class="flex items-center justify-between"><div class="flex items-center gap-2"><i class="fa-solid fa-book-open text-orange-500"></i><h4 class="font-black">小说</h4></div><span class="text-xs font-bold text-slate-400">1 个</span></div><div class="mt-3 rounded-2xl bg-slate-50 p-3"><div class="flex items-center gap-3"><div class="grid h-11 w-11 place-items-center rounded-2xl bg-orange-50 text-orange-500"><i class="fa-solid fa-magnifying-glass"></i></div><div class="flex-1"><h5 class="font-black">快速找书</h5><p class="text-xs text-slate-500">进入小说列表页</p></div><div class="h-6 w-11 rounded-full bg-brand p-0.5"><div class="ml-auto h-5 w-5 rounded-full bg-white"></div></div></div></div></div>
+              </div>
+            </div>
+            <nav class="bottom-nav"><div class="nav-item"><i class="fa-solid fa-house"></i>首页</div><div class="nav-item"><i class="fa-solid fa-border-all"></i>工具</div><div class="nav-item"><i class="fa-solid fa-box-archive"></i>仓库</div><div class="nav-item active"><i class="fa-solid fa-puzzle-piece"></i>插件</div><div class="nav-item"><i class="fa-solid fa-tv"></i>视频</div></nav>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 08 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 08</div><h3 class="mt-1 text-xl font-black">插件市场</h3><p class="mt-1 text-sm text-slate-500">远程配置、Stable/Beta频道、签名校验、安装/卸载。</p></div>
+          <span class="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-600">Market</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body px-5 pt-3">
+            <div class="flex items-center gap-3"><button class="mini-btn"><i class="fa-solid fa-arrow-left"></i></button><div class="flex-1"><div class="text-2xl font-black">插件市场</div><div class="text-xs font-semibold text-slate-400">安全安装 · 即插即用</div></div><button class="mini-btn"><i class="fa-solid fa-rotate-right"></i></button></div>
+            <div class="mt-4 rounded-[26px] bg-white p-3 shadow-card"><div class="flex items-center gap-3"><i class="fa-solid fa-magnifying-glass ml-2 text-slate-400"></i><span class="text-sm font-medium text-slate-400">搜索插件或动作</span></div></div>
+            <div class="mt-4 flex rounded-[22px] bg-slate-100 p-1"><button class="flex-1 rounded-[18px] bg-white py-3 text-sm font-black text-brand shadow-sm">Stable</button><button class="flex-1 py-3 text-sm font-black text-slate-500">Beta</button></div>
+            <div class="mt-4 rounded-[26px] bg-emerald-50 p-4 text-emerald-700"><div class="flex items-center gap-3"><div class="grid h-11 w-11 place-items-center rounded-2xl bg-white text-emerald-500"><i class="fa-solid fa-shield-halved"></i></div><div><h4 class="font-black">签名校验通过</h4><p class="text-xs text-emerald-600/80">SHA256 · 允许已签名模板安装</p></div></div></div>
+            <div class="mt-4 space-y-3">
+              <div class="card p-4"><div class="flex gap-3"><div class="grid h-14 w-14 place-items-center rounded-3xl bg-indigo-50 text-brand"><i class="fa-solid fa-globe text-xl"></i></div><div class="min-w-0 flex-1"><div class="flex items-center gap-2"><h4 class="truncate font-black">聚合搜索入口</h4><span class="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black text-brand">影视</span></div><p class="mt-1 text-xs leading-5 text-slate-500">添加到首页影视区，点击打开聚合搜索。</p><div class="mt-3 flex items-center gap-2"><span class="chip !px-2 !py-1 text-[10px]">openVideoList</span><span class="chip !px-2 !py-1 text-[10px]">sort 12</span></div></div></div><button class="mt-4 w-full rounded-2xl bg-slate-900 py-3 text-sm font-black text-white">安装</button></div>
+              <div class="card p-4"><div class="flex gap-3"><div class="grid h-14 w-14 place-items-center rounded-3xl bg-orange-50 text-orange-500"><i class="fa-solid fa-book-open text-xl"></i></div><div class="min-w-0 flex-1"><div class="flex items-center gap-2"><h4 class="truncate font-black">书源管理快捷入口</h4><span class="rounded-full bg-orange-50 px-2 py-0.5 text-[10px] font-black text-orange-500">小说</span></div><p class="mt-1 text-xs leading-5 text-slate-500">一键进入书源导入、诊断与测试。</p><div class="mt-3 flex items-center gap-2"><span class="chip !px-2 !py-1 text-[10px]">toast</span><span class="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-600">已安装</span></div></div></div><button class="mt-4 w-full rounded-2xl border border-slate-200 py-3 text-sm font-black text-slate-600">卸载</button></div>
+              <div class="card p-4"><div class="flex gap-3"><div class="grid h-14 w-14 place-items-center rounded-3xl bg-pink-50 text-pink-500"><i class="fa-solid fa-music text-xl"></i></div><div class="min-w-0 flex-1"><h4 class="truncate font-black">音乐榜单</h4><p class="mt-1 text-xs leading-5 text-slate-500">音乐区演示插件，后续可接入源。</p></div></div><button class="mt-4 w-full rounded-2xl bg-slate-900 py-3 text-sm font-black text-white">安装</button></div>
+            </div>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 09 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 09</div><h3 class="mt-1 text-xl font-black">视频首页</h3><p class="mt-1 text-sm text-slate-500">片源信息、换源、当前源搜索、聚合搜索、继续观看、分类与瀑布流。</p></div>
+          <span class="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-brand">Video</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body">
+            <div class="soft-scroll px-5 pt-3">
+              <div class="flex items-center justify-between"><div><div class="text-2xl font-black">视频</div><div class="text-xs font-semibold text-slate-400">绿色净化 · 多源检索</div></div><div class="flex gap-2"><button class="mini-btn"><i class="fa-solid fa-magnifying-glass"></i></button><button class="mini-btn"><i class="fa-solid fa-globe"></i></button><button class="mini-btn"><i class="fa-solid fa-rotate-right"></i></button></div></div>
+              <div class="mt-4 overflow-hidden rounded-[30px] bg-slate-950 p-4 text-white shadow-card"><div class="flex gap-3"><div class="grid h-14 w-14 place-items-center rounded-3xl bg-white/12 text-cyan"><i class="fa-solid fa-tv text-xl"></i></div><div class="min-w-0 flex-1"><div class="flex items-center justify-between"><h4 class="truncate text-lg font-black">OuonnkiTV</h4><button class="rounded-full bg-white px-3 py-1 text-xs font-black text-slate-900">换源</button></div><p class="mt-1 text-xs leading-5 text-white/65">已接入 2 个片源核心，当前显示：全部。</p><div class="mt-3 flex gap-2"><span class="rounded-full bg-white/12 px-2 py-1 text-[10px] font-bold">2 源</span><span class="rounded-full bg-white/12 px-2 py-1 text-[10px] font-bold">128 条</span><span class="rounded-full bg-white/12 px-2 py-1 text-[10px] font-bold">安全过滤</span></div></div></div></div>
+              <div class="mt-4 rounded-[26px] bg-white p-3 shadow-card"><div class="flex items-center gap-3"><i class="fa-solid fa-magnifying-glass ml-2 text-slate-400"></i><span class="text-sm font-medium text-slate-400">搜索片名、演员、关键词</span><button class="ml-auto rounded-2xl bg-slate-900 px-4 py-2 text-xs font-black text-white">搜索</button></div></div>
+              <div class="mt-4 grid grid-cols-4 gap-3 text-center"><div class="rounded-3xl bg-white p-3 shadow-card"><div class="mx-auto grid h-10 w-10 place-items-center rounded-2xl bg-indigo-50 text-brand"><i class="fa-solid fa-globe"></i></div><div class="mt-2 text-[11px] font-black">聚合</div></div><div class="rounded-3xl bg-white p-3 shadow-card"><div class="mx-auto grid h-10 w-10 place-items-center rounded-2xl bg-teal-50 text-teal-500"><i class="fa-solid fa-repeat"></i></div><div class="mt-2 text-[11px] font-black">换源</div></div><div class="rounded-3xl bg-white p-3 shadow-card"><div class="mx-auto grid h-10 w-10 place-items-center rounded-2xl bg-orange-50 text-orange-500"><i class="fa-solid fa-clock"></i></div><div class="mt-2 text-[11px] font-black">历史</div></div><div class="rounded-3xl bg-white p-3 shadow-card"><div class="mx-auto grid h-10 w-10 place-items-center rounded-2xl bg-slate-100 text-slate-500"><i class="fa-solid fa-receipt"></i></div><div class="mt-2 text-[11px] font-black">日志</div></div></div>
+              <div class="mt-5 flex items-center justify-between"><h4 class="font-black">继续观看</h4><span class="text-xs font-bold text-brand">更多</span></div>
+              <div class="mt-3 rounded-[26px] bg-white p-3 shadow-card"><div class="flex gap-3"><img class="h-20 w-14 rounded-2xl object-cover" src="https://ai.mayoubang.cn/chat/image?w=150&h=200&keyword=movie" alt="movie"><div class="flex-1"><div class="font-black">城市光影</div><p class="mt-1 text-xs text-slate-500">第 06 集 · 已播放 23:14</p><div class="mt-3 h-1.5 rounded-full bg-slate-100"><div class="h-full w-[58%] rounded-full bg-brand"></div></div></div><button class="self-center rounded-full bg-brand px-3 py-2 text-xs font-black text-white">续播</button></div></div>
+              <div class="mt-4 flex gap-2 overflow-hidden"><span class="chip active">全部</span><span class="chip">电影</span><span class="chip">剧集</span><span class="chip">动漫</span><span class="chip">综艺</span></div>
+              <div class="mt-4 grid grid-cols-2 gap-4"><div><img class="poster" src="https://ai.mayoubang.cn/chat/image?w=210&h=280&keyword=movie" alt="movie"><div class="mt-2 font-black">海边旅人</div><p class="text-xs text-slate-500">2026 · HD</p></div><div><img class="poster" src="https://ai.mayoubang.cn/chat/image?w=210&h=280&keyword=cinema" alt="movie"><div class="mt-2 font-black">星际回声</div><p class="text-xs text-slate-500">更新至 8 集</p></div></div>
+            </div>
+            <nav class="bottom-nav"><div class="nav-item"><i class="fa-solid fa-house"></i>首页</div><div class="nav-item"><i class="fa-solid fa-border-all"></i>工具</div><div class="nav-item"><i class="fa-solid fa-box-archive"></i>仓库</div><div class="nav-item"><i class="fa-solid fa-puzzle-piece"></i>插件</div><div class="nav-item active"><i class="fa-solid fa-tv"></i>视频</div></nav>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 10 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 10</div><h3 class="mt-1 text-xl font-black">聚合搜索结果</h3><p class="mt-1 text-sm text-slate-500">对应 AggregateSearchPage：多源结果、来源状态、快速进入详情。</p></div>
+          <span class="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-brand">Search</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body px-5 pt-3">
+            <div class="flex items-center gap-3"><button class="mini-btn"><i class="fa-solid fa-arrow-left"></i></button><div class="flex-1"><div class="text-2xl font-black">聚合搜索</div><div class="text-xs font-semibold text-slate-400">跨片源检索</div></div><button class="mini-btn"><i class="fa-solid fa-sliders"></i></button></div>
+            <div class="mt-4 rounded-[26px] bg-white p-3 shadow-card"><div class="flex items-center gap-3"><i class="fa-solid fa-magnifying-glass ml-2 text-brand"></i><span class="text-sm font-black text-slate-900">星际</span><button class="ml-auto rounded-2xl bg-brand px-4 py-2 text-xs font-black text-white">搜索</button></div></div>
+            <div class="mt-4 grid grid-cols-3 gap-2"><div class="rounded-2xl bg-white p-3 text-center shadow-card"><div class="text-lg font-black text-brand">2</div><div class="text-[10px] text-slate-500">可用源</div></div><div class="rounded-2xl bg-white p-3 text-center shadow-card"><div class="text-lg font-black text-emerald-500">26</div><div class="text-[10px] text-slate-500">结果</div></div><div class="rounded-2xl bg-white p-3 text-center shadow-card"><div class="text-lg font-black text-orange-500">3ms</div><div class="text-[10px] text-slate-500">缓存命中</div></div></div>
+            <div class="mt-4 flex gap-2 overflow-hidden"><span class="chip active">全部来源</span><span class="chip">OuonnkiTV</span><span class="chip">备用源</span></div>
+            <div class="mt-4 space-y-3">
+              <div class="card p-3"><div class="flex gap-3"><img class="h-24 w-16 rounded-2xl object-cover" src="https://ai.mayoubang.cn/chat/image?w=150&h=220&keyword=movie" alt="movie"><div class="min-w-0 flex-1"><div class="flex items-center gap-2"><h4 class="truncate font-black">星际回声</h4><span class="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-600">可播</span></div><p class="mt-1 truncate text-xs text-slate-500">OuonnkiTV · 科幻 · 2026</p><p class="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">一支探索队在深空中接收到来自未来的信号...</p><button class="mt-3 rounded-2xl bg-slate-900 px-4 py-2 text-xs font-black text-white">查看详情</button></div></div></div>
+              <div class="card p-3"><div class="flex gap-3"><img class="h-24 w-16 rounded-2xl object-cover" src="https://ai.mayoubang.cn/chat/image?w=150&h=220&keyword=cinema" alt="movie"><div class="min-w-0 flex-1"><div class="flex items-center gap-2"><h4 class="truncate font-black">星际旅人</h4><span class="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black text-brand">备用源</span></div><p class="mt-1 truncate text-xs text-slate-500">备用源 · 剧集 · 全 12 集</p><p class="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">结果来自聚合搜索，可切换源查看不同线路。</p><button class="mt-3 rounded-2xl border border-slate-200 px-4 py-2 text-xs font-black text-slate-600">对比线路</button></div></div></div>
+              <div class="rounded-[26px] bg-orange-50 p-4 text-orange-700"><i class="fa-solid fa-filter mr-2"></i><span class="text-sm font-bold">已自动过滤不安全内容，可在日志查看原因。</span></div>
+            </div>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 11 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 11</div><h3 class="mt-1 text-xl font-black">视频详情 / 播放器</h3><p class="mt-1 text-sm text-slate-500">播放器、续播提示、线路选择、选集与上一集/下一集。</p></div>
+          <span class="rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">Player</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen bg-[#F2F4F8]">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body">
+            <div class="bg-white px-4 py-3"><div class="flex items-center gap-3"><button class="mini-btn"><i class="fa-solid fa-arrow-left"></i></button><div class="min-w-0 flex-1"><div class="truncate font-black">星际回声</div><div class="text-xs text-slate-400">OuonnkiTV · 第06集</div></div><button class="mini-btn"><i class="fa-solid fa-bug"></i></button><button class="mini-btn"><i class="fa-solid fa-rotate-right"></i></button></div></div>
+            <div class="relative bg-black"><div class="aspect-video w-full"><img class="h-full w-full object-cover opacity-60" src="https://ai.mayoubang.cn/chat/image?w=390&h=220&keyword=movie" alt="video"><div class="absolute inset-0 grid place-items-center"><div class="grid h-16 w-16 place-items-center rounded-full bg-white/22 text-white backdrop-blur"><i class="fa-solid fa-play text-2xl"></i></div></div><div class="absolute bottom-3 left-4 right-4"><div class="mb-2 flex justify-between text-[10px] text-white/80"><span>23:14</span><span>45:00</span></div><div class="h-1 rounded-full bg-white/20"><div class="h-full w-[52%] rounded-full bg-white"></div></div></div></div></div>
+            <div class="px-5 py-4"><div class="rounded-[28px] bg-white p-4 shadow-card"><div class="flex gap-4"><img class="h-28 w-20 rounded-2xl object-cover" src="https://ai.mayoubang.cn/chat/image?w=150&h=220&keyword=movie" alt="cover"><div class="min-w-0 flex-1"><h3 class="truncate text-xl font-black">星际回声</h3><p class="mt-1 text-xs text-slate-500">科幻 · 2026 · HD · 共 12 集</p><p class="mt-3 line-clamp-3 text-xs leading-5 text-slate-500">探索队收到来自未来的信号，跨越时间寻找真相。</p><div class="mt-3 flex gap-2"><span class="chip !px-2 !py-1 text-[10px]">2 条线路</span><span class="chip !px-2 !py-1 text-[10px]">12 集</span></div></div></div></div>
+              <div class="mt-4 rounded-[28px] bg-white p-4 shadow-card"><div class="flex items-center justify-between"><h4 class="font-black">播放线路</h4><span class="text-xs text-slate-400">Line 1</span></div><div class="mt-3 flex gap-2"><span class="chip active">线路一</span><span class="chip">线路二</span><span class="chip">备用</span></div></div>
+              <div class="mt-4 rounded-[28px] bg-white p-4 shadow-card"><div class="flex items-center justify-between"><h4 class="font-black">选集</h4><button class="text-xs font-black text-brand">倒序</button></div><div class="mt-3 grid grid-cols-5 gap-2"><button class="rounded-2xl bg-slate-100 py-3 text-xs font-black text-slate-600">01</button><button class="rounded-2xl bg-slate-100 py-3 text-xs font-black text-slate-600">02</button><button class="rounded-2xl bg-slate-100 py-3 text-xs font-black text-slate-600">03</button><button class="rounded-2xl bg-slate-100 py-3 text-xs font-black text-slate-600">04</button><button class="rounded-2xl bg-slate-100 py-3 text-xs font-black text-slate-600">05</button><button class="rounded-2xl bg-brand py-3 text-xs font-black text-white">06</button><button class="rounded-2xl bg-slate-100 py-3 text-xs font-black text-slate-600">07</button><button class="rounded-2xl bg-slate-100 py-3 text-xs font-black text-slate-600">08</button><button class="rounded-2xl bg-slate-100 py-3 text-xs font-black text-slate-600">09</button><button class="rounded-2xl bg-slate-100 py-3 text-xs font-black text-slate-600">10</button></div><div class="mt-4 grid grid-cols-2 gap-3"><button class="rounded-2xl border border-slate-200 py-3 text-sm font-black text-slate-600">上一集</button><button class="rounded-2xl bg-slate-900 py-3 text-sm font-black text-white">下一集</button></div></div>
+            </div>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 12 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 12</div><h3 class="mt-1 text-xl font-black">小说发现 / 搜索</h3><p class="mt-1 text-sm text-slate-500">书源初始化、发现页分类、关键词搜索、无限加载。</p></div>
+          <span class="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-500">Novel</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body px-5 pt-3">
+            <div class="flex items-center justify-between"><div><div class="text-2xl font-black">小说</div><div class="text-xs font-semibold text-slate-400">规则书源 · 发现与搜索</div></div><div class="flex gap-2"><button class="mini-btn"><i class="fa-solid fa-sliders"></i></button><button class="mini-btn"><i class="fa-solid fa-rotate-right"></i></button></div></div>
+            <div class="mt-4 rounded-[26px] bg-white p-3 shadow-card"><div class="flex items-center gap-3"><i class="fa-solid fa-magnifying-glass ml-2 text-slate-400"></i><span class="text-sm font-medium text-slate-400">输入书名或作者名搜索</span><button class="ml-auto rounded-2xl bg-orange-500 px-4 py-2 text-xs font-black text-white">搜索</button></div></div>
+            <div class="mt-4 rounded-[26px] bg-orange-50 p-4"><div class="flex items-center justify-between"><div><div class="text-xs font-bold text-orange-600/80">当前书源</div><div class="mt-1 font-black text-orange-700">无图中文 · 支持发现页</div></div><button class="rounded-2xl bg-white px-3 py-2 text-xs font-black text-orange-600">管理</button></div></div>
+            <div class="mt-4 flex gap-2 overflow-hidden"><span class="chip active">热门</span><span class="chip">玄幻</span><span class="chip">都市</span><span class="chip">完结</span><span class="chip">排行</span></div>
+            <div class="mt-4 space-y-3">
+              <div class="card p-3"><div class="flex gap-3"><img class="book-cover" src="https://ai.mayoubang.cn/chat/image?w=140&h=190&keyword=book" alt="book"><div class="min-w-0 flex-1"><h4 class="truncate font-black">星河之上</h4><p class="mt-1 truncate text-xs text-slate-500">平安 · 玄幻 · 连载 · 120万字</p><p class="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">少年从边城走出，踏入浩瀚星河，寻找失落的真相。</p><div class="mt-2 flex gap-2"><span class="rounded-full bg-orange-50 px-2 py-1 text-[10px] font-black text-orange-500">热读</span><span class="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-500">可缓存</span></div></div></div></div>
+              <div class="card p-3"><div class="flex gap-3"><img class="book-cover" src="https://ai.mayoubang.cn/chat/image?w=140&h=190&keyword=novel" alt="novel"><div class="min-w-0 flex-1"><h4 class="truncate font-black">夜幕城</h4><p class="mt-1 truncate text-xs text-slate-500">木子 · 都市 · 连载</p><p class="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">被遗忘的城市中，一名工程师发现所有记忆都可被重写。</p><div class="mt-2 flex gap-2"><span class="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-black text-brand">新书</span></div></div></div></div>
+              <div class="card p-3"><div class="flex gap-3"><img class="book-cover" src="https://ai.mayoubang.cn/chat/image?w=140&h=190&keyword=reader" alt="reader"><div class="min-w-0 flex-1"><h4 class="truncate font-black">山海旧梦</h4><p class="mt-1 truncate text-xs text-slate-500">青石 · 奇幻 · 完结</p><p class="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">古老传说从书页中醒来，世间万物重新有了名字。</p></div></div></div>
+              <div class="py-4 text-center text-xs font-bold text-slate-400">向下滚动加载更多</div>
+            </div>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 13 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 13</div><h3 class="mt-1 text-xl font-black">小说详情</h3><p class="mt-1 text-sm text-slate-500">书架、继续阅读、缓存全本、章节列表和进度状态。</p></div>
+          <span class="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-500">Detail</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body">
+            <div class="relative h-56 overflow-hidden bg-slate-950 text-white"><img class="absolute inset-0 h-full w-full object-cover opacity-35 blur-sm" src="https://ai.mayoubang.cn/chat/image?w=390&h=250&keyword=book" alt="book"><div class="absolute left-4 right-4 top-3 flex items-center justify-between"><button class="grid h-10 w-10 place-items-center rounded-2xl bg-white/18 backdrop-blur"><i class="fa-solid fa-arrow-left"></i></button><button class="grid h-10 w-10 place-items-center rounded-2xl bg-white/18 backdrop-blur"><i class="fa-solid fa-rotate-right"></i></button></div><div class="absolute bottom-5 left-5 right-5 flex gap-4"><img class="h-32 w-24 rounded-[22px] object-cover shadow-2xl" src="https://ai.mayoubang.cn/chat/image?w=150&h=210&keyword=book" alt="book"><div class="min-w-0 flex-1 self-end"><h2 class="truncate text-2xl font-black">星河之上</h2><p class="mt-1 text-xs text-white/75">平安 · 玄幻 · 连载 · 120万字</p><div class="mt-3 flex gap-2"><span class="rounded-full bg-white/16 px-2 py-1 text-[10px] font-bold">共 368 章</span><span class="rounded-full bg-white/16 px-2 py-1 text-[10px] font-bold">书源可读</span></div></div></div></div>
+            <div class="px-5 py-4"><div class="grid grid-cols-3 gap-3"><button class="col-span-1 rounded-2xl bg-orange-500 py-4 text-sm font-black text-white">继续阅读</button><button class="rounded-2xl border border-orange-200 bg-white py-4 text-sm font-black text-orange-500">+书架</button><button class="rounded-2xl border border-slate-200 bg-white py-4 text-sm font-black text-slate-600">缓存</button></div>
+              <div class="mt-4 rounded-[26px] bg-white p-4 shadow-card"><h4 class="font-black">简介</h4><p class="mt-2 line-clamp-3 text-sm leading-6 text-slate-500">少年从边城走出，踏入浩瀚星河。每一颗星辰背后都有一段被遗忘的文明史，他要寻找真相，也要找回自己。</p></div>
+              <div class="mt-4 rounded-[26px] bg-white p-4 shadow-card"><div class="flex items-center justify-between"><div><h4 class="font-black">缓存进度</h4><p class="mt-1 text-xs text-slate-500">正在缓存全本 · 128/368</p></div><button class="rounded-2xl bg-orange-50 px-3 py-2 text-xs font-black text-orange-500">暂停</button></div><div class="mt-3 h-2 rounded-full bg-slate-100"><div class="h-full w-[35%] rounded-full bg-orange-500"></div></div></div>
+              <div class="mt-4 rounded-[26px] bg-white p-4 shadow-card"><div class="flex items-center justify-between"><h4 class="font-black">章节目录</h4><button class="text-xs font-black text-slate-500"><i class="fa-solid fa-arrow-down-wide-short mr-1"></i>倒序</button></div><div class="mt-3 divide-y divide-slate-100"><div class="py-3"><div class="truncate text-sm font-black text-brand">第128章 风暴中心</div><div class="mt-1 text-[11px] text-slate-400">上次读到这里</div></div><div class="py-3 text-sm font-semibold text-slate-700">第129章 星门开启</div><div class="py-3 text-sm font-semibold text-slate-700">第130章 遥远的回应</div><div class="py-3 text-sm font-semibold text-slate-700">第131章 新生之城</div></div></div>
+            </div>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 14 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 14</div><h3 class="mt-1 text-xl font-black">沉浸式阅读器</h3><p class="mt-1 text-sm text-slate-500">翻页/滚动、主题、字号、行高、目录、阅读进度。</p></div>
+          <span class="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-600">Reader</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen reader-paper">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body px-6 pt-4">
+            <div class="flex items-center justify-between text-xs font-bold opacity-55"><span>星河之上</span><span>58%</span></div>
+            <h3 class="mt-10 text-center text-xl font-black">第128章 风暴中心</h3>
+            <div class="mt-10 space-y-6 text-[18px] leading-[2.05] tracking-wide">
+              <p>风从城市边缘吹来，带着远方星海的微光。少年站在高塔之上，看见云层像被无形的手缓缓拨开。</p>
+              <p>那道信号再次出现，比上一次更加清晰。它不像语言，也不像图像，却让所有沉睡的机械同时亮起。</p>
+              <p>“这不是求救。”老人低声说，“这是邀请。”</p>
+              <p>他握紧掌心的旧钥匙，终于明白自己一路追寻的答案，可能从一开始就藏在星门的另一端。</p>
+            </div>
+            <div class="absolute left-4 right-4 top-4 rounded-[26px] bg-black/72 p-3 text-white shadow-2xl backdrop-blur"><div class="flex items-center gap-3"><button class="grid h-10 w-10 place-items-center rounded-2xl bg-white/12"><i class="fa-solid fa-arrow-left"></i></button><div class="min-w-0 flex-1"><div class="truncate font-black">星河之上</div><div class="text-xs text-white/55">第128章 风暴中心</div></div><button class="grid h-10 w-10 place-items-center rounded-2xl bg-white/12"><i class="fa-solid fa-moon"></i></button></div></div>
+            <div class="absolute bottom-0 left-0 right-0 rounded-t-[34px] bg-black/82 p-5 text-white shadow-2xl backdrop-blur"><div class="grid grid-cols-4 gap-3 text-center text-xs font-bold"><div><i class="fa-solid fa-list mb-2 block text-lg"></i>目录</div><div><i class="fa-solid fa-chevron-left mb-2 block text-lg"></i>上章</div><div><i class="fa-solid fa-gear mb-2 block text-lg"></i>设置</div><div><i class="fa-solid fa-chevron-right mb-2 block text-lg"></i>下章</div></div><div class="mt-5 rounded-[26px] bg-white/10 p-4"><div class="flex items-center justify-between"><span class="text-sm font-black">阅读设置</span><span class="text-xs text-white/55">翻页模式</span></div><div class="mt-4 flex items-center justify-between"><span class="text-xs text-white/65">主题</span><div class="flex gap-2"><span class="h-8 w-8 rounded-full bg-[#F1E7C8] ring-2 ring-white"></span><span class="h-8 w-8 rounded-full bg-[#CFE8D6]"></span><span class="h-8 w-8 rounded-full bg-[#141414]"></span></div></div><div class="mt-4 flex items-center justify-between"><span class="text-xs text-white/65">字号</span><div class="flex items-center gap-3"><button class="rounded-full bg-white/10 px-3 py-1">A-</button><span class="font-black">18</span><button class="rounded-full bg-white/10 px-3 py-1">A+</button></div></div></div></div>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 15 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 15</div><h3 class="mt-1 text-xl font-black">书源管理</h3><p class="mt-1 text-sm text-slate-500">导入、预检、诊断、测试、启用/禁用、导出当前书源。</p></div>
+          <span class="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-500">Source</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body px-5 pt-3">
+            <div class="flex items-center gap-3"><button class="mini-btn"><i class="fa-solid fa-arrow-left"></i></button><div class="flex-1"><div class="text-2xl font-black">书源管理</div><div class="text-xs font-semibold text-slate-400">规则源 · 可用性诊断</div></div><button class="mini-btn"><i class="fa-solid fa-plus"></i></button><button class="mini-btn"><i class="fa-solid fa-file-import"></i></button></div>
+            <div class="mt-4 rounded-[26px] bg-blue-50 p-4 text-brand"><div class="flex items-center gap-3"><i class="fa-solid fa-circle-check"></i><div><div class="text-sm font-black">当前默认书源：无图中文</div><div class="text-xs text-brand/70">支持发现页 · 支持搜索 · 可阅读</div></div></div></div>
+            <div class="mt-4 rounded-[26px] bg-white p-3 shadow-card"><div class="flex items-center gap-3"><i class="fa-solid fa-magnifying-glass ml-2 text-slate-400"></i><span class="text-sm font-medium text-slate-400">搜索书源名称 / 分组 / 域名</span></div></div>
+            <div class="mt-4 grid grid-cols-3 gap-2"><button class="rounded-2xl bg-slate-900 py-3 text-xs font-black text-white"><i class="fa-solid fa-file-import mr-1"></i>导入</button><button class="rounded-2xl bg-white py-3 text-xs font-black text-slate-700 shadow-card"><i class="fa-solid fa-pen mr-1"></i>新增</button><button class="rounded-2xl bg-white py-3 text-xs font-black text-slate-700 shadow-card"><i class="fa-solid fa-share mr-1"></i>导出</button></div>
+            <div class="mt-4 space-y-3">
+              <div class="card p-4"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><h4 class="truncate font-black">无图中文</h4><p class="mt-1 truncate text-xs text-slate-500">https://www.wtzw.com</p></div><div class="h-6 w-11 rounded-full bg-brand p-0.5"><div class="ml-auto h-5 w-5 rounded-full bg-white"></div></div></div><div class="mt-3 flex flex-wrap gap-2"><span class="rounded-full bg-orange-50 px-2 py-1 text-[10px] font-black text-orange-500">当前使用</span><span class="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-600">可阅读</span><span class="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-black text-brand">支持发现页</span><span class="rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-black text-indigo-500">规则适配</span></div><p class="mt-3 text-xs leading-5 text-slate-500">搜索：/search?q={{key}}；目录与内容规则完整。</p><div class="mt-3 flex flex-wrap gap-2"><button class="rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white">重新使用</button><button class="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-600">诊断</button><button class="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-600">测试</button><button class="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-600">导出</button></div></div>
+              <div class="card p-4"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><h4 class="truncate font-black">示例书源 Beta</h4><p class="mt-1 truncate text-xs text-slate-500">https://example.com</p></div><div class="h-6 w-11 rounded-full bg-slate-200 p-0.5"><div class="h-5 w-5 rounded-full bg-white"></div></div></div><div class="mt-3 flex flex-wrap gap-2"><span class="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-500">未启用</span><span class="rounded-full bg-orange-50 px-2 py-1 text-[10px] font-black text-orange-500">部分支持</span><span class="rounded-full bg-red-50 px-2 py-1 text-[10px] font-black text-red-500">阻塞 1</span></div><p class="mt-3 text-xs leading-5 text-red-500">缺少 ruleContent.content，阅读内容可能不可用。</p><div class="mt-3 flex flex-wrap gap-2"><button class="rounded-xl bg-orange-500 px-3 py-2 text-xs font-black text-white">启用并使用</button><button class="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-600">诊断</button><button class="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-600">编辑</button></div></div>
+            </div>
+            <button class="absolute bottom-6 right-6 rounded-full bg-slate-900 px-5 py-4 text-sm font-black text-white shadow-2xl"><i class="fa-solid fa-plus mr-2"></i>导入书源</button>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 16 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 16</div><h3 class="mt-1 text-xl font-black">视界日报 WebView</h3><p class="mt-1 text-sm text-slate-500">对应 DailyNewsPage：网页视图，刷新、更多、沉浸浏览。</p></div>
+          <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">News</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen bg-white">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body">
+            <div class="flex items-center gap-3 border-b border-slate-100 px-4 py-3"><button class="mini-btn"><i class="fa-solid fa-arrow-left"></i></button><div class="flex-1 font-black">视界日报</div><button class="mini-btn"><i class="fa-solid fa-rotate-right"></i></button><button class="mini-btn"><i class="fa-solid fa-ellipsis-vertical"></i></button></div>
+            <div class="p-5"><div class="overflow-hidden rounded-[30px] bg-slate-950 text-white shadow-card"><img class="h-40 w-full object-cover opacity-70" src="https://ai.mayoubang.cn/chat/image?w=390&h=170&keyword=news" alt="news"><div class="p-5"><div class="text-xs text-white/55">06月07日 · 60秒读世界</div><h2 class="mt-2 text-2xl font-black leading-tight">今日视界日报</h2><p class="mt-3 text-sm leading-6 text-white/70">精选热点、科技、生活与工具趋势，一页掌握今日重要信息。</p></div></div>
+              <div class="mt-5 space-y-3"><div class="card p-4"><div class="flex gap-3"><span class="grid h-8 w-8 place-items-center rounded-full bg-brand text-sm font-black text-white">1</span><div><h4 class="font-black">移动端工具应用进入“插件化”阶段</h4><p class="mt-1 text-xs leading-5 text-slate-500">插件市场与自定义入口成为效率应用新趋势。</p></div></div></div><div class="card p-4"><div class="flex gap-3"><span class="grid h-8 w-8 place-items-center rounded-full bg-slate-900 text-sm font-black text-white">2</span><div><h4 class="font-black">阅读器体验：沉浸和可调节更重要</h4><p class="mt-1 text-xs leading-5 text-slate-500">字号、行高、主题和目录是高频调节项。</p></div></div></div><div class="card p-4"><div class="flex gap-3"><span class="grid h-8 w-8 place-items-center rounded-full bg-slate-900 text-sm font-black text-white">3</span><div><h4 class="font-black">视频聚合搜索强调安全过滤</h4><p class="mt-1 text-xs leading-5 text-slate-500">清晰展示来源与过滤状态降低误触。</p></div></div></div></div>
+            </div>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 17 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 17</div><h3 class="mt-1 text-xl font-black">侧边栏 / 设置入口</h3><p class="mt-1 text-sm text-slate-500">对应 AppDrawer：账户、主题、更新日志、政策、反馈与帮助。</p></div>
+          <span class="rounded-full bg-cyan-50 px-3 py-1 text-xs font-bold text-teal-600">Drawer</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen bg-[#EAF7FA]">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body p-5">
+            <div class="rounded-[30px] bg-white p-4 shadow-card"><div class="flex items-center gap-3"><div class="grid h-14 w-14 place-items-center rounded-3xl bg-teal-50 text-teal-600"><i class="fa-solid fa-user-shield text-xl"></i></div><div class="min-w-0 flex-1"><div class="font-black">未登录会员</div><p class="text-xs text-slate-500">登录后可同步收藏与配置</p></div><button class="rounded-2xl bg-teal-50 px-3 py-2 text-xs font-black text-teal-600">登录</button></div></div>
+            <div class="mt-4 rounded-[28px] bg-white p-3 shadow-card"><div class="px-2 py-2 text-xs font-black uppercase tracking-widest text-slate-400">主页</div><div class="space-y-1"><div class="flex items-center gap-3 rounded-2xl bg-teal-50 px-3 py-3 text-teal-700"><i class="fa-solid fa-house w-6"></i><span class="flex-1 font-black">软件首页</span><i class="fa-solid fa-chevron-right text-xs"></i></div><div class="flex items-center gap-3 rounded-2xl px-3 py-3"><i class="fa-solid fa-border-all w-6 text-slate-500"></i><span class="flex-1 font-bold">全部工具</span><i class="fa-solid fa-chevron-right text-xs text-slate-300"></i></div><div class="flex items-center gap-3 rounded-2xl px-3 py-3"><i class="fa-solid fa-box-archive w-6 text-slate-500"></i><span class="flex-1 font-bold">仓库合集</span><i class="fa-solid fa-chevron-right text-xs text-slate-300"></i></div><div class="flex items-center gap-3 rounded-2xl px-3 py-3"><i class="fa-solid fa-palette w-6 text-slate-500"></i><span class="flex-1 font-bold">主题颜色</span><i class="fa-solid fa-chevron-right text-xs text-slate-300"></i></div></div></div>
+            <div class="mt-4 rounded-[28px] bg-white p-3 shadow-card"><div class="px-2 py-2 text-xs font-black uppercase tracking-widest text-slate-400">支持</div><div class="space-y-1"><div class="flex items-center gap-3 rounded-2xl px-3 py-3"><i class="fa-solid fa-sack-dollar w-6 text-slate-500"></i><div class="flex-1"><div class="font-bold">捐赠支持</div><div class="text-xs text-slate-500">用于开发与维护</div></div><i class="fa-solid fa-chevron-right text-xs text-slate-300"></i></div><div class="flex items-center gap-3 rounded-2xl px-3 py-3"><i class="fa-regular fa-message w-6 text-slate-500"></i><div class="flex-1"><div class="font-bold">反馈</div><div class="text-xs text-slate-500">功能投稿 / 失效反馈</div></div><i class="fa-solid fa-chevron-right text-xs text-slate-300"></i></div><div class="flex items-center gap-3 rounded-2xl px-3 py-3"><i class="fa-solid fa-shield-halved w-6 text-slate-500"></i><div class="flex-1"><div class="font-bold">隐私政策与权限</div><div class="text-xs text-slate-500">用户协议 / 版权处理</div></div><i class="fa-solid fa-chevron-right text-xs text-slate-300"></i></div></div></div>
+            <div class="absolute bottom-5 left-5 right-5 flex items-center gap-2 text-xs font-bold text-slate-400"><i class="fa-solid fa-circle-info"></i><span>Geek工具箱 · 作者 QQ：3377639199</span></div>
+          </div>
+        </div></div>
+      </article>
+
+      <!-- 18 -->
+      <article class="rounded-[34px] bg-white/72 p-5 shadow-soft backdrop-blur-xl">
+        <div class="phone-note mb-4 flex items-start justify-between gap-4">
+          <div><div class="screen-label text-xs font-black text-brand">SCREEN 18</div><h3 class="mt-1 text-xl font-black">诊断日志 / 更新中心</h3><p class="mt-1 text-sm text-slate-500">对应 DebugLogPage、AppLogger、更新服务：日志筛选、复制、清空、重试。</p></div>
+          <span class="rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">Debug</span>
+        </div>
+        <div class="phone-frame mx-auto"><div class="phone-screen">
+          <div class="statusbar"><span>09:41</span><span class="flex gap-1"><i class="fa-solid fa-signal"></i><i class="fa-solid fa-wifi"></i><i class="fa-solid fa-battery-three-quarters"></i></span></div>
+          <div class="screen-body px-5 pt-3">
+            <div class="flex items-center gap-3"><button class="mini-btn"><i class="fa-solid fa-arrow-left"></i></button><div class="flex-1"><div class="text-2xl font-black">诊断中心</div><div class="text-xs font-semibold text-slate-400">错误日志 · 更新状态</div></div><button class="mini-btn"><i class="fa-regular fa-copy"></i></button><button class="mini-btn"><i class="fa-regular fa-trash-can"></i></button></div>
+            <div class="mt-4 rounded-[28px] bg-slate-950 p-4 text-white shadow-card"><div class="flex items-center gap-3"><div class="grid h-12 w-12 place-items-center rounded-2xl bg-white/12 text-cyan"><i class="fa-solid fa-code-branch"></i></div><div class="flex-1"><div class="text-sm text-white/60">当前版本</div><div class="font-black">v1.1.8+118</div></div><button class="rounded-2xl bg-white px-3 py-2 text-xs font-black text-slate-900">检查更新</button></div></div>
+            <div class="mt-4 flex gap-2 overflow-hidden"><span class="chip active">全部</span><span class="chip">Flutter</span><span class="chip">Dart</span><span class="chip">Network</span><span class="chip">Video</span></div>
+            <div class="mt-4 space-y-3">
+              <div class="rounded-[24px] border border-emerald-100 bg-emerald-50 p-4"><div class="flex items-center justify-between"><span class="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-black text-emerald-700">UPDATE</span><span class="text-[10px] font-bold text-emerald-600/70">09:39:12</span></div><p class="mt-2 text-xs leading-5 text-emerald-800">更新检查成功：当前已是最新版本。</p></div>
+              <div class="rounded-[24px] border border-blue-100 bg-blue-50 p-4"><div class="flex items-center justify-between"><span class="rounded-full bg-blue-100 px-2 py-1 text-[10px] font-black text-brand">VIDEO</span><span class="text-[10px] font-bold text-brand/70">09:38:02</span></div><p class="mt-2 text-xs leading-5 text-blue-900">片源目录初始化完成，已加载 2 个 Source。</p></div>
+              <div class="rounded-[24px] border border-orange-100 bg-orange-50 p-4"><div class="flex items-center justify-between"><span class="rounded-full bg-orange-100 px-2 py-1 text-[10px] font-black text-orange-700">NOVEL</span><span class="text-[10px] font-bold text-orange-600/70">09:37:48</span></div><p class="mt-2 text-xs leading-5 text-orange-900">书源预检通过：支持搜索、发现页、目录、正文。</p></div>
+              <div class="rounded-[24px] border border-red-100 bg-red-50 p-4"><div class="flex items-center justify-between"><span class="rounded-full bg-red-100 px-2 py-1 text-[10px] font-black text-red-700">FLUTTER</span><span class="text-[10px] font-bold text-red-600/70">09:36:11</span></div><p class="mt-2 text-xs leading-5 text-red-900">示例异常：网络请求超时，已记录堆栈。</p></div>
+            </div>
+            <div class="absolute bottom-5 left-5 right-5 grid grid-cols-2 gap-3"><button class="rounded-2xl border border-slate-200 bg-white py-4 text-sm font-black text-slate-600 shadow-card">复制日志</button><button class="rounded-2xl bg-slate-900 py-4 text-sm font-black text-white shadow-card">导出报告</button></div>
+          </div>
+        </div></div>
+      </article>
+    </section>
+
+    <footer class="mt-12 rounded-[34px] bg-slate-950 p-6 text-white shadow-soft lg:p-8">
+      <div class="grid gap-6 lg:grid-cols-[1.2fr_.8fr] lg:items-center">
+        <div>
+          <h2 class="text-2xl font-black">落地建议</h2>
+          <p class="mt-3 max-w-4xl text-sm leading-7 text-white/65">
+            Flutter 实现时建议抽象统一组件：AppScaffold、SearchBar、ActionCard、ResourcePosterCard、StatusChip、BottomSheetForm、EmptyState、SegmentedTabs；同时将底部导航升级为半透明 Floating Navigation，并给视频/小说等长流程页面提供返回、刷新、诊断等一致的顶部动作。
+          </p>
+        </div>
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div class="rounded-3xl bg-white/8 p-4"><div class="font-black text-cyan">优先级 P0</div><div class="mt-2 text-white/60">首页、工具、仓库、插件、视频底栏一致性</div></div>
+          <div class="rounded-3xl bg-white/8 p-4"><div class="font-black text-orange-300">优先级 P1</div><div class="mt-2 text-white/60">小说阅读器、书源管理、播放器详情页体验</div></div>
+        </div>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>
