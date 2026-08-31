@@ -374,6 +374,7 @@ class _WarehouseTabState extends State<WarehouseTab>
       // 模拟延迟
       await Future.delayed(const Duration(seconds: 1));
 
+      if (!mounted) return;
       setState(() {
         _syncing = false;
         _syncStatus = '已同步（本地优先）';

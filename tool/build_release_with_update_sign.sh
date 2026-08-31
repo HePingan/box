@@ -25,6 +25,16 @@ SIG_ALGO="${UPDATE_SIGNATURE_ALGORITHM:-hmac_sha256}"
 CHANNEL="${APP_CHANNEL:-release}"
 TARGET_PLATFORM="${TARGET_PLATFORM:-android-arm64}"
 
+# ---- 混淆与符号表 ----------------------------------------------------------
+# --obfuscate 把 Dart 符号从 libapp.so 里剥掉，实测省 1.69MB（11.86→10.09MB）。
+# 代价：崩溃堆栈变成乱码。所以符号表**必须**归档，否则线上崩溃无法还原函数名。
+# 归档目录按 versionCode 分子目录，与发布的 APK 一一对应。
+#
+# 关掉混淆：OBFUSCATE=0 bash tool/build_release_with_update_sign.sh
+OBFUSCATE="${OBFUSCATE:-1}"
+VERSION_CODE="$(grep -m1 '^version:' pubspec.yaml | sed 's/.*+//' | tr -d ' \r')"
+SYMBOLS_DIR="${SYMBOLS_DIR:-build/symbols/$VERSION_CODE}"
+
 # ---- 取密钥 ----------------------------------------------------------------
 SECRET="${UPDATE_SIGNATURE_SECRET:-}"
 if [[ -z "$SECRET" && -r "$SECRET_FILE" ]]; then
@@ -58,8 +68,19 @@ echo "    密钥指纹    : $FP (长度 ${#SECRET})"
 echo "    渠道/架构   : $CHANNEL / $TARGET_PLATFORM"
 echo
 
+OBFUSCATE_ARGS=()
+if [[ "$OBFUSCATE" == "1" ]]; then
+  mkdir -p "$SYMBOLS_DIR"
+  OBFUSCATE_ARGS=(--obfuscate --split-debug-info="$SYMBOLS_DIR")
+  echo "    混淆        : 开启，符号表 → $SYMBOLS_DIR"
+else
+  echo "    混淆        : 关闭（OBFUSCATE=0）"
+fi
+echo
+
 flutter build apk --release \
   --target-platform "$TARGET_PLATFORM" \
+  "${OBFUSCATE_ARGS[@]}" \
   --dart-define=UPDATE_CHECK_URL="$CHECK_URL" \
   --dart-define=UPDATE_SIGNATURE_ALGORITHM="$SIG_ALGO" \
   --dart-define=UPDATE_SIGNATURE_SECRET="$SECRET" \
@@ -72,6 +93,32 @@ echo
 echo "==> 构建完成"
 ls -lh "$APK" | awk '{print "    "$5"  "$9}'
 echo "    SHA-256: $(sha256sum "$APK" | cut -d" " -f1)"
+
+# ---- 符号表闸门 ------------------------------------------------------------
+# 开了混淆却没产出符号表，等于放弃了线上崩溃排查能力，必须卡住。
+if [[ "$OBFUSCATE" == "1" ]]; then
+  SYM_COUNT="$(ls -1 "$SYMBOLS_DIR" 2>/dev/null | wc -l)"
+  if [[ "$SYM_COUNT" -eq 0 ]]; then
+    cat >&2 <<EOF
+
+[错误] 混淆已开启，但 $SYMBOLS_DIR 里没有符号表文件。
+
+没有符号表，这个包一旦在线上崩溃，堆栈全是混淆后的名字，无法定位。
+不要发布这个包。请检查 flutter build 是否真的收到了 --split-debug-info。
+EOF
+    exit 1
+  fi
+  echo "    符号表      : $SYMBOLS_DIR （$SYM_COUNT 个文件）"
+  ls -lh "$SYMBOLS_DIR" | awk 'NR>1{print "                  "$5"  "$9}'
+
+  # build/ 在 .gitignore 里，flutter clean 会连符号表一起清掉。所以立刻复制到
+  # 持久归档目录——发布出去的包一旦崩溃，只有这份符号表能还原堆栈。
+  ARCHIVE_DIR="${SYMBOLS_ARCHIVE_DIR:-/root/.box-symbols/$VERSION_CODE}"
+  mkdir -p "$ARCHIVE_DIR"
+  cp -f "$SYMBOLS_DIR"/* "$ARCHIVE_DIR"/ 2>/dev/null || true
+  sha256sum "$APK" | cut -d' ' -f1 > "$ARCHIVE_DIR/apk.sha256"
+  echo "    符号表归档  : $ARCHIVE_DIR （已附 apk.sha256 对应关系）"
+fi
 
 # ---- 签名闸门 --------------------------------------------------------------
 # 为什么必须卡这一道：key.properties 缺失时 build.gradle.kts 会静默 fallback

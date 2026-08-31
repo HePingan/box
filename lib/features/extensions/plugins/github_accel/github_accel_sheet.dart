@@ -165,6 +165,7 @@ class _GithubAccelSheetState extends State<GithubAccelSheet> {
     final savePath = p.join(saveDir.path, name);
 
     final token = CancelToken();
+    if (!mounted) return;
     setState(() {
       _cancel = token;
       _progress = 0;

@@ -174,6 +174,7 @@ class _AccountPageState extends State<AccountPage> {
       token: session.token,
       limit: 20,
     );
+    if (!mounted) return;
     setState(() {
       _session = session;
       _usage = usage;

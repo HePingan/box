@@ -115,6 +115,7 @@ class _AdminPageState extends State<AdminPage> {
       dailyLimit: dailyLimit,
       remaining: remaining,
     );
+    if (!mounted) return;
     setState(() {
       _users = _users
           .map((item) => item.id == updated.id ? updated : item)
@@ -132,6 +133,7 @@ class _AdminPageState extends State<AdminPage> {
         serverUrl: session.serverUrl,
         token: session.token,
       );
+      if (!mounted) return;
       setState(() => _providerTestResult = result);
       _showSnack(result.ok ? 'Provider 连接正常' : result.message);
     } catch (error) {
@@ -167,6 +169,7 @@ class _AdminPageState extends State<AdminPage> {
       allowedModels: allowedModels,
       clearApiKey: clearApiKey,
     );
+    if (!mounted) return;
     setState(() {
       _provider = updated;
       _providerTestResult = null;
@@ -192,6 +195,7 @@ class _AdminPageState extends State<AdminPage> {
       dailyLimit: dailyLimit,
       remaining: remaining,
     );
+    if (!mounted) return;
     setState(() {
       _users = [..._users, created]
         ..sort((a, b) => a.username.compareTo(b.username));
@@ -215,6 +219,7 @@ class _AdminPageState extends State<AdminPage> {
       status: status,
       password: password.trim().isEmpty ? null : password.trim(),
     );
+    if (!mounted) return;
     setState(() {
       _users = _users
           .map((item) => item.id == updated.id ? updated : item)
@@ -232,6 +237,7 @@ class _AdminPageState extends State<AdminPage> {
       user: user,
       status: status,
     );
+    if (!mounted) return;
     setState(() {
       _users = _users
           .map((item) => item.id == updated.id ? updated : item)
@@ -270,6 +276,7 @@ class _AdminPageState extends State<AdminPage> {
       token: session.token,
       user: user,
     );
+    if (!mounted) return;
     setState(() {
       _users = _users
           .where((item) => item.id != user.id)

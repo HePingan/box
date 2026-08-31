@@ -658,6 +658,7 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
   ) async {
     final updated = source.copyWith(enabled: value);
     await manager.addOrUpdate(updated);
+    if (!mounted) return;
     setState(() {});
   }
 

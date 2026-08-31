@@ -432,6 +432,7 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
       builder: (ctx) => _QuizBankEditSheet(item: item),
     );
     if (result == null || _busy) return;
+    if (!mounted) return;
     setState(() => _busy = true);
     try {
       // 云端镜像是只读快照：编辑必须另存为本地题，不能篡改其云端归属。

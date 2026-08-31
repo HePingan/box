@@ -59,6 +59,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
       'gif' => 'image/gif',
       _ => 'image/png',
     };
+    if (!mounted) return;
     setState(() {
       _imageName = file.name;
       _imageDataUrl = 'data:$mime;base64,${base64Encode(bytes)}';
@@ -862,6 +863,7 @@ class _IncompleteEditorState extends State<_IncompleteEditor> {
       'gif' => 'image/gif',
       _ => 'image/png',
     };
+    if (!mounted) return;
     setState(() {
       _imageName = file.name;
       _imageDataUrl = 'data:$mime;base64,${base64Encode(bytes)}';

@@ -147,6 +147,7 @@ class _ImageProviderTabState extends State<_ImageProviderTab> {
         serverUrl: widget.serverUrl,
         token: widget.token,
       );
+      if (!mounted) return;
       setState(() => _providerTestResult = result);
       _showSnack(result.ok ? 'Provider 连接正常' : result.message);
     } catch (error) {
@@ -180,6 +181,7 @@ class _ImageProviderTabState extends State<_ImageProviderTab> {
       allowedModels: allowedModels,
       clearApiKey: clearApiKey,
     );
+    if (!mounted) return;
     setState(() {
       _provider = updated;
       _providerTestResult = null;
@@ -199,6 +201,7 @@ class _ImageProviderTabState extends State<_ImageProviderTab> {
       dailyLimit: dailyLimit,
       remaining: remaining,
     );
+    if (!mounted) return;
     setState(() {
       _users = _users
           .map((item) => item.id == updated.id ? updated : item)
@@ -223,6 +226,7 @@ class _ImageProviderTabState extends State<_ImageProviderTab> {
       dailyLimit: dailyLimit,
       remaining: remaining,
     );
+    if (!mounted) return;
     setState(() {
       _users = [..._users, created]
         ..sort((a, b) => a.username.compareTo(b.username));
@@ -244,6 +248,7 @@ class _ImageProviderTabState extends State<_ImageProviderTab> {
       status: status,
       password: password.trim().isEmpty ? null : password.trim(),
     );
+    if (!mounted) return;
     setState(() {
       _users = _users
           .map((item) => item.id == updated.id ? updated : item)
@@ -262,6 +267,7 @@ class _ImageProviderTabState extends State<_ImageProviderTab> {
       user: user,
       status: status,
     );
+    if (!mounted) return;
     setState(() {
       _users = _users
           .map((item) => item.id == updated.id ? updated : item)
@@ -295,6 +301,7 @@ class _ImageProviderTabState extends State<_ImageProviderTab> {
       token: widget.token,
       user: user,
     );
+    if (!mounted) return;
     setState(() => _users = _users.where((u) => u.id != user.id).toList(growable: false));
     _showSnack('已删除 ${user.username}');
   }
