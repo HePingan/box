@@ -8,6 +8,7 @@ import '../domain/quiz_config.dart';
 import '../domain/quiz_bank.dart';
 import '../domain/ocr_quiz_parser.dart';
 import '../domain/quiz_answer_aligner.dart';
+import '../domain/quiz_match_scoring.dart';
 
 class QuizResult {
   const QuizResult({
@@ -295,19 +296,25 @@ class QuizEngine {
       // 仍要求 qScore >= 45，导致「唯一命中却提示请人工确认」。
       //
       // 只在两侧选项数都为 2 且选项高度匹配时生效，选择题完全不受影响。
-      final isJudgmentShape =
-          useOptions && probeOptNorm.length == 2 && bankOptionCount == 2;
-      final judgmentOptionFirst = isJudgmentShape && oScore >= 90;
-      final baseScore = useOptions
-          ? (judgmentOptionFirst
-                    ? (e.qScore * 0.25 + oScore * 0.75)
-                    : (e.qScore * 0.55 + oScore * 0.45))
-                .round()
-                .clamp(0, 100)
-          : (e.qScore + shapeBonus).clamp(0, 100);
-      final score = hasCompleteProbeOptions && e.qScore >= 35 && oScore >= 90
-          ? max(baseScore, (e.qScore * 0.20 + oScore * 0.80).round())
-          : (baseScore + (useOptions ? 0 : 0));
+      final judgmentOptionFirst = QuizMatchScoring.judgmentOptionFirst(
+        useOptions: useOptions,
+        probeOptionCount: probeOptNorm.length,
+        bankOptionCount: bankOptionCount,
+        optionScore: oScore,
+      );
+      final baseScore = QuizMatchScoring.baseScore(
+        useOptions: useOptions,
+        questionScore: e.qScore,
+        optionScore: oScore,
+        shapeBonus: shapeBonus,
+        optionFirst: judgmentOptionFirst,
+      );
+      final score = QuizMatchScoring.finalScore(
+        base: baseScore,
+        hasCompleteProbeOptions: hasCompleteProbeOptions,
+        questionScore: e.qScore,
+        optionScore: oScore,
+      );
       final imageScore = _bestImageScore(imagePerceptualHash, e.item);
       scored.add((
         item: e.item,

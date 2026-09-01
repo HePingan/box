@@ -466,7 +466,10 @@ class MainActivity : FlutterActivity() {
         // 否则 QuizAccessibilityService.resolveChannel() 拿不到 FlutterEngine，
         // 导致 onQuestionCaptured 等回调静默丢失。
         try {
-            if (!QuizAccessibilityService.isRunning()) {
+            if (EngineCacheRetentionPolicy.shouldEvictEngineCache(
+                    QuizAccessibilityService.isRunning()
+                )
+            ) {
                 FlutterEngineCache.getInstance().remove("quiz_engine")
             }
         } catch (_: Throwable) {

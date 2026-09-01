@@ -2331,22 +2331,14 @@ class QuizAccessibilityService : AccessibilityService() {
         hideAccessibilityOverlay()
         QuizOcrEntryOverlay.minimizeForRegionIfShowing()
 
-        var addSuccess = false
-        var lastError: String? = null
-
-        // 尝试 1：正常参数（无 FLAG_LAYOUT_IN_SCREEN）
-        try {
-            wm.addView(view, params)
-            addSuccess = true
-        } catch (e: Throwable) {
-            lastError = "${e.javaClass.simpleName}: ${e.message}"
-            Log.w(TAG, "region window addView attempt 1 failed: $lastError", e)
-            try { wm.removeView(view) } catch (_: Throwable) {}
-        }
-
-        // 尝试 2：加 FLAG_LAYOUT_IN_SCREEN + cutout mode（兼容部分需要全屏的 ROM）
-        if (!addSuccess) {
-            try {
+        // 两次尝试的差异只在 params，重试/失败恢复的判定交给
+        // RegionWindowAttachPolicy（可单测），这里只负责真实的 addView 副作用。
+        val attempts = sequenceOf(
+            {
+                // 尝试 1：正常参数（无 FLAG_LAYOUT_IN_SCREEN）
+            },
+            {
+                // 尝试 2：加 FLAG_LAYOUT_IN_SCREEN + cutout mode（兼容部分需要全屏的 ROM）
                 params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                         WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
@@ -2355,20 +2347,29 @@ class QuizAccessibilityService : AccessibilityService() {
                     params.layoutInDisplayCutoutMode =
                         WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
                 }
+            },
+        ).mapIndexed { i, prepare ->
+            try {
+                prepare()
                 wm.addView(view, params)
-                addSuccess = true
-                Log.i(TAG, "region window add succeeded with FLAG_LAYOUT_IN_SCREEN retry")
-            } catch (e2: Throwable) {
-                lastError = "${e2.javaClass.simpleName}: ${e2.message}"
-                Log.w(TAG, "region window addView attempt 2 failed: $lastError", e2)
+                RegionWindowAttachPolicy.AttemptResult.Success
+            } catch (e: Throwable) {
+                val err = "${e.javaClass.simpleName}: ${e.message}"
+                Log.w(TAG, "region window addView attempt ${i + 1} failed: $err", e)
                 try { wm.removeView(view) } catch (_: Throwable) {}
+                RegionWindowAttachPolicy.AttemptResult.Failure(err)
             }
         }
 
-        if (addSuccess) {
+        val outcome = RegionWindowAttachPolicy.attach(attempts)
+        if (outcome is RegionWindowAttachPolicy.Outcome.Attached) {
+            if (outcome.attempt > 1) {
+                Log.i(TAG, "region window add succeeded with FLAG_LAYOUT_IN_SCREEN retry")
+            }
             regionWindowView = view
             regionWindowParams = params
         } else {
+            val lastError = (outcome as RegionWindowAttachPolicy.Outcome.Failed).lastError
             // 失败恢复：必须恢复答案窗，toast 真实错误信息
             Log.e(TAG, "enterRegionMode: all addView attempts failed, restoring overlay. Error: $lastError")
             regionWindowView = null
