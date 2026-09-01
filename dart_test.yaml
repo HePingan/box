@@ -4,3 +4,12 @@
 # exclude_tags 是叠加的、命令行盖不掉，打了 tag 就永远跑不起来。它改用
 # HOME_VISUAL_CAPTURE=1 环境变量开启，默认自动 skip。
 exclude_tags: network
+
+# live：打真实第三方接口的连通性/契约测试（如 AI HOT 热点）。
+# 不加进 exclude_tags —— 它们是「上游变更预警」，平时应该跑；
+# 只是需要在 tags 里声明，否则 test runner 会警告未知 tag。
+tags:
+  network:
+    skip: false
+  live:
+    skip: false

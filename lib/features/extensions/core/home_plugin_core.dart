@@ -728,6 +728,41 @@ class HomePluginHost {
 
   List<HomePlugin> get allPlugins => _sorted(_notifier.value);
 
+  /// 内置插件表（不含用户装的第三方插件，也不读任何持久化）。
+  ///
+  /// 给测试用：`bootstrap()` 会碰 path_provider / SharedPreferences，
+  /// 在纯 widget 测试里没有平台实现会直接挂住（实测卡死 300s+）。
+  /// 要校验「内置 id 是否存在」这类静态事实，用这个入口。
+  ///
+  /// 注意它**不是**纯函数：内部会调 QuizPluginEntry.initAutoSearch，
+  /// 而那里 setMethodCallHandler 要求 binding 已初始化。调用方必须用
+  /// `testWidgets`（自带 binding），普通 `test()` 会断言失败。
+  @visibleForTesting
+  List<HomePlugin> builtInPluginsForTesting() => _sorted(_buildDefaultPlugins());
+
+  /// 直接把插件列表灌进 notifier，并标记为已 bootstrap。
+  ///
+  /// 给 widget 测试用：任何监听 [listenable] 的页面（首页快捷入口、
+  /// 自选页）在测试里都拿不到数据，因为 `bootstrap()` 要读 path_provider
+  /// 会挂住。用这个入口喂真实的内置插件表即可。
+  ///
+  /// 传 null 表示用内置插件表。测试之间记得调 [resetForTesting]，
+  /// 否则单例状态会串到下一个用例。
+  @visibleForTesting
+  void seedForTesting([List<HomePlugin>? plugins]) {
+    _notifier.value = _sorted(plugins ?? _buildDefaultPlugins());
+    _bootstrapped = true;
+    _bootFuture = null;
+  }
+
+  /// 清掉单例里的插件状态，让下一个测试从干净的起点开始。
+  @visibleForTesting
+  void resetForTesting() {
+    _notifier.value = <HomePlugin>[];
+    _bootstrapped = false;
+    _bootFuture = null;
+  }
+
   HomePlugin? findById(String id) {
     for (final plugin in _notifier.value) {
       if (plugin.id == id) return plugin;

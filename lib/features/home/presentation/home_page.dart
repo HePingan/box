@@ -10,7 +10,12 @@ import 'package:box/globals.dart';
 import 'package:box/novel/novel_module.dart';
 import 'package:box/plugin_manager.dart';
 import 'package:box/video_module.dart';
-import 'package:box/features/image_generator/presentation/image_generator_page.dart';
+import 'package:box/features/extensions/core/home_plugin_core.dart';
+import 'package:box/features/home/data/ai_hot_models.dart';
+import 'package:box/features/home/data/ai_hot_service.dart';
+import 'package:box/features/home/data/home_quick_action_prefs.dart';
+import 'package:box/features/home/presentation/quick_action_picker_page.dart';
+import 'package:box/features/home/presentation/widgets/ai_hot_section.dart';
 
 import 'widgets/home_widgets.dart';
 
@@ -31,9 +36,13 @@ class _NewsItem {
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, this.onSwitchTab});
+  const HomePage({super.key, this.onSwitchTab, this.quickActionPrefs});
 
   final ValueChanged<int>? onSwitchTab;
+
+  /// 快捷入口存储。生产环境留空用默认实现；
+  /// 测试注入 in-memory 版本，避免碰 SharedPreferences 平台通道。
+  final HomeQuickActionPrefs? quickActionPrefs;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -48,15 +57,65 @@ class _HomePageState extends State<HomePage>
   bool _isLoadingNews = true;
   List<_NewsItem> _newsItems = [];
 
+  /// 用户自选的快捷入口 id（顺序即展示顺序）。
+  List<String> _quickActionIds = <String>[];
+
+  late final HomeQuickActionPrefs _quickActionPrefs =
+      widget.quickActionPrefs ?? HomeQuickActionPrefs();
+
+  final AiHotService _aiHotService = AiHotService();
+  AiHotFeed? _aiHotFeed;
+  bool _isLoadingAiHot = true;
+
   @override
   void initState() {
     super.initState();
     _initDate();
     _fetchDailyNews();
+    _loadQuickActions();
+    _fetchAiHot();
     // 确保插件主机初始化，这样插件卡片才能拿到数据
     WidgetsBinding.instance.addPostFrameCallback((_) {
       HomePluginHost.instance.bootstrap();
     });
+  }
+
+  Future<void> _loadQuickActions() async {
+    final ids = await _quickActionPrefs.readSelectedIds();
+    if (!mounted) return;
+    setState(() => _quickActionIds = ids);
+  }
+
+  /// 拉 AI 热点。
+  ///
+  /// 失败不弹错、不清空已有内容：service 内部会回落到上次缓存，
+  /// 真的什么都没有时区块自己显示空态 + 重试。
+  Future<void> _fetchAiHot({bool forceRefresh = false}) async {
+    if (mounted && _aiHotFeed == null) {
+      setState(() => _isLoadingAiHot = true);
+    }
+    final feed = await _aiHotService.fetchSelected(
+      take: kAiHotPreviewCount + 2,
+      forceRefresh: forceRefresh,
+    );
+    if (!mounted) return;
+    setState(() {
+      _aiHotFeed = feed;
+      _isLoadingAiHot = false;
+    });
+  }
+
+  Future<void> _openQuickActionPicker() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        // 传同一个 prefs 实例：否则测试注入的 in-memory 存储和管理页
+        // 各写一份，改完回来首页读不到。
+        builder: (_) => QuickActionPickerPage(prefs: _quickActionPrefs),
+      ),
+    );
+    // 从管理页回来要重读，否则首页还是旧的那几个。
+    await _loadQuickActions();
   }
 
   void _initDate() {
@@ -155,7 +214,10 @@ class _HomePageState extends State<HomePage>
       // 兜底文案一直写着「下拉刷新重试」，但此前页面没挂 RefreshIndicator，
       // 用户下拉不会有任何反应。补上，让那句提示名副其实。
       child: RefreshIndicator(
-        onRefresh: () => _fetchDailyNews(showSpinner: false),
+        onRefresh: () => Future.wait<void>(<Future<void>>[
+          _fetchDailyNews(showSpinner: false),
+          _fetchAiHot(forceRefresh: true),
+        ]),
         color: AppTokens.primaryBlue,
         child: CustomScrollView(
           physics: const BouncingScrollPhysics(
@@ -167,6 +229,16 @@ class _HomePageState extends State<HomePage>
             SliverToBoxAdapter(child: _buildPluginSection()),
             SliverToBoxAdapter(child: _buildContinueRail()),
             SliverToBoxAdapter(child: _buildDailyNewsCard()),
+            // AI 热点接在「今日热闻」下面（用户指定的位置）。
+            SliverToBoxAdapter(
+              child: AiHotSection(
+                isLoading: _isLoadingAiHot,
+                feed: _aiHotFeed,
+                onOpenItem: _openAiHotItem,
+                onOpenAll: _openAiHotSite,
+                onRetry: () => _fetchAiHot(forceRefresh: true),
+              ),
+            ),
             // 底部留白给悬浮胶囊导航栏避让。数值由 AppPageScaffold
             // (shellInset: true) 统一下发，四个主页面共用同一算法。
             SliverToBoxAdapter(
@@ -264,43 +336,41 @@ class _HomePageState extends State<HomePage>
   }
 
   // ── 快捷入口 2×2 网格 ─────────────────────
+  /// 快捷入口。
+  ///
+  /// 改版：原先是 4 个硬编码卡片（工具/内容/AI 生图/扩展），用户改不了。
+  /// 现在由用户从已注册插件里自选（见 QuickActionPickerPage），
+  /// 这里只负责把「选中的 id」映射回插件并渲染。
+  ///
+  /// 只存 id 不存标题/图标：插件更名或被卸载时首页不会显示脏数据 ——
+  /// 找不到对应插件的 id 直接跳过，不占位、不显示空白卡。
   Widget _buildQuickActions() {
-    final actions = [
-      HomeQuickAction(
-        title: '工具',
-        subtitle: '效率工具箱',
-        icon: Icons.handyman_rounded,
-        accent: AppTokens.primaryBlue,
-        onTap: () => _switchToTab(1, '工具'),
-      ),
-      HomeQuickAction(
-        title: '内容',
-        subtitle: '小说与影视',
-        icon: Icons.collections_bookmark_rounded,
-        accent: AppTokens.emerald,
-        onTap: () => _switchToTab(2, '内容'),
-      ),
-      HomeQuickAction(
-        title: 'AI 生图',
-        subtitle: '多模型生成',
-        icon: Icons.auto_awesome_rounded,
-        accent: AppTokens.violet,
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const ImageGeneratorPage()),
-          );
-        },
-      ),
-      HomeQuickAction(
-        title: '扩展',
-        subtitle: '插件市场',
-        icon: Icons.tune_rounded,
-        accent: AppTokens.cyan,
-        onTap: () => _switchToTab(3, '扩展'),
-      ),
-    ];
+    return SafeValueListenableBuilder<List<HomePlugin>>(
+      valueListenable: HomePluginHost.instance.listenable,
+      builder: (context, plugins, child) {
+        final byId = <String, HomePlugin>{
+          for (final p in plugins)
+            if (p.enabled) p.id: p,
+        };
 
+        final actions = <HomeQuickAction>[
+          for (final id in _quickActionIds)
+            if (byId[id] != null)
+              HomeQuickAction(
+                title: byId[id]!.title,
+                subtitle: byId[id]!.subtitle,
+                icon: byId[id]!.icon,
+                accent: byId[id]!.color,
+                onTap: () => byId[id]!.onTap(context),
+              ),
+        ];
+
+        return _buildQuickActionsBody(actions);
+      },
+    );
+  }
+
+  Widget _buildQuickActionsBody(List<HomeQuickAction> actions) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppTokens.shellPageGutter,
@@ -311,7 +381,37 @@ class _HomePageState extends State<HomePage>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildSectionHeader(title: '快捷入口'),
+          _buildSectionHeader(
+            title: '快捷入口',
+            actions: [
+              GestureDetector(
+                onTap: _openQuickActionPicker,
+                behavior: HitTestBehavior.opaque,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.tune_rounded,
+                        size: 13,
+                        color: AppTokens.textSecondary,
+                      ),
+                      SizedBox(width: 3),
+                      Text(
+                        '管理',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppTokens.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (actions.isEmpty) _buildQuickActionsEmpty(),
           // 不用 GridView + childAspectRatio：任何固定/推算的高度都要跟
           // padding、1px 边框、字体缩放和字形度量赛跑，实测差 3~10px 就
           // 触发 RenderFlex overflow 黄条。改成两行 Row + Expanded，
@@ -549,7 +649,81 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  void _switchToTab(int index, String label) {
+  /// 快捷入口一个都没选时的占位。
+  ///
+  /// 不显示空白：给一句话 + 直达管理页，否则用户清空后会以为首页坏了。
+  Widget _buildQuickActionsEmpty() {
+    return GestureDetector(
+      onTap: _openQuickActionPicker,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+        decoration: BoxDecoration(
+          color: AppTokens.surface,
+          borderRadius: BorderRadius.circular(AppTokens.radiusCard),
+          border: Border.all(color: AppTokens.divider),
+        ),
+        child: Row(
+          children: const [
+            Icon(
+              Icons.add_circle_outline_rounded,
+              size: 18,
+              color: AppTokens.primaryBlue,
+            ),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '还没有快捷入口，点这里从插件里挑几个',
+                style: TextStyle(fontSize: 13, color: AppTokens.textSecondary),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 打开某条 AI 热点。
+  ///
+  /// 走站内 WebView（DailyNewsPage）而不是外部浏览器：和「今日热闻」
+  /// 的行为保持一致，用户返回时还在 App 里。
+  void _openAiHotItem(AiHotItem item) {
+    final url = item.openUrl;
+    if (url == null) {
+      // 理论上不会发生（模型层保证至少有 permalink 或 url），
+      // 但真出现时给提示而不是打开一个空白页。
+      showSnack(context, '这条热点没有可打开的链接');
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => DailyNewsPage(initialUrl: url),
+      ),
+    );
+  }
+
+  void _openAiHotSite() {
+    final canonical = _aiHotFeed?.attributionCanonical;
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => DailyNewsPage(
+          initialUrl: canonical ?? AiHotService.siteUrl,
+        ),
+      ),
+    );
+  }
+
+  /// 切到指定底部 Tab。
+  ///
+  /// 快捷入口改成插件自选后，首页自己不再有硬编码的「工具/内容/扩展」卡片，
+  /// 所以这里目前没有内部调用方。保留它 + `widget.onSwitchTab`：
+  /// AppShell 仍在传这个回调，插件将来要跳 Tab 也走这条路，
+  /// 删了等于把外部契约一起删掉。
+  @visibleForTesting
+  void switchToTab(int index, String label) {
     if (widget.onSwitchTab != null) {
       widget.onSwitchTab!(index);
       return;
