@@ -8,7 +8,9 @@ import '../../data/quiz_bank_admin_client.dart';
 import '../../domain/admin_resource.dart';
 import '../../domain/admin_resource_provider.dart';
 import '../../domain/quiz_bank_import_report.dart';
+import '../../domain/quiz_bank_filter.dart';
 import '../../domain/quiz_bank_models.dart';
+import '../../domain/quiz_thumb_image_source.dart';
 
 part 'quiz_bank_tab_widgets.part.dart';
 
@@ -243,8 +245,33 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
   final Set<String> _selectedIds = <String>{};
   bool _loading = true;
   String? _error;
-  /// all | published | pending | rejected
-  String _statusFilter = 'all';
+  late QuizBankFilter _filter = QuizBankFilter(base: widget.serverUrl);
+
+  /// 当前展开看全文的题目 id（一次只展开一条，列表默认保持矮身）
+  String? _expandedId;
+
+  /// 搜索框默认收起，点放大镜才占一行
+  bool _searchOpen = false;
+
+  /// 多选模式：长按题目进入，退出时清空已选
+  bool _selectionMode = false;
+
+  void _toggleSelect(String id) {
+    if (id.isEmpty) return;
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+      } else {
+        _selectedIds.add(id);
+      }
+      if (_selectedIds.isEmpty) _selectionMode = false;
+    });
+  }
+
+  void _exitSelection() => setState(() {
+    _selectionMode = false;
+    _selectedIds.clear();
+  });
 
   @override
   void initState() {
@@ -292,25 +319,13 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
     }
   }
 
-  List<QuizBankQuestion> get _visibleQuestions {
-    final query = _searchController.text.trim().toLowerCase();
-    Iterable<QuizBankQuestion> items = _questions;
-    if (_statusFilter != 'all') {
-      items = items.where((item) {
-        if (_statusFilter == 'published') return item.isPublished;
-        return item.status == _statusFilter;
-      });
-    }
-    if (query.isEmpty) return items.toList(growable: false);
-    return items
-        .where((item) {
-          return item.question.toLowerCase().contains(query) ||
-              item.answer.toLowerCase().contains(query) ||
-              item.category.toLowerCase().contains(query) ||
-              item.tags.any((tag) => tag.toLowerCase().contains(query));
-        })
-        .toList(growable: false);
-  }
+  /// 首屏统一走 QuizBankFilter：状态/图片/题型/搜索四个维度一处判定，
+  /// 弹层选完写回 _filter 即刻生效，chip 与列表不会各说一套。
+  QuizBankFilter get _effectiveFilter =>
+      _filter.copyWith(query: _searchController.text);
+
+  List<QuizBankQuestion> get _visibleQuestions =>
+      _effectiveFilter.apply(_questions);
 
   @override
   Widget build(BuildContext context) {
@@ -321,139 +336,219 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
       return _ErrorState(message: _error!, onRetry: _load);
     }
     final questions = _visibleQuestions;
+    final activeFilter = _effectiveFilter;
     return RefreshIndicator(
       onRefresh: _load,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '题库管理',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-              ),
-              IconButton(
-                onPressed: _loading ? null : _load,
-                tooltip: '刷新',
-                icon: const Icon(Icons.refresh_rounded),
-              ),
-              OutlinedButton.icon(
-                onPressed: _loading ? null : _importJson,
-                icon: const Icon(Icons.upload_file_rounded),
-                label: const Text('导入 JSON'),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: () => _edit(),
-                icon: const Icon(Icons.add_rounded),
-                label: const Text('添加题目'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          _SummaryCard(
-            questionCount: _questions.length,
-            pendingCount: _pendingCount,
-            incompleteCount: _incompleteCount,
-            onTapPending: _showPendingSubmissions,
-            onTapIncomplete: _incompleteCount == 0 ? null : _showIncomplete,
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              ActionChip(
-                avatar: const Icon(Icons.pending_actions_rounded, size: 18),
-                label: Text('待审核投稿 $_pendingCount'),
-                onPressed: _showPendingSubmissions,
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.category_outlined, size: 18),
-                label: Text('批量分类（${_selectedIds.length}）'),
-                onPressed: _selectedIds.isEmpty || _loading
-                    ? null
-                    : _bulkCategorize,
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.image_outlined, size: 18),
-                label: Text('批量补图（${_selectedIds.length}）'),
-                onPressed: _selectedIds.isEmpty || _loading
-                    ? null
-                    : _bulkSetImage,
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.rule_folder_outlined, size: 18),
-                label: Text('待补全 $_incompleteCount'),
-                onPressed: _incompleteCount == 0 ? null : _showIncomplete,
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.history_rounded, size: 18),
-                label: Text('导入记录 $_importCount'),
-                onPressed: _importCount == 0 ? null : _showImportHistory,
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _searchController,
-            onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(
-              prefixIcon: const Icon(Icons.search_rounded),
-              suffixIcon: _searchController.text.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.clear_rounded),
-                      onPressed: () {
-                        _searchController.clear();
-                        setState(() {});
-                      },
-                    ),
-              hintText: '搜索题干、答案、分类或标签',
-              border: const OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 8),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                for (final entry in const [
-                  ('all', '全部'),
-                  ('published', '已发布'),
-                  ('pending', '待审核'),
-                  ('rejected', '已拒绝'),
-                ]) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: FilterChip(
-                      label: Text(entry.$2),
-                      selected: _statusFilter == entry.$1,
-                      onSelected: (_) =>
-                          setState(() => _statusFilter = entry.$1),
+      child: CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+              child: Row(
+                children: [
+                  const Text(
+                    '题库管理',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: _searchOpen ? '收起搜索' : '搜索题目',
+                    onPressed: () => setState(() {
+                      _searchOpen = !_searchOpen;
+                      if (!_searchOpen) _searchController.clear();
+                    }),
+                    icon: Icon(
+                      _searchOpen ? Icons.search_off_rounded : Icons.search_rounded,
                     ),
                   ),
+                  IconButton(
+                    tooltip: '添加题目',
+                    onPressed: () => _edit(),
+                    icon: const Icon(Icons.add_circle_rounded),
+                  ),
+                  PopupMenuButton<String>(
+                    tooltip: '更多操作',
+                    onSelected: (value) {
+                      switch (value) {
+                        case 'refresh':
+                          _load();
+                        case 'import':
+                          _importJson();
+                        case 'history':
+                          _showImportHistory();
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
+                        value: 'refresh',
+                        child: Text('刷新'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'import',
+                        child: Text('导入 JSON'),
+                      ),
+                      PopupMenuItem(
+                        value: 'history',
+                        child: Text('导入记录（$_importCount）'),
+                      ),
+                    ],
+                  ),
                 ],
-              ],
+              ),
             ),
           ),
-          const SizedBox(height: 12),
-          if (_error != null) _InlineError(message: _error!, onRetry: _load),
-          if (questions.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 72),
-              child: Center(
-                child: Text(
-                  _searchController.text.isEmpty && _statusFilter == 'all'
-                      ? '暂无题目'
-                      : '未找到匹配题目',
+          if (_searchOpen)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                child: TextField(
+                  controller: _searchController,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    prefixIcon: Icon(Icons.search_rounded, size: 20),
+                    hintText: '搜索题干、答案、分类、标签',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (_) => setState(() {}),
                 ),
               ),
-            )
-          else
-            ...questions.map(_questionCard),
+            ),
+          if (_selectionMode && _selectedIds.isNotEmpty) SliverToBoxAdapter(
+            child: _SelectionBar(
+              selectedCount: _selectedIds.length,
+              onClear: _exitSelection,
+              onBulkCategorize: _bulkCategorize,
+              onBulkImage: _bulkSetImage,
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 8)),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _CompactSummaryBar(
+                questionCount: _questions.length,
+                pendingCount: _pendingCount,
+                incompleteCount: _incompleteCount,
+                onTapPending: _showPendingSubmissions,
+                onTapIncomplete: _incompleteCount == 0 ? null : _showIncomplete,
+              ),
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 8)),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _showFilterDialog,
+                    icon: const Icon(Icons.filter_list_rounded, size: 18),
+                    label: Text(
+                      activeFilter.activeCount == 0
+                          ? '筛选'
+                          : '筛选 · ${activeFilter.activeCount}',
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: activeFilter.activeCount == 0
+                        ? Text(
+                            '共 ${questions.length} 题',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                            ),
+                          )
+                        : SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                for (final label in activeFilter.activeLabels)
+                                  Padding(
+                                    padding: const EdgeInsets.only(right: 6),
+                                    child: Chip(
+                                      visualDensity: VisualDensity.compact,
+                                      avatar: Icon(
+                                        _dimensionIcon(label.dimension),
+                                        size: 14,
+                                      ),
+                                      label: Text(
+                                        label.text,
+                                        style: const TextStyle(fontSize: 12),
+                                      ),
+                                      onDeleted: () =>
+                                          _clearDimension(label.dimension),
+                                    ),
+                                  ),
+                                Text(
+                                  '${questions.length} 题',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade600,
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: () => setState(() {
+                                    _filter = _filter.clearAll();
+                                    _searchController.clear();
+                                    _searchOpen = false;
+                                  }),
+                                  child: const Text('清除'),
+                                ),
+                              ],
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 8)),
+          if (_error != null && questions.isEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: _InlineError(message: _error!, onRetry: _load),
+              ),
+            ),
+          if (questions.isEmpty && _error == null)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.only(top: 72),
+                child: Center(child: Text('暂无题目')),
+              ),
+            ),
+          if (questions.isNotEmpty)
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (ctx, i) {
+                  final question = questions[i];
+                  return _QuestionCard(
+                    question: question,
+                    serverUrl: widget.serverUrl,
+                    expanded: _expandedId == question.id,
+                    selectionMode: _selectionMode,
+                    isSelected: _selectedIds.contains(question.id),
+                    onToggleExpand: () => setState(
+                      () => _expandedId =
+                          _expandedId == question.id ? null : question.id,
+                    ),
+                    onToggleSelect: () => _toggleSelect(question.id),
+                    onEnterSelection: () => setState(() {
+                      _selectionMode = true;
+                      if (question.id.isNotEmpty) {
+                        _selectedIds.add(question.id);
+                      }
+                    }),
+                    onEdit: () => _edit(question),
+                    onEditImage: () => _editImage(question),
+                    onDelete: () => _delete(question),
+                  );
+                },
+                childCount: questions.length,
+              ),
+            ),
         ],
       ),
     );
@@ -553,7 +648,10 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
         category,
       );
       if (!mounted) return;
-      _selectedIds.clear();
+      // 批量操作收尾必须连 _selectionMode 一起退出：
+      // 只 clear() 会留在多选态，卡片仍显示勾选框、点一下变选中而不是展开，
+      // 而操作条因为「已选为空」不显示，用户没有出口。
+      _exitSelection();
       await _load();
       if (mounted) {
         ScaffoldMessenger.of(
@@ -614,7 +712,7 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
         image: url,
       );
       if (!mounted) return;
-      _selectedIds.clear();
+      _exitSelection();
       await _load();
       if (!mounted) return;
       final updated = result['updated'] ?? 0;
@@ -839,102 +937,6 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
     }
   }
 
-  Widget _questionCard(QuizBankQuestion question) => Card(
-    margin: const EdgeInsets.only(bottom: 10),
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(14, 12, 6, 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Checkbox(
-                value: _selectedIds.contains(question.id),
-                onChanged: question.id.isEmpty
-                    ? null
-                    : (selected) => setState(() {
-                        if (selected == true) {
-                          _selectedIds.add(question.id);
-                        } else {
-                          _selectedIds.remove(question.id);
-                        }
-                      }),
-              ),
-              Expanded(
-                child: Text(
-                  question.question.isEmpty ? '未命名题目' : question.question,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-              _StatusChip(status: question.status),
-              PopupMenuButton<String>(
-                onSelected: (action) {
-                  if (action == 'edit') {
-                    _edit(question);
-                  } else if (action == 'image') {
-                    _editImage(question);
-                  } else {
-                    _delete(question);
-                  }
-                },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'edit', child: Text('编辑')),
-                  PopupMenuItem(value: 'image', child: Text('补图/换图')),
-                  PopupMenuItem(
-                    value: 'delete',
-                    child: Text('删除', style: TextStyle(color: Colors.red)),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          if (question.options.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              '选项：${question.options.join('  ·  ')}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.black54, fontSize: 13),
-            ),
-          ],
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 4,
-            children: [
-              Text(
-                '答案：${question.answer.isEmpty ? '未设置' : question.answer}',
-                style: const TextStyle(fontSize: 12),
-              ),
-              if (question.category.isNotEmpty)
-                Chip(
-                  label: Text(question.category),
-                  visualDensity: VisualDensity.compact,
-                  labelStyle: const TextStyle(fontSize: 11),
-                ),
-              if (question.image.isNotEmpty)
-                const Chip(
-                  avatar: Icon(Icons.image_outlined, size: 14),
-                  label: Text('有图'),
-                  visualDensity: VisualDensity.compact,
-                  labelStyle: TextStyle(fontSize: 11),
-                ),
-              ...question.tags.map(
-                (tag) => Chip(
-                  label: Text(tag),
-                  visualDensity: VisualDensity.compact,
-                  labelStyle: const TextStyle(fontSize: 11),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    ),
-  );
-
   Future<void> _edit([QuizBankQuestion? question]) async {
     final data = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -1086,5 +1088,38 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
       if (mounted) setState(() => _loading = false);
     }
   }
+
+  Future<void> _showFilterDialog() async {
+    final picked = await showModalBottomSheet<QuizBankFilter>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _FilterDialog(
+        initial: _filter,
+        counts: QuizBankFilter.imageCounts(
+          _questions,
+          base: widget.serverUrl,
+        ),
+      ),
+    );
+    if (picked != null && mounted) setState(() => _filter = picked);
+  }
+
+  void _clearDimension(QuizFilterDimension dimension) {
+    setState(() {
+      if (dimension == QuizFilterDimension.query) {
+        _searchController.clear();
+        _searchOpen = false;
+      }
+      _filter = _filter.without(dimension);
+    });
+  }
+
+  IconData _dimensionIcon(QuizFilterDimension d) => switch (d) {
+    QuizFilterDimension.status => Icons.filter_list_rounded,
+    QuizFilterDimension.image => Icons.image_rounded,
+    QuizFilterDimension.type => Icons.category_rounded,
+    QuizFilterDimension.query => Icons.search_rounded,
+  };
 }
 
