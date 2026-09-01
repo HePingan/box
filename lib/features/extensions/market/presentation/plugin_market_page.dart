@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import 'package:box/core/load_generation.dart';
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_bottom_sheet.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
@@ -73,6 +74,9 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
 
   late PluginMarketChannel _currentChannel;
 
+  /// 清单加载的请求身份守卫（intent = 频道）。
+  final LoadGeneration _marketGeneration = LoadGeneration();
+
   String _marketSource = 'builtin';
   int _marketVersion = 1;
   DateTime? _marketFetchedAt;
@@ -92,6 +96,8 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
 
   @override
   void dispose() {
+    // 作废在途清单请求，回来后直接丢弃。
+    _marketGeneration.invalidate();
     _searchController.dispose();
     super.dispose();
   }
@@ -106,6 +112,10 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
   }
 
   Future<void> _loadMarket({required bool forceRefresh}) async {
+    // intent 用频道：既防「后发先至」（旧代号），也防「同代号但频道已变」。
+    // 没有这道闸，慢的 stable 响应回来会把 _currentChannel 改回 stable，
+    // 用户明明已经切到 Beta，列表和频道标记却被旧清单覆盖。
+    final token = _marketGeneration.begin(_currentChannel);
     setState(() => _marketLoading = true);
 
     try {
@@ -121,7 +131,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
         forceRefresh: forceRefresh,
       );
 
-      if (!mounted) return;
+      if (!mounted || !_marketGeneration.isCurrent(token)) return;
 
       setState(() {
         _allTemplates = manifest.templates;
@@ -146,11 +156,22 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
         _showSnack('远程清单验签未通过：${manifest.signatureMessage}');
       }
     } catch (e) {
-      if (!mounted) return;
+      // 过期请求的失败不得写状态：否则旧请求的报错会盖掉新请求的加载态，
+      // 还会弹一条与当前频道无关的错误提示。
+      if (!mounted || !_marketGeneration.isCurrent(token)) return;
       setState(() => _marketLoading = false);
       _showSnack('加载插件市场失败：$e');
     }
   }
+
+  /// 仅测试用：驱动频道切换（等价于点击频道 Tab）。
+  @visibleForTesting
+  Future<void> switchChannelForTesting(PluginMarketChannel channel) =>
+      _switchChannel(channel);
+
+  /// 仅测试用：读取当前生效频道。
+  @visibleForTesting
+  PluginMarketChannel get currentChannelForTesting => _currentChannel;
 
   Future<void> _switchChannel(PluginMarketChannel channel) async {
     if (_currentChannel == channel) return;

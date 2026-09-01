@@ -59,9 +59,15 @@ class PublicApiClient {
     final json = await _getJson(uri);
     final rates = json['rates'];
     if (rates is! Map) return const {};
-    return rates.map(
-      (key, value) => MapEntry(key.toString(), (value as num).toDouble()),
-    );
+    // 逐币种判型：免费接口偶发把某个币种返回成 null 或字符串，
+    // 裸 `as num` 会让整张汇率表连带失败。这里跳过坏字段，保住其余币种。
+    final result = <String, double>{};
+    rates.forEach((key, value) {
+      if (value is num) {
+        result[key.toString()] = value.toDouble();
+      }
+    });
+    return result;
   }
 
   Future<double?> convertCurrency({

@@ -126,6 +126,9 @@ class _AccountPageState extends State<AccountPage> {
         successMessage: '登录成功：${session.user.username}',
       );
     } catch (error) {
+      // 用户可能在请求在途时就退出页面，此处不守 mounted 会抛
+      // "setState called after dispose"。
+      if (!mounted) return;
       setState(() => _error = _messageOf(error));
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -157,6 +160,7 @@ class _AccountPageState extends State<AccountPage> {
         successMessage: '注册成功，已自动登录：${session.user.username}',
       );
     } catch (error) {
+      if (!mounted) return;
       setState(() => _error = _messageOf(error));
     } finally {
       if (mounted) setState(() => _loading = false);

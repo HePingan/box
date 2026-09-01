@@ -1,6 +1,4 @@
-import 'dart:async';
-
-import 'package:box/novel/core/load_generation.dart';
+import 'package:box/core/load_generation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// 回归：慢响应的旧请求不得覆盖新请求的结果。

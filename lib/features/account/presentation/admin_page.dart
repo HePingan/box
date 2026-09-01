@@ -86,6 +86,8 @@ class _AdminPageState extends State<AdminPage> {
         _usage = results[3] as List<BoxAdminUsageRecord>;
       });
     } catch (error) {
+      // 请求在途时用户可能已离开页面，不守 mounted 会抛 setState-after-dispose。
+      if (!mounted) return;
       setState(() => _error = _messageOf(error));
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -137,6 +139,7 @@ class _AdminPageState extends State<AdminPage> {
       setState(() => _providerTestResult = result);
       _showSnack(result.ok ? 'Provider 连接正常' : result.message);
     } catch (error) {
+      if (!mounted) return;
       setState(
         () => _providerTestResult = BoxAdminProviderTestResult(
           ok: false,
@@ -368,6 +371,8 @@ class _AdminPageState extends State<AdminPage> {
       await Clipboard.setData(ClipboardData(text: csv));
       _showSnack('已复制 CSV，可粘贴到表格或文档');
     } catch (error) {
+      // _showSnack 内部要取 context，页面已销毁时不能再弹。
+      if (!mounted) return;
       _showSnack(_messageOf(error));
     } finally {
       if (mounted) setState(() => _exportingUsage = false);

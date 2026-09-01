@@ -8,7 +8,7 @@ import '../../design_system/widgets/shimmer_skeleton.dart';
 import '../../design_system/widgets/empty_error_states.dart';
 import '../../../design_system/widgets/app_page_scaffold.dart';
 import '../core/book_deduplicator.dart';
-import '../core/load_generation.dart';
+import '../../core/load_generation.dart';
 import '../core/models.dart';
 import '../core/rule_novel_source.dart';
 import '../novel_module.dart';
@@ -55,7 +55,7 @@ class _NovelListPageState extends State<NovelListPage> {
 
   /// 请求身份守卫：`mounted` 只防 dispose 后写状态，防不住「后发先至」。
   /// 搜索、发现页切换、取消搜索都会并发触碰同一批 `_books`，必须靠代号
-  /// 丢弃过期响应。见 test/novel/core/load_generation_test.dart。
+  /// 丢弃过期响应。见 test/core/load_generation_test.dart。
   final LoadGeneration _loadGen = LoadGeneration();
 
   int _page = 1;

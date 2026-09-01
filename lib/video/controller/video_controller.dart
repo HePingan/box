@@ -722,6 +722,17 @@ class VideoController extends ChangeNotifier {
     return _prefsFuture ??= SharedPreferences.getInstance();
   }
 
+  /// 仅测试用：清掉 [_prefsFuture] 静态缓存。
+  ///
+  /// 这个 future 会连带捕获创建它的 Zone。testWidgets 每个用例跑在独立的
+  /// fakeAsync zone 里，若上一个用例把 future 缓存下来，下一个用例 await 到的
+  /// 是「已消失的 zone」里的 future，回调永远不会被调度 —— 表现为 initSources
+  /// 静默挂死到超时，而非报错。每个用例前调用本方法即可隔离。
+  @visibleForTesting
+  static void resetPrefsCacheForTesting() {
+    _prefsFuture = null;
+  }
+
   VideoSource? _findDefaultSource(List<VideoSource> sources) {
     for (final keyword in _preferredDefaultSourceKeywords) {
       for (final source in sources) {

@@ -167,10 +167,15 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
             sourceFailed = true;
           }
 
-          // 每个源一回来就渲染，体感“秒出结果”，不再干等最慢的源。
-          if (!mounted || generation != _searchGeneration) return;
+          // 计数必须先落账：`completed` 是本世代闭包的局部变量，与新世代无关。
+          // 若在自增前就 return，本世代剩余 worker 永远凑不满 sources.length，
+          // 该世代的收尾分支（含 _isLoading=false）就再也不会执行。
           completed++;
           if (sourceFailed) failed++;
+
+          // 每个源一回来就渲染，体感“秒出结果”，不再干等最慢的源。
+          // 世代已过期只跳过 UI 写入，不影响上面的账。
+          if (!mounted || generation != _searchGeneration) return;
           if (sourceResults != null && sourceResults.isNotEmpty) {
             aggregated.addAll(sourceResults);
             // 预热该源封面(前 6 张):滑到时已在缓存,体感秒开。
@@ -220,8 +225,19 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
       _results = [];
       _hasSearched = false;
       _errorMessage = null;
+      // 自增世代已作废在途 worker，它们会在 :171 提前 return，
+      // 永远补不齐 `completed == sources.length`——而那是 `_isLoading = false`
+      // 的唯一出口。所以取消方必须自己收尾加载态，否则 spinner 永久转圈。
+      _isLoading = false;
+      _completedSourceCount = 0;
+      _failedSourceCount = 0;
+      _totalSourceCount = 0;
     });
   }
+
+  /// 仅测试用：驱动「搜索途中清空」这条路径。
+  @visibleForTesting
+  void clearSearchForTesting() => _clearSearch();
 
   /// 预热封面:结果一到就把前几张解码进缓存,用户滑到时秒开。
   /// 与卡片同用 200px 解码宽,预取的即最终展示的那份,零重复解码。

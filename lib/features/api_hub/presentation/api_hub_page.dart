@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
+
+import 'package:box/core/load_generation.dart';
 
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_back_button.dart';
@@ -16,16 +19,25 @@ import 'widgets/api_hub_tool_panels.dart';
 import 'widgets/api_hub_widgets.dart';
 
 class ApiHubPage extends StatefulWidget {
-  const ApiHubPage({super.key, this.initialTool});
+  const ApiHubPage({super.key, this.initialTool, this.httpClientForTesting});
 
   final String? initialTool;
+
+  /// 仅测试用：注入可控的 HTTP 客户端（生产走 PublicApiClient 默认实现）。
+  @visibleForTesting
+  final http.Client? httpClientForTesting;
 
   @override
   State<ApiHubPage> createState() => _ApiHubPageState();
 }
 
 class _ApiHubPageState extends State<ApiHubPage> {
-  final PublicApiClient _client = PublicApiClient();
+  late final PublicApiClient _client = PublicApiClient(
+    client: widget.httpClientForTesting,
+  );
+
+  /// 请求身份守卫（intent = 当前工具），防旧工具响应串台到新工具。
+  final LoadGeneration _requestGeneration = LoadGeneration();
   final TextEditingController _amountController = TextEditingController(
     text: '1',
   );
@@ -122,6 +134,8 @@ class _ApiHubPageState extends State<ApiHubPage> {
 
   @override
   void dispose() {
+    // 作废在途请求，回来后直接丢弃。
+    _requestGeneration.invalidate();
     _amountController.dispose();
     _latController.dispose();
     _lonController.dispose();
@@ -299,6 +313,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
   }
 
   Future<void> _guard(Future<void> Function() run) async {
+    // intent 用当前工具：切换工具后，旧工具的慢响应/报错不得再写状态，
+    // 否则会出现「已经在看 IP，却弹天气接口的错误」这种串台。
+    final token = _requestGeneration.begin(_activeTool);
     setState(() {
       _loading = true;
       _error = null;
@@ -306,11 +323,27 @@ class _ApiHubPageState extends State<ApiHubPage> {
     try {
       await run();
     } catch (e) {
-      _error = e.toString();
+      // 原来是裸赋值：既没判过期，也没 setState —— 错误压根刷不到界面上。
+      if (!mounted || !_requestGeneration.isCurrent(token)) return;
+      setState(() => _error = e.toString());
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && _requestGeneration.isCurrent(token)) {
+        setState(() => _loading = false);
+      }
     }
   }
+
+  /// 仅测试用：切换工具（等价于点击工具卡片）。
+  @visibleForTesting
+  void switchToolForTesting(String id) => _switchTool(id);
+
+  /// 仅测试用：当前错误态。
+  @visibleForTesting
+  String? get errorForTesting => _error;
+
+  /// 仅测试用：当前加载态。
+  @visibleForTesting
+  bool get loadingForTesting => _loading;
 
   void _switchTool(String id) {
     final tool = PublicApiRegistry.byId(id);

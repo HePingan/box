@@ -1110,6 +1110,14 @@ class VideoApiService {
     return fetchVideos(baseUrl, typeId, page);
   }
 
+  /// 仅测试用：替换 [searchVideo] 的真实网络实现。
+  ///
+  /// 聚合搜索的世代/计数逻辑必须能在无网络环境下被驱动（多源快慢交错、
+  /// 搜索中途取消），否则回归测试只能靠真实网络碰运气。生产代码永不赋值。
+  @visibleForTesting
+  static Future<List<VodItem>> Function(String baseUrl, String keyword)?
+  searchOverrideForTesting;
+
   /// 搜索视频
   ///
   /// 返回值语义：
@@ -1126,6 +1134,10 @@ class VideoApiService {
     bool fastFail = false,
     Duration? timeout,
   }) async {
+    final override = searchOverrideForTesting;
+    if (override != null) {
+      return override(baseUrl, keyword);
+    }
     final url = _buildVodBaseUrl(baseUrl);
     final query = keyword.trim();
     if (url.isEmpty || query.isEmpty) {
