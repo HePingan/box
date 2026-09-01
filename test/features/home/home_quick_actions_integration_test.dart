@@ -11,10 +11,20 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:box/core/storage/cache_store.dart';
 import 'package:box/features/extensions/core/home_plugin_core.dart';
+import 'package:box/features/home/data/continue_repository.dart';
 import 'package:box/features/home/data/home_quick_action_prefs.dart';
 import 'package:box/features/home/presentation/home_page.dart';
 
 late List<HomePlugin> _builtIns;
+
+/// 不碰 Hive / SharedPreferences 的「继续使用」数据源。
+///
+/// 这几条测试关心的是快捷入口接线，不该被本地存储初始化拖下水。
+ContinueRepository _noContinueData() => ContinueRepository(
+      loadVideoHistory: () async => const [],
+      loadBookshelf: () async => const [],
+      loadNovelProgress: (_) async => null,
+    );
 
 void main() {
   setUp(() {
@@ -47,6 +57,7 @@ void main() {
       MaterialApp(
         home: HomePage(
           quickActionPrefs: HomeQuickActionPrefs(cache: cache),
+          continueRepository: _noContinueData(),
         ),
       ),
     );
@@ -81,6 +92,7 @@ void main() {
       MaterialApp(
         home: HomePage(
           quickActionPrefs: HomeQuickActionPrefs(cache: cache),
+          continueRepository: _noContinueData(),
         ),
       ),
     );
@@ -88,5 +100,36 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.textContaining('还没有快捷入口'), findsOneWidget);
+  });
+
+  testWidgets('本地进度读取抛异常时首页照常渲染，不把异常抛到 initState', (tester) async {
+    // 真实场景：Hive 未初始化 / 盒子损坏时 HistoryController.loadHistory 会抛
+    // HiveError。「继续使用」只是首页的一个区块，它读不到数据不该让整个首页崩。
+    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final cache = CacheStore.inMemory('home_integration_boom');
+    await HomeQuickActionPrefs(cache: cache).saveSelectedIds(const <String>[]);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomePage(
+          quickActionPrefs: HomeQuickActionPrefs(cache: cache),
+          continueRepository: ContinueRepository(
+            loadVideoHistory: () async =>
+                throw StateError('Hive not initialized'),
+            loadBookshelf: () async => const [],
+            loadNovelProgress: (_) async => null,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(tester.takeException(), isNull, reason: '进度读取失败不应冒泡出来');
+    expect(find.text('快捷入口'), findsOneWidget, reason: '首页其余部分应正常渲染');
   });
 }

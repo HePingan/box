@@ -4,7 +4,9 @@ import 'dart:io';
 import 'dart:ui' show ImageByteFormat;
 
 import 'package:box/design_system/app_tokens.dart';
+import 'package:box/features/home/data/continue_item.dart';
 import 'package:box/features/home/presentation/home_page.dart';
+import 'package:box/features/home/presentation/widgets/continue_rail.dart';
 import 'package:box/features/home/presentation/widgets/home_widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
@@ -53,22 +55,24 @@ void main() {
 
       // 复刻首页真实用到的四个快捷入口 + 两张继续使用卡 + 三条热闻，
       // 数据与 home_page.dart 里的一致（颜色走同一套 token）。
+      // 「继续使用」现在展示真实进度，截图里也用带进度的样本数据，
+      // 这样人眼核对到的就是用户真会看到的形态。
       final continueItems = [
-        HomeContinueItem(
-          eyebrow: '继续阅读',
-          title: '小说书架',
-          subtitle: '查看收藏与最近阅读',
-          icon: Icons.menu_book_rounded,
-          color: AppTokens.amber,
-          onTap: () {},
+        ContinueItem(
+          kind: ContinueKind.novel,
+          id: 'n1',
+          title: '诡秘之主',
+          subtitle: '第 128 章 罪魁祸首',
+          updatedAt: 3000,
+          progress: 0.42,
         ),
-        HomeContinueItem(
-          eyebrow: '继续观看',
-          title: '影视搜索',
-          subtitle: '聚合影片、剧集与播放源',
-          icon: Icons.play_circle_fill_rounded,
-          color: AppTokens.emerald,
-          onTap: () {},
+        ContinueItem(
+          kind: ContinueKind.video,
+          id: 'v1',
+          title: '狂飙',
+          subtitle: '第 18 集',
+          updatedAt: 2000,
+          progress: 0.76,
         ),
       ];
 
@@ -172,16 +176,11 @@ void main() {
                         const SizedBox(height: 10),
                       ],
                       const SizedBox(height: 8),
-                      sectionHeader('继续使用', AppTokens.amber),
-                      SizedBox(
-                        height: 72,
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: continueItems.length,
-                          separatorBuilder: (_, _) => const SizedBox(width: 10),
-                          itemBuilder: (_, i) =>
-                              HomeContinueCard(item: continueItems[i]),
-                        ),
+                      ContinueRail(
+                        items: continueItems,
+                        onOpen: (_) {},
+                        onBrowseNovel: () {},
+                        onBrowseVideo: () {},
                       ),
                       const SizedBox(height: 18),
                       sectionHeader(

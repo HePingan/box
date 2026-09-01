@@ -1,4 +1,5 @@
-import 'package:box/features/home/presentation/home_page.dart';
+import 'package:box/features/home/data/continue_item.dart';
+import 'package:box/features/home/presentation/widgets/continue_rail.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -8,6 +9,40 @@ import 'package:flutter_test/flutter_test.dart';
 /// 1. 「继续使用」卡片固定 176 宽，副标题「聚合影片、剧集与播放源」
 ///    在 maxLines:1 下被截断成「聚合影片、剧集与播…」（真机截图证实）。
 /// 2. 热闻取 4 条但只渲染 3 条，第 4 条永远取到又永远不显示。
+///
+/// 「继续使用」后来从硬编码入口改成读真实播放/阅读进度（ContinueRail），
+/// 卡片实现随之替换。下面的宽度/截断断言跟着迁到新卡片上 —— 这些是真机
+/// 证实过的缺陷，换实现不等于问题不会重现。
+Widget _rail(List<ContinueItem> items) {
+  return MaterialApp(
+    home: Scaffold(
+      body: ContinueRail(
+        items: items,
+        onOpen: (_) {},
+        onBrowseNovel: () {},
+        onBrowseVideo: () {},
+      ),
+    ),
+  );
+}
+
+ContinueItem _item({
+  ContinueKind kind = ContinueKind.video,
+  String id = 'v1',
+  String title = '影视搜索',
+  String subtitle = '聚合影片、剧集与播放源',
+  double? progress,
+}) {
+  return ContinueItem(
+    kind: kind,
+    id: id,
+    title: title,
+    subtitle: subtitle,
+    updatedAt: 1000,
+    progress: progress,
+  );
+}
+
 void main() {
   group('首页「继续使用」卡片文字不应被截断', () {
     /// 用真实文本布局测量：给定卡片内可用文字宽度，这段文案要几行才放得下。
@@ -50,28 +85,8 @@ void main() {
       tester.view.devicePixelRatio = 3.0;
       addTearDown(tester.view.reset);
 
-      final item = HomeContinueItem(
-        eyebrow: '继续观看',
-        title: '影视搜索',
-        subtitle: '聚合影片、剧集与播放源',
-        icon: Icons.play_circle_fill_rounded,
-        color: const Color(0xFF10B981),
-        onTap: () {},
-      );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SizedBox(
-              height: 72,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [HomeContinueCard(item: item)],
-              ),
-            ),
-          ),
-        ),
-      );
+      await tester.pumpWidget(_rail([_item()]));
+      await tester.pump();
 
       final subtitleFinder = find.text('聚合影片、剧集与播放源');
       expect(subtitleFinder, findsOneWidget);
@@ -95,50 +110,23 @@ void main() {
     });
   });
 
-  group('HomeContinueCard 宽度策略', () {
+  group('继续使用卡片宽度策略', () {
     testWidgets('窄屏时卡片不超出屏幕，仍可横向滚动', (tester) async {
       tester.view.physicalSize = const Size(320 * 3, 700 * 3);
       tester.view.devicePixelRatio = 3.0;
       addTearDown(tester.view.reset);
 
-      final items = [
-        HomeContinueItem(
-          eyebrow: '继续阅读',
-          title: '小说书架',
-          subtitle: '查看收藏与最近阅读',
-          icon: Icons.menu_book_rounded,
-          color: const Color(0xFFF59E0B),
-          onTap: () {},
-        ),
-        HomeContinueItem(
-          eyebrow: '继续观看',
-          title: '影视搜索',
-          subtitle: '聚合影片、剧集与播放源',
-          icon: Icons.play_circle_fill_rounded,
-          color: const Color(0xFF10B981),
-          onTap: () {},
-        ),
-      ];
-
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SizedBox(
-              height: 72,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: items.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 8),
-                itemBuilder: (_, i) => HomeContinueCard(item: items[i]),
-              ),
-            ),
-          ),
-        ),
+        _rail([
+          _item(kind: ContinueKind.novel, id: 'n1', title: '小说书架', subtitle: '查看收藏与最近阅读'),
+          _item(),
+        ]),
       );
+      await tester.pump();
 
       expect(tester.takeException(), isNull, reason: '窄屏不应溢出报错');
 
-      final cardWidth = tester.getSize(find.byType(HomeContinueCard).first).width;
+      final cardWidth = tester.getSize(find.text('小说书架')).width;
       expect(
         cardWidth,
         lessThanOrEqualTo(320.0),
@@ -146,34 +134,25 @@ void main() {
       );
     });
 
-    testWidgets('点击卡片触发 onTap', (tester) async {
-      var tapped = false;
-      final item = HomeContinueItem(
-        eyebrow: '继续阅读',
-        title: '小说书架',
-        subtitle: '查看收藏与最近阅读',
-        icon: Icons.menu_book_rounded,
-        color: const Color(0xFFF59E0B),
-        onTap: () => tapped = true,
-      );
-
+    testWidgets('点击卡片触发回调', (tester) async {
+      final opened = <String>[];
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: SizedBox(
-              height: 72,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [HomeContinueCard(item: item)],
-              ),
+            body: ContinueRail(
+              items: [_item(kind: ContinueKind.novel, id: 'n1', title: '小说书架')],
+              onOpen: (item) => opened.add(item.id),
+              onBrowseNovel: () {},
+              onBrowseVideo: () {},
             ),
           ),
         ),
       );
+      await tester.pump();
 
       await tester.tap(find.text('小说书架'));
       await tester.pumpAndSettle();
-      expect(tapped, isTrue);
+      expect(opened, ['n1']);
     });
   });
 }

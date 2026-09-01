@@ -1,21 +1,25 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:provider/provider.dart';
 
 import 'package:box/daily_news_page.dart';
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import 'package:box/globals.dart';
+import 'package:box/novel/core/models.dart' show NovelBook;
 import 'package:box/novel/novel_module.dart';
 import 'package:box/plugin_manager.dart';
 import 'package:box/video_module.dart';
 import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/home/data/ai_hot_models.dart';
 import 'package:box/features/home/data/ai_hot_service.dart';
+import 'package:box/core/load_generation.dart';
+import 'package:box/features/home/data/continue_item.dart';
+import 'package:box/features/home/data/daily_news_service.dart';
+import 'package:box/features/home/data/continue_repository.dart';
 import 'package:box/features/home/data/home_quick_action_prefs.dart';
 import 'package:box/features/home/presentation/quick_action_picker_page.dart';
 import 'package:box/features/home/presentation/widgets/ai_hot_section.dart';
+import 'package:box/features/home/presentation/widgets/continue_rail.dart';
 
 import 'widgets/home_widgets.dart';
 
@@ -25,24 +29,32 @@ import 'widgets/home_widgets.dart';
 /// 收敛成一个常量，避免两处再次漂移。想看全部走「更多」进 DailyNewsPage。
 const int _homeNewsPreviewCount = 3;
 
-/// 新闻条目（标题 + 详情链接）
-class _NewsItem {
-  const _NewsItem({required this.title, this.url, this.isPlaceholder = false});
-  final String title;
-  final String? url;
-
-  /// true 表示这不是真新闻，而是空态/错误态提示文案，不可点击。
-  final bool isPlaceholder;
-}
-
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, this.onSwitchTab, this.quickActionPrefs});
+  const HomePage({
+    super.key,
+    this.onSwitchTab,
+    this.quickActionPrefs,
+    this.continueRepository,
+    this.newsService,
+    this.aiHotService,
+  });
 
   final ValueChanged<int>? onSwitchTab;
 
   /// 快捷入口存储。生产环境留空用默认实现；
   /// 测试注入 in-memory 版本，避免碰 SharedPreferences 平台通道。
   final HomeQuickActionPrefs? quickActionPrefs;
+
+  /// 「继续使用」数据源。生产环境留空走真实的 Hive + SharedPreferences；
+  /// 测试注入假实现，避免碰平台通道。
+  final ContinueRepository? continueRepository;
+
+  /// 今日热闻数据源。生产留空走真实网络；测试注入桩，避免打外网。
+  final DailyNewsService? newsService;
+
+  /// AI HOT 数据源。同上：此前是字段里直接 new，widget 测试没法阻止它
+  /// 打真实网络，pumpAndSettle 会一直等不到静止。
+  final AiHotService? aiHotService;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -55,7 +67,18 @@ class _HomePageState extends State<HomePage>
 
   String _todayDateStr = '';
   bool _isLoadingNews = true;
-  List<_NewsItem> _newsItems = [];
+
+  /// 只装真新闻。错误态走 _newsError，不再往列表里塞提示文案（A4）。
+  List<DailyNewsItem> _newsItems = const <DailyNewsItem>[];
+
+  /// 拿不到任何内容时的提示文案；正常时为空串。
+  String _newsError = '';
+
+  /// 热闻加载的代号守卫。
+  ///
+  /// 首页有两条路径会触发拉取：initState 和下拉刷新。快速下拉两次时，
+  /// 先发的请求可能后返回，把新结果覆盖成旧结果（mounted 挡不住这个）。
+  final LoadGeneration _newsGeneration = LoadGeneration();
 
   /// 用户自选的快捷入口 id（顺序即展示顺序）。
   List<String> _quickActionIds = <String>[];
@@ -63,9 +86,25 @@ class _HomePageState extends State<HomePage>
   late final HomeQuickActionPrefs _quickActionPrefs =
       widget.quickActionPrefs ?? HomeQuickActionPrefs();
 
-  final AiHotService _aiHotService = AiHotService();
+  late final AiHotService _aiHotService =
+      widget.aiHotService ?? AiHotService();
   AiHotFeed? _aiHotFeed;
   bool _isLoadingAiHot = true;
+
+  /// 「继续使用」的真实进度条目。
+  List<ContinueItem> _continueItems = const <ContinueItem>[];
+
+  /// 影视历史控制器。
+  ///
+  /// 与 _createContinueRepository 内部共用同一实例：续播时要按 storageKey
+  /// 回查 HistoryItem 拿 episodeUrl/position，用两个实例会读到空列表。
+  final HistoryController _historyController = HistoryController();
+
+  late final ContinueRepository _continueRepository =
+      widget.continueRepository ?? _createContinueRepository();
+
+  late final DailyNewsService _newsService =
+      widget.newsService ?? DailyNewsService();
 
   @override
   void initState() {
@@ -74,6 +113,7 @@ class _HomePageState extends State<HomePage>
     _fetchDailyNews();
     _loadQuickActions();
     _fetchAiHot();
+    _loadContinueItems();
     // 确保插件主机初始化，这样插件卡片才能拿到数据
     WidgetsBinding.instance.addPostFrameCallback((_) {
       HomePluginHost.instance.bootstrap();
@@ -84,6 +124,139 @@ class _HomePageState extends State<HomePage>
     final ids = await _quickActionPrefs.readSelectedIds();
     if (!mounted) return;
     setState(() => _quickActionIds = ids);
+  }
+
+  /// 创建「继续使用」的数据源。
+  ///
+  /// 影视历史走 HistoryController（Hive），小说要书架（拿书名/封面）加
+  /// 逐本进度（拿章节名/时间）两处拼合。测试可通过 widget.continueRepository
+  /// 注入假数据，避开 Hive 与 SharedPreferences 平台通道。
+  ContinueRepository _createContinueRepository() {
+    return ContinueRepository(
+      loadVideoHistory: () async {
+        await _historyController.loadHistory();
+        return _historyController.historyList;
+      },
+      loadBookshelf: () => NovelModule.bookshelf.getBookshelf(),
+      loadNovelProgress: (bookId) =>
+          NovelModule.repository.getProgress(bookId),
+    );
+  }
+
+  /// 载入真实进度。
+  ///
+  /// 失败时保留已有列表而不是清空：进度是本地数据，读一次失败通常是瞬时的，
+  /// 把已经显示出来的卡片抹掉只会让用户以为记录丢了。
+  Future<void> _loadContinueItems() async {
+    List<ContinueItem> items;
+    try {
+      items = await _continueRepository.load();
+    } catch (_) {
+      // 本地存储读不出来（Hive 未初始化、盒子损坏、书架 JSON 坏了）不该让
+      // 首页整块崩掉 —— 这个区块是锦上添花，读不到就维持现状。
+      return;
+    }
+    if (!mounted) return;
+    if (items.isEmpty && _continueItems.isNotEmpty) return;
+    setState(() => _continueItems = items);
+  }
+
+  /// 点开一条「继续使用」，回到上次位置。
+  Future<void> _openContinueItem(ContinueItem item) async {
+    switch (item.kind) {
+      case ContinueKind.video:
+        await _resumeVideo(item);
+      case ContinueKind.novel:
+        await _resumeNovel(item);
+    }
+    // 从播放器/阅读器回来，进度已经变了，重读一次让卡片跟上。
+    await _loadContinueItems();
+  }
+
+  Future<void> _resumeVideo(ContinueItem item) async {
+    final history = _findHistory(item.id);
+    if (history == null) {
+      _toast('这条记录已失效');
+      return;
+    }
+
+    // 续播需要 VideoSource 对象，只有 id 不够；片源被用户删掉后无法续播。
+    final sources = context.read<VideoController>().sources;
+    VideoSource? target;
+    for (final source in sources) {
+      if (source.id == history.sourceId) {
+        target = source;
+        break;
+      }
+    }
+    if (target == null) {
+      _toast('该视频的片源已失效或被移除');
+      return;
+    }
+
+    final vodId = int.tryParse(history.vodId) ?? 0;
+    if (vodId <= 0) {
+      _toast('历史记录中的视频ID无效');
+      return;
+    }
+
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => VideoDetailPage(
+          source: target!,
+          vodId: vodId,
+          initialEpisodeUrl: history.episodeUrl,
+          initialPosition: history.position,
+        ),
+      ),
+    );
+  }
+
+  HistoryItem? _findHistory(String storageKey) {
+    for (final entry in _historyController.historyList) {
+      if (entry.storageKey == storageKey) return entry;
+    }
+    return null;
+  }
+
+  Future<void> _resumeNovel(ContinueItem item) async {
+    final books = await NovelModule.bookshelf.getBookshelf();
+    NovelBook? target;
+    for (final book in books) {
+      final id = book.id.isNotEmpty ? book.id : book.detailUrl;
+      if (id == item.id) {
+        target = book;
+        break;
+      }
+    }
+    if (target == null) {
+      _toast('这本书已不在书架');
+      return;
+    }
+
+    if (!mounted) return;
+    // 走详情页而不是直接进 ReaderPage：ReaderPage 要求 detail.chapters 非空，
+    // 而书架只存 NovelBook（无章节）。详情页会自己加载章节，并已有
+    // 「续读上次位置」的逻辑。
+    final book = target;
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => ChangeNotifierProvider(
+          create: (_) => NovelDetailController(entryBook: book),
+          child: NovelDetailPage(entryBook: book),
+        ),
+      ),
+    );
+  }
+
+  void _toast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   /// 拉 AI 热点。
@@ -143,65 +316,29 @@ class _HomePageState extends State<HomePage>
   /// [showSpinner] 为 false 时不切到 loading 态——下拉刷新场景下
   /// RefreshIndicator 自己有转圈，再把列表换成 spinner 会让已有内容闪一下。
   Future<void> _fetchDailyNews({bool showSpinner = true}) async {
+    // 每次拉取先领一个代号，作废所有在途请求（A3）。
+    // 症状：连续两次下拉，先发的请求若后返回会把新结果盖成旧结果。
+    final token = _newsGeneration.begin('news');
+
     if (showSpinner) {
       setState(() => _isLoadingNews = true);
     }
 
-    try {
-      // 同时拉取今日和昨日热点，混合后随机选4条。
-      final yesterday = DateTime.now().subtract(const Duration(days: 1));
-      final yesterdayStr =
-          '${yesterday.year}${yesterday.month.toString().padLeft(2, '0')}${yesterday.day.toString().padLeft(2, '0')}';
-      const newsTimeout = Duration(seconds: 10);
+    // 下拉刷新要绕过 5 分钟缓存，否则用户下拉了却什么都没变。
+    final feed = await _newsService.fetch(
+      take: _homeNewsPreviewCount,
+      forceRefresh: !showSpinner,
+    );
 
-      final results = await Future.wait([
-        http
-            .get(Uri.parse('https://news-at.zhihu.com/api/4/news/latest'))
-            .timeout(newsTimeout),
-        http
-            .get(
-              Uri.parse(
-                'https://news-at.zhihu.com/api/4/news/before/$yesterdayStr',
-              ),
-            )
-            .timeout(newsTimeout),
-      ]);
+    if (!mounted) return;
+    // 过期的请求整段丢弃，连错误态也不写。
+    if (!_newsGeneration.isCurrent(token)) return;
 
-      final allItems = <_NewsItem>[];
-
-      for (final resp in results) {
-        if (resp.statusCode != 200) continue;
-        final data = jsonDecode(resp.body) as Map<String, dynamic>;
-        final stories = data['stories'] as List<dynamic>? ?? [];
-        for (final s in stories) {
-          final item = s as Map<String, dynamic>;
-          final title = item['title'] as String?;
-          if (title != null && title.isNotEmpty) {
-            allItems.add(_NewsItem(
-              title: title,
-              url: item['url'] as String?,
-            ));
-          }
-        }
-      }
-
-      if (allItems.isEmpty) {
-        _newsItems = [
-          const _NewsItem(title: '暂无热点新闻，下拉刷新重试', isPlaceholder: true),
-        ];
-      } else {
-        allItems.shuffle();
-        _newsItems = allItems.take(_homeNewsPreviewCount).toList();
-      }
-    } catch (e) {
-      _newsItems = [
-        const _NewsItem(title: '网络异常，请下拉刷新重试', isPlaceholder: true),
-      ];
-    } finally {
-      if (mounted) {
-        setState(() => _isLoadingNews = false);
-      }
-    }
+    setState(() {
+      _newsItems = feed.items;
+      _newsError = feed.errorMessage;
+      _isLoadingNews = false;
+    });
   }
 
   @override
@@ -217,6 +354,7 @@ class _HomePageState extends State<HomePage>
         onRefresh: () => Future.wait<void>(<Future<void>>[
           _fetchDailyNews(showSpinner: false),
           _fetchAiHot(forceRefresh: true),
+          _loadContinueItems(),
         ]),
         color: AppTokens.primaryBlue,
         child: CustomScrollView(
@@ -490,69 +628,22 @@ class _HomePageState extends State<HomePage>
   }
 
   // ── 继续上次 ───────────────────────────────
+  /// 「继续使用」区块。
+  ///
+  /// 此前这里是两张硬编码卡（「小说书架」「影视搜索」），挂在「继续使用」
+  /// 标题下但跟用户真实进度无关，点进去只是打开列表页。现在读真实的
+  /// 播放历史 / 阅读进度，点击直接回到上次位置。
   Widget _buildContinueRail() {
-    final items = <HomeContinueItem>[
-      HomeContinueItem(
-        eyebrow: '继续阅读',
-        title: '小说书架',
-        subtitle: '查看收藏与最近阅读',
-        icon: Icons.menu_book_rounded,
-        color: AppTokens.amber,
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
-          );
-        },
+    return ContinueRail(
+      items: _continueItems,
+      onOpen: _openContinueItem,
+      onBrowseNovel: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
       ),
-      HomeContinueItem(
-        eyebrow: '继续观看',
-        title: '影视搜索',
-        subtitle: '聚合影片、剧集与播放源',
-        icon: Icons.play_circle_fill_rounded,
-        color: AppTokens.emerald,
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const VideoListPage()),
-          );
-        },
-      ),
-    ];
-
-    if (items.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    return Padding(
-      // 右侧不留 padding：让横向列表能滚到屏幕边缘，
-      // 视觉上暗示「还有更多可以划」。
-      padding: const EdgeInsets.fromLTRB(
-        AppTokens.shellPageGutter,
-        0,
-        0,
-        14,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(right: 14),
-            child: _buildSectionHeader(title: '继续使用', accent: AppTokens.amber),
-          ),
-          SizedBox(
-            height: 72,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.only(right: 14),
-              itemCount: items.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 10),
-              itemBuilder: (context, index) =>
-                  HomeContinueCard(item: items[index]),
-            ),
-          ),
-        ],
+      onBrowseVideo: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const VideoListPage()),
       ),
     );
   }
@@ -617,6 +708,13 @@ class _HomePageState extends State<HomePage>
                       ),
                     ),
                   )
+                else if (_newsError.isNotEmpty)
+                  // 错误态是独立分支，不再混进数据列表（A4）。
+                  HomeNewsLine(
+                    text: _newsError,
+                    showDivider: false,
+                    isPlaceholder: true,
+                  )
                 else
                   ..._newsItems.asMap().entries.map((entry) {
                     final item = entry.value;
@@ -624,11 +722,16 @@ class _HomePageState extends State<HomePage>
                       text: item.title,
                       // 最后一条不画分隔线，避免卡片底部出现悬空的线。
                       showDivider: entry.key != _newsItems.length - 1,
-                      isPlaceholder: item.isPlaceholder,
                     );
-                    // 空态/错误态不挂点击：之前它照样可点，会打开一个
-                    // initialUrl 为 null 的详情页（死入口）。
-                    if (item.isPlaceholder) return line;
+                    // 上游偶尔给不出 url，这种条目点开会是空白详情页，
+                    // 所以不挂手势也不显示箭头。
+                    if (!item.isOpenable) {
+                      return HomeNewsLine(
+                        text: item.title,
+                        showDivider: entry.key != _newsItems.length - 1,
+                        isPlaceholder: true,
+                      );
+                    }
                     return GestureDetector(
                       onTap: () {
                         Navigator.push(
@@ -898,108 +1001,4 @@ class _PluginCard extends StatelessWidget {
 
 Future<void> showSnack(BuildContext context, String text) async {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-}
-
-// ── 继续上次 ──────────────────────────────────
-class HomeContinueItem {
-  const HomeContinueItem({
-    required this.eyebrow,
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.color,
-    required this.onTap,
-  });
-
-  final String eyebrow;
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-}
-
-class HomeContinueCard extends StatelessWidget {
-  const HomeContinueCard({super.key, required this.item});
-
-  final HomeContinueItem item;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(AppTokens.radiusCard),
-      onTap: item.onTap,
-      // 宽度按内容自适应而不是死钉 176：
-      // 176 时「聚合影片、剧集与播放源」这类副标题会被 ellipsis 截成
-      // 「聚合影片、剧集与播…」（真机截图证实）。这里给一个区间：
-      // 下限保证多张卡时视觉整齐，上限防止单条超长文案把卡拉过屏宽。
-      // 仍在横向 ListView 里，卡多了照旧可以滑。
-      child: Container(
-        constraints: const BoxConstraints(minWidth: 176, maxWidth: 260),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: AppTokens.surface,
-          borderRadius: BorderRadius.circular(AppTokens.radiusCard),
-          border: Border.all(color: AppTokens.divider),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: item.color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(AppTokens.radiusChip),
-              ),
-              child: Icon(item.icon, color: item.color, size: 18),
-            ),
-            const SizedBox(width: 10),
-            // 用 Flexible 而不是 Expanded：Expanded 会强制占满父级最大宽度，
-            // 让上面的 maxWidth 变成"总是最宽"，文字照旧按最宽算再截断。
-            // Flexible 允许 Row 收缩到内容宽度，同时在超过 maxWidth 时
-            // 仍然让文字让位（ellipsis 兜底），不会溢出。
-            Flexible(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    item.eyebrow,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: item.color,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    item.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppTokens.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  Text(
-                    item.subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppTokens.textSecondary,
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
