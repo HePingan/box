@@ -21,7 +21,7 @@ QuizBankItem item({
 void main() {
   group('QuizBank duplicate protection', () {
     test(
-      'same canonical question is rejected without replacing stored content',
+      'same canonical question (including answer) is rejected without replacing stored content',
       () {
         final existing = item(
           id: 'old',
@@ -34,7 +34,7 @@ void main() {
           id: 'new',
           question: '夜间 会车应使用什么灯光？',
           options: const ['远光灯', '近光灯'],
-          answer: '远光灯',
+          answer: '近光灯', // 相同答案
         );
 
         final result = QuizBankWritePolicy.insertIfAbsent(
@@ -49,13 +49,13 @@ void main() {
       },
     );
 
-    test('same stem with different options is inserted', () {
-      final existing = item(id: 'old', question: '这是合法的吗？');
+    test('same stem with different answers is inserted as variant', () {
+      final existing = item(id: 'old', question: '这是合法的吗？', answer: '甲');
       final incoming = item(
         id: 'new',
         question: '这是合法的吗？',
         options: const ['正确', '错误'],
-        answer: '正确',
+        answer: '乙', // 不同答案
       );
 
       final result = QuizBankWritePolicy.insertIfAbsent(
@@ -63,8 +63,7 @@ void main() {
         incoming: incoming,
       );
 
-      // 同题干、不同选项：仍然入库（length 2），但源码用更精确的
-      // variantInserted 区分「全新题」与「同题干变体」，二者都算成功插入。
+      // 同题干+选项但答案不同：作为新变体插入（length 2）
       expect(
         result.status,
         anyOf(
@@ -73,6 +72,8 @@ void main() {
         ),
       );
       expect(result.items, hasLength(2));
+      expect(result.items.where((e) => e.correctAnswer == '甲'), hasLength(1));
+      expect(result.items.where((e) => e.correctAnswer == '乙'), hasLength(1));
     });
   });
 
@@ -80,6 +81,7 @@ void main() {
     test(
       'keeps the most complete record for duplicate canonical questions',
       () {
+        // 相同答案的题目才会被 deduplicate
         final result = QuizBankDeduplicator.deduplicate([
           item(
             id: 'legacy-a',
@@ -90,7 +92,7 @@ void main() {
           item(
             id: 'legacy-b',
             question: '安全距离是多少？',
-            answer: '保持足够安全距离',
+            answer: '', // 相同空答案，会合并
             analysis: '应根据车速和路况保持距离。',
             createdAt: DateTime(2026, 1, 3),
           ),
@@ -99,11 +101,15 @@ void main() {
         expect(result.items, hasLength(1));
         expect(result.removed, 1);
         expect(result.duplicateGroups, 1);
-        expect(result.items.single.correctAnswer, '保持足够安全距离');
+        expect(result.items.single.correctAnswer, '');
         expect(result.items.single.analysis, isNotEmpty);
         expect(
           result.items.single.id,
-          UniqueQuizKeyGenerator.key('安全距离是多少？', options: const ['甲', '乙']),
+          UniqueQuizKeyGenerator.key(
+            '安全距离是多少？',
+            options: const ['甲', '乙'],
+            correctAnswer: '',
+          ),
         );
       },
     );

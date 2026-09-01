@@ -49,18 +49,47 @@ class QuizBankAdminClient {
     required String token,
     String status = '',
   }) async {
-    final path = status.trim() == 'pending'
+    final isPendingStatus =
+        status.trim() == 'pending' || status.trim() == 'pending_review';
+    final path = isPendingStatus
         ? '/admin/quiz/submissions/pending'
         : '/admin/quiz/submissions';
     final uri = _uri(serverUrl, path).replace(
-      queryParameters: status.trim().isEmpty || status.trim() == 'pending'
+      queryParameters: status.trim().isEmpty || isPendingStatus
           ? null
           : {'status': status.trim()},
     );
+    final primary = await _getSubmissions(uri, token);
+    if (primary != null || !isPendingStatus) return primary ?? const [];
+
+    // 兜底只在 `/pending` **没返回可识别的列表结构**时触发
+    // （典型：该路径不被服务端支持）。返回空列表是合法答案，
+    // 不该为此多打一次请求。
+    final fallback = await _getSubmissions(
+      _uri(serverUrl, '/admin/quiz/submissions'),
+      token,
+    );
+    if (fallback == null) return const [];
+    return fallback.where((e) => e.isPending).toList(growable: false);
+  }
+
+  /// 返回 `null` 表示响应里找不到任何可识别的列表字段（结构不对），
+  /// 返回空列表表示「确实没有数据」—— 两者要分开，才能决定是否兜底。
+  Future<List<QuizBankSubmission>?> _getSubmissions(
+    Uri uri,
+    String token,
+  ) async {
     final response = await _httpClient.get(uri, headers: _headers(token));
     final decoded = _decode(response);
-    final items = decoded['submissions'] ?? decoded['items'] ?? decoded['data'];
-    if (items is! List) return const [];
+    // 列表可能平铺在顶层，也可能嵌在 data 里。
+    final nested = decoded['data'];
+    final items =
+        decoded['submissions'] ??
+        decoded['items'] ??
+        (nested is Map
+            ? (nested['submissions'] ?? nested['items'] ?? nested['list'])
+            : nested);
+    if (items is! List) return null;
     return items
         .whereType<Map>()
         .map(
@@ -120,6 +149,28 @@ class QuizBankAdminClient {
     return QuizBankQuestion.fromJson(_questionPayload(_decode(response)));
   }
 
+  /// 只更新题目图片，不回传题干与选项。
+  ///
+  /// 服务端 PATCH 带查重：请求体里出现 `question` + `options` 时，
+  /// 它会拿这份题干去比库，命中的正是这道题自己，于是报
+  /// 「题干与完整选项已存在，不能合并覆盖」——补图被自己挡住。
+  /// 只发要改的那一个字段，查重就无从触发。
+  ///
+  /// 传空串表示清除图片（显式发送，不能省略字段，否则服务端不知道要清）。
+  Future<QuizBankQuestion> updateQuestionImage({
+    required String serverUrl,
+    required String token,
+    required String id,
+    required String imageUrl,
+  }) async {
+    final response = await _httpClient.patch(
+      _uri(serverUrl, '/admin/quiz/questions/${Uri.encodeComponent(id)}'),
+      headers: _headers(token, json: true),
+      body: jsonEncode({'image': imageUrl}),
+    );
+    return QuizBankQuestion.fromJson(_questionPayload(_decode(response)));
+  }
+
   Future<void> deleteQuestion({
     required String serverUrl,
     required String token,
@@ -175,9 +226,10 @@ class QuizBankAdminClient {
     if (filter.trim().isNotEmpty) params['filter'] = filter.trim();
     if (query.trim().isNotEmpty) params['q'] = query.trim();
     final response = await _httpClient.get(
-      _uri(serverUrl, '/admin/quiz/incomplete').replace(
-        queryParameters: params.isEmpty ? null : params,
-      ),
+      _uri(
+        serverUrl,
+        '/admin/quiz/incomplete',
+      ).replace(queryParameters: params.isEmpty ? null : params),
       headers: _headers(token),
     );
     final decoded = _decode(response);
@@ -202,7 +254,8 @@ class QuizBankAdminClient {
       'action': action,
       'ids': ids,
       if (category.trim().isNotEmpty) 'category': category.trim(),
-      if (correctAnswer.trim().isNotEmpty) 'correctAnswer': correctAnswer.trim(),
+      if (correctAnswer.trim().isNotEmpty)
+        'correctAnswer': correctAnswer.trim(),
       if (analysis.trim().isNotEmpty) 'analysis': analysis.trim(),
       if (image.trim().isNotEmpty) 'image': image.trim(),
       if (answers != null && answers.isNotEmpty) 'answers': answers,
@@ -214,7 +267,6 @@ class QuizBankAdminClient {
     );
     return _decode(response);
   }
-
 
   Future<Map<String, dynamic>> bulkUpdateQuestions({
     required String serverUrl,

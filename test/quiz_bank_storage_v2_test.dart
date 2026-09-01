@@ -17,11 +17,17 @@ QuizBankItem item({
 void main() {
   group('QuizBank import v2 canonicalization', () {
     test(
-      'always recalculates IDs and collapses duplicate canonical questions',
+      'always recalculates IDs and keeps different answers as separate entries',
       () {
-        final canonical = UniqueQuizKeyGenerator.key(
+        final canonicalWithAnswer = UniqueQuizKeyGenerator.key(
           '道路  安全？',
           options: const ['正确', '错误'],
+          correctAnswer: '错误',
+        );
+        final canonicalWithOtherAnswer = UniqueQuizKeyGenerator.key(
+          '道路  安全？',
+          options: const ['正确', '错误'],
+          correctAnswer: '甲', // 默认答案
         );
 
         final result = QuizBankImportNormalizer.canonicalize([
@@ -29,6 +35,7 @@ void main() {
             id: 'legacy-question-only-id',
             question: '道路  安全？',
             options: const ['正确', '错误'],
+            answer: '甲', // 默认答案
           ),
           item(
             id: 'foreign-id',
@@ -38,10 +45,11 @@ void main() {
           ),
         ]);
 
-        expect(result.items, hasLength(1));
-        expect(result.items.single.id, canonical);
-        expect(result.items.single.correctAnswer, '错误');
-        expect(result.skipped, 1);
+        // 两条题答案不同，产生不同ID，都保留
+        expect(result.items, hasLength(2));
+        expect(result.items.any((e) => e.id == canonicalWithAnswer), true);
+        expect(result.items.any((e) => e.id == canonicalWithOtherAnswer), true);
+        expect(result.skipped, 0);
       },
     );
 

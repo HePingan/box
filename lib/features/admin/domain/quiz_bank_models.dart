@@ -39,7 +39,7 @@ class QuizBankQuestion extends ResourceData {
 
   String get statusLabel => switch (status) {
     'published' || 'active' => '已发布',
-    'pending' => '待审核',
+    'pending' || 'pending_review' => '待审核',
     'rejected' => '已拒绝',
     'draft' => '草稿',
     _ => status.isEmpty ? '未知' : status,
@@ -69,9 +69,36 @@ class QuizBankQuestion extends ResourceData {
       updatedAt: DateTime.tryParse((json['updatedAt'] ?? '').toString()),
       submitter:
           json['submitter']?.toString() ?? json['submittedBy']?.toString(),
-      image: (json['image'] ?? json['imageUrl'] ?? '').toString(),
+      image:
+          (json['image'] ??
+                  json['imageUrl'] ??
+                  json['questionImage'] ??
+                  (json['question'] is Map
+                      ? (json['question'] as Map)['image'] ??
+                            (json['question'] as Map)['imageUrl']
+                      : null) ??
+                  '')
+              .toString(),
     );
   }
+
+  QuizBankQuestion copyWith({String? image}) => QuizBankQuestion(
+    id: id,
+    question: question,
+    options: options,
+    answer: answer,
+    status: status,
+    tags: tags,
+    explanation: explanation,
+    category: category,
+    source: source,
+    type: type,
+    revision: revision,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+    submitter: submitter,
+    image: image ?? this.image,
+  );
 
   @override
   Map<String, dynamic> toJson() => {
@@ -110,13 +137,13 @@ class QuizBankSubmission {
   final String reviewNote;
   final String? linkedQuestionId;
 
-  bool get isPending => status == 'pending';
+  bool get isPending => status == 'pending' || status == 'pending_review';
   bool get isMerged => status == 'merged';
   bool get isApproved => status == 'approved';
   bool get isRejected => status == 'rejected';
 
   String get statusLabel => switch (status) {
-    'pending' => '待审核',
+    'pending' || 'pending_review' => '待审核',
     'approved' => '已通过',
     'merged' => '云端已有',
     'rejected' => '已拒绝',
@@ -124,16 +151,30 @@ class QuizBankSubmission {
   };
 
   factory QuizBankSubmission.fromJson(Map<String, dynamic> json) {
-    final question = json['question'];
+    final rawQuestion = json['question'];
+    final parsedQuestion = QuizBankQuestion.fromJson(
+      rawQuestion is Map<String, dynamic>
+          ? rawQuestion
+          : rawQuestion is Map
+          ? Map<String, dynamic>.from(rawQuestion)
+          : json,
+    );
+    final submissionImage =
+        (json['image'] ??
+                json['imageUrl'] ??
+                json['questionImage'] ??
+                (rawQuestion is Map
+                    ? rawQuestion['image'] ?? rawQuestion['imageUrl']
+                    : null) ??
+                '')
+            .toString();
     return QuizBankSubmission(
       id: (json['id'] ?? json['_id'] ?? '').toString(),
-      question: QuizBankQuestion.fromJson(
-        question is Map<String, dynamic>
-            ? question
-            : question is Map
-            ? Map<String, dynamic>.from(question)
-            : json,
-      ),
+      question:
+          parsedQuestion.image.trim().isEmpty &&
+              submissionImage.trim().isNotEmpty
+          ? parsedQuestion.copyWith(image: submissionImage)
+          : parsedQuestion,
       status: (json['status'] ?? 'pending').toString(),
       submitter:
           json['submitter']?.toString() ??

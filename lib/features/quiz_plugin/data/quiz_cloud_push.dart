@@ -64,6 +64,7 @@ class QuizCloudPushCoordinator {
     var invalid = 0;
     var failed = 0;
     final errors = <String>[];
+    final mergedQuestionIds = <String>[];
 
     final targets = items.toList(growable: false);
     for (var i = 0; i < targets.length; i++) {
@@ -119,6 +120,12 @@ class QuizCloudPushCoordinator {
         submitted++;
         if (localStatus == QuizSyncStatus.merged) {
           merged++;
+          // 服务端判定同题时会回传云端题目 ID。它是用户唯一的线索：
+          // 没有它就不知道该去后台改/删哪一条。记下来供 UI 展示。
+          final linked = result.linkedQuestionId?.trim() ?? '';
+          if (linked.isNotEmpty) {
+            mergedQuestionIds.add(linked);
+          }
         } else if (localStatus == QuizSyncStatus.pendingReview) {
           pending++;
         }
@@ -151,6 +158,7 @@ class QuizCloudPushCoordinator {
       invalid: invalid,
       failed: failed,
       errors: errors,
+      mergedQuestionIds: List.unmodifiable(mergedQuestionIds),
     );
   }
 
@@ -229,20 +237,26 @@ class QuizSubmissionReconciler {
       for (final item in remotes)
         if (item.id.trim().isNotEmpty && item.isSettled) item.id.trim(): item,
     };
-    final byFingerprint = <String, QuizCloudSubmission>{
-      for (final item in remotes)
-        if (item.isSettled &&
-            _fingerprint(item.question, item.options).isNotEmpty)
-          _fingerprint(item.question, item.options): item,
-    };
+    final byFingerprint = <String, List<QuizCloudSubmission>>{};
+    for (final item in remotes) {
+      if (!item.isSettled) continue;
+      final fingerprint = _fingerprintRemote(item);
+      if (fingerprint.isEmpty) continue;
+      (byFingerprint[fingerprint] ??= []).add(item);
+    }
     final decisions = <QuizSubmissionReconcileDecision>[];
     for (final local in locals) {
-      if (local.isCloud || local.syncStatus != QuizSyncStatus.pendingReview)
+      if (local.isCloud || local.syncStatus != QuizSyncStatus.pendingReview) {
         continue;
+      }
       final id = local.remoteSubmissionId?.trim() ?? '';
+      final remoteById = id.isEmpty ? null : byRemoteId[id];
+      final fallbackMatches = byFingerprint[_fingerprintLocal(local)];
       final remote =
-          (id.isEmpty ? null : byRemoteId[id]) ??
-          byFingerprint[_fingerprint(local.question, local.options)];
+          remoteById ??
+          (fallbackMatches != null && fallbackMatches.length == 1
+              ? fallbackMatches.single
+              : null);
       final status = remote?.localSyncStatus;
       if (remote == null || status == null) continue;
       decisions.add(
@@ -257,12 +271,37 @@ class QuizSubmissionReconciler {
     return List<QuizSubmissionReconcileDecision>.unmodifiable(decisions);
   }
 
-  static String _fingerprint(String question, List<String> options) {
+  static String _fingerprintLocal(QuizBankItem item) => _fingerprintParts(
+    item.question,
+    item.options,
+    imageSha256: item.imageSha256,
+    imagePerceptualHash: item.imagePerceptualHash,
+  );
+
+  static String _fingerprintRemote(QuizCloudSubmission item) =>
+      _fingerprintParts(
+        item.question,
+        item.options,
+        imageSha256: item.imageSha256,
+        imagePerceptualHash: item.imagePerceptualHash,
+      );
+
+  static String _fingerprintParts(
+    String question,
+    List<String> options, {
+    String? imageSha256,
+    String? imagePerceptualHash,
+  }) {
     String normalize(String value) =>
         value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '');
     final q = normalize(question);
     if (q.isEmpty) return '';
-    return '$q|${options.map(normalize).join('|')}';
+    final phash = normalize(imagePerceptualHash ?? '');
+    final sha256 = normalize(imageSha256 ?? '');
+    final image = phash.isNotEmpty
+        ? '|phash:$phash'
+        : (sha256.isNotEmpty ? '|sha256:$sha256' : '');
+    return '$q|${options.map(normalize).join('|')}$image';
   }
 
   void dispose() => _sync.dispose();
@@ -303,6 +342,7 @@ class QuizCloudPushResult {
     required this.invalid,
     required this.failed,
     this.errors = const [],
+    this.mergedQuestionIds = const [],
   });
 
   final String serverUrl;
@@ -315,6 +355,10 @@ class QuizCloudPushResult {
   final int failed;
   final List<String> errors;
 
+  /// 被服务端判定为同题（merged）的云端题目 ID。
+  /// 用户要改/删云端那条时，靠它定位。
+  final List<String> mergedQuestionIds;
+
   String get summaryText {
     final parts = <String>[
       '提交 $submitted',
@@ -324,7 +368,20 @@ class QuizCloudPushResult {
       if (invalid > 0) '校验失败 $invalid',
       if (failed > 0) '失败 $failed',
     ];
-    return parts.join(' · ');
+    final base = parts.join(' · ');
+    // 「提交成功但后台没有待审核投稿」最常见的原因是服务端判定同题
+    // （merged / 云端已有），而不是推送失败。把它说明白，省掉一轮排查。
+    if (submitted > 0 && pending == 0 && merged > 0) {
+      final ids = mergedQuestionIds.take(3).join('、');
+      return '$base\n服务端判定为云端已有同题，未新建待审核记录。'
+          '这道题云端已存在，不会再进审核队列；'
+          '要补图请在后台「题库」里直接编辑它'
+          '${ids.isEmpty ? '' : '（题目 ID：$ids）'}。';
+    }
+    if (submitted == 0 && merged == 0 && pending == 0) {
+      return '$base\n没有任何题进入待审核队列，请检查上面的失败原因。';
+    }
+    return base;
   }
 }
 

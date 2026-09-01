@@ -26,13 +26,22 @@ void main() {
         type: QuizQuestionType.singleChoice,
         options: ['正确', '错误'],
         correctAnswer: 'A',
+        imageSha256:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        imagePerceptualHash: '0123456789abcdef',
       ),
     );
     expect(result.status, 'pending');
     expect(requests[0].url.path, '/api/quiz/catalogs');
     expect(requests[1].url.path, '/api/quiz/submissions');
     expect(requests[1].headers['authorization'], 'Bearer t');
-    expect(jsonDecode(requests[1].body), containsPair('category', 'drive_ev'));
+    final body = jsonDecode(requests[1].body) as Map<String, dynamic>;
+    expect(body['category'], 'drive_ev');
+    expect(
+      body['imageSha256'],
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
+    expect(body['imagePerceptualHash'], '0123456789abcdef');
   });
 
   test(
@@ -108,13 +117,21 @@ void main() {
     expect(result.cloudDeletes, 1);
   });
 
-  test('sync keeps image field from cloud changes', () async {
+  test('sync keeps image and image fingerprints from cloud changes', () async {
     SharedPreferences.setMockInitialValues({});
     final client = _PagedSyncClient([
       {
         'cursor': 3,
         'hasMore': false,
-        'changes': [_upsertChange('如图所示题', image: '/api/quiz/images/demo.png')],
+        'changes': [
+          _upsertChange(
+            '如图所示题',
+            image: '/api/quiz/images/demo.png',
+            imageSha256:
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            imagePerceptualHash: '0123456789abcdef',
+          ),
+        ],
       },
     ]);
     final imported = <QuizBankItem>[];
@@ -129,10 +146,20 @@ void main() {
     await service.sync(serverUrl: 'https://box.example');
     expect(imported, hasLength(1));
     expect(imported.single.imageUrl, '/api/quiz/images/demo.png');
+    expect(
+      imported.single.imageSha256,
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
+    expect(imported.single.imagePerceptualHash, '0123456789abcdef');
   });
 }
 
-Map<String, Object?> _upsertChange(String question, {String? image}) => {
+Map<String, Object?> _upsertChange(
+  String question, {
+  String? image,
+  String? imageSha256,
+  String? imagePerceptualHash,
+}) => {
   'operation': 'upsert',
   'question': {
     'id': question,
@@ -141,6 +168,8 @@ Map<String, Object?> _upsertChange(String question, {String? image}) => {
     'options': ['甲', '乙'],
     'correctAnswer': '甲',
     'image': ?image,
+    'imageSha256': ?imageSha256,
+    'imagePerceptualHash': ?imagePerceptualHash,
   },
 };
 

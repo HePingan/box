@@ -35,6 +35,9 @@ class QuizConfig {
 
     /// 考试模式悬浮窗尺寸：small / standard / large。
     this.examOverlaySize = 'standard',
+
+    /// 题图比对区域（屏幕像素比例 0~1）；为空表示不启用图像消歧。
+    this.regionForImage,
   });
 
   final bool enabled;
@@ -93,6 +96,9 @@ class QuizConfig {
   /// 考试模式悬浮窗尺寸：small / standard / large。
   final String examOverlaySize;
 
+  /// 题图比对区域（屏幕像素比例 0~1）；为空表示不启用图像消歧。
+  final Rect? regionForImage;
+
   QuizConfig copyWith({
     bool? enabled,
     String? apiUrl,
@@ -119,6 +125,7 @@ class QuizConfig {
     bool? autoExamOnLeaveApp,
     String? autoExamPackages,
     String? examOverlaySize,
+    Rect? regionForImage,
   }) {
     return QuizConfig(
       enabled: enabled ?? this.enabled,
@@ -146,6 +153,7 @@ class QuizConfig {
       autoExamOnLeaveApp: autoExamOnLeaveApp ?? this.autoExamOnLeaveApp,
       autoExamPackages: autoExamPackages ?? this.autoExamPackages,
       examOverlaySize: examOverlaySize ?? this.examOverlaySize,
+      regionForImage: regionForImage ?? this.regionForImage,
     );
   }
 
@@ -175,6 +183,13 @@ class QuizConfig {
     'autoExamOnLeaveApp': autoExamOnLeaveApp,
     'autoExamPackages': autoExamPackages,
     'examOverlaySize': examOverlaySize,
+    if (regionForImage != null)
+      'regionForImage': {
+        'left': regionForImage!.left,
+        'top': regionForImage!.top,
+        'right': regionForImage!.right,
+        'bottom': regionForImage!.bottom,
+      },
   };
 
   factory QuizConfig.fromJson(Map<String, dynamic> json) {
@@ -209,21 +224,36 @@ class QuizConfig {
           .clamp(0.3, 1.0),
       autoExamOnLeaveApp: (json['autoExamOnLeaveApp'] as bool?) ?? true,
       autoExamPackages: (json['autoExamPackages'] as String?) ?? '',
-      examOverlaySize: _parseExamOverlaySize(
-        json['examOverlaySize'] as String?,
-      ),
+      examOverlaySize:
+          _parseExamOverlaySize(json['examOverlaySize'] as String?) ??
+          'standard',
+      regionForImage: _parseRegionForImage(json['regionForImage']),
     );
   }
 
-  static String _parseExamOverlaySize(String? value) {
+  static String? _parseExamOverlaySize(String? value) {
     switch (value) {
       case 'small':
       case 'standard':
       case 'large':
-        return value!;
+        return value;
       default:
-        return 'standard';
+        return null;
     }
+  }
+
+  static Rect? _parseRegionForImage(Object? value) {
+    if (value is! Map) return null;
+    final raw = value as Map<String, dynamic>;
+    final left = (raw['left'] as num?)?.toDouble();
+    final top = (raw['top'] as num?)?.toDouble();
+    final right = (raw['right'] as num?)?.toDouble();
+    final bottom = (raw['bottom'] as num?)?.toDouble();
+    if (left == null || top == null || right == null || bottom == null) {
+      return null;
+    }
+    if (left < 0 || top < 0 || right <= left || bottom <= top) return null;
+    return Rect.fromLTWH(left, top, right - left, bottom - top);
   }
 
   static String _parseDisplayMode(String? value) {

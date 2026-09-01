@@ -20,7 +20,7 @@ class QuizSyncStatus {
     String source = '',
   }) {
     final value = (raw ?? '').trim();
-    final isCloud = origin == 'cloud' || source.contains('云端');
+    final isCloud = origin == 'cloud';
     if (value.isEmpty) return isCloud ? published : localOnly;
     // 云端镜像不应停留在 local_only（构造默认值 / 旧数据）。
     if (isCloud && value == localOnly) return published;
@@ -55,6 +55,11 @@ class QuizBankItem {
     this.source = '录入',
     this.createdAt,
     this.imageUrl,
+    this.imageSha256,
+    this.imagePerceptualHash,
+    this.imageRegionHash,
+    this.imageVisualFingerprint,
+    this.imageEmbedding,
     this.category = '',
     this.origin = 'local',
     this.syncStatus = QuizSyncStatus.localOnly,
@@ -73,6 +78,21 @@ class QuizBankItem {
   final DateTime? createdAt;
   final String? imageUrl;
 
+  /// 原始题图字节的 SHA-256（完全相同的图片）。
+  final String? imageSha256;
+
+  /// 题图的感知哈希（缩放/压缩后的视觉相同图片）。
+  final String? imagePerceptualHash;
+
+  /// 题图区域专属的感知哈希（仅框选题图部分的 dHash），用于精确匹配同题干同选项仅题图不同的题目。
+  final String? imageRegionHash;
+
+  /// 标准化题图的多特征模板：dHash、横/纵结构、pHash、边缘及颜色比例。
+  final String? imageVisualFingerprint;
+
+  /// 轻量本地模型输出的量化视觉向量（v1:int8...），仅用于同题干候选消歧。
+  final String? imageEmbedding;
+
   /// 题库分类（云端 catalog / 本地标签）。
   final String category;
 
@@ -85,7 +105,7 @@ class QuizBankItem {
   final String? lastSubmitError;
   final String? remoteSubmissionId;
 
-  bool get isCloud => origin == 'cloud' || source.contains('云端');
+  bool get isCloud => origin == 'cloud';
 
   /// 本地题可投稿（云端镜像、审核中和已合并的题不重复投稿）。
   bool get canPushToCloud =>
@@ -99,6 +119,36 @@ class QuizBankItem {
           syncStatus == QuizSyncStatus.rejected ||
           syncStatus.trim().isEmpty);
 
+  /// Returns a fresh local revision after a question body has been changed.
+  ///
+  /// A previous submission identifies a specific immutable revision. Keeping
+  /// that status after editing hides the changed content from the “未推送”
+  /// filter and prevents a new review submission. The changed revision must
+  /// therefore be explicitly marked local-only and detached from its old
+  /// submission metadata.
+  QuizBankItem asLocalRevision() => copyWith(
+    syncStatus: QuizSyncStatus.localOnly,
+    clearLastSubmitError: true,
+    clearRemoteSubmissionId: true,
+  );
+
+  /// Replaces the question image and marks the item as a fresh local revision.
+  ///
+  /// A picture is part of the question payload: changing it must not retain an
+  /// old review/published status, otherwise the “未推送” filter hides the new
+  /// image-only revision.
+  QuizBankItem withQuestionImage({
+    required String imageUrl,
+    required String imageSha256,
+    required String imagePerceptualHash,
+    String? imageRegionHash,
+  }) => copyWith(
+    imageUrl: imageUrl,
+    imageSha256: imageSha256,
+    imagePerceptualHash: imagePerceptualHash,
+    imageRegionHash: imageRegionHash,
+  ).asLocalRevision();
+
   QuizBankItem copyWith({
     String? id,
     String? question,
@@ -109,6 +159,11 @@ class QuizBankItem {
     String? source,
     DateTime? createdAt,
     String? imageUrl,
+    String? imageSha256,
+    String? imagePerceptualHash,
+    String? imageRegionHash,
+    String? imageVisualFingerprint,
+    String? imageEmbedding,
     String? category,
     String? origin,
     String? syncStatus,
@@ -128,6 +183,12 @@ class QuizBankItem {
       source: source ?? this.source,
       createdAt: createdAt ?? this.createdAt,
       imageUrl: imageUrl ?? this.imageUrl,
+      imageSha256: imageSha256 ?? this.imageSha256,
+      imagePerceptualHash: imagePerceptualHash ?? this.imagePerceptualHash,
+      imageRegionHash: imageRegionHash ?? this.imageRegionHash,
+      imageVisualFingerprint:
+          imageVisualFingerprint ?? this.imageVisualFingerprint,
+      imageEmbedding: imageEmbedding ?? this.imageEmbedding,
       category: category ?? this.category,
       origin: origin ?? this.origin,
       syncStatus: syncStatus ?? this.syncStatus,
@@ -168,9 +229,35 @@ class QuizBankItem {
         .toString();
     final analysis = (json['analysis'] ?? json['解析'] ?? '').toString();
     final question = (json['question'] ?? '').toString();
-    final imageUrl = (json['image'] ?? json['imageUrl'] ?? '')
+    final imageUrl =
+        (json['image'] ??
+                json['imageUrl'] ??
+                json['questionImage'] ??
+                (json['question'] is Map
+                    ? (json['question'] as Map)['image'] ??
+                          (json['question'] as Map)['imageUrl']
+                    : null) ??
+                '')
+            .toString()
+            .trim();
+    final imageSha256 = (json['imageSha256'] ?? '').toString().trim();
+    final imagePerceptualHash = (json['imagePerceptualHash'] ?? '')
         .toString()
         .trim();
+    final imageRegionHash =
+        (json['imageRegionHash'] ?? json['image_region_hash'] ?? '')
+            .toString()
+            .trim();
+    final imageVisualFingerprint =
+        (json['imageVisualFingerprint'] ??
+                json['image_visual_fingerprint'] ??
+                '')
+            .toString()
+            .trim();
+    final imageEmbedding =
+        (json['imageEmbedding'] ?? json['image_embedding'] ?? '')
+            .toString()
+            .trim();
     final source = (json['source'] ?? '录入').toString();
     final category = (json['category'] ?? '').toString().trim();
     final originRaw = (json['origin'] ?? '').toString().trim();
@@ -186,9 +273,19 @@ class QuizBankItem {
             .toString()
             .trim();
 
+    final rawId = (json['id'] ?? '').toString().trim();
     return QuizBankItem(
-      id: (json['id'] ?? UniqueQuizKeyGenerator.key(question, options: options))
-          .toString(),
+      id: rawId.isEmpty
+          ? UniqueQuizKeyGenerator.key(
+              question,
+              options: options,
+              imageSha256: imageSha256.isEmpty ? null : imageSha256,
+              imagePerceptualHash: imagePerceptualHash.isEmpty
+                  ? null
+                  : imagePerceptualHash,
+              imageRegionHash: imageRegionHash.isEmpty ? null : imageRegionHash,
+            )
+          : rawId,
       question: question,
       type: type,
       options: options,
@@ -199,6 +296,15 @@ class QuizBankItem {
           ? null
           : DateTime.tryParse(json['createdAt'].toString()),
       imageUrl: imageUrl.isEmpty ? null : imageUrl,
+      imageSha256: imageSha256.isEmpty ? null : imageSha256,
+      imagePerceptualHash: imagePerceptualHash.isEmpty
+          ? null
+          : imagePerceptualHash,
+      imageRegionHash: imageRegionHash.isEmpty ? null : imageRegionHash,
+      imageVisualFingerprint: imageVisualFingerprint.isEmpty
+          ? null
+          : imageVisualFingerprint,
+      imageEmbedding: imageEmbedding.isEmpty ? null : imageEmbedding,
       category: category,
       origin: origin,
       syncStatus: QuizSyncStatus.normalize(
@@ -218,6 +324,13 @@ class QuizBankItem {
 
   factory QuizBankItem.fromDb(Map<String, Object?> row) {
     final rawImage = (row['image'] ?? row['imageUrl'] ?? '').toString().trim();
+    final imageSha256 = (row['imageSha256']?.toString() ?? '').trim();
+    final imagePerceptualHash = (row['imagePerceptualHash']?.toString() ?? '')
+        .trim();
+    final imageRegionHash = (row['imageRegionHash']?.toString() ?? '').trim();
+    final imageVisualFingerprint =
+        (row['imageVisualFingerprint']?.toString() ?? '').trim();
+    final imageEmbedding = (row['imageEmbedding']?.toString() ?? '').trim();
     final source = row['source']?.toString() ?? '录入';
     final category = (row['category']?.toString() ?? '').trim();
     final originRaw = (row['origin']?.toString() ?? '').trim();
@@ -243,6 +356,15 @@ class QuizBankItem {
           ? null
           : DateTime.tryParse(row['createdAt'].toString()),
       imageUrl: rawImage.isEmpty ? null : rawImage,
+      imageSha256: imageSha256.isEmpty ? null : imageSha256,
+      imagePerceptualHash: imagePerceptualHash.isEmpty
+          ? null
+          : imagePerceptualHash,
+      imageRegionHash: imageRegionHash.isEmpty ? null : imageRegionHash,
+      imageVisualFingerprint: imageVisualFingerprint.isEmpty
+          ? null
+          : imageVisualFingerprint,
+      imageEmbedding: imageEmbedding.isEmpty ? null : imageEmbedding,
       category: category,
       origin: origin,
       syncStatus: QuizSyncStatus.normalize(
@@ -288,6 +410,16 @@ class QuizBankItem {
     'source': source,
     if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
     if (imageUrl != null && imageUrl!.isNotEmpty) 'image': imageUrl,
+    if (imageSha256 != null && imageSha256!.isNotEmpty)
+      'imageSha256': imageSha256,
+    if (imagePerceptualHash != null && imagePerceptualHash!.isNotEmpty)
+      'imagePerceptualHash': imagePerceptualHash,
+    if (imageRegionHash != null && imageRegionHash!.isNotEmpty)
+      'imageRegionHash': imageRegionHash,
+    if (imageVisualFingerprint != null && imageVisualFingerprint!.isNotEmpty)
+      'imageVisualFingerprint': imageVisualFingerprint,
+    if (imageEmbedding != null && imageEmbedding!.isNotEmpty)
+      'imageEmbedding': imageEmbedding,
     if (category.isNotEmpty) 'category': category,
     'origin': origin,
     'syncStatus': QuizSyncStatus.normalize(
@@ -313,6 +445,11 @@ class QuizBankItem {
     'createdAt': createdAt?.toIso8601String(),
     'updatedAt': DateTime.now().toIso8601String(),
     'image': imageUrl,
+    'imageSha256': imageSha256,
+    'imagePerceptualHash': imagePerceptualHash,
+    'imageRegionHash': imageRegionHash,
+    'imageVisualFingerprint': imageVisualFingerprint,
+    'imageEmbedding': imageEmbedding,
     'category': category,
     'origin': origin,
     'syncStatus': QuizSyncStatus.normalize(
@@ -327,18 +464,67 @@ class QuizBankItem {
 }
 
 class UniqueQuizKeyGenerator {
-  /// 题目标识：题干 + 规范化选项。同题干不同选项视为不同题。
-  static String key(String question, {List<String> options = const []}) {
-    final q = _compact(question);
-    final opts = options.map(_compact).where((e) => e.isNotEmpty).toList()
-      ..sort(); // 顺序无关：A/B 互换仍算同一题（内容相同）
-    final payload = opts.isEmpty ? q : '$q|${opts.join('|')}';
-    final digest = _fnv1a32(payload).toRadixString(16).padLeft(8, '0');
-    return 'quiz_${payload.length.toString().padLeft(4, '0')}$digest';
+  /// 题目标识：题干 + 规范化选项 + 答案 + 已知题图变体。
+  ///
+  /// 答案参与唯一性判断，使"题干+选项相同但答案不同"的题可以并存。
+  /// 未保存题图指纹的存量题维持旧文字身份；有感知哈希时优先使用它，
+  /// 使同图的不同 URL/压缩版本聚合为一个变体。
+  static String key(
+    String question, {
+    List<String> options = const [],
+    String? correctAnswer,
+    String? imageSha256,
+    String? imagePerceptualHash,
+    String? imageRegionHash,
+  }) {
+    final canonical = canonicalIdentity(
+      question,
+      options: options,
+      correctAnswer: correctAnswer,
+      imageSha256: imageSha256,
+      imagePerceptualHash: imagePerceptualHash,
+      imageRegionHash: imageRegionHash,
+    );
+    final digest = _fnv1a32(canonical).toRadixString(16).padLeft(8, '0');
+    return 'quiz_${canonical.length.toString().padLeft(4, '0')}$digest';
   }
 
-  static String keyFromItem(QuizBankItem item) =>
-      key(item.question, options: item.options);
+  static String keyFromItem(QuizBankItem item) => key(
+    item.question,
+    options: item.options,
+    correctAnswer: item.correctAnswer,
+    imageSha256: item.imageSha256,
+    imagePerceptualHash: item.imagePerceptualHash,
+    imageRegionHash: item.imageRegionHash,
+  );
+
+  static String canonicalIdentity(
+    String question, {
+    List<String> options = const [],
+    String? correctAnswer,
+    String? imageSha256,
+    String? imagePerceptualHash,
+    String? imageRegionHash,
+  }) {
+    final q = _compact(question);
+    final opts = options.map(_compact).where((e) => e.isNotEmpty).toList()
+      ..sort();
+    final ans = _compact(correctAnswer ?? '');
+    final textPayload = opts.isEmpty ? q : '$q|${opts.join('|')}';
+    final answerVariant = ans.isNotEmpty ? '|ans:$ans' : '';
+    final region = _compactHash(imageRegionHash);
+    final perceptual = _compactHash(imagePerceptualHash);
+    final exact = _compactHash(imageSha256);
+    final imageVariant = region.isNotEmpty
+        ? '|region:$region'
+        : (perceptual.isNotEmpty
+              ? '|phash:$perceptual'
+              : (exact.isNotEmpty ? '|sha256:$exact' : ''));
+    return '$textPayload$answerVariant$imageVariant';
+  }
+
+  static String _compactHash(String? value) =>
+      (value ?? '').replaceAll(RegExp(r'\s+'), '').toLowerCase();
 
   static String _compact(String text) {
     return text
@@ -695,6 +881,15 @@ class QuizBankTextNormalizer {
   static String normalizeOption(String text) {
     var t = text.replaceAll(RegExp(r'\s+'), '').toLowerCase();
     t = t.replaceFirst(RegExp(r'^[a-dａ-ｄ][.、．:：)）]'), '');
+    // 判断题选项常被录成「正确. 正确」「错误、错误」——
+    // 前缀是选项自身文字而非 A./B.，上面的字母正则剥不掉，
+    // 归一化后留下「正确.正确」，与卷面 OCR 的「正确」对不上，
+    // oScore 被压低，最终 baseScore 跌破 0.70 误报「请人工确认」。
+    // 仅当分隔符前后是同一个词时才剥，避免误伤「正确、安全的驾驶方式」。
+    t = t.replaceFirstMapped(
+      RegExp(r'^(正确|错误|对|错)[.、．:：)）]\1$'),
+      (m) => m.group(1)!,
+    );
     return t.trim();
   }
 
@@ -877,7 +1072,7 @@ class QuizBankStorage {
     final dbPath = p.join(await getDatabasesPath(), 'quiz_bank.db');
     final db = await openDatabase(
       dbPath,
-      version: 4,
+      version: 9,
       onCreate: (database, _) async {
         await database.execute('''
 CREATE TABLE $_table (
@@ -891,6 +1086,11 @@ CREATE TABLE $_table (
   createdAt TEXT,
   updatedAt TEXT,
   image TEXT,
+  imageSha256 TEXT,
+  imagePerceptualHash TEXT,
+  imageRegionHash TEXT,
+  imageVisualFingerprint TEXT,
+  imageEmbedding TEXT,
   category TEXT,
   origin TEXT,
   syncStatus TEXT,
@@ -953,6 +1153,47 @@ CREATE TABLE $_table (
           await database.execute(
             'CREATE INDEX IF NOT EXISTS idx_quiz_bank_sync_status ON $_table(syncStatus)',
           );
+        }
+        if (oldVersion < 5) {
+          await database.execute(
+            'ALTER TABLE $_table ADD COLUMN imageSha256 TEXT',
+          );
+          await database.execute(
+            'ALTER TABLE $_table ADD COLUMN imagePerceptualHash TEXT',
+          );
+        }
+        if (oldVersion < 6) {
+          await database.execute(
+            'ALTER TABLE $_table ADD COLUMN imageRegionHash TEXT',
+          );
+        }
+        if (oldVersion < 8) {
+          await database.execute(
+            'ALTER TABLE $_table ADD COLUMN imageVisualFingerprint TEXT',
+          );
+        }
+        if (oldVersion < 9) {
+          await database.execute(
+            'ALTER TABLE $_table ADD COLUMN imageEmbedding TEXT',
+          );
+        }
+        if (oldVersion < 7) {
+          // 重新计算所有题目的ID（答案现在参与唯一性判断）
+          final rows = await database.rawQuery(
+            'SELECT rowid, id, question, type, options, correctAnswer, analysis, source, createdAt, updatedAt, image, imageSha256, imagePerceptualHash, imageRegionHash, category, origin, syncStatus, lastSubmitAt, lastSubmitError, remoteSubmissionId FROM $_table',
+          );
+          for (final row in rows) {
+            final item = QuizBankItem.fromDb(row.cast<String, Object?>());
+            final newItem = item.copyWith(
+              id: UniqueQuizKeyGenerator.keyFromItem(item),
+            );
+            await database.update(
+              _table,
+              newItem.toDb(),
+              where: 'rowid = ?',
+              whereArgs: [row['rowid']],
+            );
+          }
         }
       },
     );

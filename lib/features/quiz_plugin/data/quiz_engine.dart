@@ -58,6 +58,7 @@ class QuizAnswer {
     this.imageUrl,
     this.alignedToProbe = false,
     this.alignmentMethod = '',
+    this.imageMatchHint = '',
   });
 
   final String text;
@@ -73,6 +74,9 @@ class QuizAnswer {
 
   /// exact/letter/synonym/...
   final String alignmentMethod;
+
+  /// 题图消歧诊断：用于解释同题干多候选为何需要确认。
+  final String imageMatchHint;
 }
 
 class QuizEngine {
@@ -84,6 +88,7 @@ class QuizEngine {
     String question, {
     bool forceExternalSearch = false,
     List<String> probeOptions = const [],
+    String? imagePerceptualHash,
   }) async {
     final stopwatch = Stopwatch()..start();
     final trimmed = question.trim();
@@ -100,6 +105,7 @@ class QuizEngine {
         final bankResult = await _searchBank(
           trimmed,
           probeOptions: probeOptions,
+          imagePerceptualHash: imagePerceptualHash,
         );
         if (bankResult != null && bankResult.isNotEmpty) {
           return QuizResult(
@@ -161,6 +167,7 @@ class QuizEngine {
   Future<List<QuizAnswer>?> _searchBank(
     String question, {
     List<String> probeOptions = const [],
+    String? imagePerceptualHash,
   }) async {
     await QuizBankCache.instance.ensureLoaded();
     // 自动读屏会带进“答题/背题/设置”等 chrome。题干应与 OCR/试捕路径一样
@@ -247,6 +254,7 @@ class QuizEngine {
             int qScore,
             int oScore,
             int shapeBonus,
+            int imageScore,
           })
         >[];
     for (final e in pool) {
@@ -277,22 +285,48 @@ class QuizEngine {
           .length;
       final hasCompleteProbeOptions =
           bankOptionCount > 0 && probeOptNorm.length >= bankOptionCount;
+      // 判断题（卷面与题库都只有 2 个选项）改用选项优先加权。
+      //
+      // 原因：引擎里多处「选项已足够消歧」的快捷路径门槛都是
+      // probeOptNorm.length >= 3，判断题整类被排除，只能吃 55/45 加权。
+      // 但对判断题而言选项匹配才是最强信号（只有正确/错误两种可能，
+      // 对上就是对上了），题干相似度反而最容易被 OCR 噪声污染
+      // （屏幕噪声字符、错别字、长题干稀释）。55/45 下 oScore 满分时
+      // 仍要求 qScore >= 45，导致「唯一命中却提示请人工确认」。
+      //
+      // 只在两侧选项数都为 2 且选项高度匹配时生效，选择题完全不受影响。
+      final isJudgmentShape =
+          useOptions && probeOptNorm.length == 2 && bankOptionCount == 2;
+      final judgmentOptionFirst = isJudgmentShape && oScore >= 90;
       final baseScore = useOptions
-          ? (e.qScore * 0.55 + oScore * 0.45).round().clamp(0, 100)
+          ? (judgmentOptionFirst
+                    ? (e.qScore * 0.25 + oScore * 0.75)
+                    : (e.qScore * 0.55 + oScore * 0.45))
+                .round()
+                .clamp(0, 100)
           : (e.qScore + shapeBonus).clamp(0, 100);
       final score = hasCompleteProbeOptions && e.qScore >= 35 && oScore >= 90
           ? max(baseScore, (e.qScore * 0.20 + oScore * 0.80).round())
           : (baseScore + (useOptions ? 0 : 0));
+      final imageScore = _bestImageScore(imagePerceptualHash, e.item);
       scored.add((
         item: e.item,
         score: score.clamp(0, 100),
         qScore: e.qScore,
         oScore: oScore,
         shapeBonus: shapeBonus,
+        imageScore: imageScore,
       ));
     }
 
     scored.sort((a, b) {
+      // 同题干/同选项的候选若均有截图 dHash，先按视觉一致性消歧。
+      // -1 代表本次或题库记录没有可用 hash，保留历史文字排序以兼容存量。
+      if (a.imageScore >= 0 &&
+          b.imageScore >= 0 &&
+          a.imageScore != b.imageScore) {
+        return b.imageScore.compareTo(a.imageScore);
+      }
       // 决胜：先能否对齐卷面答案，再选项分，再形态分，再题干分
       if (useOptions) {
         final aAlign = QuizAnswerAligner.align(
@@ -314,6 +348,89 @@ class QuizEngine {
       }
       return b.qScore.compareTo(a.qScore);
     });
+
+    final hasProbeImageHash = _isValidDHash(imagePerceptualHash);
+    var imageMatchHint = '';
+    // 图片消歧只在同题干多候选时启用，并且只接受同一题图区域产生的 hash。
+    if (scored.length > 1 && hasProbeImageHash) {
+      // 只有题库真实保存的题图区域 hash 才能证明区域消歧可用。
+      // imageScore 也可能来自旧版整题 hash 回退，后者仅用于兼容排序，不能据此
+      // 指责用户框选错误，或宣称题图消歧已经成功。
+      final withRegion = scored
+          .where((entry) => _isValidDHash(entry.item.imageRegionHash))
+          .toList();
+      if (withRegion.isEmpty) {
+        imageMatchHint = '题库题图指纹缺失，请重新录入题图';
+      } else {
+        final bestImageScore = withRegion
+            .map((entry) => entry.imageScore)
+            .reduce((a, b) => a > b ? a : b);
+        // dHash 相似度满分为 64。屏幕框选通常会比题库参考图多一点
+        // UI 留白，不能只依赖 48 分绝对门槛；但也不能无限降阈值。
+        // 低于绝对门槛时，要求至少 40 分且比第二名高 8 分，才把它当作
+        // 有证据的相对消歧。旧整题 hash 回退不参与此判断。
+        final regionScores =
+            withRegion.map((entry) => entry.imageScore).toList()
+              ..sort((a, b) => b.compareTo(a));
+        final secondImageScore = regionScores.length > 1 ? regionScores[1] : -1;
+        final imageFloor = bestImageScore >= 75
+            ? max(75, bestImageScore - 12)
+            : bestImageScore - 12;
+        // 自动收敛必须有明确领先；仅分数高但彼此接近时保留候选确认，
+        // 防止交通标志等同色同轮廓题被错误自动作答。
+        final hasClearVisualWinner =
+            bestImageScore >= 75 &&
+            (secondImageScore < 0 || bestImageScore - secondImageScore >= 12);
+        if (hasClearVisualWinner) {
+          final imageFiltered = withRegion
+              .where((entry) => entry.imageScore >= imageFloor)
+              .toList();
+          if (imageFiltered.isNotEmpty) {
+            scored
+              ..clear()
+              ..addAll(imageFiltered);
+            imageMatchHint = '题图消歧已启用';
+          }
+        } else {
+          // 至少一个候选确有 region hash，但探针与它们都不匹配，才提示检查框选区域。
+          imageMatchHint = '题图匹配不足：请确认框选的是完整题图';
+        }
+      }
+    } else if (scored.length > 1) {
+      // 多候选且本次也没有捕获图片指纹
+      imageMatchHint = '题干选项相同，题图未参与匹配';
+    }
+    // C2: 候选答案清单不在此处拼接。此时的 scored 仍是宽松的同题干池，
+    // 含选项集完全不同的变体（如「环形交叉路口预告」），后面会被完整选项过滤淘汰。
+    // 清单统一在最终 selected 确定后再生成，避免把已淘汰变体展示给用户。
+
+    // ④ 选项分消歧：最优候选选项分 ≥75 且与次优差距 ≥35，且卷面已有 ≥3 个完整选项时，
+    //    选项本身已足够消歧，直接收敛为唯一候选，不再依赖图片指纹，也不触发 ambiguous 确认。
+    if (scored.length > 1 &&
+        useOptions &&
+        probeOptNorm.length >= 3 &&
+        scored[0].oScore >= 75 &&
+        (scored[0].oScore - scored[1].oScore) >= 35) {
+      final optWinner = scored[0];
+      scored
+        ..clear()
+        ..add(optWinner);
+      imageMatchHint = '';
+    }
+
+    // 新增：选项完全匹配且所有候选答案相同时，清除"题图匹配不足"提示
+    // 适用场景：同一题的多个录入（答案相同，仅题图区域框选不同），用户实际框选了正确区域，
+    // 但由于录入时的框选差异导致 dHash 分数不高。这时答案已确定，不应再要求用户检查框选。
+    if (scored.length > 1 &&
+        useOptions &&
+        probeOptNorm.length >= 3 &&
+        scored.every((e) => e.oScore >= 90)) {
+      final answers = scored.map((e) => e.item.correctAnswer).toSet();
+      if (answers.length == 1) {
+        // 所有候选答案相同，选项分数都很高，清除"题图匹配不足"提示
+        imageMatchHint = '';
+      }
+    }
 
     // 有完整卷面文字选项时：丢掉选项分过低的候选（同题干图选题/其它变体）
     var filtered = scored;
@@ -363,7 +480,41 @@ class QuizEngine {
     final selected = hasExactCompleteVariant
         ? filtered.where((entry) => entry.oScore == 100).toList()
         : filtered;
-    final top = selected.take(config.bankMaxMatches).toList();
+
+    // 最终展示只能来自已通过完整选项过滤的变体。视觉状态不可在这里
+    // 无差别清空：强模板/向量命中需要保留可审计诊断；低证据则必须把
+    // 最终竞争答案交给悬浮窗确认，绝不能仅按排序第一条自动作答。
+    if (hasExactCompleteVariant && selected.length == 1) {
+      if (imageMatchHint.contains('题图匹配不足') ||
+          imageMatchHint.contains('视觉模板相似') ||
+          imageMatchHint.contains('视觉向量相似')) {
+        imageMatchHint = '';
+      }
+    } else if (selected.length > 1) {
+      final hintBase = imageMatchHint.split('\n候选答案：').first.trim();
+      final finalSummary = _competingAnswerSummary(selected);
+      imageMatchHint = finalSummary.isEmpty
+          ? hintBase
+          : hintBase.isEmpty
+          ? finalSummary
+          : '$hintBase\n$finalSummary';
+    }
+
+    // 配置的 bankMaxMatches 可限制常规匹配数量；但视觉/文字未收敛时，
+    // 绝不能把多个真实竞争答案再截成第一条，否则悬浮窗会把排序结果误作
+    // 确定答案。至少返回两条不同答案以触发确认态。
+    final competingAnswerCount = selected
+        .map(
+          (entry) =>
+              QuizBankTextNormalizer.normalizeOption(entry.item.correctAnswer),
+        )
+        .where((answer) => answer.isNotEmpty)
+        .toSet()
+        .length;
+    final effectiveLimit = competingAnswerCount > 1
+        ? max(config.bankMaxMatches, 2)
+        : config.bankMaxMatches;
+    final top = selected.take(effectiveLimit).toList();
     if (top.isEmpty || (top.first.qScore < 60 && top.first.oScore < 90)) {
       return null;
     }
@@ -451,12 +602,85 @@ class QuizEngine {
             imageUrl: item.imageUrl,
             alignedToProbe: alignment.aligned,
             alignmentMethod: alignment.method,
+            imageMatchHint: imageMatchHint,
           );
         })
         .whereType<QuizAnswer>()
         .toList();
     if (mapped.isEmpty) return null;
     return mapped;
+  }
+
+  int _dHashSimilarity(String? probeHash, String? bankHash) {
+    final probe = probeHash?.trim().toLowerCase() ?? '';
+    final bank = bankHash?.trim().toLowerCase() ?? '';
+    // Android 原生当前产出 64 bit / 16 个十六进制字符；格式不完整时不参与排序。
+    if (!RegExp(r'^[0-9a-f]{16}$').hasMatch(probe) ||
+        !RegExp(r'^[0-9a-f]{16}$').hasMatch(bank)) {
+      return -1;
+    }
+    var distance = 0;
+    for (var i = 0; i < probe.length; i++) {
+      final diff =
+          int.parse(probe[i], radix: 16) ^ int.parse(bank[i], radix: 16);
+      distance += diff.bitLength == 0 ? 0 : _popCount(diff);
+    }
+    return 64 - distance;
+  }
+
+  /// B1: 优先用题图区域 hash（imageRegionHash）比对；存量题回退到整题 hash。
+  ///
+  /// 探针（probe）来自独立框选的题图区域，精度远高于整题截图。
+  /// 只要题库侧有 imageRegionHash，就只比 region；
+  /// 若题库侧只有旧的整题 hash，则回退，但分数最高只取 imageScore 的 80%
+  /// （打折反映整块 dHash 区分度较低，避免用低质量分数压掉文字匹配结果）。
+  /// C2: 题图消歧失败时列出竞争候选的答案，让用户能自己核对选哪个。
+  /// 只在候选答案确实不同时才有意义——答案一样的话选哪个都对，不必打扰用户。
+  String _competingAnswerSummary(
+    List<
+      ({
+        QuizBankItem item,
+        int score,
+        int qScore,
+        int oScore,
+        int shapeBonus,
+        int imageScore,
+      })
+    >
+    scored,
+  ) {
+    final seen = <String>{};
+    final answers = <String>[];
+    for (final entry in scored.take(4)) {
+      final answer = entry.item.correctAnswer.trim();
+      if (answer.isEmpty) continue;
+      final key = QuizBankTextNormalizer.normalizeOption(answer);
+      if (key.isEmpty || !seen.add(key)) continue;
+      answers.add(answer.length > 24 ? '${answer.substring(0, 24)}…' : answer);
+    }
+    // 全部候选答案一致：无需让用户选择。
+    if (answers.length < 2) return '';
+    return '候选答案：${answers.join(' / ')}';
+  }
+
+  int _bestImageScore(String? probeHash, QuizBankItem item) {
+    if (!_isValidDHash(probeHash)) return -1;
+    final regionScore = _dHashSimilarity(probeHash, item.imageRegionHash);
+    if (regionScore >= 0) return (regionScore * 100 / 64).round();
+    return -1;
+  }
+
+  bool _isValidDHash(String? value) =>
+      RegExp(r'^[0-9a-f]{16}$').hasMatch(value?.trim().toLowerCase() ?? '');
+
+  int _popCount(int value) {
+    var n = value;
+    var count = 0;
+    while (n != 0) {
+      count += n & 1;
+      n >>= 1;
+    }
+    return count;
   }
 
   bool _stemLooksLikeImageQuestion(String raw) {

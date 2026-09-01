@@ -8,6 +8,7 @@ import 'package:crypto/crypto.dart';
 
 import '../../account/data/account_client.dart';
 import '../domain/quiz_bank.dart';
+import 'quiz_submission_image_payload.dart';
 
 typedef QuizCloudImportItems = Future<int> Function(List<QuizBankItem> items);
 typedef QuizCloudDeleteItem = Future<int> Function(String id);
@@ -258,10 +259,14 @@ class QuizCloudSyncService {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
           },
-          body: jsonEncode({
-            ...item.toJson(),
-            if (category.trim().isNotEmpty) 'category': category.trim(),
-          }),
+          // 图片必须内联成 data URL 再提交：直接发本地路径
+          // （/data/user/0/...）审核端取不到像素，只会看到「图片加载失败」。
+          body: jsonEncode(
+            await QuizSubmissionImagePayload.buildSubmissionJson({
+              ...item.toJson(),
+              if (category.trim().isNotEmpty) 'category': category.trim(),
+            }),
+          ),
         )
         .timeout(_apiTimeout);
     return QuizCloudSubmission.fromJson(_decode(response));
@@ -550,6 +555,8 @@ class QuizCloudSubmission {
     this.reviewedAt,
     this.question = '',
     this.options = const <String>[],
+    this.imageSha256,
+    this.imagePerceptualHash,
   });
 
   factory QuizCloudSubmission.fromJson(Map<String, dynamic> json) {
@@ -558,6 +565,11 @@ class QuizCloudSubmission {
         ? Map<String, dynamic>.from(nested)
         : const <String, dynamic>{};
     final rawOptions = questionMap['options'];
+    final imageSha256 =
+        '${questionMap['imageSha256'] ?? json['imageSha256'] ?? ''}'.trim();
+    final imagePerceptualHash =
+        '${questionMap['imagePerceptualHash'] ?? json['imagePerceptualHash'] ?? ''}'
+            .trim();
     return QuizCloudSubmission(
       id: '${json['id'] ?? ''}',
       status: '${json['status'] ?? ''}',
@@ -570,6 +582,10 @@ class QuizCloudSubmission {
       options: rawOptions is List
           ? rawOptions.map((e) => '$e').toList(growable: false)
           : const <String>[],
+      imageSha256: imageSha256.isEmpty ? null : imageSha256,
+      imagePerceptualHash: imagePerceptualHash.isEmpty
+          ? null
+          : imagePerceptualHash,
     );
   }
 
@@ -587,6 +603,8 @@ class QuizCloudSubmission {
   /// 云端回传的题干与选项，用于历史投稿（无 remoteSubmissionId）的兜底匹配。
   final String question;
   final List<String> options;
+  final String? imageSha256;
+  final String? imagePerceptualHash;
 
   /// 审核已产生终态（不再是排队中）。
   bool get isSettled => localSyncStatus != null;

@@ -67,6 +67,21 @@ void main() {
     },
   );
 
+  test('submission image accepts nested question image fields', () {
+    final parsed = QuizBankSubmission.fromJson({
+      'id': 'sub-image',
+      'status': 'pending_review',
+      'question': {
+        'question': '带图题',
+        'options': ['A', 'B'],
+        'imageUrl': 'https://cdn.example/q.png',
+      },
+    });
+
+    expect(parsed.isPending, isTrue);
+    expect(parsed.question.image, 'https://cdn.example/q.png');
+  });
+
   test('submission review endpoints and parse submitterUserId', () async {
     final parsed = QuizBankSubmission.fromJson({
       'id': 'sub-1',
