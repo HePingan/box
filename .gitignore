@@ -84,3 +84,13 @@ local_ai.md
 # 人眼核对用的渲染截图产物（visual 标签测试生成），不入库。
 test/features/home/goldens/
 test/features/home/failures/
+
+# 一次性工作产物：交接文档、只读审计报告、UI 设计稿。
+# 属于某次任务的过程记录，不是项目的一部分，各自留在生成它的机器上。
+HANDOFF.md
+audit_quiz_plugin_report.md
+references/
+
+# 一次性远端补丁脚本：路径硬编码到后端机 47.109.97.1 的部署目录，
+# 直接改线上源文件，重跑会二次改写。补丁内容已合进后端仓库。
+remote_quiz_image_patch.py
