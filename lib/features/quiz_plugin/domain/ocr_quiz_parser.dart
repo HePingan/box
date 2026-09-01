@@ -340,7 +340,14 @@ class OcrQuizParser {
         .toList();
   }
 
-  /// 识别「题干 + 紧接着 2~5 个无字母前缀的短选项」结构。
+  /// 无字母选项的单行长度上限。
+  ///
+  /// 驾考法规题的选项经常是完整长句，例如
+  /// 「连续驾驶中型以上载客汽车、危险物品运输车超过4小时未停车休息的」（31 字）。
+  /// 上限过低会在遇到长选项时提前 break，导致整组选项判死后退回题干。
+  static const int _maxBareOptionChars = 60;
+
+  /// 识别「题干 + 紧接着 2~5 个无字母前缀的选项」结构。
   /// 典型：驾考宝典「xx 属于什么行为?」后接「违规行为/违章行为/违法行为/犯罪行为」。
   /// 返回 null 表示未命中。
   static _QaSplit? _splitQa(List<String> lines) {
@@ -361,9 +368,9 @@ class OcrQuizParser {
       final opts = <String>[];
       for (var j = i + 1; j < lines.length && opts.length < 6; j++) {
         final t = lines[j].trim();
-        // 选项：短、无冒号、非噪声
+        // 选项：不过长、无冒号、非噪声
         if (t.isEmpty ||
-            t.length > 30 ||
+            t.length > _maxBareOptionChars ||
             t.contains('：') ||
             t.contains(':') ||
             _isNoiseLine(t) ||
@@ -375,12 +382,35 @@ class OcrQuizParser {
       }
       // OCR 常把同屏并排的选项黏进一行（如「未立即排除故障未将车停到路边」）；
       // 若多数选项共享首字，按首字二次切分。
+      //
+      // 切分是启发式的，可能把正常选项（如「驾驶与准驾车型不符的…」）切碎，
+      // 所以切分结果不合法时必须退回未切分的原始选项，
+      // 不能让一次失败的切分把整组选项判死、全部退回题干。
       final expanded = _splitGluedSiblings(opts);
       if (expanded.length >= 2 && expanded.length <= 5) {
         return _QaSplit(question: _cleanQuestion(head), options: expanded);
       }
+      if (opts.length >= 2 && opts.length <= 5) {
+        return _QaSplit(question: _cleanQuestion(head), options: opts);
+      }
     }
     return null;
+  }
+
+  /// 圈码/序号标记：①-⑳、㈠-㈩、带点数字等。
+  ///
+  /// 排序题的选项本身就是这些标记的序列（如「②①③④」），
+  /// 它们在选项内部反复出现是正常内容，不能当成黏连边界。
+  static bool _isEnumMarker(String ch) {
+    if (ch.isEmpty) return false;
+    final code = ch.codeUnitAt(0);
+    // ①-⑳ (U+2460-U+2473)、⑴-⒇ (U+2474-U+2487)、⒈-⒛ (U+2488-U+249B)
+    if (code >= 0x2460 && code <= 0x249B) return true;
+    // ㈠-㈩ (U+3220-U+3229)
+    if (code >= 0x3220 && code <= 0x3229) return true;
+    // ㊀-㊉ (U+3280-U+3289)
+    if (code >= 0x3280 && code <= 0x3289) return true;
+    return false;
   }
 
   /// 兄弟选项共享首字时，拆开被 OCR 黏连的选项。
@@ -388,11 +418,19 @@ class OcrQuizParser {
   /// 仅在 ≥2 个选项共享同一首字时启用，避免误切普通文本。
   static List<String> _splitGluedSiblings(List<String> opts) {
     if (opts.length < 2) return opts;
+    // 黏连的表现一定是「选项条数偏少」——两条被挤进同一行，才会少一条。
+    // 已经收到 4 条（驾考单选的标准条数）时不可能还有黏连，
+    // 此时切分只会误伤正文里复用了共享首字的选项，例如
+    // 「代替实际机动车驾驶人接受…」被内部的「驾」劈成两段。
+    if (opts.length >= 4) return opts;
+
     // 统计首字频次，取出现 ≥2 次的首字作为切分标记。
+    // 序号/圈码字符除外：它们是选项内部的排序标记，不是黏连边界。
     final firstCharCount = <String, int>{};
     for (final o in opts) {
       if (o.isEmpty) continue;
       final c = o.substring(0, 1);
+      if (_isEnumMarker(c)) continue;
       firstCharCount[c] = (firstCharCount[c] ?? 0) + 1;
     }
     final delim = firstCharCount.entries
@@ -405,7 +443,13 @@ class OcrQuizParser {
     if (delim == null) return opts;
     final out = <String>[];
     for (final o in opts) {
-      if (o.length > 1 && o.substring(1).contains(delim)) {
+      // 只切「以 delim 开头且内部又出现 delim」的行。
+      //
+      // 兄弟选项共享首字才会被选成 delim，所以真正被 OCR 黏起来的行
+      // 形如「未…未…」——开头和内部都是 delim。
+      // 反之，若某条选项只是正文里复用了这个字（如「代替实际机动车驾驶人接受…」
+      // 内部含「驾」，但首字是「代」），它就不是黏连行，切开会把选项劈成两半。
+      if (o.length > 1 && o.startsWith(delim) && o.substring(1).contains(delim)) {
         // 在内部出现的 delim 处切分，保留 delim 作为后段首字。
         var buf = o.substring(0, 1);
         for (var k = 1; k < o.length; k++) {

@@ -11,6 +11,8 @@ import '../domain/quiz_bank.dart';
 import '../data/quiz_cloud_pull.dart';
 import '../data/quiz_cloud_push.dart';
 import '../data/quiz_cloud_sync.dart';
+import 'quiz_question_image_store.dart';
+import '../../../globals.dart';
 
 class QuizBankViewPage extends StatefulWidget {
   const QuizBankViewPage({super.key});
@@ -19,7 +21,24 @@ class QuizBankViewPage extends StatefulWidget {
   State<QuizBankViewPage> createState() => _QuizBankViewPageState();
 }
 
-class _QuizBankViewPageState extends State<QuizBankViewPage> {
+class _QuestionImagePreview extends StatelessWidget {
+  const _QuestionImagePreview({required this.source});
+
+  final String source;
+
+  @override
+  Widget build(BuildContext context) {
+    final isRemote =
+        source.startsWith('http://') || source.startsWith('https://');
+    final image = isRemote
+        ? Image.network(source, fit: BoxFit.contain)
+        : Image.file(File(source), fit: BoxFit.contain);
+    return SizedBox(height: 180, child: image);
+  }
+}
+
+class _QuizBankViewPageState extends State<QuizBankViewPage>
+    with RouteAware {
   List<QuizBankItem> _items = const [];
   List<QuizBankItem> _filtered = const [];
   final TextEditingController _searchController = TextEditingController();
@@ -41,12 +60,28 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
     _searchController.dispose();
     _cloudPull.dispose();
     _cloudPush.dispose();
     _reconciler.dispose();
     super.dispose();
+  }
+
+  @override
+  void didPopNext() {
+    // 从录入页面/其他页面返回时，自动刷新题库列表
+    _load();
   }
 
   Future<void> _load() async {
@@ -439,21 +474,23 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
       final newId = UniqueQuizKeyGenerator.key(
         result.question,
         options: result.options,
+        imageSha256: result.imageSha256,
+        imagePerceptualHash: result.imagePerceptualHash,
       );
-      final updated = result.copyWith(
-        id: newId,
-        createdAt: item.createdAt ?? result.createdAt,
-        origin: item.isCloud ? 'local' : item.origin,
-        source: item.isCloud ? '云端题库（本地修改）' : result.source,
-        syncStatus: item.isCloud
-            ? QuizSyncStatus.localOnly
-            : (newId == item.id &&
-                  item.syncStatus == QuizSyncStatus.pendingReview)
-            ? QuizSyncStatus.pendingReview
-            : QuizSyncStatus.localOnly,
-        clearLastSubmitError: true,
-        clearRemoteSubmissionId: item.isCloud,
-      );
+      final revised = item.isCloud
+          ? result.copyWith(
+              id: newId,
+              createdAt: item.createdAt ?? result.createdAt,
+              origin: 'local',
+              source: '云端题库（本地修改）',
+            )
+          : result.copyWith(
+              id: newId,
+              createdAt: item.createdAt ?? result.createdAt,
+              origin: item.origin,
+            );
+      // 本地编辑的内容已不同于此前投稿的版本，必须作为新修订重新投稿。
+      final updated = revised.asLocalRevision();
       if (item.isCloud) {
         await QuizBankStorage.insertIfAbsent(updated);
       } else {
@@ -462,7 +499,11 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
       await _load();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(item.isCloud ? '已另存为本地修改副本' : '已保存修改')),
+        SnackBar(
+          content: Text(
+            item.isCloud ? '已另存为本地修改副本，显示为未推送' : '已保存修改，已标记为未推送，可重新上传云端',
+          ),
+        ),
       );
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -1079,6 +1120,12 @@ class _QuizBankViewPageState extends State<QuizBankViewPage> {
                                     ),
                                   ],
                                 ),
+                                if ((item.imageUrl ?? '')
+                                    .trim()
+                                    .isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  _QuestionImagePreview(source: item.imageUrl!),
+                                ],
                                 if (item.category.trim().isNotEmpty) ...[
                                   const SizedBox(height: 4),
                                   Text(
@@ -1234,6 +1281,8 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
   late final List<TextEditingController> _opts;
   late QuizQuestionType _type;
   int? _correctIndex;
+  QuizQuestionImage? _questionImage;
+  bool _imageBusy = false;
 
   @override
   void initState() {
@@ -1273,6 +1322,23 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
     setState(() {});
   }
 
+  Future<void> _pickQuestionImage() async {
+    if (_imageBusy) return;
+    setState(() => _imageBusy = true);
+    try {
+      final image = await QuizQuestionImageStore.pickAndPersist();
+      if (image != null && mounted) setState(() => _questionImage = image);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('读取题图失败：$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _imageBusy = false);
+    }
+  }
+
   void _submit() {
     final question = _q.text.trim();
     if (question.isEmpty) {
@@ -1309,26 +1375,37 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
         .text
         .trim();
     final analysis = _analysis.text.trim();
-    Navigator.pop(
-      context,
-      QuizBankItem(
-        id: widget.item.id,
-        question: question,
-        type: _type,
-        options: options,
-        correctAnswer: correct,
-        analysis: analysis.isEmpty ? null : analysis,
-        source: widget.item.source,
-        createdAt: widget.item.createdAt,
-        imageUrl: widget.item.imageUrl,
-        category: widget.item.category,
-        origin: widget.item.origin,
-        syncStatus: widget.item.syncStatus,
-        lastSubmitAt: widget.item.lastSubmitAt,
-        lastSubmitError: widget.item.lastSubmitError,
-        remoteSubmissionId: widget.item.remoteSubmissionId,
-      ),
+    final result = QuizBankItem(
+      id: widget.item.id,
+      question: question,
+      type: _type,
+      options: options,
+      correctAnswer: correct,
+      analysis: analysis.isEmpty ? null : analysis,
+      source: widget.item.source,
+      createdAt: widget.item.createdAt,
+      imageUrl: _questionImage?.path ?? widget.item.imageUrl,
+      imageSha256: _questionImage?.sha256 ?? widget.item.imageSha256,
+      imagePerceptualHash:
+          _questionImage?.perceptualHash ?? widget.item.imagePerceptualHash,
+      imageRegionHash:
+          _questionImage?.regionHash ?? widget.item.imageRegionHash,
+      category: widget.item.category,
+      origin: widget.item.origin,
+      syncStatus: widget.item.syncStatus,
+      lastSubmitAt: widget.item.lastSubmitAt,
+      lastSubmitError: widget.item.lastSubmitError,
+      remoteSubmissionId: widget.item.remoteSubmissionId,
     );
+    final edited = _questionImage == null
+        ? result
+        : result.withQuestionImage(
+            imageUrl: _questionImage!.path,
+            imageSha256: _questionImage!.sha256,
+            imagePerceptualHash: _questionImage!.perceptualHash,
+            imageRegionHash: _questionImage!.regionHash,
+          );
+    Navigator.pop(context, edited);
   }
 
   @override
@@ -1378,6 +1455,39 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
                 border: OutlineInputBorder(),
               ),
             ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _imageBusy ? null : _pickQuestionImage,
+              icon: _imageBusy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      _questionImage != null || widget.item.imageUrl != null
+                          ? Icons.image_outlined
+                          : Icons.add_photo_alternate_outlined,
+                    ),
+              label: Text(
+                _questionImage != null
+                    ? '已更换题图 · 点击再选'
+                    : (widget.item.imageUrl?.isNotEmpty == true
+                          ? '已有题图 · 点击更换'
+                          : '上传题目图片'),
+              ),
+            ),
+            if (widget.item.imagePerceptualHash?.isNotEmpty == true ||
+                _questionImage != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  _questionImage != null
+                      ? '新题图将用于同题不同图消歧。'
+                      : '已具备图像指纹，答题助手会优先按题图匹配。',
+                  style: const TextStyle(fontSize: 11, color: Colors.black54),
+                ),
+              ),
             const SizedBox(height: 12),
             Row(
               children: [

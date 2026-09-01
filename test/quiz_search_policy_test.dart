@@ -50,4 +50,35 @@ void main() {
     expect(policy.canReplaceWith(QuizResultSource.externalApi), isFalse);
     expect(policy.canReplaceWith(QuizResultSource.localBank), isTrue);
   });
+
+  test('同题干同选项但题图指纹变化时不受上一题命中锁抑制', () {
+    final policy = QuizSearchPolicy();
+    const stem = '这个标志是何含义？';
+    const options = ['堤坝路', '上陡坡', '下陡坡', '连续上坡'];
+    policy.recordSuccess(
+      stem: stem,
+      options: options,
+      imageHash: '1111111111111111',
+      source: QuizResultSource.localBank,
+      questionScore: 100,
+      optionScore: 100,
+    );
+
+    expect(
+      policy.shouldSuppress(
+        stem: stem,
+        options: options,
+        imageHash: '1111111111111111',
+      ),
+      isTrue,
+    );
+    expect(
+      policy.shouldSuppress(
+        stem: stem,
+        options: options,
+        imageHash: '2222222222222222',
+      ),
+      isFalse,
+    );
+  });
 }

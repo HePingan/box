@@ -29,7 +29,9 @@ String _overlayTextForAnswer(QuizAnswer answer) {
         answer.options.isNotEmpty) {
       return '$base（未对齐卷面选项）';
     }
-    return base;
+    return answer.imageMatchHint.isEmpty
+        ? base
+        : '$base\n${answer.imageMatchHint}';
   }
 
   // 无结构化答案时，从详情里尽量抠出答案行；抠不到再退回极简首行。
@@ -88,6 +90,38 @@ String _formatResultForOverlay(QuizResult result) {
     return buf.toString();
   }
   return result.error?.isNotEmpty == true ? result.error! : '未找到答案';
+}
+
+/// 歧义结果专用正文。候选是用于人工比对的线索，绝不能带「答案：」前缀，
+/// 也不泄露引擎内部的「题图匹配不足」「候选答案：」诊断文案。
+String _ambiguousCandidatesForOverlay(QuizResult result) {
+  final candidates = <String>[];
+  final seen = <String>{};
+  for (final answer in result.answers) {
+    var value = answer.correctAnswer.trim();
+    if (value.isEmpty) {
+      value = _answerValueWithoutPrefix(answer.text);
+    }
+    value = _answerValueWithoutPrefix(value);
+    if (value.isEmpty || !seen.add(value)) continue;
+    candidates.add(value);
+  }
+
+  if (candidates.isEmpty) return '请人工确认\n未提取到可核对候选';
+  return <String>[
+    '请人工确认',
+    for (var i = 0; i < candidates.length; i++) '候选 ${i + 1}：${candidates[i]}',
+  ].join('\n');
+}
+
+String _answerValueWithoutPrefix(String source) {
+  var value = source.trim();
+  value = value.replaceFirst(RegExp(r'^\s*答案\s*[：:]?\s*'), '');
+  final firstLine = value
+      .split('\n')
+      .map((line) => line.trim())
+      .firstWhere((line) => line.isNotEmpty, orElse: () => '');
+  return firstLine.replaceFirst(RegExp(r'^\s*候选\s*\d+\s*[：:]?\s*'), '').trim();
 }
 
 /// 多匹配列表：每条单独一条，供原生切换正文。

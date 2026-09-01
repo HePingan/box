@@ -643,6 +643,33 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                     onPressed: _saving
                         ? null
                         : () async {
+                            setState(() => _saving = true);
+                            await QuizPluginEntry.saveConfig(_cfg);
+                            final opened =
+                                await QuizPluginEntry.openImageRegionSelector();
+                            if (context.mounted) {
+                              if (opened) {
+                                Navigator.pop(context);
+                                widget.onResult(_cfg);
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('请先开启无障碍服务，再框选题图区域'),
+                                  ),
+                                );
+                              }
+                            }
+                            if (mounted) setState(() => _saving = false);
+                          },
+                    child: const Text('框选题图区域'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton.tonal(
+                    onPressed: _saving
+                        ? null
+                        : () async {
                             await QuizPluginEntry.saveConfig(_cfg);
                             if (_cfg.displayMode == 'notification') {
                               await QuizPluginEntry.requestNotificationPermission();

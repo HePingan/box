@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'quiz_question_image_store.dart';
+
 import 'package:box/design_system/app_tokens.dart';
 
 import '../domain/ocr_quiz_parser.dart';
@@ -27,6 +29,8 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
   int _correctIndex = 0;
   final TextEditingController _analysisController = TextEditingController();
   bool _ocrBusy = false;
+  QuizQuestionImage? _questionImage;
+  bool _imageBusy = false;
 
   @override
   void dispose() {
@@ -48,6 +52,23 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
     }
     if (_correctIndex >= n) _correctIndex = 0;
     setState(() {});
+  }
+
+  Future<void> _pickQuestionImage() async {
+    if (_imageBusy) return;
+    setState(() => _imageBusy = true);
+    try {
+      final image = await QuizQuestionImageStore.pickAndPersist();
+      if (image == null || !mounted) return;
+      setState(() => _questionImage = image);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('读取题图失败：$e')));
+    } finally {
+      if (mounted) setState(() => _imageBusy = false);
+    }
   }
 
   Future<void> _save() async {
@@ -74,7 +95,12 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
     final analysis = _analysisController.text.trim();
 
     final item = QuizBankItem(
-      id: UniqueQuizKeyGenerator.key(question, options: options),
+      id: UniqueQuizKeyGenerator.key(
+        question,
+        options: options,
+        imageSha256: _questionImage?.sha256,
+        imagePerceptualHash: _questionImage?.perceptualHash,
+      ),
       question: question,
       type: _type,
       options: options,
@@ -82,6 +108,10 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
       analysis: analysis.isEmpty ? null : analysis,
       source: '录入',
       createdAt: DateTime.now(),
+      imageUrl: _questionImage?.path,
+      imageSha256: _questionImage?.sha256,
+      imagePerceptualHash: _questionImage?.perceptualHash,
+      imageRegionHash: _questionImage?.regionHash,
     );
 
     final status = await QuizBankStorage.insertIfAbsent(item);
@@ -107,6 +137,7 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
     }
     _correctIndex = 0;
     _analysisController.clear();
+    _questionImage = null;
     setState(() {});
   }
 
@@ -294,6 +325,35 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
                 ),
               ),
             ),
+
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _imageBusy ? null : _pickQuestionImage,
+              icon: _imageBusy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      _questionImage == null
+                          ? Icons.add_photo_alternate_outlined
+                          : Icons.image_outlined,
+                    ),
+              label: Text(
+                _questionImage == null ? '上传题目图片（同题不同图时必选）' : '已保存题图 · 点击更换',
+              ),
+            ),
+            if (_questionImage != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                '图像指纹：${_questionImage!.perceptualHash}；答题助手将用图片消歧。',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppTokens.textTertiary,
+                ),
+              ),
+            ],
 
             const SizedBox(height: 12),
 

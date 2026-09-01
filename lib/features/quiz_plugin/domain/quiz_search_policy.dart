@@ -6,6 +6,7 @@ enum QuizResultSource { localBank, ocrLocalBank, externalApi, unknown }
 class QuizSearchPolicy {
   String _lockedStem = '';
   String _lockedOptions = '';
+  String _lockedImageHash = '';
   QuizResultSource? _bestSource;
 
   static String stemFingerprint(String raw) =>
@@ -26,13 +27,17 @@ class QuizSearchPolicy {
   bool shouldSuppress({
     required String stem,
     required List<String> options,
+    String? imageHash,
     bool manualRefresh = false,
   }) {
     if (manualRefresh) return false;
     final normalizedStem = stemFingerprint(stem);
     if (normalizedStem.isEmpty || normalizedStem != _lockedStem) return false;
     // 选项补全/变化表示题目质量提升或同题干另一题，允许受控复搜。
-    return _lockedOptions == _optionsKey(options);
+    if (_lockedOptions != _optionsKey(options)) return false;
+    // 交通标志等图片题常出现同题干同选项的多个变体；题图变化必须复搜。
+    final normalizedImageHash = (imageHash ?? '').trim().toLowerCase();
+    return _lockedImageHash == normalizedImageHash;
   }
 
   void recordSuccess({
@@ -41,6 +46,7 @@ class QuizSearchPolicy {
     required QuizResultSource source,
     required int questionScore,
     required int optionScore,
+    String? imageHash,
   }) {
     final isReliableLocal =
         source == QuizResultSource.localBank &&
@@ -50,9 +56,11 @@ class QuizSearchPolicy {
     if (isReliableLocal) {
       _lockedStem = stemFingerprint(stem);
       _lockedOptions = _optionsKey(options);
+      _lockedImageHash = (imageHash ?? '').trim().toLowerCase();
     } else {
       _lockedStem = '';
       _lockedOptions = '';
+      _lockedImageHash = '';
     }
   }
 

@@ -179,12 +179,18 @@ class QuizAnswerAligner {
     }
 
     // 1.5) 多选/组合答案：①②③ / A+B / 123 等 → 投影到卷面对应项
-    final multi = _tryMultiSelectAlignment(
-      raw: raw,
-      bankResolved: bankResolved,
-      bankOptions: bankOptions,
-      options: options,
-    );
+    //
+    // 但排序题的选项本身就是圈码序列（如「②①③④」），答案正文含多个圈码
+    // 并不代表多选。判据：答案正文与某个选项完整相等时，它是单选答案，
+    // 必须走精确匹配，否则会把四个选项全部投影展示。
+    final multi = _answerEqualsSingleOption(bankResolved, bankOptions, options)
+        ? null
+        : _tryMultiSelectAlignment(
+            raw: raw,
+            bankResolved: bankResolved,
+            bankOptions: bankOptions,
+            options: options,
+          );
     if (multi != null) return multi;
 
     final bankNorm = QuizBankTextNormalizer.normalizeOption(bankResolved);
@@ -313,6 +319,27 @@ class QuizAnswerAligner {
     );
   }
 
+  /// 答案正文是否与某个选项完整相等（题库侧或卷面侧任一命中即可）。
+  ///
+  /// 排序题的选项就是圈码序列本身，答案「②①③④」等于 B 选项正文。
+  /// 这种情况下答案是单选，圈码不是多选标记，必须阻止多选投影。
+  /// 而真正的多选答案（如「①③」，选项正文是文字）不会与任何选项相等。
+  static bool _answerEqualsSingleOption(
+    String bankResolved,
+    List<String> bankOptions,
+    List<String> options,
+  ) {
+    final answerNorm = QuizBankTextNormalizer.normalizeOption(bankResolved);
+    if (answerNorm.isEmpty) return false;
+    for (final list in [bankOptions, options]) {
+      for (final o in list) {
+        final optNorm = QuizBankTextNormalizer.normalizeOption(o);
+        if (optNorm.isNotEmpty && optNorm == answerNorm) return true;
+      }
+    }
+    return false;
+  }
+
   /// 多选组合：①②③ / A+B / 123 / A、B、C
   static QuizAnswerAlignment? _tryMultiSelectAlignment({
     required String raw,
@@ -434,10 +461,23 @@ class QuizAnswerAligner {
     // 去 A./①/1. 等前缀
     t = t
         .replaceFirst(RegExp(r'^[A-Ha-hＡ-Ｈ][.、．:：)）\s]+'), '')
-        .replaceFirst(RegExp(r'^[①②③④⑤⑥⑦⑧⑨⑩⑴⑵⑶⑷⑸]'), '')
         .replaceFirst(RegExp(r'^[1-8][.、．:：)）\s]+'), '')
         .trim();
+    // 圈码前缀只在它确实是「编号 + 正文」时才剥。
+    // 排序题的选项整体就是圈码序列（如「②①③④」），剥掉首个圈码会得到
+    // 「①③④」，恰好与另一个选项相等，导致答案被贴到错误选项上。
+    if (!_isEnumSequenceOnly(t)) {
+      t = t.replaceFirst(RegExp(r'^[①②③④⑤⑥⑦⑧⑨⑩⑴⑵⑶⑷⑸]'), '').trim();
+    }
     return QuizBankTextNormalizer.normalizeOption(t);
+  }
+
+  /// 文本是否整体只由圈码/序号标记组成（如「②①③④」）。
+  /// 这类文本是排序题的答案序列本身，不含可剥离的编号前缀。
+  static bool _isEnumSequenceOnly(String text) {
+    final t = text.replaceAll(RegExp(r'[\s、,，+]'), '');
+    if (t.isEmpty) return false;
+    return RegExp(r'^[①②③④⑤⑥⑦⑧⑨⑩⑴⑵⑶⑷⑸]+$').hasMatch(t);
   }
 
   static int _containmentScore(String a, String b) {
