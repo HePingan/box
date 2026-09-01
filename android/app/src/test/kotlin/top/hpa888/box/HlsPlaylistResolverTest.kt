@@ -1,4 +1,4 @@
-package com.example.box
+package top.hpa888.box
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
