@@ -198,7 +198,13 @@ class QuizOverlayManager(private val context: Context) {
                 currentAnswers.contains("未开启") || currentAnswers.contains("未命中") -> "miss"
             else -> "hit"
         }
-        currentAnswerKey = answerKey
+        // 题图歧义必须显式清空上一题的答案键；否则 native 缓存会把旧的
+        // A/B/C/D 展示成当前题已经确认的答案。
+        if (status == "ambiguous") {
+            currentAnswerKey = null
+        } else {
+            currentAnswerKey = answerKey
+        }
         currentSimilarity = similarity
         currentMatchIndex = matchIndex ?: 0
         currentMatchCount = matchCount ?: 1
@@ -607,7 +613,8 @@ class QuizOverlayManager(private val context: Context) {
             else
                 @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -629,7 +636,8 @@ class QuizOverlayManager(private val context: Context) {
             normalOverlayView = null
             try {
                 params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                        WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
                 wm.addView(view, params)
                 normalOverlayView = view
                 normalOverlayParams = params
@@ -705,6 +713,11 @@ class QuizOverlayManager(private val context: Context) {
         fun bind(target: View) {
             var ix = 0; var iy = 0; var tx = 0f; var ty = 0f; var dragging = false
             var lastTap = 0L
+            // 同帧合并高频 MOVE，避免每个触摸采样都触发一次跨进程布局。
+            val committer = OverlayLayoutCommitter(ChoreographerFrameScheduler()) { g ->
+                params.x = g.x; params.y = g.y
+                try { wm.updateViewLayout(view, params) } catch (_: Throwable) {}
+            }
             target.setOnTouchListener { v, e ->
                 when (e.actionMasked) {
                     android.view.MotionEvent.ACTION_DOWN -> {
@@ -718,10 +731,16 @@ class QuizOverlayManager(private val context: Context) {
                             pill?.alpha = 0.55f
                         }
                         if (dragging) {
+                            val saveX = params.x; val saveY = params.y
                             params.x = ix + dx.toInt()
                             params.y = iy + dy.toInt()
                             clampNormal(params)
-                            try { wm.updateViewLayout(view, params) } catch (_: Throwable) {}
+                            val targetX = params.x; val targetY = params.y
+                            // clamp 计算需要写 params，提交前还原，由门闸统一落地。
+                            params.x = saveX; params.y = saveY
+                            committer.request(
+                                OverlayGeometry(targetX, targetY, params.width, params.height),
+                            )
                         }
                         true
                     }
@@ -729,8 +748,14 @@ class QuizOverlayManager(private val context: Context) {
                         view.findViewById<View>(R.id.answer_container)?.alpha = 1f
                         pill?.alpha = 1f
                         if (dragging) {
+                            val dx = e.rawX - tx; val dy = e.rawY - ty
+                            params.x = ix + dx.toInt()
+                            params.y = iy + dy.toInt()
+                            clampNormal(params)
                             snapNormal(params)
-                            try { wm.updateViewLayout(view, params) } catch (_: Throwable) {}
+                            committer.flush(
+                                OverlayGeometry(params.x, params.y, params.width, params.height),
+                            )
                         } else {
                             val now = System.currentTimeMillis()
                             if (v.id == R.id.title_bar && now - lastTap < 280) {
@@ -799,6 +824,7 @@ class QuizOverlayManager(private val context: Context) {
                 .map { it.trim() }
                 .firstOrNull { it.isNotEmpty() && !it.contains("相似度") }
                 ?: a.ifBlank { "未命中" }
+            currentStatus == "ambiguous" -> a.ifBlank { "存在多个候选，请手动确认" }
             else -> {
                 val lines = a.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
                 var answerLine = lines.firstOrNull {
@@ -828,6 +854,7 @@ class QuizOverlayManager(private val context: Context) {
         val color = when (currentStatus) {
             "searching" -> 0xFFF59E0B.toInt()
             "miss" -> 0xFFEF4444.toInt()
+            "ambiguous" -> 0xFFF59E0B.toInt()
             "hit" -> 0xFF22C55E.toInt()
             else -> 0xFF6366F1.toInt()
         }
@@ -836,7 +863,9 @@ class QuizOverlayManager(private val context: Context) {
         val sim = simFromMarker ?: Regex("""相似度\s*[:：]?\s*(\d{1,3})\s*%""")
             .find(a)?.groupValues?.getOrNull(1)?.toIntOrNull()
         val titleText = when {
-            currentStatus == "searching" -> "检索中…"
+            currentStatus == "ambiguous" && currentMatchCount > 1 ->
+                "请确认 ${currentMatchIndex + 1}/$currentMatchCount"
+            currentStatus == "ambiguous" -> "请手动确认"
             currentMatchCount > 1 && !key.isNullOrBlank() && sim != null ->
                 "${currentMatchIndex + 1}/$currentMatchCount · $key · $sim%"
             currentMatchCount > 1 && sim != null ->

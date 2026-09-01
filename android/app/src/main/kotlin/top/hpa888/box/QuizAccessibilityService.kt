@@ -7,6 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.PixelFormat
@@ -56,6 +59,8 @@ class QuizAccessibilityService : AccessibilityService() {
         private const val TAG = "QuizAccessibility"
         private const val PREFS_NAME = "quiz_plugin_prefs"
         private const val KEY_REGION = "quiz_region"
+        /** 题图区域：仅框住题图本身，用于 dHash 消歧，与 OCR 区域独立。 */
+        private const val KEY_IMAGE_REGION = "quiz_image_region"
         private const val KEY_OVERLAY_GEOMETRY = "quiz_overlay_geometry"
         private const val KEY_OVERLAY_COMPACT_MIGRATED = "quiz_overlay_compact_migrated_v4"
         private const val KEY_OVERLAY_OPACITY = "quiz_overlay_opacity"
@@ -242,7 +247,30 @@ class QuizAccessibilityService : AccessibilityService() {
         /** 进入识别区域调节（服务自建全屏无障碍浮层，有权限）。 */
         fun enterRegionModeIfRunning(): Boolean {
             val svc = runningService ?: return false
-            svc.mainHandler.post { svc.enterRegionMode() }
+            svc.mainHandler.post {
+                svc.regionMode = "ocr"
+                svc.enterRegionMode()
+            }
+            return true
+        }
+
+        /** 进入「题图区域」框选模式，保存后写入 KEY_IMAGE_REGION 而非 OCR 区域。 */
+        fun enterImageRegionModeIfRunning(): Boolean {
+            val svc = runningService ?: return false
+            svc.mainHandler.post {
+                svc.regionMode = "image"
+                svc.enterRegionMode()
+            }
+            return true
+        }
+
+        /** 用题图区域截图并计算 dHash（供 Flutter 侧消歧用）。 */
+        fun captureImageRegionIfRunning(
+            requestId: Int,
+            callback: (ByteArray?) -> Unit,
+        ): Boolean {
+            val svc = runningService ?: return false
+            svc.captureImageRegionScreenshotWithRequestId(requestId, callback)
             return true
         }
 
@@ -385,12 +413,21 @@ class QuizAccessibilityService : AccessibilityService() {
                 QuizOcrEntryOverlay.hideIfShowing()
             }
         }
+
+        @JvmStatic
+        fun computeDHashFromPng(pngBytes: ByteArray): String? {
+            val svc = runningService
+            if (svc != null) return svc.computeDHash(pngBytes)
+            return null
+        }
     }
 
     val mainHandler = Handler(Looper.getMainLooper())
     private var channel: MethodChannel? = null
     private var isActive = false
     private var screenRegion: RectF? = null
+    /** 题图区域：仅框住题图本身，独立于 OCR 识别区域。 */
+    private var imageRegion: RectF? = null
     private var windowManager: WindowManager? = null
     private var accessibilityOverlayView: View? = null
     private var overlayParams: WindowManager.LayoutParams? = null
@@ -405,6 +442,8 @@ class QuizAccessibilityService : AccessibilityService() {
     private var lastProbeSearchText: String = ""
     /** 无区域时点试捕：先框选，保存后自动继续。entry=录入填表；answer=答题搜题 */
     private var pendingProbeAfterRegion: String? = null
+    /** 区域选择模式：ocr=识别区域（默认），image=题图区域。 */
+    private var regionMode: String = "ocr"
     private var commandReceiver: BroadcastReceiver? = null
 
     // 悬浮窗几何 / 外观状态
@@ -412,6 +451,18 @@ class QuizAccessibilityService : AccessibilityService() {
     private var overlayCollapsed = false
     private var overlayHiddenDot = false
     @Volatile private var hiddenDotDragging = false
+
+    /**
+     * 用户此刻是否正在滑动/拖动我们自己的浮层。
+     * 抓题扫描与浮层渲染共用主线程，滑动期间必须让路，松手后再恢复。
+     */
+    @Volatile private var ownOverlayInteracting = false
+
+    /** 最后一次操作自己浮层的时间（触摸或滚动均算），用于抓题扫描静默判定。 */
+    @Volatile private var lastOwnOverlayActivityAt = 0L
+
+    /** 在途的扫描恢复回调，重排时需先撤销，避免叠加成多次扫描。 */
+    private var scanResumeRunnable: Runnable? = null
     private var deferredCaptureAfterDotDrag: Runnable? = null
     private var overlayExpandedHeight = 0 // 展开时的窗口高度（px），折叠时暂存
     private var examMode = false
@@ -514,6 +565,17 @@ class QuizAccessibilityService : AccessibilityService() {
         if (!isActive) return
         // 驾考宝典页面滚动/动画会高频发节点事件；圆点拖动优先，扫描延后到松手后。
         if (hiddenDotDragging) return
+
+        // 抓题扫描跑在主线程（渲染悬浮窗的同一条线程），且每次都是几百次 binder 调用。
+        // 自身浮层滚动产生的事件既是无用功又直接吃掉滑动帧率，必须在入口挡掉。
+        if (!QuizCaptureScanGate.shouldScan(
+                eventPackage = event.packageName?.toString().orEmpty(),
+                selfPackage = packageName,
+                ownOverlayInteracting = ownOverlayInteracting,
+            )
+        ) {
+            return
+        }
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
@@ -781,7 +843,11 @@ class QuizAccessibilityService : AccessibilityService() {
             overlayQuestion = question.ifBlank { overlayQuestion }
             overlayAnswers = answers.ifBlank { overlayAnswers }
             if (status.isNotBlank()) overlayStatus = status
-            if (answerKey != null) overlayAnswerKey = answerKey
+            if (status == "ambiguous") {
+                overlayAnswerKey = null
+            } else if (answerKey != null) {
+                overlayAnswerKey = answerKey
+            }
             if (answersList.isNotEmpty()) {
                 overlayAnswersList = answersList
                 overlayMatchCount = answersList.size
@@ -801,7 +867,11 @@ class QuizAccessibilityService : AccessibilityService() {
         }
         overlayAnswers = answers
         if (status.isNotBlank()) overlayStatus = status
-        if (answerKey != null) overlayAnswerKey = answerKey
+        if (status == "ambiguous") {
+            overlayAnswerKey = null
+        } else if (answerKey != null) {
+            overlayAnswerKey = answerKey
+        }
         // 相似度为 0 时不覆盖已有值，让 Native 回退到 SIM marker/正则提取
         if (similarity != null && similarity > 0) overlaySimilarity = similarity
         if (answersList.isNotEmpty()) {
@@ -889,11 +959,20 @@ class QuizAccessibilityService : AccessibilityService() {
             view.findViewById<View>(R.id.btn_area)?.setOnClickListener {
                 // 从答案窗进区域模式：保存后默认自动试捕并搜题
                 pendingProbeAfterRegion = "answer"
+                regionMode = "ocr"
                 enterRegionMode()
             }
             view.findViewById<View>(R.id.btn_area)?.setOnLongClickListener {
                 showRegionQuickMenu(it)
                 true
+            }
+            view.findViewById<View>(R.id.btn_quiz_entry)?.setOnClickListener {
+                val ch = resolveChannel()
+                if (ch == null) {
+                    toast("请先打开 box 应用")
+                } else {
+                    ch.invokeMethod("examQuickEntry", null)
+                }
             }
             refreshRegionButtonState(view)
             view.findViewById<View>(R.id.btn_probe)?.setOnClickListener {
@@ -932,12 +1011,15 @@ class QuizAccessibilityService : AccessibilityService() {
             }
             // 注意：部分 ROM 上 TYPE_ACCESSIBILITY_OVERLAY 配合 FLAG_LAYOUT_IN_SCREEN
             // 对非全屏小窗会抛 BadTokenException，这里去掉该 flag 以提升兼容性。
+            // FLAG_HARDWARE_ACCELERATED：Manifest 的 hardwareAccelerated 只覆盖 Activity，
+            // WindowManager 直加的浮层默认软件渲染，答案区滚动会掉帧。
             val params = WindowManager.LayoutParams(
                 w,
                 h,
                 type,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                        WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
@@ -979,7 +1061,8 @@ class QuizAccessibilityService : AccessibilityService() {
                 Log.w(TAG, "add accessibility overlay failed: ${e.javaClass.simpleName}: ${e.message}", e)
                 try {
                     params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                         params.layoutInDisplayCutoutMode =
                             WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
@@ -1052,7 +1135,7 @@ class QuizAccessibilityService : AccessibilityService() {
             popup.setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> { cycleFontScale(root); true }
-                    2 -> { enterRegionMode(); true }
+                    2 -> { regionMode = "ocr"; enterRegionMode(); true }
                     3 -> { copyAnswerToClipboard(); true }
                     4 -> { toggleAnswerOnly(root); true }
                     5 -> { setExamMode(!examMode); true }
@@ -1345,6 +1428,9 @@ class QuizAccessibilityService : AccessibilityService() {
             view.findViewById<View>(id)?.visibility =
                 if (exam) View.GONE else View.VISIBLE
         }
+        // 考试态仍保留「一键录入」入口；普通态隐藏，避免与现有答题操作混杂。
+        view.findViewById<View>(R.id.btn_quiz_entry)?.visibility =
+            if (exam) View.VISIBLE else View.GONE
         // 关闭按钮考试态仍保留，方便关掉悬浮窗
         view.findViewById<View>(R.id.btn_close)?.visibility = View.VISIBLE
         // 考试态答案区保持紧凑内容高度；避免 weight=1 把卡片拉成空白长条。
@@ -1590,6 +1676,76 @@ class QuizAccessibilityService : AccessibilityService() {
 
     private var overlayExpandedWidth = 0
 
+    /**
+     * 缩放门闸缓存。resizeHandleTouch 每个事件都会被调用，若在函数内新建门闸，
+     * 同帧合并状态就会随事件丢失，等于没做合并。
+     */
+    private var resizeCommitterCache: OverlayLayoutCommitter? = null
+    private var resizeCommitterView: View? = null
+
+    private fun resizeCommitter(
+        view: View,
+        wm: WindowManager,
+        params: WindowManager.LayoutParams,
+    ): OverlayLayoutCommitter {
+        val cached = resizeCommitterCache
+        if (cached != null && resizeCommitterView === view) return cached
+        val created = OverlayLayoutCommitter(ChoreographerFrameScheduler()) { g ->
+            params.x = g.x
+            params.y = g.y
+            params.width = g.width
+            params.height = g.height
+            try { wm.updateViewLayout(view, params) } catch (_: Throwable) {}
+        }
+        resizeCommitterCache = created
+        resizeCommitterView = view
+        return created
+    }
+
+    /**
+     * 浮层被触摸期间暂停抓题扫描。由浮层的 touch 分发在按下时置位、抬起时清位。
+     * 松手后补一次扫描，避免滑动期间刚好切题被漏掉。
+     */
+    fun setOwnOverlayInteracting(interacting: Boolean) {
+        // 触摸本身就是一次「活动」，无论置位还是清位都要刷新静默计时。
+        lastOwnOverlayActivityAt = SystemClock.uptimeMillis()
+        if (ownOverlayInteracting == interacting) return
+        ownOverlayInteracting = interacting
+        if (!interacting) scheduleScanResume(OverlayScanResumePolicy.QUIET_WINDOW_MS)
+    }
+
+    /**
+     * 浮层内部发生滚动（含抬手后的 fling 惯性）时刷新静默计时。
+     *
+     * 只看触摸不够：ACTION_UP 之后 ScrollView 还在跑减速动画，
+     * 此时开扫会把全树遍历插进动画中段，表现为松手瞬间顿一下。
+     */
+    fun notifyOwnOverlayScrolled() {
+        lastOwnOverlayActivityAt = SystemClock.uptimeMillis()
+    }
+
+    /** 静默期结束后才补一次扫描，避免漏掉滑动期间的切题。 */
+    private fun scheduleScanResume(delayMs: Long) {
+        scanResumeRunnable?.let { mainHandler.removeCallbacks(it) }
+        val r = Runnable {
+            scanResumeRunnable = null
+            if (!isActive) return@Runnable
+            val decision = OverlayScanResumePolicy.decide(
+                now = SystemClock.uptimeMillis(),
+                touchActive = ownOverlayInteracting,
+                lastActivityAt = lastOwnOverlayActivityAt,
+            )
+            when (decision) {
+                is OverlayScanResumePolicy.Decision.Resume ->
+                    extractAndSend(bestCaptureRoot(null))
+                is OverlayScanResumePolicy.Decision.Recheck ->
+                    scheduleScanResume(decision.delayMs)
+            }
+        }
+        scanResumeRunnable = r
+        mainHandler.postDelayed(r, delayMs)
+    }
+
     private fun resizeHandleTouch(view: View, event: MotionEvent): Boolean {
         val wm = windowManager ?: return false
         val params = overlayParams ?: return false
@@ -1614,10 +1770,16 @@ class QuizAccessibilityService : AccessibilityService() {
                 overlayExpandedHeight = nh
                 overlayExpandedWidth = nw
                 clampParamsToScreen(params)
-                try { wm.updateViewLayout(view, params) } catch (_: Throwable) {}
+                // 与拖动一致：同帧合并，避免逐采样跨进程布局造成缩放发涩。
+                resizeCommitter(view, wm, params).request(
+                    OverlayGeometry(params.x, params.y, params.width, params.height),
+                )
                 true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                resizeCommitter(view, wm, params).flush(
+                    OverlayGeometry(params.x, params.y, params.width, params.height),
+                )
                 // 考试模式拖拽不写坏「正常大窗」持久化；退出考试时用 preExamGeometry 恢复
                 if (!examMode) {
                     saveOverlaySize(params.width, params.height)
@@ -1822,11 +1984,30 @@ class QuizAccessibilityService : AccessibilityService() {
 
     // ---- 识别区域调节（服务自建全屏无障碍浮层）----
 
-    /** 标题栏区域按钮：已保存区域时不透明，未设置时半透明提示。 */
+    /**
+     * 标题栏区域按钮状态：
+     * - alpha 表示 OCR 识别区域是否已配置（已配置不透明，未配置半透明）
+     * - tint 表示题图区域是否已配置（已配置显琥珀色，未配置显常规浅色）
+     *
+     * 题图区域直接决定图片指纹的区分度：未配置时图片指纹取自整题截图，
+     * 「同题干同选项仅题图不同」的题会因 dHash 区分度不足而误配。
+     * 这里用颜色把该状态暴露在悬浮窗上，避免用户不知道自己漏配了。
+     */
     private fun refreshRegionButtonState(root: View? = accessibilityOverlayView) {
         val btn = root?.findViewById<View>(R.id.btn_area) ?: return
-        val has = loadSavedRegionOnly() != null || screenRegion != null
-        btn.alpha = if (has) 0.95f else 0.62f
+        val hasOcrRegion = loadSavedRegionOnly() != null || screenRegion != null
+        btn.alpha = if (hasOcrRegion) 0.95f else 0.62f
+
+        val hasImageRegion = loadImageRegion() != null
+        (btn as? ImageButton)?.setColorFilter(
+            if (hasImageRegion) 0xFFFBBF24.toInt() else 0xFFF8FAFC.toInt()
+        )
+        btn.contentDescription = when {
+            hasImageRegion && hasOcrRegion -> "设置识别区域（识别区域、题图区域均已配置）"
+            hasImageRegion -> "设置识别区域（题图区域已配置，识别区域未配置）"
+            hasOcrRegion -> "设置识别区域（识别区域已配置，题图区域未配置）"
+            else -> "设置识别区域（识别区域、题图区域均未配置）"
+        }
     }
 
     /** 长按区域按钮：快捷预设，不进全屏框选。 */
@@ -1838,6 +2019,9 @@ class QuizAccessibilityService : AccessibilityService() {
             popup.menu.add(0, 3, 2, "全屏")
             popup.menu.add(0, 4, 3, "恢复上次")
             popup.menu.add(0, 5, 4, "打开框选…")
+            val imgSet = loadImageRegion() != null
+            popup.menu.add(0, 6, 5, if (imgSet) "重设题图区域…" else "框选题图区域…")
+            if (imgSet) popup.menu.add(0, 7, 6, "清除题图区域")
             popup.setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> {
@@ -1881,6 +2065,25 @@ class QuizAccessibilityService : AccessibilityService() {
                         enterRegionMode()
                         true
                     }
+                    6 -> {
+                        // 框选题图区域
+                        regionMode = "image"
+                        enterRegionMode()
+                        true
+                    }
+                    7 -> {
+                        // 清除题图区域
+                        imageRegion = null
+                        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                        prefs.remove(KEY_IMAGE_REGION)
+                        val pkg = lastForegroundPkg
+                        if (pkg.isNotBlank()) prefs.remove("${KEY_IMAGE_REGION}_$pkg")
+                        prefs.apply()
+                        toast("题图区域已清除")
+                        // C1: 清除后立即刷新按钮颜色（琥珀→白）
+                        mainHandler.post { refreshRegionButtonState() }
+                        true
+                    }
                     else -> false
                 }
             }
@@ -1888,6 +2091,7 @@ class QuizAccessibilityService : AccessibilityService() {
         } catch (e: Throwable) {
             Log.w(TAG, "showRegionQuickMenu failed", e)
             pendingProbeAfterRegion = "answer"
+            regionMode = "ocr"
             enterRegionMode()
         }
     }
@@ -1944,7 +2148,8 @@ class QuizAccessibilityService : AccessibilityService() {
             WindowManager.LayoutParams.MATCH_PARENT,
             type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -1981,11 +2186,34 @@ class QuizAccessibilityService : AccessibilityService() {
         applyToolbarSafeInsets(selector, toolbar)
         toolbar?.post { applyToolbarSafeInsets(selector, toolbar) }
 
+        // 题图模式：面板文案/按钮按用途自适应，避免和 OCR 识别区域混淆。
+        val isImageMode = regionMode == "image"
+        view.findViewById<TextView>(R.id.tv_region_hint)?.text = if (isImageMode) {
+            "框选「题图区域」：只框住题目里的图片本身，不要包含题干和选项文字，" +
+                "否则文字会稀释图片指纹，导致同题干不同题图被误判为同一题。"
+        } else {
+            "框选「识别区域」：包含题干和选项的范围，用于取题和 OCR。"
+        }
+        (view.findViewById<View>(R.id.btn_region_save) as? android.widget.Button)?.text =
+            if (isImageMode) "保存题图区域" else "保存"
+        // 题图模式下试捕/OCR试识/搜题都不适用，隐藏避免误触。
+        view.findViewById<View>(R.id.btn_region_probe)?.visibility =
+            if (isImageMode) View.GONE else View.VISIBLE
+        view.findViewById<View>(R.id.btn_region_ocr)?.visibility =
+            if (isImageMode) View.GONE else View.VISIBLE
+
         // 优先当前前台 App 专属区域，否则全局/默认上 55%
         val pkg = lastForegroundPkg.ifBlank { null }
-        val initial = (pkg?.let { loadRegionForPackage(it) }) ?: loadRegion()
+        val initial = if (isImageMode) {
+            loadImageRegion()
+        } else {
+            (pkg?.let { loadRegionForPackage(it) }) ?: loadRegion()
+        }
         if (initial != null) {
             selector?.setRegion(initial)
+        } else if (isImageMode) {
+            // 题图常见位置：题干下方居中偏上的一块，给个比 OCR 区更小的起始框。
+            selector?.applyPreset(0.12f, 0.22f, 0.88f, 0.55f)
         } else {
             selector?.applyPreset(0.02f, 0.04f, 0.98f, 0.55f)
         }
@@ -2006,6 +2234,13 @@ class QuizAccessibilityService : AccessibilityService() {
         }
         view.findViewById<View>(R.id.btn_region_save)?.setOnClickListener {
             saveRegionFromSelector(selector, showToast = true)
+            // 题图模式：仅保存，不触发任何探测
+            if (regionMode == "image") {
+                regionMode = "ocr"
+                pendingProbeAfterRegion = null
+                exitRegionMode()
+                return@setOnClickListener
+            }
             // 录入窗在场（含 minimize）时默认录入试捕；否则答题搜题
             val pending = pendingProbeAfterRegion
                 ?: if (QuizOcrEntryOverlay.isShowing() || QuizOcrEntryOverlay.isMinimizedForRegion()) "entry" else "answer"
@@ -2020,6 +2255,12 @@ class QuizAccessibilityService : AccessibilityService() {
         }
         selector?.setOnRegionConfirmedListener {
             saveRegionFromSelector(selector, showToast = true)
+            if (regionMode == "image") {
+                regionMode = "ocr"
+                pendingProbeAfterRegion = null
+                exitRegionMode()
+                return@setOnRegionConfirmedListener
+            }
             val pending = pendingProbeAfterRegion
                 ?: if (QuizOcrEntryOverlay.isShowing() || QuizOcrEntryOverlay.isMinimizedForRegion()) "entry" else "answer"
             pendingProbeAfterRegion = null
@@ -2061,12 +2302,12 @@ class QuizAccessibilityService : AccessibilityService() {
             }
         }
         view.findViewById<View>(R.id.btn_preset_last)?.setOnClickListener {
-            val last = loadSavedRegionOnly()
+            val last = if (regionMode == "image") loadImageRegion() else loadSavedRegionOnly()
             if (last != null) {
                 selector?.setRegion(last)
-                toast("已恢复上次区域")
+                toast(if (regionMode == "image") "已恢复上次题图区域" else "已恢复上次区域")
             } else {
-                toast("尚无已保存区域")
+                toast(if (regionMode == "image") "尚无已保存题图区域" else "尚无已保存区域")
             }
         }
         // R2：试捕 / OCR / 比例
@@ -2108,6 +2349,7 @@ class QuizAccessibilityService : AccessibilityService() {
             try {
                 params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                        WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
                         WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     params.layoutInDisplayCutoutMode =
@@ -2164,6 +2406,14 @@ class QuizAccessibilityService : AccessibilityService() {
 
     private fun saveRegionFromSelector(selector: RegionSelectorView?, showToast: Boolean = false) {
         val region = selector?.getRegion() ?: return
+        // 题图模式：只写题图区域，不污染 OCR 识别区域
+        if (regionMode == "image") {
+            saveImageRegion(region)
+            if (showToast) toast("题图区域已保存")
+            // C1: 题图区域保存后立即刷新按钮颜色指示
+            mainHandler.post { refreshRegionButtonState() }
+            return
+        }
         saveRegion(region)
         screenRegion = region
         if (showToast) {
@@ -2193,6 +2443,38 @@ class QuizAccessibilityService : AccessibilityService() {
             .ifBlank { body.trim() }
         root.findViewById<View>(R.id.btn_probe_search)?.setOnClickListener {
             searchWithProbeText()
+        }
+        root.findViewById<View>(R.id.btn_probe_copy)?.setOnClickListener {
+            copyProbePanelToClipboard(title, body)
+        }
+    }
+
+    /**
+     * 复制框选页试捕面板结果。
+     *
+     * 面板只有预览文本，没有解析后的题干/选项，所以这里把去前缀后的
+     * 可搜文本作为「读屏原文」，其余段落留空并如实标注，避免复制出
+     * 看起来完整但其实没有解析结果的假快照。
+     */
+    private fun copyProbePanelToClipboard(title: String, body: String) {
+        val payload = QuizProbeCopyFormatter.build(
+            status = title,
+            raw = lastProbeSearchText.ifBlank { body },
+            question = "",
+            options = "",
+            answer = "",
+            analysis = "",
+            timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                .format(java.util.Date()),
+        )
+        try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE)
+                as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("box-probe", payload))
+            toast("已复制试捕结果")
+        } catch (e: Throwable) {
+            Log.w(TAG, "copy probe panel failed", e)
+            toast("复制失败：${e.message ?: e.javaClass.simpleName}")
         }
     }
 
@@ -2796,6 +3078,7 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
                 .map { it.trim() }
                 .firstOrNull { it.isNotEmpty() && !it.contains("相似度") }
                 ?: a.ifBlank { "未命中" }
+            overlayStatus == "ambiguous" -> a.ifBlank { "存在多个候选，请手动确认" }
             else -> compactAnswerForExam(a, includeSimilarity = false)
         }
         qTv?.text = q
@@ -2814,6 +3097,7 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         val color = when (overlayStatus) {
             "searching" -> 0xFFF59E0B.toInt()
             "miss" -> 0xFFEF4444.toInt()
+            "ambiguous" -> 0xFFF59E0B.toInt()
             "hit" -> 0xFF22C55E.toInt()
             else -> themeColor
         }
@@ -2825,6 +3109,8 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         // 标题栏只显示固定相似度标签：进一步缩短文案，给眼睛与关闭按钮保留固定空间。
         val badgeText = when {
             isSearchingNow -> "检索中"
+            overlayStatus == "ambiguous" && overlayMatchCount > 1 -> "请确认 ${overlayMatchIndex + 1}/$overlayMatchCount"
+            overlayStatus == "ambiguous" -> "请确认"
             sim == null -> "待匹配"
             sim >= 90 -> "$sim%"
             sim >= 70 -> "$sim%"
@@ -2832,6 +3118,7 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         }
         val badgeColor = when {
             isSearchingNow -> 0xFFB45309.toInt()
+            overlayStatus == "ambiguous" -> 0xFFB45309.toInt()
             sim == null -> 0xFF475467.toInt()
             sim >= 90 -> 0xFF15803D.toInt()
             sim >= 70 -> 0xFFB45309.toInt()
@@ -3013,6 +3300,60 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
      * 带 requestId 的截屏：Dart 侧用 QuizCaptureSessionCoordinator 校验请求归属，
      * 防止并发 OCR/录入/试识串图。Native 端记录 requestId，回调时比对丢弃过期结果。
      */
+    /**
+     * 用题图区域（imageRegion）截图，仅裁题图部分，用于 dHash 消歧。
+     * 题图区域未配置时回传 null（Flutter 侧降级跳过图片筛选）。
+     */
+    fun captureImageRegionScreenshotWithRequestId(
+        requestId: Int,
+        callback: (ByteArray?) -> Unit,
+    ) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) { callback(null); return }
+        imageRegion = imageRegion ?: loadImageRegion()
+        val region = imageRegion
+        if (region == null || region.isEmpty) { callback(null); return }
+
+        Companion.currentRequestId = requestId
+        try {
+            takeScreenshot(
+                android.view.Display.DEFAULT_DISPLAY,
+                { it.run() },
+                object : AccessibilityService.TakeScreenshotCallback {
+                    override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
+                        val bytes = runCatching { encodePngWithRegion(screenshot, region) }.getOrNull()
+                        try { screenshot.hardwareBuffer.close() } catch (_: Throwable) {}
+                        if (Companion.currentRequestId == requestId) callback(bytes)
+                    }
+                    override fun onFailure(errorCode: Int) {
+                        Log.w(TAG, "captureImageRegion failed code=$errorCode")
+                        if (Companion.currentRequestId == requestId) callback(null)
+                    }
+                }
+            )
+        } catch (e: Throwable) {
+            Log.w(TAG, "captureImageRegion exception", e)
+            if (Companion.currentRequestId == requestId) callback(null)
+        }
+    }
+
+    /** 截全屏后按指定 region 裁剪并编码为 PNG。 */
+    private fun encodePngWithRegion(screenshot: ScreenshotResult, region: RectF): ByteArray? {
+        val buffer = screenshot.hardwareBuffer
+        val full = Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace) ?: return null
+        val software = full.copy(Bitmap.Config.ARGB_8888, false) ?: return null
+        full.recycle()
+        val left = region.left.toInt().coerceIn(0, software.width - 1)
+        val top = region.top.toInt().coerceIn(0, software.height - 1)
+        val right = region.right.toInt().coerceIn(left + 1, software.width)
+        val bottom = region.bottom.toInt().coerceIn(top + 1, software.height)
+        val cropped = Bitmap.createBitmap(software, left, top, right - left, bottom - top)
+        val out = ByteArrayOutputStream()
+        cropped.compress(Bitmap.CompressFormat.PNG, 100, out)
+        if (cropped !== software) cropped.recycle()
+        software.recycle()
+        return out.toByteArray()
+    }
+
     fun captureRegionScreenshotWithRequestId(
         requestId: Int,
         callback: (ByteArray?) -> Unit,
@@ -3081,6 +3422,56 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         if (cropped !== software) cropped.recycle()
         software.recycle()
         return out.toByteArray()
+    }
+
+    /**
+     * 计算题图的 dHash（差异哈希）。
+     *
+     * 算法：
+     * 1. 缩放到 9×8（宽 9，高 8）
+     * 2. 转灰度
+     * 3. 每行比较左右相邻像素：左 > 右则 bit=1，否则 bit=0
+     * 4. 8 行 × 8 比较 = 64 位 → 16 字符 hex
+     */
+    fun computeDHash(pngBytes: ByteArray): String? {
+        if (pngBytes.isEmpty()) return null
+        val original = android.graphics.BitmapFactory.decodeByteArray(pngBytes, 0, pngBytes.size)
+            ?: return null
+        if (original.width < 2 || original.height < 2) {
+            original.recycle()
+            return null
+        }
+        // 缩放到 9×8
+        val resized = Bitmap.createScaledBitmap(original, 9, 8, true)
+        original.recycle()
+        // 转灰度
+        val gray = Bitmap.createBitmap(9, 8, Bitmap.Config.ARGB_8888)
+        val paint = Paint()
+        val canvas = Canvas(gray)
+        canvas.drawBitmap(resized, 0f, 0f, paint)
+        resized.recycle()
+        // 计算哈希
+        val sb = StringBuilder()
+        for (y in 0 until 8) {
+            for (x in 0 until 8) {
+                val left = Color.red(gray.getPixel(x, y)) * 0.299 +
+                    Color.green(gray.getPixel(x, y)) * 0.587 +
+                    Color.blue(gray.getPixel(x, y)) * 0.114
+                val right = Color.red(gray.getPixel(x + 1, y)) * 0.299 +
+                    Color.green(gray.getPixel(x + 1, y)) * 0.587 +
+                    Color.blue(gray.getPixel(x + 1, y)) * 0.114
+                sb.append(if (left > right) '1' else '0')
+            }
+        }
+        gray.recycle()
+        // 转为 16 字符 hex
+        val hash = sb.toString()
+        val result = StringBuilder()
+        for (i in 0 until 16) {
+            val nibble = hash.substring(i * 4, (i + 1) * 4).toInt(2)
+            result.append(String.format("%01x", nibble))
+        }
+        return result.toString()
     }
 
     private fun bestCaptureRoot(eventRoot: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -3229,6 +3620,37 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         if (bounds.isEmpty) return true
         val nodeRect = RectF(bounds)
         return RectF.intersects(region, nodeRect) || region.contains(nodeRect.centerX(), nodeRect.centerY())
+    }
+
+    /** 保存题图区域（独立于 OCR 识别区域），同样按前台包记忆。 */
+    private fun saveImageRegion(region: RectF) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        val raw = "${region.left},${region.top},${region.right},${region.bottom}"
+        prefs.putString(KEY_IMAGE_REGION, raw)
+        val pkg = lastForegroundPkg
+        if (pkg.isNotBlank() && pkg != packageName && !pkg.startsWith("com.android")) {
+            prefs.putString("${KEY_IMAGE_REGION}_$pkg", raw)
+        }
+        prefs.apply()
+        imageRegion = region
+    }
+
+    private fun parseRegionRaw(raw: String?): RectF? {
+        if (raw == null) return null
+        val parts = raw.split(',').mapNotNull { it.toFloatOrNull() }
+        if (parts.size != 4) return null
+        val rect = RectF(parts[0], parts[1], parts[2], parts[3])
+        return if (rect.isEmpty) null else rect
+    }
+
+    /** 读取题图区域：优先当前前台包专属，回退全局。 */
+    private fun loadImageRegion(): RectF? {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val pkg = lastForegroundPkg
+        if (pkg.isNotBlank() && pkg != packageName) {
+            parseRegionRaw(prefs.getString("${KEY_IMAGE_REGION}_$pkg", null))?.let { return it }
+        }
+        return parseRegionRaw(prefs.getString(KEY_IMAGE_REGION, null))
     }
 
     private fun saveRegion(region: RectF) {

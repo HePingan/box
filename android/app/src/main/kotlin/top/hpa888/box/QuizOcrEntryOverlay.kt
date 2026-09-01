@@ -157,9 +157,13 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
         }
+        // FLAG_HARDWARE_ACCELERATED 必须显式声明：Manifest 的 hardwareAccelerated
+        // 只作用于 Activity，WindowManager 直加的浮层默认走软件渲染，
+        // 滚动与拖动会明显发涩。
         val lp = WindowManager.LayoutParams(
             w, h, type,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -185,6 +189,9 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
             // 180ms 在部分 ROM 上不够，active window 仍是浮层导致“没反应”
             QuizAccessibilityService.probeFromSavedRegionIfRunning(delayMs = 320L)
         }
+        view.findViewById<View>(R.id.btn_ocr_entry_copy)?.setOnClickListener {
+            copyProbeResult()
+        }
         view.findViewById<View>(R.id.btn_ocr_entry_parse)?.setOnClickListener {
             reparseOnly()
         }
@@ -199,6 +206,8 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
         }
         attachDrag(view.findViewById(R.id.ocr_entry_title), view, lp, windowManager)
         attachResizeHandle(view, lp, windowManager)
+        attachNestedTextScrollArbitration(view)
+        attachScanPauseWhileTouching(view)
 
         try {
             windowManager.addView(view, lp)
@@ -210,6 +219,84 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
             toast("OCR 录入窗添加失败：${e.javaClass.simpleName}")
             rootView = null
             params = null
+        }
+    }
+
+    /**
+     * 滑动/触摸本窗口期间暂停无障碍抓题扫描。
+     *
+     * 抓题扫描（枚举窗口 + 递归节点树，数百次 binder 调用）跑在主线程，
+     * 也就是渲染本窗口的同一条线程。不暂停的话，上下滑内容、左右滑功能按钮
+     * 都会被自身的 TYPE_VIEW_SCROLLED 事件反复触发重扫，直接掉帧。
+     *
+     * 用 dispatchTouchEvent 级别的监听：无论手势最终被哪个子 View 消费都能覆盖。
+     */
+    private fun attachScanPauseWhileTouching(root: View) {
+        (root as? TouchAwareFrameLayout)?.onTouchActiveChanged = { active ->
+            service.setOwnOverlayInteracting(active)
+        }
+        // 抬手后 fling 惯性仍在滚动，必须把滚动本身也算作「活动」，
+        // 否则扫描会按固定延迟插进减速动画中段，表现为松手瞬间顿一下。
+        val scrollIds = intArrayOf(
+            R.id.ocr_entry_toolbar_scroll,
+            R.id.ocr_entry_form_scroll,
+        )
+        for (id in scrollIds) {
+            val v = root.findViewById<View>(id) ?: continue
+            v.setOnScrollChangeListener { _, _, _, _, _ ->
+                service.notifyOwnOverlayScrolled()
+            }
+        }
+    }
+
+    /**
+     * 让多行输入框只在自己真的还能滚动时消费竖向手势，否则交回面板。
+     * 不做这件事时，手指落在输入框上面板就滑不动（用户报的「不丝滑」主因之一）。
+     */
+    private fun attachNestedTextScrollArbitration(root: View) {
+        val ids = intArrayOf(
+            R.id.et_ocr_raw,
+            R.id.et_ocr_question,
+            R.id.et_ocr_options,
+            R.id.et_ocr_answer,
+            R.id.et_ocr_analysis,
+        )
+        for (id in ids) {
+            val edit = root.findViewById<View>(id) ?: continue
+            var downY = 0f
+            var handedToParent = false
+            edit.setOnTouchListener { v, e ->
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downY = e.rawY
+                        handedToParent = false
+                        // 先允许父级拦截权按需转移，不在 DOWN 阶段锁死。
+                        v.parent?.requestDisallowInterceptTouchEvent(false)
+                        false
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (handedToParent) return@setOnTouchListener false
+                        val dy = e.rawY - downY
+                        val toParent = NestedTextScrollArbiter.shouldParentScroll(
+                            canScrollUp = v.canScrollVertically(-1),
+                            canScrollDown = v.canScrollVertically(1),
+                            dy = dy,
+                        )
+                        if (toParent) {
+                            handedToParent = true
+                            v.parent?.requestDisallowInterceptTouchEvent(false)
+                        } else {
+                            v.parent?.requestDisallowInterceptTouchEvent(true)
+                        }
+                        false
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        v.parent?.requestDisallowInterceptTouchEvent(false)
+                        false
+                    }
+                    else -> false
+                }
+            }
         }
     }
 
@@ -334,6 +421,36 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
         if (!ok) setStatusText("无障碍服务未运行")
     }
 
+    /**
+     * 一键复制试捕结果：读屏原文 + 解析结果 + 行数/选项数诊断。
+     *
+     * 报障时用户只能贴文本，缺原文就无法判断是漏捕还是解析错位，
+     * 所以这里复制的是完整快照而不是单个输入框内容。
+     */
+    private fun copyProbeResult() {
+        val v = rootView ?: return
+        val payload = QuizProbeCopyFormatter.build(
+            status = v.findViewById<TextView>(R.id.tv_ocr_entry_status)?.text?.toString().orEmpty(),
+            raw = v.findViewById<EditText>(R.id.et_ocr_raw)?.text?.toString().orEmpty(),
+            question = v.findViewById<EditText>(R.id.et_ocr_question)?.text?.toString().orEmpty(),
+            options = v.findViewById<EditText>(R.id.et_ocr_options)?.text?.toString().orEmpty(),
+            answer = v.findViewById<EditText>(R.id.et_ocr_answer)?.text?.toString().orEmpty(),
+            analysis = v.findViewById<EditText>(R.id.et_ocr_analysis)?.text?.toString().orEmpty(),
+            timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                .format(java.util.Date()),
+        )
+        try {
+            val cm = service.getSystemService(Context.CLIPBOARD_SERVICE)
+                as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("box-probe", payload))
+            setStatusText("试捕结果已复制，可直接粘贴反馈")
+            toast("已复制试捕结果")
+        } catch (e: Throwable) {
+            Log.w(TAG, "copy probe result failed", e)
+            setStatusText("复制失败：${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
     private fun reparseOnly() {
         val raw = rootView?.findViewById<EditText>(R.id.et_ocr_raw)?.text?.toString().orEmpty()
         if (raw.isBlank()) {
@@ -359,34 +476,25 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
         val opts = v.findViewById<EditText>(R.id.et_ocr_options)?.text?.toString().orEmpty()
         val ans = v.findViewById<EditText>(R.id.et_ocr_answer)?.text?.toString()?.trim().orEmpty()
         val ana = v.findViewById<EditText>(R.id.et_ocr_analysis)?.text?.toString()?.trim().orEmpty()
-        if (q.isEmpty()) {
-            setStatusText("题目不能为空")
-            toast("请填写题目")
+        // 与批量录入共用同一份校验：原先两处内联实现已漂移
+        // （手动这份的字母答案正则漏了 IGNORE_CASE，小写 b 会被误拦）。
+        val verdict = QuizOcrSaveValidator.validate(
+            question = q,
+            optionsRaw = opts,
+            answerRaw = ans,
+        )
+        if (!verdict.canSave) {
+            setStatusText(QuizOcrSaveValidator.statusFor(verdict))
+            toast(
+                when (verdict.reason) {
+                    QuizOcrSaveValidator.Reason.EMPTY_QUESTION -> "请填写题目"
+                    QuizOcrSaveValidator.Reason.NOT_ENOUGH_OPTIONS -> "选项不足，未保存"
+                    else -> "答案与选项不一致，未保存"
+                },
+            )
             return
         }
-        val optionValues = opts.lineSequence()
-            .map { it.trim() }
-            .map { it.replaceFirst(Regex("^[A-DＡ-Ｄ]\\s*[.、．:：)）\\s]+"), "") }
-            .filter { it.isNotEmpty() }
-            .toList()
-        if (optionValues.size < 2) {
-            setStatusText("识别到 ${optionValues.size} 项选项，不能保存：请补齐至少两项")
-            toast("选项不足，未保存")
-            return
-        }
-        val isTf = optionValues.size == 2 &&
-            optionValues.any { it == "正确" || it == "对" } &&
-            optionValues.any { it == "错误" || it == "错" }
-        val answerValue = ans.removePrefix("答案：").removePrefix("答案:").trim()
-        val answerMatches = answerValue.isBlank() || optionValues.any { option ->
-            option == answerValue || option.contains(answerValue) || answerValue.contains(option)
-        } || Regex("^[A-DＡ-Ｄ]$").matches(answerValue)
-        if (!answerMatches) {
-            setStatusText("识别到：${if (isTf) "判断" else "选择"} · ${optionValues.size} 项；答案不在选项内，请核对")
-            toast("答案与选项不一致，未保存")
-            return
-        }
-        val structure = "识别到：${if (isTf) "判断" else "选择"} · ${optionValues.size} 项"
+        val structure = verdict.structureLabel
         val ch = channel()
         if (ch == null) {
             setStatusText("请先打开 box 应用")
@@ -404,22 +512,28 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
                 ),
                 object : MethodChannel.Result {
                     override fun success(result: Any?) {
-                        val resp = result as? Map<*, *> ?: run {
-                            mainHandler.post {
-                                setStatusText("保存成功")
-                                toast("题目已保存")
-                            }
-                            return
-                        }
-                        val ok = resp["ok"] as? Boolean ?: false
-                        val msg = resp["message"]?.toString() ?: ""
+                        val resp = result as? Map<*, *>
+                        val ok = resp?.get("ok") as? Boolean ?: false
+                        val msg = resp?.get("message")?.toString() ?: "保存完成"
+                        val status = resp?.get("status")?.toString()
                         mainHandler.post {
+                            // 原先 if(ok)/else 两个分支代码完全一样，等于没分支：
+                            // 「已存入」和「重复跳过」显示成同一个样子，
+                            // 用户分不清这题到底进库了没有。
                             if (ok) {
-                                setStatusText("已保存题库")
-                                toast("题目已保存")
+                                setStatusText("✓ $msg")
+                                toast(msg)
+                                // 存进去了就清空表单，否则下一题试捕回填时
+                                // 残留的旧答案/解析可能被误当成新题一起保存。
+                                rootView?.let { clearBatchFields(it) }
                             } else {
-                                setStatusText("保存失败：$msg")
-                                toast("保存失败：$msg")
+                                val hint = when (status) {
+                                    "duplicateSkipped" -> "题库已有，未重复写入"
+                                    "incompleteVariantNeedsRetry" -> "内容不全，请重新框选后再存"
+                                    else -> msg
+                                }
+                                setStatusText("未保存：$hint")
+                                toast(hint)
                             }
                         }
                     }
@@ -492,7 +606,20 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
     }
 
     // ========== 一键批量录入 ==========
-    private var batchLoopJob: android.os.Handler? = null
+    /**
+     * 当前一轮「等 OCR 回填」的轮询 handler。
+     *
+     * 必须持有：原先每轮 runBatchStep 都新建一个局部 Handler 且无人引用，
+     * stopBatchEntry 无从取消。停止后马上再启动时，上一轮遗留的 tick
+     * 会带着 batchRunning=true 撞进新一轮，出现重复保存/计数错乱。
+     */
+    private var batchProbeWaitHandler: Handler? = null
+
+    /** 取消在途的轮询 tick。 */
+    private fun cancelBatchProbeWait() {
+        batchProbeWaitHandler?.removeCallbacksAndMessages(null)
+        batchProbeWaitHandler = null
+    }
 
     private fun batchStats(): String =
         "新增:$batchSuccessCount 变体:$batchVariantCount 重复:$batchDuplicateCount 待复核:$batchReviewCount 失败:$batchFailCount"
@@ -533,6 +660,7 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
         val wasRunning = batchRunning
         batchRunning = false
         pendingPreviousFingerprint = null
+        cancelBatchProbeWait()
         batchNavigationWatchdog?.let { mainHandler.removeCallbacks(it) }
         batchNavigationWatchdog = null
         reattachAfterBatchNavigation()
@@ -545,7 +673,12 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
         }
     }
 
-    /** 清空上一题表单，轮询只能接受本轮试捕/解析回填，不能把旧题再次保存。 */
+    /**
+     * 清空表单各字段。
+     *
+     * 批量轮询用它保证只接受本轮试捕/解析的回填，不把旧题再次保存；
+     * 手动保存成功后也调用，避免残留答案/解析串到下一题。
+     */
     private fun clearBatchFields(view: View) {
         view.findViewById<EditText>(R.id.et_ocr_question)?.setText("")
         view.findViewById<EditText>(R.id.et_ocr_options)?.setText("")
@@ -565,27 +698,35 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
         QuizAccessibilityService.probeFromSavedRegionIfRunning(delayMs = 200L)
 
         // 2. 等待OCR解析完成（通过轮询表单字段判断）
+        // 先清掉上一轮可能还在途的 tick，再建本轮，避免两轮轮询叠加。
+        cancelBatchProbeWait()
         val checkHandler = Handler(Looper.getMainLooper())
+        batchProbeWaitHandler = checkHandler
         var checks = 0
         val maxChecks = 60 // 最多等6秒
         val checkRunnable = object : Runnable {
             override fun run() {
                 if (!batchRunning) return
                 val q = v.findViewById<EditText>(R.id.et_ocr_question)?.text?.toString()?.trim().orEmpty()
-                if (q.isNotEmpty() && checks < maxChecks) {
-                    // OCR解析完成，尝试保存
-                    checks = 0
-                    batchSaveAndSwipe(v, q)
-                } else if (checks >= maxChecks) {
-                    // 超时未解析到内容
-                    batchFailCount++
-                    mainHandler.post {
-                        setStatusText("本轮超时未解析到题目 · 成功:$batchSuccessCount 失败:$batchFailCount")
+                // 判定收敛到 BatchProbeWaitPolicy：原先「已回填」与「未到上限」
+                // 用 && 绑在一起，checks==maxChecks 那一 tick 即使抓到题干
+                // 也会掉进超时分支，把已识别的题记成失败跳过。
+                when (BatchProbeWaitPolicy.decide(q.isNotEmpty(), checks, maxChecks)) {
+                    BatchProbeWaitPolicy.Action.SAVE -> {
+                        checks = 0
+                        batchSaveAndSwipe(v, q)
                     }
-                    batchNext()
-                } else {
-                    checks++
-                    checkHandler.postDelayed(this, 100)
+                    BatchProbeWaitPolicy.Action.TIMEOUT -> {
+                        batchFailCount++
+                        mainHandler.post {
+                            setStatusText("本轮超时未解析到题目 · 成功:$batchSuccessCount 失败:$batchFailCount")
+                        }
+                        batchNext()
+                    }
+                    BatchProbeWaitPolicy.Action.WAIT -> {
+                        checks++
+                        checkHandler.postDelayed(this, 100)
+                    }
                 }
             }
         }
@@ -611,42 +752,27 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
             return
         }
 
-        // 验证选项数量
-        val optionValues = opts.lineSequence()
-            .map { it.trim() }
-            .map { it.replaceFirst(Regex("^[A-DＡ-Ｄ]\\s*[.、．:：)）\\s]+"), "") }
-            .filter { it.isNotEmpty() }
-            .toList()
-
-        if (optionValues.size < 2 || question.isEmpty()) {
+        // 与手动保存共用同一份校验，避免两处规则再次漂移。
+        val verdict = QuizOcrSaveValidator.validate(
+            question = question,
+            optionsRaw = opts,
+            answerRaw = ans,
+        )
+        if (!verdict.canSave) {
             batchFailCount++
-            mainHandler.post {
-                setStatusText("本轮数据不完整 · 成功:$batchSuccessCount 失败:$batchFailCount")
+            val why = when (verdict.reason) {
+                QuizOcrSaveValidator.Reason.ANSWER_MISMATCH -> "答案不匹配，跳过"
+                else -> "本轮数据不完整"
             }
-            batchNext()
-            return
-        }
-
-        // 验证答案一致性
-        val isTf = optionValues.size == 2 &&
-            optionValues.any { it == "正确" || it == "对" } &&
-            optionValues.any { it == "错误" || it == "错" }
-        val answerValue = ans.removePrefix("答案：").removePrefix("答案:").trim()
-        val answerMatches = answerValue.isBlank() || optionValues.any { option ->
-            option == answerValue || option.contains(answerValue) || answerValue.contains(option)
-        } || Regex("^[A-DＡ-Ｄ]$", RegexOption.IGNORE_CASE).matches(answerValue)
-
-        if (!answerMatches) {
-            batchFailCount++
             mainHandler.post {
-                setStatusText("答案不匹配，跳过 · 成功:$batchSuccessCount 失败:$batchFailCount")
+                setStatusText("$why · 成功:$batchSuccessCount 失败:$batchFailCount")
             }
             batchNext()
             return
         }
 
         // 调用Flutter端保存
-        val structure = "识别到：${if (isTf) "判断" else "选择"} · ${optionValues.size} 项"
+        val structure = verdict.structureLabel
         val ch = channel()
         if (ch == null) {
             batchFailCount++
@@ -820,6 +946,12 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
         if (target == null) return
         val slop = ViewConfiguration.get(service).scaledTouchSlop
         var ix = 0; var iy = 0; var tx = 0f; var ty = 0f; var dragging = false
+        // 逐 MOVE 提交会让 WindowManager 一帧内多次跨进程布局，手感发涩；
+        // 统一走同帧合并门闸。
+        val committer = OverlayLayoutCommitter(ChoreographerFrameScheduler()) { g ->
+            lp.x = g.x; lp.y = g.y
+            try { wm.updateViewLayout(root, lp) } catch (_: Throwable) {}
+        }
         target.setOnTouchListener { _, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -830,15 +962,23 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
                     val dy = e.rawY - ty
                     if (!dragging && hypot(dx.toDouble(), dy.toDouble()) > slop) dragging = true
                     if (dragging) {
-                        lp.x = ix + dx.toInt()
-                        lp.y = iy + dy.toInt()
-                        try { wm.updateViewLayout(root, lp) } catch (_: Throwable) {}
+                        committer.request(
+                            OverlayGeometry(ix + dx.toInt(), iy + dy.toInt(), lp.width, lp.height),
+                        )
                     }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (dragging) savePos(lp.x, lp.y)
                     val was = dragging
+                    if (dragging) {
+                        // 最后一段位移必须立即落地，否则松手时会少走一截。
+                        val dx = e.rawX - tx
+                        val dy = e.rawY - ty
+                        committer.flush(
+                            OverlayGeometry(ix + dx.toInt(), iy + dy.toInt(), lp.width, lp.height),
+                        )
+                        savePos(lp.x, lp.y)
+                    }
                     dragging = false
                     was
                 }
@@ -856,6 +996,11 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
         val maxW = (root.context.resources.displayMetrics.widthPixels * 0.95f).toInt()
         val maxH = (root.context.resources.displayMetrics.heightPixels * 0.95f).toInt()
         var startX = 0f; var startY = 0f; var startW = lp.width; var startH = lp.height
+        // 缩放同样是高频事件，与拖动共用同帧合并策略。
+        val committer = OverlayLayoutCommitter(ChoreographerFrameScheduler()) { g ->
+            lp.width = g.width; lp.height = g.height
+            try { wm.updateViewLayout(root, lp) } catch (_: Throwable) {}
+        }
 
         handle.setOnTouchListener { _, event ->
             when (event.actionMasked) {
@@ -867,11 +1012,13 @@ class QuizOcrEntryOverlay private constructor(private val service: QuizAccessibi
                 MotionEvent.ACTION_MOVE -> {
                     val nw = (startW + (event.rawX - startX)).toInt().coerceIn(minW, maxW)
                     val nh = (startH + (event.rawY - startY)).toInt().coerceIn(minH, maxH)
-                    lp.width = nw; lp.height = nh
-                    try { wm.updateViewLayout(root, lp) } catch (_: Throwable) {}
+                    committer.request(OverlayGeometry(lp.x, lp.y, nw, nh))
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    val nw = (startW + (event.rawX - startX)).toInt().coerceIn(minW, maxW)
+                    val nh = (startH + (event.rawY - startY)).toInt().coerceIn(minH, maxH)
+                    committer.flush(OverlayGeometry(lp.x, lp.y, nw, nh))
                     savePos(lp.x, lp.y)
                     saveSize(lp.width, lp.height)
                     false
