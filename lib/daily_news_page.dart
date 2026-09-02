@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'daily_news_url_policy.dart';
 import 'design_system/widgets/app_back_button.dart';
 
 class DailyNewsPage extends StatefulWidget {
@@ -15,16 +16,6 @@ class DailyNewsPage extends StatefulWidget {
 }
 
 class _DailyNewsPageState extends State<DailyNewsPage> {
-  static final Uri _fallbackUri =
-      Uri.parse('https://actcpc.heytapimage.com/oh5/3/1/index.html#/');
-
-  static const Set<String> _allowedHosts = {
-    'actcpc.heytapimage.com',
-    'daily.zhihu.com',
-    'news-at.zhihu.com',
-    'news-at-cdn.zhihu.com',
-  };
-
   late final WebViewController _controller;
 
   @override
@@ -36,7 +27,7 @@ class _DailyNewsPageState extends State<DailyNewsPage> {
         NavigationDelegate(
           onNavigationRequest: (request) {
             final uri = Uri.tryParse(request.url);
-            if (uri == null || !_isAllowedUri(uri)) {
+            if (uri == null || !DailyNewsUrlPolicy.isAllowed(uri)) {
               return NavigationDecision.prevent;
             }
             return NavigationDecision.navigate;
@@ -46,22 +37,7 @@ class _DailyNewsPageState extends State<DailyNewsPage> {
       ..loadRequest(_initialUri());
   }
 
-  Uri _initialUri() {
-    final raw = widget.initialUrl?.trim();
-    final uri = raw == null || raw.isEmpty ? null : Uri.tryParse(raw);
-    if (uri == null || !_isAllowedUri(uri)) return _fallbackUri;
-    return uri;
-  }
-
-  bool _isAllowedUri(Uri uri) {
-    final scheme = uri.scheme.toLowerCase();
-    if (scheme != 'https' && scheme != 'http') return false;
-
-    final host = uri.host.toLowerCase();
-    return _allowedHosts.any(
-      (allowed) => host == allowed || host.endsWith('.$allowed'),
-    );
-  }
+  Uri _initialUri() => DailyNewsUrlPolicy.resolve(widget.initialUrl);
 
   @override
   void dispose() {
