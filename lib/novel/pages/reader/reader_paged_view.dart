@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/models.dart';
 import 'reader_controller.dart';
+import 'reader_layout_metrics.dart';
 
 class ReaderPagedView extends StatelessWidget {
   const ReaderPagedView({
@@ -115,43 +116,52 @@ class ReaderPagedView extends StatelessWidget {
           children: [
             Container(
               padding: EdgeInsets.fromLTRB(20, topPadding + 8, 20, 8),
-              child: Column(
+              // 小窗里可用高度可能比标题块还矮，标题必须给正文让位，
+              // 否则 Expanded 拿到负高度 → 正文一个字都画不出。
+              child: LayoutBuilder(
+                builder: (context, box) {
+                  final metrics = ReaderLayoutMetrics.resolve(
+                    availableHeight: box.maxHeight,
+                    isFirstPage: index == 0,
+                  );
+                  return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (index == 0)
-                    Container(
-                      height: 46,
-                      alignment: Alignment.bottomLeft,
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Text(
-                        controller.currentChapterTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
-                          color: textColor,
-                          height: 1.1,
-                        ),
-                      ),
-                    )
-                  else
-                    SizedBox(
-                      height: 24,
-                      child: Align(
-                        alignment: Alignment.topLeft,
-                        child: Text(
-                          controller.currentChapterTitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: textColor.withValues(alpha: 0.5),
-                            fontWeight: FontWeight.w500,
+                  // 标题块高度由 metrics 决定；矮到放不下就整块隐藏。
+                  if (metrics.titleHeight > 0)
+                    index == 0
+                        ? Container(
+                            height: metrics.titleHeight,
+                            alignment: Alignment.bottomLeft,
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Text(
+                              controller.currentChapterTitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 26,
+                                fontWeight: FontWeight.bold,
+                                color: textColor,
+                                height: 1.1,
+                              ),
+                            ),
+                          )
+                        : SizedBox(
+                            height: metrics.titleHeight,
+                            child: Align(
+                              alignment: Alignment.topLeft,
+                              child: Text(
+                                controller.currentChapterTitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: textColor.withValues(alpha: 0.5),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                    ),
                   Expanded(
                     child: menuVisible
                         ? Text(
@@ -215,6 +225,8 @@ class ReaderPagedView extends StatelessWidget {
                           ),
                   ),
                 ],
+              );
+                },
               ),
             ),
             // 底部页码/进度指示（绝对定位，不占用内容空间）

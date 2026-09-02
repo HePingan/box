@@ -16,6 +16,7 @@ import 'reader/reader_bottom_bar.dart';
 import 'reader/reader_controller.dart';
 import 'reader/reader_continuous_view.dart';
 import 'reader/reader_directory_sheet.dart';
+import 'reader/reader_layout_metrics.dart';
 import 'reader/reader_navigation_controller.dart';
 import 'reader/reader_paginator.dart';
 import 'reader/reader_paged_view.dart';
@@ -930,13 +931,25 @@ class _ReaderPageState extends State<ReaderPage> {
     BoxConstraints constraints,
   ) {
     final topPad = MediaQuery.of(context).padding.top;
-    final fitWidth = (constraints.maxWidth - 40.0).clamp(200.0, 660.0);
+    // 小窗里窗口可以窄到 100dp 上下，绝不能给排版宽加 200 的下限。
+    // 判据与理由见 ReaderLayoutMetrics.resolveFitWidth。
+    final fitWidth = ReaderLayoutMetrics.resolveFitWidth(constraints.maxWidth);
     final paddingTotal = topPad + 8.0 + 8.0;
 
-    final firstTextHeight =
-        constraints.maxHeight - paddingTotal - 46.0 - 24.0 - 14.0;
-    final normalTextHeight =
-        constraints.maxHeight - paddingTotal - 24.0 - 24.0 - 14.0;
+    // 加固（非本次 bug 的成因）：这里原来硬编码 46/24 两个标题高度，
+    // 与 ReaderLayoutMetrics 的「标题可让位」语义不一致 —— 窗口高
+    // <=124dp 时会算出负的正文高而永久 spinner。改走同一套 metrics。
+    // 24 = 底部页码/进度行预留，14 = 行尾余量，都与标题无关，先扣掉；
+    // 扣完再分配标题/正文，大窗下算出的值与改动前逐值一致（有测试闸门）。
+    final availableForText = constraints.maxHeight - paddingTotal - 24.0 - 14.0;
+    final firstTextHeight = ReaderLayoutMetrics.resolve(
+      availableHeight: availableForText,
+      isFirstPage: true,
+    ).textHeight;
+    final normalTextHeight = ReaderLayoutMetrics.resolve(
+      availableHeight: availableForText,
+      isFirstPage: false,
+    ).textHeight;
 
     if (fitWidth <= 0 || firstTextHeight <= 0 || normalTextHeight <= 0) {
       return Center(
