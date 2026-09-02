@@ -19,6 +19,8 @@ import '../features/quiz_plugin/data/quiz_cloud_auto_sync.dart';
 import '../features/policy/plugin_policy.dart';
 import '../features/extensions/market/data/plugin_market_local_sync.dart';
 import '../features/cloud_sync/data/book_source_cloud_sync.dart';
+import '../features/cloud_sync/domain/announcement_center.dart';
+import '../features/cloud_sync/presentation/announcement_popup.dart';
 
 /// 桌面端断点 — ≥800px 切换 NavigationRail
 const double _desktopBreakpoint = 800;
@@ -104,6 +106,26 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
       if (!mounted) return;
       context.read<FavoritesController>().load();
     });
+    // 公告：首帧后再拉，不阻塞冷启动。内部按 6h 节流、失败静默。
+    // 拉完若有未读的 warning 级公告，弹一次窗 —— 更新验签这类故障必须能
+    // 主动触达用户，不能指望他自己翻到「抽屉 → 账号 → 个人中心」。
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final center = context.read<AnnouncementCenter>();
+      await center.bootstrap();
+      if (!mounted) return;
+      await _maybeShowAnnouncementPopup(center);
+    });
+  }
+
+  Future<void> _maybeShowAnnouncementPopup(AnnouncementCenter center) async {
+    final popup = center.takePopup();
+    if (popup == null || !mounted) return;
+    await showAnnouncementPopup(
+      context: context,
+      entry: popup,
+      onAcknowledged: () => center.acknowledge(popup.id),
+    );
   }
 
   @override

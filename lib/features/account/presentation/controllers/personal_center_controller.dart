@@ -306,18 +306,9 @@ class PersonalCenterController extends ChangeNotifier {
     }
   }
 
-  /// 只读缓存刷新红点，不打网络。
-  Future<void> refreshAnnouncementBadge() async {
-    try {
-      final cached = await _announcements.loadCachedOnly();
-      if (cached.items.isNotEmpty) {
-        announcements = cached;
-        notifyListeners();
-      }
-    } catch (_) {
-      // 红点是锦上添花，失败静默
-    }
-  }
+  // 原先这里有个 refreshAnnouncementBadge()：只读缓存点亮红点，但从未被任何
+  // 地方调用 —— 公告因此既不会在启动时拉，红点也永远不亮。职责已由 app 作用域
+  // 的 AnnouncementCenter.bootstrap() 接管，这里不再保留死代码。
 
   Future<void> markAnnouncementRead(String id) async {
     if (announcements.isRead(id)) return;

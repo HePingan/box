@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
 
+import '../features/cloud_sync/domain/announcement_center.dart';
 import '../novel/pages/source_manager/book_source_manager.dart';
 import '../video_module.dart';
 import 'app_bootstrap.dart';
@@ -18,6 +19,11 @@ class AppProviders extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        // 挂在 app 作用域：公告以前只由个人中心页持有，页面不打开就不拉，
+        // 线上出故障时公告发了也触达不到用户。
+        ChangeNotifierProvider<AnnouncementCenter>(
+          create: (_) => AnnouncementCenter(),
+        ),
         ChangeNotifierProvider<BookSourceManager>(
           create: (_) => BookSourceManager(bootstrap.prefs),
         ),

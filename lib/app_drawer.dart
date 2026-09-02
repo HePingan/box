@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'app/app_routes.dart';
@@ -10,6 +11,7 @@ import 'design_system/app_tokens.dart';
 import 'update/update_dialog.dart';
 import 'update/update_service.dart';
 import 'features/account/data/account_store.dart';
+import 'features/cloud_sync/domain/announcement_center.dart';
 import 'features/account/domain/account_models.dart';
 import 'features/backup/local_backup_service.dart';
 
@@ -659,6 +661,43 @@ class _DrawerContent extends StatelessWidget {
             ),
           ),
           ..._withDividers([
+            // 公告放在最前并带未读红点：原先埋在个人中心里，出故障时用户
+            // 根本找不到，等于没有触达手段。
+            Consumer<AnnouncementCenter>(
+              builder: (context, center, _) {
+                final unread = center.unreadCount;
+                return _buildMoreItem(
+                  context,
+                  icon: Icons.campaign_outlined,
+                  title: '公告',
+                  subtitle: unread > 0 ? '$unread 条未读' : null,
+                  trailing: unread > 0
+                      ? Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppTokens.danger,
+                            borderRadius: BorderRadius.circular(
+                              AppTokens.radiusPill,
+                            ),
+                          ),
+                          child: Text(
+                            unread > 99 ? '99+' : '$unread',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        )
+                      : null,
+                  onTap: () =>
+                      _openRoute(context, AppRoutes.announcements),
+                );
+              },
+            ),
             _buildMoreItem(
               context,
               icon: Icons.account_circle_rounded,
