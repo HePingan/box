@@ -94,6 +94,40 @@ echo "==> 构建完成"
 ls -lh "$APK" | awk '{print "    "$5"  "$9}'
 echo "    SHA-256: $(sha256sum "$APK" | cut -d" " -f1)"
 
+# ---- 验签密钥闸门 ----------------------------------------------------------
+# 为什么必须在**产物**上验而不是只看变量：这个脚本传了 --dart-define 不等于
+# 密钥真进了包。单测也挡不住——单测跑在没注入 define 的环境，
+# test/update/update_signature_secret_present_test.dart 那条只会 skip。
+#
+# 这个错已经犯过两次：1.7.3(173) 和 1.8.5(185) 都是绕过本脚本手工敲
+# flutter build 发出去的，用户装上后每次检查更新都报「更新清单签名校验未
+# 通过 (HMAC 更新验签缺少 secret)」，且再也收不到后续版本——更新链路是断的。
+# 所以在这里直接搜 libapp.so，产物里没有密钥就不让发。
+if [[ "$SIG_ALGO" == "hmac_sha256" ]]; then
+  SECRET_PROBE_DIR="$(mktemp -d)"
+  trap 'rm -rf "$SECRET_PROBE_DIR"' EXIT
+  unzip -q -o "$APK" 'lib/*/libapp.so' -d "$SECRET_PROBE_DIR" 2>/dev/null || true
+  PROBE_SO="$(find "$SECRET_PROBE_DIR" -name libapp.so | head -1)"
+  if [[ -z "$PROBE_SO" ]]; then
+    echo "    [警告] APK 内找不到 libapp.so，跳过密钥注入核对" >&2
+  elif grep -qF "$SECRET" "$PROBE_SO"; then
+    echo "    验签密钥    : 已确认注入产物（指纹 $FP）"
+  else
+    cat >&2 <<EOF
+
+[错误] 验签密钥没有进到 APK 产物里，不要发布这个包。
+
+算法是 $SIG_ALGO，但 libapp.so 内搜不到密钥。装上这个包的用户每次检查
+更新都会报「更新清单签名校验未通过 (HMAC 更新验签缺少 secret)」，并且
+收不到任何后续版本。
+
+请检查 flutter build 是否真的收到了
+  --dart-define=UPDATE_SIGNATURE_SECRET=...
+EOF
+    exit 1
+  fi
+fi
+
 # ---- 符号表闸门 ------------------------------------------------------------
 # 开了混淆却没产出符号表，等于放弃了线上崩溃排查能力，必须卡住。
 if [[ "$OBFUSCATE" == "1" ]]; then
