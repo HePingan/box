@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Activity 窗口底色。必须与 Flutter 侧 AppTokens.background
+         (lib/design_system/app_tokens.dart) 保持一致。
+
+         这个值会在两个时机被用户看到：
+         1. 冷启动时 Flutter 首帧之前
+         2. SurfaceView 的 surface 重建期间（小窗拖拽缩放时）
+
+         原先浅色用 ?android:colorBackground（Theme.Light 下是纯白）、
+         深色继承 Theme.Black（纯黑），两者都和 #F4F7FB 有明显色差，
+         在红米 K80(HyperOS) 小窗缩放时表现为刺眼的白屏。
+
+         改这个值时记得同步 AppTokens.background，
+         test/android_window_background_test.dart 会校验两者一致。 -->
+    <color name="window_background">#F4F7FB</color>
+</resources>

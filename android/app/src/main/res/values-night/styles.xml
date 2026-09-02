@@ -13,6 +13,10 @@
 
          This Theme is only used starting with V2 of Flutter's Android embedding. -->
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
-        <item name="android:windowBackground">?android:colorBackground</item>
+        <!-- 这个 App 只有浅色主题（没有 darkTheme/ThemeMode），Flutter UI
+             在系统深色模式下依然是 #F4F7FB。若这里保留 Theme.Black 的
+             ?android:colorBackground（纯黑），小窗缩放时 surface 重建
+             会漏出黑屏，比白屏更突兀。统一到同一个背景色。 -->
+        <item name="android:windowBackground">@color/window_background</item>
     </style>
 </resources>

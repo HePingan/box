@@ -13,6 +13,10 @@
 
          This Theme is only used starting with V2 of Flutter's Android embedding. -->
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
-        <item name="android:windowBackground">?android:colorBackground</item>
+        <!-- 不用 ?android:colorBackground：它在 Theme.Light 下是纯白，
+             而 Flutter 首帧是 #F4F7FB。SurfaceView 在小窗拖拽缩放时会
+             销毁重建 surface，重建的空窗期这层底色会直接露出来 ——
+             红米 K80(HyperOS) 上就是那片刺眼白屏。 -->
+        <item name="android:windowBackground">@color/window_background</item>
     </style>
 </resources>
