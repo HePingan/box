@@ -1,15 +1,59 @@
 package top.hpa888.box
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.RenderMode
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+
+    /**
+     * HyperOS 自由小窗在 resize 后会偶发让默认 SurfaceView 丢掉绘制层，
+     * 因此这里固定使用 TextureView。代价是多一次纹理合成，但普通全屏行为不变，
+     * 且只影响 Flutter 的承载 View，可随时回退这一处 override。
+     */
+    override fun getRenderMode(): RenderMode = RenderMode.texture
+
+    override fun onResume() {
+        super.onResume()
+        logFlutterWindowState("resume")
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        logFlutterWindowState("window_focus:$hasFocus")
+    }
+
+    override fun onMultiWindowModeChanged(
+        isInMultiWindowMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
+        logFlutterWindowState("multi_window:$isInMultiWindowMode")
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        logFlutterWindowState("configuration_changed")
+    }
+
+    private fun logFlutterWindowState(event: String) {
+        val root = window?.decorView
+        Log.i(
+            FlutterWindowDiagnostics.tag,
+            "event=$event renderMode=${getRenderMode()} " +
+                "size=${root?.width ?: 0}x${root?.height ?: 0} " +
+                "multiWindow=$isInMultiWindowMode " +
+                "orientation=${resources.configuration.orientation}",
+        )
+    }
 
     companion object {
         // 视频下载 MethodChannel — top.hpa888.box/video_downloads
