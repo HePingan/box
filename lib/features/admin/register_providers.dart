@@ -3,6 +3,7 @@ import 'presentation/widgets/book_source_tab.dart';
 import 'presentation/widgets/image_provider_tab.dart';
 import 'presentation/widgets/plugin_policy_tab.dart';
 import 'presentation/widgets/plugin_market_admin_tab.dart';
+import 'presentation/widgets/announcement_tab.dart';
 import 'presentation/widgets/video_source_tab.dart';
 import 'presentation/widgets/quiz_bank_tab.dart';
 
@@ -28,4 +29,7 @@ void registerResourceProviders() {
 
   // 用户插件市场审核
   ResourceRegistry.register(PluginMarketAdminResourceProvider());
+
+  // 站内公告：草稿、发布、置顶、编辑和删除
+  ResourceRegistry.register(AnnouncementResourceProvider());
 }

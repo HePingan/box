@@ -20,6 +20,9 @@ enum AdminResourceType {
   /// 插件市场审核 — 用户投稿 / 发布 / 下架
   pluginMarket('plugin-market', '插件市场', 5),
 
+  /// 站内公告 — 草稿、发布、置顶与历史维护
+  announcement('announcement', '公告', 6),
+
   /// 更多扩展...
   ;
 

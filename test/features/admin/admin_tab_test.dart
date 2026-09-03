@@ -153,7 +153,7 @@ void main() {
 
   group('AdminResourceType enum', () {
     test('values contain all expected types', () {
-      expect(AdminResourceType.values.length, 6);
+      expect(AdminResourceType.values.length, 7);
       final types = AdminResourceType.values.map((e) => e.type).toSet();
       expect(
           types,
@@ -164,6 +164,7 @@ void main() {
             'quiz-bank',
             'plugin-policy',
             'plugin-market',
+            'announcement',
           ]));
     });
 
