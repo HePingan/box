@@ -14,7 +14,7 @@ import 'cloud_sync_models.dart';
 /// 这个类挂在 app 作用域，启动后台拉一次，供任意位置读红点/弹窗。
 class AnnouncementCenter extends ChangeNotifier {
   AnnouncementCenter({AnnouncementService? service})
-      : _service = service ?? AnnouncementService();
+    : _service = service ?? AnnouncementService();
 
   final AnnouncementService _service;
 
@@ -30,7 +30,10 @@ class AnnouncementCenter extends ChangeNotifier {
   int get unreadCount => AnnouncementStartupPolicy.unreadCount(_state);
   bool get hasUnread => AnnouncementStartupPolicy.hasUnread(_state);
 
-  /// 启动流程：先读本地缓存让红点在首帧就能亮，再按节流决定是否打网络。
+  /// 启动流程：先读本地缓存让红点在首帧就能亮，再立即从网络刷新。
+  ///
+  /// 启动是用户获知重要提醒的唯一可靠时机，不能沿用书源同步的 6h 节流：
+  /// 节流会让刚发布的 warning 在用户手动刷新前一直不可见，也无法弹窗。
   /// 幂等 —— 重复调用不会重复打网络。
   Future<void> bootstrap() async {
     if (_bootstrapped) return;
@@ -43,14 +46,8 @@ class AnnouncementCenter extends ChangeNotifier {
         notifyListeners();
       }
 
-      if (!AnnouncementStartupPolicy.shouldFetch(
-        lastFetchedAt: cached.fetchedAt,
-        now: DateTime.now(),
-      )) {
-        return;
-      }
-
       _state = await _service.load();
+      lastError = null;
       notifyListeners();
     } catch (e) {
       // 公告拉取失败不能影响启动，留痕即可。
@@ -80,11 +77,13 @@ class AnnouncementCenter extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 手动刷新（下拉等场景），绕过节流。
+  /// 手动刷新（下拉、回到前台等场景），绕过节流。
+  /// 拉到新的未读 warning 时允许再次弹窗；已确认过的条目仍走已读集合。
   Future<void> refresh() async {
     try {
       _state = await _service.load(force: true);
       lastError = null;
+      _popupDelivered = false;
       notifyListeners();
     } catch (e) {
       lastError = e;

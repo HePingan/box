@@ -106,7 +106,7 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
       if (!mounted) return;
       context.read<FavoritesController>().load();
     });
-    // 公告：首帧后再拉，不阻塞冷启动。内部按 6h 节流、失败静默。
+    // 公告：首帧后再拉，不阻塞冷启动。进入 App 必刷新，失败静默。
     // 拉完若有未读的 warning 级公告，弹一次窗 —— 更新验签这类故障必须能
     // 主动触达用户，不能指望他自己翻到「抽屉 → 账号 → 个人中心」。
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -128,6 +128,14 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
     );
   }
 
+  Future<void> _refreshAnnouncementsOnResume() async {
+    if (!mounted) return;
+    final center = context.read<AnnouncementCenter>();
+    await center.refresh();
+    if (!mounted) return;
+    await _maybeShowAnnouncementPopup(center);
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -139,6 +147,7 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       QuizCloudAutoSync.instance.onAppResumed();
+      _refreshAnnouncementsOnResume();
       // 回前台刷新插件远程策略（节流在 Store 内）
       PluginPolicyStore.instance.refresh();
       // 回前台同步市场插件下架状态并强制禁用

@@ -78,7 +78,7 @@ void main() {
     _FakeService._prefs = await SharedPreferences.getInstance();
   });
 
-  test('启动：先读缓存点亮红点，再按节流决定是否打网络', () async {
+  test('启动：先读缓存点亮红点，再立即打网络刷新', () async {
     final svc = _FakeService(
       remote: state([entry('a'), entry('b')]),
       cached: state([entry('a')], fetchedAt: null),
@@ -93,7 +93,7 @@ void main() {
     expect(center.hasUnread, isTrue);
   });
 
-  test('启动：距上次拉取不足 6h → 不打网络，只用缓存', () async {
+  test('启动：即使距上次拉取不足 6h，也打网络刷新', () async {
     final recent = DateTime.now().subtract(const Duration(hours: 1));
     final svc = _FakeService(
       remote: state([entry('a'), entry('b')]),
@@ -108,8 +108,8 @@ void main() {
 
     await center.bootstrap();
 
-    expect(svc.loadCalls, 0, reason: '6h 内不应重复打网络');
-    expect(center.unreadCount, 1, reason: '仍应用缓存点亮红点');
+    expect(svc.loadCalls, 1, reason: '进入 App 必须刷新，不能被 6h 缓存挡住');
+    expect(center.unreadCount, 2, reason: '应以网络结果覆盖缓存');
   });
 
   test('启动：网络失败静默降级，不抛给调用方，红点仍按缓存显示', () async {
@@ -137,11 +137,7 @@ void main() {
     final first = center.takePopup();
     expect(first?.id, 'w');
 
-    expect(
-      center.takePopup(),
-      isNull,
-      reason: '同一次启动内不应重复弹，否则切 tab 就再弹一次',
-    );
+    expect(center.takePopup(), isNull, reason: '同一次启动内不应重复弹，否则切 tab 就再弹一次');
   });
 
   test('弹窗：确认后写入已读，下次启动不再弹', () async {
