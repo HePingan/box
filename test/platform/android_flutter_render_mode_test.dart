@@ -21,6 +21,45 @@ void main() {
     );
   });
 
+  test('诊断日志双出口：logcat 之外必须推给 Dart，用户才能免 adb 取证', () {
+    final diagnostics = File(
+      'android/app/src/main/kotlin/top/hpa888/box/FlutterWindowDiagnostics.kt',
+    ).readAsStringSync();
+
+    expect(
+      diagnostics,
+      contains('Log.i(tag, message)'),
+      reason: 'Dart 侧卡死时 logcat 是唯一还能出数的通道，不能被替换掉。',
+    );
+    expect(
+      diagnostics,
+      contains('top.hpa888.box/window_diagnostics'),
+      reason: '需要独立通道把事件送进 App 内「调试日志」页。',
+    );
+    expect(
+      diagnostics,
+      allOf(contains('pending'), contains('onDartReady')),
+      reason: 'onResume/焦点变化早于引擎就绪，必须缓冲并在 Dart ready 后回放。',
+    );
+    expect(
+      diagnostics,
+      contains('MAX_BUFFERED'),
+      reason: '缓冲要有上限，诊断日志不值得为它 OOM。',
+    );
+
+    final mainActivity = File(mainActivityPath).readAsStringSync();
+    expect(
+      mainActivity,
+      contains('FlutterWindowDiagnostics.record('),
+      reason: '窗口事件必须走统一出口，绕过它就只剩 logcat 一份。',
+    );
+    expect(
+      mainActivity,
+      contains('FlutterWindowDiagnostics.detachChannel()'),
+      reason: 'Activity 销毁必须解绑，否则重建后事件投向失效 channel 静默丢失。',
+    );
+  });
+
   test('小窗异常时记录真实窗口尺寸、multi-window 状态与焦点，便于下次取证', () {
     final source = File(mainActivityPath).readAsStringSync();
 

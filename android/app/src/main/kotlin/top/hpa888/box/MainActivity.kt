@@ -5,7 +5,6 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.android.RenderMode
 import io.flutter.embedding.engine.FlutterEngine
@@ -46,8 +45,7 @@ class MainActivity : FlutterActivity() {
 
     private fun logFlutterWindowState(event: String) {
         val root = window?.decorView
-        Log.i(
-            FlutterWindowDiagnostics.tag,
+        FlutterWindowDiagnostics.record(
             "event=$event renderMode=${getRenderMode()} " +
                 "size=${root?.width ?: 0}x${root?.height ?: 0} " +
                 "multiWindow=$isInMultiWindowMode " +
@@ -82,6 +80,25 @@ class MainActivity : FlutterActivity() {
         FlutterEngineCache.getInstance().put("quiz_engine", flutterEngine)
 
         overlayManager = QuizOverlayManager(this)
+
+        // 小窗诊断通道：logcat 之外再给 Dart 侧 AppLogger 一份，
+        // 让拿不到 adb 的用户能直接在「调试日志」页复制现场。
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            FlutterWindowDiagnostics.CHANNEL,
+        ).also { diagnosticsChannel ->
+            FlutterWindowDiagnostics.attachChannel(diagnosticsChannel)
+            diagnosticsChannel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    FlutterWindowDiagnostics.METHOD_READY -> {
+                        // Dart handler 已就位，回放引擎就绪前攒下的早期事件。
+                        FlutterWindowDiagnostics.onDartReady()
+                        result.success(true)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
 
         // 尽早请求通知权限，避免 setOverlayVisible 时权限还没授予
         if (Build.VERSION.SDK_INT >= 33) {
@@ -505,6 +522,9 @@ class MainActivity : FlutterActivity() {
         // 用户切到驾考/考试 App 时 MainActivity 常被 destroy，若这里 hide 全部，
         // 就会出现「启用成功但屏幕上看不到悬浮窗」。
         overlayManager?.hideActivityOwned()
+        // 诊断通道绑在这个 Activity 的 engine 上，必须随之解绑，
+        // 否则重建后事件会投向失效 channel 而静默丢掉。
+        FlutterWindowDiagnostics.detachChannel()
         // 仅在 AccessibilityService 已停止时才移除引擎缓存。
         // 若无障碍服务仍在运行（如用户切到驾考App），quiz_engine 必须保留在缓存中，
         // 否则 QuizAccessibilityService.resolveChannel() 拿不到 FlutterEngine，

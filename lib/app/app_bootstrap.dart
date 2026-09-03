@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../features/admin/register_providers.dart';
 import '../novel/pages/source_manager/book_source_bootstrap.dart';
+import '../platform/window_diagnostics_channel.dart';
 import '../utils/app_logger.dart';
 import '../utils/http_overrides.dart';
 import '../video/config/video_proxy_config.dart';
@@ -29,6 +30,7 @@ class AppBootstrap {
 
     await Hive.initFlutter();
     await _initLogger();
+    await _attachWindowDiagnostics();
     _installErrorHandlers();
     _configureSystemUi();
     _configureImageCache();
@@ -46,6 +48,18 @@ class AppBootstrap {
       await AppLogger.instance.init();
     } catch (e) {
       debugPrint('AppLogger init failed: $e');
+    }
+  }
+
+  /// 接上原生小窗诊断通道。
+  ///
+  /// 必须排在 [_initLogger] 之后：原生会回放引擎就绪前缓冲的早期事件，
+  /// AppLogger 还没 init 的话这批最关键的现场会落空。
+  static Future<void> _attachWindowDiagnostics() async {
+    try {
+      await WindowDiagnosticsChannel().attach();
+    } catch (e) {
+      debugPrint('WindowDiagnostics attach failed: $e');
     }
   }
 
