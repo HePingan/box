@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../features/admin/register_providers.dart';
 import '../novel/pages/source_manager/book_source_bootstrap.dart';
+import '../platform/flutter_viewport_diagnostics.dart';
 import '../platform/window_diagnostics_channel.dart';
 import '../utils/app_logger.dart';
 import '../utils/http_overrides.dart';
@@ -60,6 +61,15 @@ class AppBootstrap {
       await WindowDiagnosticsChannel().attach();
     } catch (e) {
       debugPrint('WindowDiagnostics attach failed: $e');
+    }
+
+    // Flutter 侧视口诊断：原生日志只能证明 Android 窗口尺寸变了，
+    // 证明不了 Flutter 的 physicalSize 有没有跟上。两层都记，才能区分
+    // 「原生没恢复」和「原生恢复了但 Flutter 视口没同步」。
+    try {
+      FlutterViewportDiagnostics().attach();
+    } catch (e) {
+      debugPrint('FlutterViewportDiagnostics attach failed: $e');
     }
   }
 
