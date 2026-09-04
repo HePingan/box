@@ -84,4 +84,50 @@ void main() {
       reason: '自由小窗拖拽缩放会分发配置变化，必须记录这个真实事件。',
     );
   });
+
+  test('退出分屏必须采 layout 后尺寸：朋友机日志最后停在 layout 前的 1728', () {
+    // 红米 K80 / HyperOS，2026-09-04T18:33:22 现场（用户原文，未改字）：
+    //   window_focus:false  size=1080x2400  multiWindow=false
+    //   multi_window:true   size=1080x2400  multiWindow=true   ← layout 前
+    //   configuration_changed size=1080x2400 multiWindow=true  ← layout 前
+    //   window_focus:true   size=1080x1728  multiWindow=true   ← 进入分屏后才更新
+    //   ... 分屏内两次失焦/回焦，尺寸一直 1728 ...
+    //   multi_window:false  size=1080x1728  multiWindow=false  ← 退出仍是旧高
+    //   configuration_changed size=1080x1728 multiWindow=false ← 之后再无采样
+    // 同步读 decorView 不能当「高度卡住」的证据；必须另记 Configuration
+    // 的 dp，并在 layout 后（或超时未 layout）再采一次。
+    final source = File(mainActivityPath).readAsStringSync();
+
+    expect(
+      source,
+      contains('configDp='),
+      reason: 'lifecycle 回调里 decorView 还是旧像素；'
+          'Configuration.screenWidthDp/HeightDp 是新配置，必须写进同一条。',
+    );
+    expect(
+      source,
+      contains('after_layout'),
+      reason: '退出分屏那两行是 layout 前采样。没有 after_layout，'
+          '1080x1728 无法区分「日志采早了」和「窗口真卡住」。',
+    );
+    expect(
+      source,
+      contains('after_layout_timeout'),
+      reason: '高度若真卡住，OnLayoutChangeListener 根本不响；'
+          '必须有超时采样，才能在 App 内日志里看到「layout 没来」。',
+    );
+    expect(
+      source,
+      contains('AFTER_LAYOUT_LOG_TIMEOUT_MS'),
+      reason: '超时是启发式，必须是命名常量，不能写死魔法数字。',
+    );
+    expect(
+      source.contains('scheduleAfterLayoutLog') &&
+          !RegExp(r'scheduleAfterLayoutLog\(\s*"resume"').hasMatch(source) &&
+          !RegExp(r'scheduleAfterLayoutLog\(\s*"window_focus').hasMatch(source),
+      isTrue,
+      reason: 'resume/焦点变化本身常发生在 layout 后，再预约会把 1000 行环刷满。'
+          '只在 multi_window 与 configuration_changed 两条 layout 前回调里预约。',
+    );
+  });
 }

@@ -4,7 +4,10 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
+import android.view.View
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.android.RenderMode
 import io.flutter.embedding.engine.FlutterEngine
@@ -36,21 +39,92 @@ class MainActivity : FlutterActivity() {
     ) {
         super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
         logFlutterWindowState("multi_window:$isInMultiWindowMode")
+        // 同步读 decorView 仍是旧像素（朋友机退出分屏：1080x1728），layout 后再采一次。
+        scheduleAfterLayoutLog("multi_window:$isInMultiWindowMode")
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         logFlutterWindowState("configuration_changed")
+        scheduleAfterLayoutLog("configuration_changed")
     }
 
     private fun logFlutterWindowState(event: String) {
         val root = window?.decorView
+        val cfg = resources.configuration
         FlutterWindowDiagnostics.record(
             "event=$event renderMode=${getRenderMode()} " +
                 "size=${root?.width ?: 0}x${root?.height ?: 0} " +
+                "configDp=${cfg.screenWidthDp}x${cfg.screenHeightDp} " +
                 "multiWindow=$isInMultiWindowMode " +
-                "orientation=${resources.configuration.orientation}",
+                "orientation=${cfg.orientation}",
         )
+    }
+
+    /**
+     * 朋友机 2026-09-04T18:33:22 现场：退出分屏的
+     * `onMultiWindowModeChanged` / `onConfigurationChanged` 同步读到的仍是
+     * 分屏高度 1080x1728，之后再无采样。真正的 layout 发生在回调返回之后。
+     *
+     * 同步那条保留（证明回调发生过）；layout 后再记 `after_layout`。
+     * 若 [AFTER_LAYOUT_LOG_TIMEOUT_MS] 内 bounds 没变，记 `after_layout_timeout`——
+     * 那才是「高度卡住」的证据，而不是「日志采早了」。
+     *
+     * resume / 焦点变化本身常发生在 layout 之后，不再预约，避免把
+     * AppLogger 1000 行环刷满。
+     */
+    private fun scheduleAfterLayoutLog(sourceEvent: String) {
+        val root = window?.decorView ?: return
+        pendingAfterLayoutListener?.let { root.removeOnLayoutChangeListener(it) }
+        afterLayoutTimeoutRunnable?.let { afterLayoutHandler.removeCallbacks(it) }
+
+        // 只认「尺寸真的变了」的那次 layout：位置平移（拖动小窗）不代表
+        // 高度恢复，记下来只会淹没有效证据。
+        val listener = object : View.OnLayoutChangeListener {
+            override fun onLayoutChange(
+                v: View,
+                left: Int,
+                top: Int,
+                right: Int,
+                bottom: Int,
+                oldLeft: Int,
+                oldTop: Int,
+                oldRight: Int,
+                oldBottom: Int,
+            ) {
+                if (right - left == oldRight - oldLeft &&
+                    bottom - top == oldBottom - oldTop
+                ) {
+                    return
+                }
+                v.removeOnLayoutChangeListener(this)
+                if (pendingAfterLayoutListener === this) pendingAfterLayoutListener = null
+                afterLayoutTimeoutRunnable?.let { afterLayoutHandler.removeCallbacks(it) }
+                afterLayoutTimeoutRunnable = null
+                logFlutterWindowState("after_layout:$sourceEvent")
+            }
+        }
+        pendingAfterLayoutListener = listener
+        root.addOnLayoutChangeListener(listener)
+
+        val timeout = Runnable {
+            pendingAfterLayoutListener?.let { root.removeOnLayoutChangeListener(it) }
+            pendingAfterLayoutListener = null
+            afterLayoutTimeoutRunnable = null
+            logFlutterWindowState("after_layout_timeout:$sourceEvent")
+        }
+        afterLayoutTimeoutRunnable = timeout
+        afterLayoutHandler.postDelayed(timeout, AFTER_LAYOUT_LOG_TIMEOUT_MS)
+    }
+
+    private fun cancelAfterLayoutLog() {
+        val root = window?.decorView
+        pendingAfterLayoutListener?.let { listener ->
+            root?.removeOnLayoutChangeListener(listener)
+        }
+        pendingAfterLayoutListener = null
+        afterLayoutTimeoutRunnable?.let { afterLayoutHandler.removeCallbacks(it) }
+        afterLayoutTimeoutRunnable = null
     }
 
     companion object {
@@ -64,9 +138,24 @@ class MainActivity : FlutterActivity() {
 
         private const val REQUEST_OVERLAY_PERMISSION = 1001
         private const val REQUEST_NOTIFICATION_PERMISSION = 1002
+
+        /**
+         * layout 后补采样的等待上限（启发式）。
+         *
+         * 调大：慢机/复杂页面更不容易误报 `after_layout_timeout`，代价是
+         * 「高度真卡住」这条证据来得更晚。
+         * 调小：卡住时更快留痕，但正常但偏慢的一次 relayout 会被误记成 timeout。
+         * 600ms 是量级判断，尚未在朋友机上按真实样本校准。
+         */
+        private const val AFTER_LAYOUT_LOG_TIMEOUT_MS = 600L
     }
 
     private var overlayManager: QuizOverlayManager? = null
+
+    /// layout 后补采样：只保留最近一次预约，避免连续 resize 时堆叠回调。
+    private val afterLayoutHandler = Handler(Looper.getMainLooper())
+    private var pendingAfterLayoutListener: View.OnLayoutChangeListener? = null
+    private var afterLayoutTimeoutRunnable: Runnable? = null
 
     /// 仅当阅读页开启「音量键翻页」时才拦截音量键；
     /// 其余场景必须放行，否则整个 App 都调不了系统音量。
@@ -522,6 +611,9 @@ class MainActivity : FlutterActivity() {
         // 用户切到驾考/考试 App 时 MainActivity 常被 destroy，若这里 hide 全部，
         // 就会出现「启用成功但屏幕上看不到悬浮窗」。
         overlayManager?.hideActivityOwned()
+        // layout 后补采样的 listener/timeout 都持有 decorView 与 this，
+        // Activity 销毁时必须撤掉，否则泄漏且会往失效 channel 投递。
+        cancelAfterLayoutLog()
         // 诊断通道绑在这个 Activity 的 engine 上，必须随之解绑，
         // 否则重建后事件会投向失效 channel 而静默丢掉。
         FlutterWindowDiagnostics.detachChannel()
