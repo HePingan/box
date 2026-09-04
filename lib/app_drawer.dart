@@ -740,6 +740,13 @@ class _DrawerContent extends StatelessWidget {
             ),
             _buildMoreItem(
               context,
+              icon: Icons.bug_report_outlined,
+              title: '调试日志',
+              subtitle: '出问题时复制这里的日志发给开发者',
+              onTap: () => _openRoute(context, AppRoutes.debugLog),
+            ),
+            _buildMoreItem(
+              context,
               icon: Icons.info_outline_rounded,
               title: '关于',
               subtitle: null,
@@ -879,13 +886,7 @@ class _DrawerContent extends StatelessWidget {
           const Spacer(),
           GestureDetector(
             onTap: () => _openRoute(context, AppRoutes.debugLog),
-            child: Text(
-              'v2.0.0',
-              style: TextStyle(
-                fontSize: 10,
-                color: AppTokens.textSecondary.withValues(alpha: 0.65),
-              ),
-            ),
+            child: const _FooterVersionLabel(),
           ),
         ],
       ),
@@ -895,6 +896,49 @@ class _DrawerContent extends StatelessWidget {
   void _showSnack(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+    );
+  }
+}
+
+/// 抽屉底部的版本号。
+///
+/// 之前这里硬编码 `v2.0.0`，而 `pubspec.yaml` 早已走到 1.9.x —— 用户想确认
+/// 「线上版本装上了没有」时，唯一顺手能看的这个数字反而在说谎。改成读
+/// [PackageInfo]，与「关于」弹窗同源。
+class _FooterVersionLabel extends StatefulWidget {
+  const _FooterVersionLabel();
+
+  @override
+  State<_FooterVersionLabel> createState() => _FooterVersionLabelState();
+}
+
+class _FooterVersionLabelState extends State<_FooterVersionLabel> {
+  String? _label;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() => _label = 'v${info.version}+${info.buildNumber}');
+    } catch (_) {
+      // 取不到就保持占位，不能因为拿不到版本号把整个抽屉底栏搞崩。
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      _label ?? 'v—',
+      style: TextStyle(
+        fontSize: 10,
+        color: AppTokens.textSecondary.withValues(alpha: 0.65),
+      ),
     );
   }
 }
