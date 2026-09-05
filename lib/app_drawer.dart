@@ -115,16 +115,20 @@ class _DrawerContent extends StatelessWidget {
 
   // ─── 路由跳转 ───
 
+  /// 打开二级页，但**不关抽屉**。
+  ///
+  /// 原先是先 `pop()` 关抽屉再 push 目标页，结果用户从目标页返回时抽屉早已
+  /// 不在，得重新划开才能点下一项 —— 抽屉本来就是「连着点几下」的地方。
+  /// 现在让目标页直接盖在抽屉之上，返回时抽屉还在原位。
   void _openRoute(BuildContext context, String route) {
-    Navigator.of(context).pop();
     Navigator.of(context).pushNamed(route);
   }
 
   // ─── 反馈 ───
 
+  /// 反馈弹框，同上：不关抽屉。
   void _openFeedback(BuildContext context) {
     const url = 'https://github.com/HePingan/box/issues';
-    Navigator.of(context).pop();
     Clipboard.setData(const ClipboardData(text: url));
     showDialog(
       context: context,
@@ -158,9 +162,13 @@ class _DrawerContent extends StatelessWidget {
 
   // ─── 关于对话框 ───
 
+  /// 弹「关于」框，同样不关抽屉：关掉框之后用户还站在抽屉里。
+  ///
+  /// 顺带消掉一个隐患 —— 原先先 pop 抽屉再 await，之后拿这个已经出栈的
+  /// context 去 showDialog / showSnackBar，「检查更新」就曾因此静默失效
+  /// （见 test/update/manual_check_snackbar_test.dart）。不 pop 之后
+  /// context 全程有效。
   Future<void> _showAboutDialog(BuildContext context) async {
-    Navigator.of(context).pop();
-
     final info = await PackageInfo.fromPlatform();
     if (!context.mounted) return;
 
