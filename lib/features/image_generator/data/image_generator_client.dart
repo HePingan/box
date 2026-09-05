@@ -142,26 +142,19 @@ class ImageGeneratorClient {
     final client = _httpClient ?? http.Client();
     final closeClient = _httpClient == null;
     try {
-      http.BaseRequest request;
+      final request = http.Request(method, endpoint)
+        ..headers.addAll(headers ?? {});
       if (method == 'POST') {
-        request = http.Request(method, endpoint)
-          ..headers.addAll(headers ?? {})
-          ..body = body ?? '';
-      } else {
-        request = http.Request('GET', endpoint);
-        request.headers.addAll(headers ?? {});
+        request.body = body ?? '';
       }
 
-      final streamed = await request.send().timeout(timeout);
+      // 必须用 client.send()：http.Request.send() 会自建一次性 client，
+      // 那样注入的 httpClient 形同虚设（测试打真实网络、连接无法复用）。
+      final streamed = await client.send(request).timeout(timeout);
       final response = await http.Response.fromStream(streamed);
 
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw ImageGeneratorException(
-          _extractError(utf8.decode(response.bodyBytes), response.statusCode),
-          statusCode: response.statusCode,
-          rawPreview: _preview(utf8.decode(response.bodyBytes)),
-        );
-      }
+      // 状态码判定统一留给各调用方（它们都会检查并附带 rawPreview），
+      // 这里不再重复抛，避免同一响应被解码两次。
       return response;
     } on ImageGeneratorException {
       rethrow;
