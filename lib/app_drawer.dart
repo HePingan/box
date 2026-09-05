@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import 'app/app_routes.dart';
 import 'config/app_config.dart';
@@ -13,7 +11,6 @@ import 'update/update_service.dart';
 import 'features/account/data/account_store.dart';
 import 'features/cloud_sync/domain/announcement_center.dart';
 import 'features/account/domain/account_models.dart';
-import 'features/backup/local_backup_service.dart';
 
 /// 应用侧滑菜单 — 风格与主页面完全一致
 ///
@@ -160,59 +157,6 @@ class _DrawerContent extends StatelessWidget {
   }
 
   // ─── 关于对话框 ───
-
-  Future<void> _backupLocalData(BuildContext context) async {
-    Navigator.of(context).pop();
-    _showSnack(context, '正在整理本地数据…');
-    try {
-      final file = await LocalBackupService.writeBackupToTemporaryFile();
-      // 导出后当场回读自检。只报总条数看不出「某一类整体缺失」，
-      // 分类计数能让用户在卸载重装**之前**发现备份不全。
-      String summaryText;
-      try {
-        final summary = LocalBackupService.summarize(
-          await file.readAsString(),
-        );
-        summaryText = summary.describe();
-      } catch (_) {
-        summaryText = '（自检未通过，请确认备份文件是否完整）';
-      }
-      if (!context.mounted) return;
-      await SharePlus.instance.share(
-        ShareParams(
-          files: [XFile(file.path, mimeType: 'application/json')],
-          subject: 'Box 本地数据备份',
-          text: '本次备份内容：$summaryText\n请妥善保存此备份文件；重装后可通过“恢复本地数据”导入。',
-        ),
-      );
-      if (context.mounted) _showSnack(context, '备份内容：$summaryText');
-    } catch (_) {
-      if (context.mounted) _showSnack(context, '备份失败，请稍后重试');
-    }
-  }
-
-  Future<void> _restoreLocalData(BuildContext context) async {
-    Navigator.of(context).pop();
-    try {
-      final picked = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ['json'],
-      );
-      final file = picked?.files.single;
-      final bytes = await file?.readAsBytes();
-      if (bytes == null || bytes.isEmpty || !context.mounted) return;
-      final count = await LocalBackupService.restoreBackupBytes(bytes);
-      if (context.mounted) {
-        // 仍然建议重启：内存缓存已失效，但已经建好的页面（列表、
-        // 阅读器）不会自己重建，用户看到的可能还是旧画面。
-        _showSnack(context, '已恢复 $count 条本地记录，建议重启应用以刷新界面');
-      }
-    } on FormatException {
-      if (context.mounted) _showSnack(context, '不是有效的 Box 本地数据备份文件');
-    } catch (_) {
-      if (context.mounted) _showSnack(context, '恢复失败，原数据未被清空');
-    }
-  }
 
   Future<void> _showAboutDialog(BuildContext context) async {
     Navigator.of(context).pop();
@@ -502,6 +446,39 @@ class _DrawerContent extends StatelessWidget {
                 ],
               ),
             ),
+            // 公告未读红点提到常驻可见的头部卡片上。原先只挂在「更多」
+            // 列表里，抽屉一划开如果不滚动可能看不到——而公告恰恰是线上
+            // 出故障时唯一的触达手段。
+            Consumer<AnnouncementCenter>(
+              builder: (context, center, _) {
+                final unread = center.unreadCount;
+                if (unread == 0) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: Container(
+                    key: const Key('drawer_header_unread_badge'),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppTokens.danger,
+                      borderRadius: BorderRadius.circular(
+                        AppTokens.radiusPill,
+                      ),
+                    ),
+                    child: Text(
+                      unread > 99 ? '99+' : '$unread',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
             const Icon(
               Icons.chevron_right_rounded,
               size: 20,
@@ -567,13 +544,6 @@ class _DrawerContent extends StatelessWidget {
             ),
             _buildMoreItem(
               context,
-              icon: Icons.account_circle_rounded,
-              title: '账号中心',
-              subtitle: null,
-              onTap: () => _openRoute(context, AppRoutes.account),
-            ),
-            _buildMoreItem(
-              context,
               icon: Icons.settings_outlined,
               title: '设置',
               subtitle: null,
@@ -583,19 +553,14 @@ class _DrawerContent extends StatelessWidget {
           ]),
           _buildSectionLabel('数据'),
           ..._withDividers([
+            // 备份与恢复是成对使用的功能，合成一个入口进「数据设置」，
+            // 抽屉不再平铺两条。具体实现搬到 DataSettingsPage。
             _buildMoreItem(
               context,
               icon: Icons.backup_outlined,
-              title: '备份本地数据',
-              subtitle: '收藏、历史、下载、书架书源与阅读进度、本地题库',
-              onTap: () => _backupLocalData(context),
-            ),
-            _buildMoreItem(
-              context,
-              icon: Icons.settings_backup_restore_outlined,
-              title: '恢复本地数据',
-              subtitle: '重装后导入此前导出的备份',
-              onTap: () => _restoreLocalData(context),
+              title: '备份与恢复',
+              subtitle: '导出或导入收藏、书架、阅读进度、本地题库',
+              onTap: () => _openRoute(context, AppRoutes.dataSettings),
             ),
           ]),
           _buildSectionLabel('帮助'),
