@@ -128,6 +128,11 @@ void main() {
     expect(captured, hasLength(1));
     expect(captured.single, contains('阅读分页'));
     expect(captured.single, isNot(contains('播放起播')));
+    // 复制出去的是带上下文的诊断报告，不是裸日志——
+    // 报障的人没有 adb，头部这几行省掉一轮追问机型。
+    expect(captured.single, contains('===== Box 诊断报告 ====='));
+    expect(captured.single, contains('日志范围: 阅读'));
+    expect(captured.single, contains('日志行数: 1'));
   });
 
   testWidgets('复制后的提示写明行数与分类范围', (tester) async {
@@ -148,9 +153,59 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('log_channel_PLAYER')));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithIcon(IconButton, Icons.copy_rounded));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(find.text('已复制2行（播放）'), findsOneWidget);
+  });
+
+  testWidgets('「仅错误」时报告头部写明筛选范围', (tester) async {
+    seed();
+    final captured = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          captured.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      );
+    });
+
+    await pumpPage(tester);
+
+    await tester.tap(
+      find.widgetWithIcon(IconButton, Icons.filter_alt_outlined),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.copy_rounded));
+    await tester.pumpAndSettle();
+
+    expect(captured.single, contains('仅警告与错误'));
+  });
+
+  testWidgets('分享按钮存在，空日志时禁用', (tester) async {
+    await pumpPage(tester);
+
+    final share = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.ios_share_rounded),
+    );
+    expect(share.onPressed, isNull);
+  });
+
+  testWidgets('有日志时分享按钮可用', (tester) async {
+    seed();
+    await pumpPage(tester);
+
+    final share = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.ios_share_rounded),
+    );
+    expect(share.onPressed, isNotNull);
   });
 
   testWidgets('日志内容可选中，方便用户长按复制单行', (tester) async {

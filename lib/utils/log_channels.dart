@@ -78,6 +78,10 @@ enum LogChannel {
       case 'UPDATE':
         return LogChannel.network;
       case 'ERROR':
+      // app_bootstrap 的 PlatformDispatcher.onError 写的是 'DART'。
+      // 这是未捕获异常的崩溃现场，必须能被「错误」频道筛到。
+      case 'DART':
+      case 'EXCEPTION':
         return LogChannel.error;
       case 'APP':
       case 'SYSTEM':

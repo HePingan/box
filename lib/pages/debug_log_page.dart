@@ -3,7 +3,10 @@ import 'package:flutter/services.dart';
 
 import '../design_system/widgets/app_back_button.dart';
 import '../design_system/widgets/app_page_scaffold.dart';
+import 'package:share_plus/share_plus.dart';
+
 import '../utils/app_logger.dart';
+import '../utils/diagnostic_report.dart';
 import '../utils/log_channels.dart';
 
 /// 统一调试日志页。
@@ -36,7 +39,10 @@ class _DebugLogPageState extends State<DebugLogPage> {
           if (_channel != null && e.channel != _channel) return false;
           if (_errorsOnly &&
               e.level != LogLevel.error &&
-              e.level != LogLevel.warn) {
+              e.level != LogLevel.warn &&
+              // 频道兜底：升级前记下的崩溃行没有级别段（解析成 info），
+              // 只按级别过滤会把最关键的崩溃现场筛掉。
+              e.channel != LogChannel.error) {
             return false;
           }
           return true;
@@ -44,16 +50,54 @@ class _DebugLogPageState extends State<DebugLogPage> {
         .toList(growable: false);
   }
 
+  String get _scopeLabel {
+    final channel = _channel?.label ?? '全部';
+    return _errorsOnly ? '$channel · 仅警告与错误' : channel;
+  }
+
+  /// 组装带设备上下文的诊断报告。
+  ///
+  /// 报障的人多半没有 adb，只能手动复制。裸日志缺机型和版本号，
+  /// 每次都要再追问一轮，所以这里直接把上下文打进报告头部。
+  ///
+  /// 头部走**启动时预取的缓存**、同步读取：复制是报障的核心动作，
+  /// 不能为了一个可选的版本号去等 platform channel。
+  String _buildReport(List<LogEntry> visible) {
+    return DiagnosticReport.compose(
+      header: DiagnosticHeader.cachedOrPlaceholder,
+      entries: visible,
+      scopeLabel: _scopeLabel,
+    );
+  }
+
   Future<void> _copyVisible(List<LogEntry> visible) async {
     // 复制当前可见内容，而不是无脑全量——见类文档说明。
-    final text = visible.map((e) => e.raw).join('\n');
-    await Clipboard.setData(ClipboardData(text: text));
+    final report = _buildReport(visible);
+    await Clipboard.setData(ClipboardData(text: report));
 
     if (!mounted) return;
-    final scope = _channel?.label ?? '全部';
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('已复制${visible.length}行（$scope）')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已复制${visible.length}行（$_scopeLabel）')),
+    );
+  }
+
+  /// 直接调起系统分享，省掉「复制 → 切到聊天 → 粘贴」这几步。
+  Future<void> _shareVisible(List<LogEntry> visible) async {
+    final report = _buildReport(visible);
+
+    try {
+      await SharePlus.instance.share(
+        ShareParams(text: report, subject: 'Box 诊断报告（$_scopeLabel）'),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      // 分享失败不能让日志发不出去——退回剪贴板。
+      await Clipboard.setData(ClipboardData(text: report));
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('分享不可用，已复制到剪贴板')));
+    }
   }
 
   Future<void> _clearAll() async {
@@ -90,6 +134,13 @@ class _DebugLogPageState extends State<DebugLogPage> {
                 tooltip: '复制当前筛选结果',
                 icon: const Icon(Icons.copy_rounded),
                 onPressed: visible.isEmpty ? null : () => _copyVisible(visible),
+              ),
+              IconButton(
+                tooltip: '分享诊断报告',
+                icon: const Icon(Icons.ios_share_rounded),
+                onPressed: visible.isEmpty
+                    ? null
+                    : () => _shareVisible(visible),
               ),
               IconButton(
                 tooltip: '清空日志',

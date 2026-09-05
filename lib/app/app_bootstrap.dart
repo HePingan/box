@@ -9,6 +9,8 @@ import '../novel/pages/source_manager/book_source_bootstrap.dart';
 import '../platform/flutter_viewport_diagnostics.dart';
 import '../platform/window_diagnostics_channel.dart';
 import '../utils/app_logger.dart';
+import '../utils/diagnostic_report.dart';
+import '../utils/log_channels.dart';
 import '../utils/http_overrides.dart';
 import '../video/config/video_proxy_config.dart';
 import '../video_module.dart';
@@ -50,6 +52,10 @@ class AppBootstrap {
     } catch (e) {
       debugPrint('AppLogger init failed: $e');
     }
+
+    // 预取版本/系统信息，供诊断报告同步取用。
+    // 放在这里而不是复制时才取：复制是报障的核心动作，不能等 platform channel。
+    await DiagnosticHeader.prime();
   }
 
   /// 接上原生小窗诊断通道。
@@ -77,18 +83,25 @@ class AppBootstrap {
     FlutterError.onError = (FlutterErrorDetails details) {
       FlutterError.presentError(details);
 
-      AppLogger.instance.log(
+      // 走 error 频道 + error 级别：崩溃现场是报障时第一个要看的东西，
+      // 以前记成 FLUTTER/info，用户点「仅错误」反而筛不到。
+      AppLogger.instance.logTo(
+        LogChannel.error,
         'FlutterError: ${details.exceptionAsString()}',
-        tag: 'FLUTTER',
+        level: LogLevel.error,
       );
 
       if (details.stack != null) {
-        AppLogger.instance.log(details.stack.toString(), tag: 'FLUTTER');
+        AppLogger.instance.logTo(
+          LogChannel.error,
+          details.stack.toString(),
+          level: LogLevel.error,
+        );
       }
     };
 
     PlatformDispatcher.instance.onError = (error, stack) {
-      AppLogger.instance.logError(error, stack, 'DART');
+      AppLogger.instance.logChannelError(LogChannel.error, error, stack);
       return true;
     };
   }
