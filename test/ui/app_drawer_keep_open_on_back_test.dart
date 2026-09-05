@@ -128,6 +128,15 @@ void main() {
     // 这条按钮曾因为传了已 pop 的抽屉 context 而静默无反应
     // （见 test/update/manual_check_snackbar_test.dart）。本轮改动动了
     // 同一段 pop 时序，必须确认入口没被弄丢。
-    expect(find.text('检查更新'), findsOneWidget);
+    //
+    // 限定在 AlertDialog 内查找：抽屉「帮助」组现在也有一条「检查更新」，
+    // 不限定范围会同时命中两个。
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('检查更新'),
+      ),
+      findsOneWidget,
+    );
   });
 }

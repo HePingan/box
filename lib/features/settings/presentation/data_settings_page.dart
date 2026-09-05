@@ -3,9 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../../design_system/app_tokens.dart';
+import '../../account/data/personal_center_cache_service.dart';
 import '../../backup/local_backup_service.dart';
 
-/// 数据设置：备份与恢复。
+/// 数据设置：备份与恢复、清理缓存。
 ///
 /// 逻辑整体搬自 `app_drawer.dart` 的 `_backupLocalData` / `_restoreLocalData`，
 /// 一字未改地保留了两处关键行为，改动它们会造成静默的数据损失：
@@ -14,8 +15,16 @@ import '../../backup/local_backup_service.dart';
 ///     用户会在卸载重装之后才发现备份不全，而那时已经不可逆。
 ///  2. 恢复成功后提示重启。内存缓存虽已失效，但已建好的页面（列表、阅读器）
 ///     不会自己重建，用户看到的可能还是旧画面，会以为恢复失败又导一次。
-class DataSettingsPage extends StatelessWidget {
+class DataSettingsPage extends StatefulWidget {
   const DataSettingsPage({super.key});
+
+  @override
+  State<DataSettingsPage> createState() => _DataSettingsPageState();
+}
+
+class _DataSettingsPageState extends State<DataSettingsPage> {
+  /// 清理进行中：拦住重复点击，并给图标位一个转圈反馈。
+  bool _clearing = false;
 
   @override
   Widget build(BuildContext context) {
@@ -54,9 +63,65 @@ class DataSettingsPage extends StatelessWidget {
               ],
             ),
           ),
+          const SizedBox(height: 16),
+          // 单独一组：上面两项动的是用户数据本身，这一项只是释放空间。
+          // 混在一起容易让人以为清缓存也会动到备份内容。
+          Container(
+            decoration: BoxDecoration(
+              color: AppTokens.surface,
+              borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+              border: Border.all(color: AppTokens.divider),
+            ),
+            child: _DataTile(
+              icon: Icons.cleaning_services_outlined,
+              title: '清理缓存',
+              subtitle: '释放图片与阅读器临时缓存占用的空间',
+              busy: _clearing,
+              onTap: _clearing ? null : _clearCache,
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  /// 清理可再生缓存。
+  ///
+  /// 实现搬自 `personal_center_page.dart` 的 `_clearCache`，行为一字未改：
+  /// 先弹确认框讲清边界。用户最怕的是「清缓存把我的书和题库清了」，
+  /// 所以文案必须写明不动登录信息、离线书籍和题库。
+  /// 不收 context 参数：本方法跨 await 用 State.context，并以 State.mounted
+  /// 守卫。传外部 context 再判 State.mounted 是两个不相关的生命周期，
+  /// analyzer 会（正确地）报 use_build_context_synchronously。
+  Future<void> _clearCache() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('清理缓存'),
+        content: const Text('仅清除图片和阅读器临时缓存，不会删除登录信息、离线书籍或题库数据。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('清理'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _clearing = true);
+    try {
+      await PersonalCenterCacheService().clearRegenerableCaches();
+      if (mounted) _showSnack(context, '缓存已清理');
+    } catch (error) {
+      if (mounted) _showSnack(context, '清理缓存失败：$error');
+    } finally {
+      if (mounted) setState(() => _clearing = false);
+    }
   }
 
   void _showSnack(BuildContext context, String message) {
@@ -119,12 +184,18 @@ class _DataTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.busy = false,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
-  final VoidCallback onTap;
+
+  /// 置空即为停用（例如清理进行中）。
+  final VoidCallback? onTap;
+
+  /// 进行中：右侧箭头换成转圈，告诉用户点击已生效。
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -160,11 +231,18 @@ class _DataTile extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(
-              Icons.chevron_right_rounded,
-              size: 20,
-              color: AppTokens.textTertiary,
-            ),
+            if (busy)
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              const Icon(
+                Icons.chevron_right_rounded,
+                size: 20,
+                color: AppTokens.textTertiary,
+              ),
           ],
         ),
       ),

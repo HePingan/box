@@ -272,10 +272,13 @@ class _DrawerContent extends StatelessWidget {
         ),
         actions: [
           TextButton(
-            // 必须用关于框自己的 ctx：抽屉的 context 在本方法第一行就被 pop
-            // 掉了，用它取 ScaffoldMessenger 再判 mounted 会静默返回，
-            // 表现就是「点检查更新没反应」。
-            onPressed: () => _checkUpdateManually(ctx, info),
+            // 用关于框自己的 ctx，并把「关掉宿主」交给 closeHost：
+            // 有新版本时先收掉关于框再弹更新框，否则两层弹窗叠在一起。
+            onPressed: () => _checkUpdateManually(
+              ctx,
+              info,
+              closeHost: () => Navigator.of(ctx).pop(),
+            ),
             child: const Text('检查更新'),
           ),
           TextButton(
@@ -296,10 +299,14 @@ class _DrawerContent extends StatelessWidget {
   /// 刻意不查 UpdateIgnoreStore：用户主动点「检查更新」时必须看到结果，
   /// 哪怕这个版本之前被忽略过。否则点了没反应会被当成功能坏了。
   /// 这也是忽略之后唯一的找回入口。
+  /// [closeHost] 关掉承载这个动作的宿主。从「关于」框调用时传 pop 关掉框；
+  /// 从抽屉列表直接调用时传 null —— 抽屉不是路由，pop 一下会把身下的主页面
+  /// 顶掉。所以宿主关闭行为必须由调用方决定，不能在这里写死 pop。
   Future<void> _checkUpdateManually(
     BuildContext context,
-    PackageInfo info,
-  ) async {
+    PackageInfo info, {
+    VoidCallback? closeHost,
+  }) async {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
 
@@ -327,9 +334,9 @@ class _DrawerContent extends StatelessWidget {
 
     final manifest = outcome.manifest;
     if (outcome.hasUpdate && manifest != null) {
-      navigator.pop();
+      closeHost?.call();
       // 判 navigator 而不是判弹窗 context：navigator 活得和 App 一样久，
-      // 弹窗 context 刚被上一行 pop 掉，判它必然提前 return。
+      // 弹窗 context 可能刚被 closeHost 关掉，判它必然提前 return。
       if (!navigator.mounted) return;
       await showDialog(
         context: navigator.context,
@@ -351,6 +358,16 @@ class _DrawerContent extends StatelessWidget {
         duration: Duration(seconds: outcome.isFailure ? 6 : 2),
       ),
     );
+  }
+
+  /// 抽屉列表里的「检查更新」。
+  ///
+  /// 不传 closeHost：抽屉不是路由，没有需要收掉的宿主弹窗，
+  /// pop 一下会把身下的主页面顶掉。
+  Future<void> _checkUpdateFromDrawer(BuildContext context) async {
+    final info = await PackageInfo.fromPlatform();
+    if (!context.mounted) return;
+    await _checkUpdateManually(context, info);
   }
 
   Widget _aboutRow(String label, String value) {
@@ -591,6 +608,15 @@ class _DrawerContent extends StatelessWidget {
               title: '调试日志',
               subtitle: '出问题时复制这里的日志发给开发者',
               onTap: () => _openRoute(context, AppRoutes.debugLog),
+            ),
+            // 提到列表：原先只在「关于」框的按钮里，用户得先点关于才找得到。
+            // 忽略过某个版本之后，这里也是唯一的找回入口。
+            _buildMoreItem(
+              context,
+              icon: Icons.system_update_outlined,
+              title: '检查更新',
+              subtitle: '看看有没有新版本',
+              onTap: () => _checkUpdateFromDrawer(context),
             ),
             _buildMoreItem(
               context,
