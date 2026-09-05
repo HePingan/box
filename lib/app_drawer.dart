@@ -64,10 +64,22 @@ class _AppDrawerState extends State<AppDrawer> {
 }
 
 /// 抽屉实际内容（响应 session 变化）
-class _DrawerContent extends StatelessWidget {
+///
+/// Stateful 的唯一理由：「检查更新」需要一个进行中状态。抽屉里无法用
+/// SnackBar 反馈（会被抽屉盖住），只能由列表项自己转圈 + 防重复点击。
+class _DrawerContent extends StatefulWidget {
   final BoxAccountSession? session;
 
   const _DrawerContent({required this.session});
+
+  @override
+  State<_DrawerContent> createState() => _DrawerContentState();
+}
+
+class _DrawerContentState extends State<_DrawerContent> {
+  bool _checkingUpdate = false;
+
+  BoxAccountSession? get session => widget.session;
 
   @override
   Widget build(BuildContext context) {
@@ -302,21 +314,32 @@ class _DrawerContent extends StatelessWidget {
   /// [closeHost] 关掉承载这个动作的宿主。从「关于」框调用时传 pop 关掉框；
   /// 从抽屉列表直接调用时传 null —— 抽屉不是路由，pop 一下会把身下的主页面
   /// 顶掉。所以宿主关闭行为必须由调用方决定，不能在这里写死 pop。
+  /// [resultInDialog] 结论用对话框而不是 SnackBar 呈现。
+  ///
+  /// 从抽屉调用时必须为 true：抽屉是盖在主页面之上的一层，而 SnackBar 由
+  /// ScaffoldMessenger 挂在主页面底部，会被抽屉整个盖住 —— 用户报过
+  /// 「提示在最下层，关闭侧边栏才能看到」。对话框走 Navigator overlay，
+  /// 稳定盖在抽屉之上。
   Future<void> _checkUpdateManually(
     BuildContext context,
     PackageInfo info, {
     VoidCallback? closeHost,
+    bool resultInDialog = false,
   }) async {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
 
-    messenger.showSnackBar(
-      const SnackBar(
-        content: Text('正在检查更新…'),
-        duration: Duration(seconds: 1),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    // 「正在检查…」同样会被抽屉盖住，弹了也是白弹。抽屉那条路径改由
+    // 列表项自己转圈提示进行中（见 _checkUpdateFromDrawer）。
+    if (!resultInDialog) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('正在检查更新…'),
+          duration: Duration(seconds: 1),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
 
     final outcome = await UpdateService.instance.checkUpdateDiagnostic(
       checkUrl: AppConfig.updateCheckUrl,
@@ -351,6 +374,24 @@ class _DrawerContent extends StatelessWidget {
       return;
     }
 
+    if (resultInDialog) {
+      if (!navigator.mounted) return;
+      await showDialog<void>(
+        context: navigator.context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(outcome.isFailure ? '检查更新失败' : '检查更新'),
+          content: Text(outcome.describe()),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('知道了'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
     messenger.showSnackBar(
       SnackBar(
         content: Text(outcome.describe()),
@@ -364,10 +405,17 @@ class _DrawerContent extends StatelessWidget {
   ///
   /// 不传 closeHost：抽屉不是路由，没有需要收掉的宿主弹窗，
   /// pop 一下会把身下的主页面顶掉。
-  Future<void> _checkUpdateFromDrawer(BuildContext context) async {
-    final info = await PackageInfo.fromPlatform();
-    if (!context.mounted) return;
-    await _checkUpdateManually(context, info);
+  Future<void> _checkUpdateFromDrawer() async {
+    if (_checkingUpdate) return;
+    setState(() => _checkingUpdate = true);
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      // resultInDialog: 结论必须走对话框，SnackBar 会被抽屉盖住。
+      await _checkUpdateManually(context, info, resultInDialog: true);
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
   }
 
   Widget _aboutRow(String label, String value) {
@@ -615,8 +663,8 @@ class _DrawerContent extends StatelessWidget {
               context,
               icon: Icons.system_update_outlined,
               title: '检查更新',
-              subtitle: '看看有没有新版本',
-              onTap: () => _checkUpdateFromDrawer(context),
+              subtitle: _checkingUpdate ? '正在检查…' : '看看有没有新版本',
+              onTap: _checkingUpdate ? null : _checkUpdateFromDrawer,
             ),
             _buildMoreItem(
               context,
@@ -655,7 +703,8 @@ class _DrawerContent extends StatelessWidget {
     required String title,
     String? subtitle,
     Widget? trailing,
-    required VoidCallback onTap,
+    // 可空：置 null 即停用该项（例如检查更新进行中，防重复点击）。
+    required VoidCallback? onTap,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
