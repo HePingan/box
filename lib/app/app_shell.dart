@@ -277,7 +277,7 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
   Widget _buildDesktopLayout() {
     return Scaffold(
       key: appScaffoldKey,
-      drawer: AppDrawer(onSwitchTab: _onItemTapped, currentIndex: _currentIndex),
+      drawer: const AppDrawer(),
       drawerScrimColor: Colors.black.withValues(alpha: 0.30),
       body: Row(
         children: [
@@ -308,7 +308,7 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
   Widget _buildMobileLayout() {
     return Scaffold(
       key: appScaffoldKey,
-      drawer: AppDrawer(onSwitchTab: _onItemTapped, currentIndex: _currentIndex),
+      drawer: const AppDrawer(),
       drawerScrimColor: Colors.black.withValues(alpha: 0.30),
       body: PageView(
         controller: _pageController,

@@ -16,14 +16,13 @@ import 'features/account/domain/account_models.dart';
 import 'features/backup/local_backup_service.dart';
 
 /// 应用侧滑菜单 — 风格与主页面完全一致
+///
+/// 这里**刻意没有** tab 导航区。`app_shell.dart` 的 bottomNavigationBar 已
+/// 常驻首页/工具/内容/扩展 四项，数据源是同一个 `_tabs`；抽屉里再列一份是
+/// 纯复制品，还更难用（底栏一次点击到位，抽屉要先划开再点），且白占约
+/// 150dp 高度，把只能从抽屉进的功能挤到需要滚动才看得到。
 class AppDrawer extends StatefulWidget {
-  /// 导航项选中回调（首页/工具/内容/扩展 → tab index）
-  final ValueChanged<int>? onSwitchTab;
-
-  /// 当前高亮的 tab 索引，用于在抽屉中标记选中态
-  final int currentIndex;
-
-  const AppDrawer({super.key, this.onSwitchTab, this.currentIndex = 0});
+  const AppDrawer({super.key});
 
   @override
   State<AppDrawer> createState() => _AppDrawerState();
@@ -60,11 +59,7 @@ class _AppDrawerState extends State<AppDrawer> {
       child: ListenableBuilder(
         listenable: globalSessionNotifier,
         builder: (context, _) {
-          return _DrawerContent(
-            session: globalSessionNotifier.value,
-            onSwitchTab: widget.onSwitchTab,
-            currentIndex: widget.currentIndex,
-          );
+          return _DrawerContent(session: globalSessionNotifier.value);
         },
       ),
     );
@@ -74,14 +69,8 @@ class _AppDrawerState extends State<AppDrawer> {
 /// 抽屉实际内容（响应 session 变化）
 class _DrawerContent extends StatelessWidget {
   final BoxAccountSession? session;
-  final ValueChanged<int>? onSwitchTab;
-  final int currentIndex;
 
-  const _DrawerContent({
-    required this.session,
-    required this.onSwitchTab,
-    required this.currentIndex,
-  });
+  const _DrawerContent({required this.session});
 
   @override
   Widget build(BuildContext context) {
@@ -113,8 +102,6 @@ class _DrawerContent extends StatelessWidget {
                   children: [
                     _buildHeaderCard(context),
                     const SizedBox(height: 12),
-                    _buildNavSection(context),
-                    const SizedBox(height: 12),
                     _buildMoreSection(context),
                   ],
                 ),
@@ -128,11 +115,6 @@ class _DrawerContent extends StatelessWidget {
   }
 
   // ─── Tab 切换 ───
-
-  void _switchTab(BuildContext context, int index) {
-    Navigator.of(context).pop();
-    onSwitchTab?.call(index);
-  }
 
   // ─── 路由跳转 ───
 
@@ -531,110 +513,6 @@ class _DrawerContent extends StatelessWidget {
     );
   }
 
-  // ─── 导航区（紧凑、有选中态） ───
-
-  Widget _buildNavSection(BuildContext context) {
-    const tabs = [
-      _NavTabData(title: '首页', icon: Icons.home_rounded, index: 0),
-      _NavTabData(title: '工具', icon: Icons.handyman_rounded, index: 1),
-      _NavTabData(
-        title: '内容',
-        icon: Icons.collections_bookmark_rounded,
-        index: 2,
-      ),
-      _NavTabData(title: '扩展', icon: Icons.extension_rounded, index: 3),
-    ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Padding(
-          padding: EdgeInsets.only(left: 4, bottom: 6, top: 2),
-          child: Text(
-            '导航',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: AppTokens.textSecondary, // ≥4.5:1
-              letterSpacing: 0.4,
-            ),
-          ),
-        ),
-        ...tabs.map((tab) => _buildNavRow(context, tab)),
-      ],
-    );
-  }
-
-  Widget _buildNavRow(BuildContext context, _NavTabData tab) {
-    final isActive = tab.index == currentIndex;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppTokens.radiusXs),
-        onTap: () => _switchTab(context, tab.index),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          decoration: BoxDecoration(
-            color: isActive
-                ? AppTokens.primaryBlue.withValues(alpha: 0.08)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(AppTokens.radiusXs),
-          ),
-          child: Row(
-            children: [
-              // 图标：28dp，选中时渐变
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  gradient: isActive ? AppTokens.blueGradient : null,
-                  color: isActive
-                      ? null
-                      : AppTokens.primaryBlue.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  tab.icon,
-                  size: 16,
-                  color: isActive
-                      ? Colors.white
-                      : AppTokens.primaryBlue.withValues(alpha: 0.70),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  tab.title,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
-                    color: isActive
-                        ? AppTokens.primaryBlue
-                        : AppTokens.textPrimary,
-                  ),
-                ),
-              ),
-              // 右侧指示条（仅活跃时显示）
-              if (isActive) ...[
-                const SizedBox(width: 4),
-                Container(
-                  width: 3,
-                  height: 14,
-                  decoration: BoxDecoration(
-                    color: AppTokens.primaryBlue,
-                    borderRadius: BorderRadius.circular(1.5),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   // ─── 更多区（紧凑、统一箭头样式） ───
 
   Widget _buildMoreSection(BuildContext context) {
@@ -648,18 +526,7 @@ class _DrawerContent extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(14, 10, 14, 2),
-            child: Text(
-              '更多',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: AppTokens.textSecondary, // ≥4.5:1
-                letterSpacing: 0.4,
-              ),
-            ),
-          ),
+          _buildSectionLabel('常用'),
           ..._withDividers([
             // 公告放在最前并带未读红点：原先埋在个人中心里，出故障时用户
             // 根本找不到，等于没有触达手段。
@@ -710,20 +577,12 @@ class _DrawerContent extends StatelessWidget {
               icon: Icons.settings_outlined,
               title: '设置',
               subtitle: null,
-              onTap: () => _openRoute(context, AppRoutes.account),
+              // 改之前这里跳 AppRoutes.account，与上面「账号中心」撞同一个页面。
+              onTap: () => _openRoute(context, AppRoutes.settings),
             ),
-            _buildMoreItem(
-              context,
-              icon: Icons.feedback_outlined,
-              title: '反馈',
-              subtitle: '问题报告与功能建议',
-              trailing: const Icon(
-                Icons.open_in_new_rounded,
-                size: 16,
-                color: AppTokens.textSecondary,
-              ),
-              onTap: () => _openFeedback(context),
-            ),
+          ]),
+          _buildSectionLabel('数据'),
+          ..._withDividers([
             _buildMoreItem(
               context,
               icon: Icons.backup_outlined,
@@ -737,6 +596,21 @@ class _DrawerContent extends StatelessWidget {
               title: '恢复本地数据',
               subtitle: '重装后导入此前导出的备份',
               onTap: () => _restoreLocalData(context),
+            ),
+          ]),
+          _buildSectionLabel('帮助'),
+          ..._withDividers([
+            _buildMoreItem(
+              context,
+              icon: Icons.feedback_outlined,
+              title: '反馈',
+              subtitle: '问题报告与功能建议',
+              trailing: const Icon(
+                Icons.open_in_new_rounded,
+                size: 16,
+                color: AppTokens.textSecondary,
+              ),
+              onTap: () => _openFeedback(context),
             ),
             _buildMoreItem(
               context,
@@ -755,6 +629,23 @@ class _DrawerContent extends StatelessWidget {
           ]),
           const SizedBox(height: 4),
         ],
+      ),
+    );
+  }
+
+  /// 分组小标题。改之前「更多」是一个 8 项的无分隔长列表，常用项和
+  /// 出故障才找的项混在一起。
+  Widget _buildSectionLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 2),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: AppTokens.textSecondary, // ≥4.5:1
+          letterSpacing: 0.4,
+        ),
       ),
     );
   }
@@ -884,10 +775,9 @@ class _DrawerContent extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          GestureDetector(
-            onTap: () => _openRoute(context, AppRoutes.debugLog),
-            child: const _FooterVersionLabel(),
-          ),
+          // 这里原来挂着「点版本号进调试日志」的隐藏手势。「更多 → 帮助」
+          // 已有正式入口，隐藏路径留着只是多一条没人知道的路。
+          const _FooterVersionLabel(),
         ],
       ),
     );
@@ -943,15 +833,4 @@ class _FooterVersionLabelState extends State<_FooterVersionLabel> {
   }
 }
 
-/// 导航项数据模型
-class _NavTabData {
-  final String title;
-  final IconData icon;
-  final int index;
 
-  const _NavTabData({
-    required this.title,
-    required this.icon,
-    required this.index,
-  });
-}
