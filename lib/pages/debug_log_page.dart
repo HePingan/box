@@ -168,11 +168,21 @@ class _DebugLogPageState extends State<DebugLogPage> {
                             textAlign: TextAlign.center,
                           ),
                         )
+                      // 倒序展示：最新的在最上面。
+                      //
+                      // 日志是 1000 行环形缓冲，正序铺开时用户打开这一页看到的
+                      // 是几小时前的启动日志，要报障得先手动滚到底。而报障场景
+                      // 恰恰是「刚出问题、马上来复制」，最新几十行才是现场。
+                      //
+                      // 注意只有**展示**倒序，[DiagnosticReport] 正文仍是时间
+                      // 正序 —— 报告给开发者顺着读，正序才能看出因果。
                       : ListView.builder(
                           padding: const EdgeInsets.all(12),
                           itemCount: visible.length,
                           itemBuilder: (context, index) {
-                            return _LogLine(entry: visible[index]);
+                            return _LogLine(
+                              entry: visible[visible.length - 1 - index],
+                            );
                           },
                         ),
                 ),

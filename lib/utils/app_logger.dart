@@ -183,11 +183,34 @@ class AppLogger {
     log('════════ $title ════════\n$content\n══════════════════════', tag: tag);
   }
 
+  /// 记录错误。**必须写出级别段**，否则日志页「仅看警告与错误」筛不到。
+  ///
+  /// 曾经这里转调 [log]，写出两段式 `[时间][TAG] 正文`（无级别段）。
+  /// `LogEntry.parse` 对两段式取不到级别，一律落 info —— 于是全部 13 处
+  /// 调用点（起播失败、历史写入失败、目录拉取失败…）记下的错误都被当成
+  /// 普通信息，用户点「仅看警告与错误」一条都看不到，而这些恰恰是
+  /// 「视频打不开」这类报障唯一的现场证据。
+  ///
+  /// 现在改为走三段式 `[时间][TAG][E] 正文`。tag 仍按调用方传入的字符串
+  /// 归位频道，保持 40 多处既有调用点不用改。
   void logError(Object error, [StackTrace? stackTrace, String tag = 'ERROR']) {
-    log('Error: $error', tag: tag);
+    _appendLeveled('Error: $error', tag: tag, level: LogLevel.error);
     if (stackTrace != null) {
-      log(stackTrace.toString(), tag: tag);
+      _appendLeveled(stackTrace.toString(), tag: tag, level: LogLevel.error);
     }
+  }
+
+  /// 写一条带级别段的日志，tag 保持调用方给的裸字符串。
+  ///
+  /// 与 [logTo] 的区别：[logTo] 要求调用方已经拿到 [LogChannel] 枚举；
+  /// 这里服务于历史调用点传进来的裸 tag（`PLAYER` / `VIDEO_CONTROLLER` …），
+  /// 由 `LogChannel.fromTag` 在读取侧归位。
+  void _appendLeveled(
+    String message, {
+    required String tag,
+    required LogLevel level,
+  }) {
+    _append('[${_stamp()}][$tag][${level.mark}] $message');
   }
 
   void _scheduleFlush(List<String> current) {

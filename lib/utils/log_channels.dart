@@ -64,6 +64,9 @@ enum LogChannel {
       case 'DETAIL_FILL':
       case 'DETAIL_CTRL':
       case 'HISTORY':
+      // video_controller.dart 有 5 处 logError 用这个 tag。漏登记会让
+      // 「影视打不开」的错误现场落进 system，筛「影视」时看不到。
+      case 'VIDEO_CONTROLLER':
         return LogChannel.video;
       case 'FLUTTER':
       case 'WINDOW':
