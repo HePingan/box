@@ -1,175 +1,36 @@
-import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../../../utils/app_logger.dart';
+import '../../../utils/log_channels.dart';
 
-/// 阅读器调试日志服务（仅用于诊断继续阅读bug）
+/// 阅读器调试日志。
+///
+/// 改造前这是一套**独立**的日志系统：自己的 SharedPreferences key
+/// (`reader_debug_log`)、自己的 200 行上限、自己的换行拼接存储，还在阅读界面
+/// 上常驻一个橙色虫子 FloatingActionButton。两个问题：
+///
+/// 1. 那个按钮没有任何 kDebugMode 判断，Release 包里也照样浮在正文上方，
+///    每个普通读者都看得见、点得开。
+/// 2. 用户报障时只会截其中一套日志，另一套的线索直接丢失。
+///
+/// 现在它退化成 [AppLogger] 的转发壳：19 处既有调用点一行不用改，日志统一
+/// 流进抽屉「更多 → 调试日志」，在那里按「阅读」频道筛选即可。历史数据由
+/// `AppLogger.init()` 启动时一次性迁移。
 class ReaderDebugLog {
-  static const _kLogKey = 'reader_debug_log';
-  static const _kMaxLines = 200;
-  
-  static final _logs = <String>[];
-  static SharedPreferences? _prefs;
+  const ReaderDebugLog._();
 
-  static Future<void> init() async {
-    _prefs = await SharedPreferences.getInstance();
-    final saved = _prefs?.getString(_kLogKey);
-    if (saved != null && saved.isNotEmpty) {
-      _logs.addAll(saved.split('\n'));
-    }
-  }
+  /// 保留空实现：调用点还在 `reader_page.dart` 的 initState 里，
+  /// 真正的初始化由 `AppLogger.init()` 在应用启动时统一完成。
+  static Future<void> init() async {}
 
   static void log(String message) {
-    final timestamp = DateTime.now().toString().substring(11, 23);
-    final line = '[$timestamp] $message';
-    _logs.add(line);
-    
-    // 限制日志行数
-    if (_logs.length > _kMaxLines) {
-      _logs.removeRange(0, _logs.length - _kMaxLines);
-    }
-    
-    // 持久化
-    _prefs?.setString(_kLogKey, _logs.join('\n'));
-    
-    // 同时打印到控制台
-    debugPrint('[DEBUG_LOG] $line');
+    AppLogger.instance.logTo(LogChannel.reader, message);
   }
 
-  static void clear() {
-    _logs.clear();
-    _prefs?.remove(_kLogKey);
-  }
+  static Future<void> clear() => AppLogger.instance.clear();
 
-  static List<String> getLogs() => List.unmodifiable(_logs);
-}
-
-/// 浮动日志按钮 + 日志查看器
-class ReaderDebugLogButton extends StatefulWidget {
-  const ReaderDebugLogButton({
-    super.key,
-    required this.textColor,
-  });
-
-  final Color textColor;
-
-  @override
-  State<ReaderDebugLogButton> createState() => _ReaderDebugLogButtonState();
-}
-
-class _ReaderDebugLogButtonState extends State<ReaderDebugLogButton> {
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      right: 16,
-      bottom: 120,
-      child: FloatingActionButton(
-        mini: true,
-        backgroundColor: Colors.orange.withValues(alpha: 0.9),
-        onPressed: _showLogViewer,
-        child: const Icon(Icons.bug_report, size: 18),
-      ),
-    );
-  }
-
-  void _showLogViewer() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.7,
-        minChildSize: 0.5,
-        maxChildSize: 0.95,
-        builder: (context, scrollController) => Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF1E1E1E),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          child: Column(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withValues(alpha: 0.15),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.bug_report, color: Colors.orange, size: 20),
-                    const SizedBox(width: 8),
-                    const Text(
-                      '阅读进度调试日志',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const Spacer(),
-                    TextButton.icon(
-                      onPressed: () {
-                        setState(() => ReaderDebugLog.clear());
-                        Navigator.pop(context);
-                      },
-                      icon: const Icon(Icons.delete_outline, size: 16, color: Colors.orange),
-                      label: const Text('清空', style: TextStyle(color: Colors.orange)),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: _buildLogList(scrollController),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLogList(ScrollController scrollController) {
-    final logs = ReaderDebugLog.getLogs();
-    
-    if (logs.isEmpty) {
-      return const Center(
-        child: Text(
-          '暂无日志\n\n翻页或切换章节会产生日志',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white54, fontSize: 14),
-        ),
-      );
-    }
-
-    return ListView.builder(
-      controller: scrollController,
-      padding: const EdgeInsets.all(12),
-      itemCount: logs.length,
-      itemBuilder: (context, index) {
-        final log = logs[index];
-        Color lineColor = Colors.white70;
-        
-        if (log.contains('ERROR') || log.contains('null')) {
-          lineColor = Colors.redAccent;
-        } else if (log.contains('SAVE') || log.contains('charOffset=')) {
-          lineColor = Colors.greenAccent;
-        } else if (log.contains('RESTORE') || log.contains('located')) {
-          lineColor = Colors.cyanAccent;
-        } else if (log.contains('SKIP')) {
-          lineColor = Colors.yellowAccent;
-        }
-
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: Text(
-            log,
-            style: TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 11,
-              color: lineColor,
-              height: 1.4,
-            ),
-          ),
-        );
-      },
-    );
+  /// 只返回阅读频道的行，保持原语义（原本这里只存阅读器自己的日志）。
+  static List<String> getLogs() {
+    return AppLogger.instance.lines.value
+        .where((line) => LogEntry.parse(line).channel == LogChannel.reader)
+        .toList(growable: false);
   }
 }

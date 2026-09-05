@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'log_channels.dart';
+
 class AppLogger {
   AppLogger._();
 
@@ -37,7 +39,11 @@ class AppLogger {
       lines.value = List<String>.unmodifiable(_decodeStoredLines(stored));
       _inited = true;
 
-      log('Logger initialized', tag: 'SYSTEM');
+      // 把阅读器那套独立日志的历史数据并过来，否则统一入口后
+      // 用户升级前记下的阅读日志就再也看不到了。
+      await _absorbLegacyReaderLog();
+
+      logTo(LogChannel.system, 'Logger initialized');
     } catch (e, st) {
       // 即便初始化失败，也不要让主流程崩
       debugPrint('[AppLogger] init failed: $e');
@@ -49,6 +55,60 @@ class AppLogger {
 
   String _stamp() {
     return DateTime.now().toIso8601String();
+  }
+
+  /// 旧 `ReaderDebugLog` 的 SharedPreferences key。
+  ///
+  /// 那套系统写的是 `[12:34:56.789] 正文`（无 tag、换行拼接），统一入口后
+  /// 它不再被写入，但用户手机上可能还存着报障需要的历史数据，所以启动时
+  /// 搬一次并删除原 key，避免每次启动重复导入。
+  static const String _legacyReaderKey = 'reader_debug_log';
+
+  /// 把 `[12:34:56.789] 正文` 重排成 `[12:34:56.789][READER][I] 正文`。
+  /// 认不出时间片段的行整行当正文，只补标签，不丢内容。
+  static String _reshapeLegacyReaderLine(String line) {
+    const tag = 'READER';
+    const mark = 'I';
+    final match = RegExp(
+      r'^\[([^\]]*)\]\s?(.*)$',
+      dotAll: true,
+    ).firstMatch(line);
+    if (match == null) {
+      return '[][$tag][$mark] $line';
+    }
+    return '[${match.group(1)}][$tag][$mark] ${match.group(2)}';
+  }
+
+  Future<void> _absorbLegacyReaderLog() async {
+    final prefs = _prefs;
+    if (prefs == null) return;
+
+    final legacy = prefs.getString(_legacyReaderKey);
+    if (legacy == null || legacy.trim().isEmpty) return;
+
+    final migrated = legacy
+        .split('\n')
+        .map((e) => e.trimRight())
+        .where((e) => e.trim().isNotEmpty)
+        // 旧行形如 `[12:34:56.789] 正文`（只有时分秒，没有日期）。
+        // 拆出时间片段重排成标准的 `[时间][READER][I] 正文`，中间不留空格，
+        // 否则 LogEntry.parse 认不出第二个方括号是 tag。
+        .map(_reshapeLegacyReaderLine)
+        .toList(growable: false);
+
+    if (migrated.isEmpty) {
+      await prefs.remove(_legacyReaderKey);
+      return;
+    }
+
+    final merged = <String>[...migrated, ...lines.value];
+    if (merged.length > _maxLines) {
+      merged.removeRange(0, merged.length - _maxLines);
+    }
+    lines.value = List<String>.unmodifiable(merged);
+
+    await prefs.remove(_legacyReaderKey);
+    _scheduleFlush(merged);
   }
 
   List<String> _decodeStoredLines(String? stored) {
@@ -76,9 +136,35 @@ class AppLogger {
         .toList(growable: false);
   }
 
-  void log(String message, {String tag = 'APP'}) {
-    final line = '[${_stamp()}][$tag] $message';
+  /// 按频道 + 级别记一条日志。新代码用这个，不要再手写裸 tag 字符串。
+  ///
+  /// 旧的 [log] 保留是为了不动那 40 多处既有调用点（其中 28 处连 tag 都没传），
+  /// 两者写出的行都能被 `LogEntry.parse` 认回来。
+  void logTo(
+    LogChannel channel,
+    String message, {
+    LogLevel level = LogLevel.info,
+  }) {
+    _append('[${_stamp()}][${channel.tag}][${level.mark}] $message');
+  }
 
+  /// 按频道记录错误，自动落到 error 级别，便于日志页「只看出错的」。
+  void logChannelError(
+    LogChannel channel,
+    Object error, [
+    StackTrace? stackTrace,
+  ]) {
+    logTo(channel, 'Error: $error', level: LogLevel.error);
+    if (stackTrace != null) {
+      logTo(channel, stackTrace.toString(), level: LogLevel.error);
+    }
+  }
+
+  void log(String message, {String tag = 'APP'}) {
+    _append('[${_stamp()}][$tag] $message');
+  }
+
+  void _append(String line) {
     final current = List<String>.from(lines.value)..add(line);
     if (current.length > _maxLines) {
       current.removeRange(0, current.length - _maxLines);
@@ -158,5 +244,20 @@ class AppLogger {
   void dispose() {
     _flushTimer?.cancel();
     _flushTimer = null;
+  }
+
+  /// 仅供测试：清掉单例状态后重新走一遍 [init]。
+  ///
+  /// [init] 有 `_inited` 守卫（生产环境正确——重复初始化会重复导入旧日志），
+  /// 但测试需要针对不同的 SharedPreferences 初值反复验证迁移逻辑。
+  @visibleForTesting
+  Future<void> reinitForTest() async {
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _dirty = false;
+    _inited = false;
+    _prefs = null;
+    lines.value = const <String>[];
+    await init();
   }
 }

@@ -1136,8 +1136,9 @@ class _ReaderPageState extends State<ReaderPage> {
                     child: _buildBottomBar(),
                   ),
                 
-                // 调试日志按钮（橙色虫子图标）
-                ReaderDebugLogButton(textColor: _textColor),
+                // 原先这里常驻一个橙色虫子 FloatingActionButton，无 kDebugMode
+                // 判断，Release 包里也浮在正文上方遮挡阅读。调试日志已统一到
+                // 抽屉「更多 → 调试日志」，按「阅读」频道筛选即可，故移除。
               ],
             ),
           ),

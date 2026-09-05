@@ -661,7 +661,9 @@ class _DrawerContentState extends State<_DrawerContent> {
               context,
               icon: Icons.bug_report_outlined,
               title: '调试日志',
-              subtitle: '出问题时复制这里的日志发给开发者',
+              // 阅读器那个橙色虫子按钮已撤，日志全部汇总到这里，
+              // 所以副标题要说明可以按分类筛，否则用户不知道能筛。
+              subtitle: '按播放/阅读/网络等分类筛选，复制后发给开发者',
               onTap: () => _openRoute(context, AppRoutes.debugLog),
             ),
             // 提到列表：原先只在「关于」框的按钮里，用户得先点关于才找得到。
