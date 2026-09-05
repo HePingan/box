@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../data/personal_center_cache_service.dart';
@@ -8,6 +7,8 @@ import 'controllers/personal_center_controller.dart';
 import '../domain/personal_center_models.dart';
 import 'personal_quota_transactions_page.dart';
 import 'widgets/personal_activity_chart.dart';
+import 'widgets/personal_center_admin_entry.dart';
+import '../../../app/app_routes.dart';
 import '../../cloud_sync/domain/cloud_sync_models.dart';
 
 class PersonalCenterPage extends StatelessWidget {
@@ -88,10 +89,8 @@ class _PersonalCenterViewState extends State<_PersonalCenterView>
             Tab(
               child: Selector<PersonalCenterController, int>(
                 selector: (_, c) => c.announcements.unreadCount,
-                builder: (context, unread, _) => _TabLabelWithBadge(
-                  label: '公告',
-                  count: unread,
-                ),
+                builder: (context, unread, _) =>
+                    _TabLabelWithBadge(label: '公告', count: unread),
               ),
             ),
           ],
@@ -825,17 +824,6 @@ class _SettingsTabState extends State<_SettingsTab> {
     if (mounted) Navigator.of(context).pop();
   }
 
-  Future<void> _showAbout() async {
-    final info = await PackageInfo.fromPlatform();
-    if (!mounted) return;
-    showAboutDialog(
-      context: context,
-      applicationName: 'Geek工具箱 Pro',
-      applicationVersion: '${info.version} (${info.buildNumber})',
-      applicationLegalese: '智能工具集，为极客而生。',
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     // watch：昵称更新后由控制器 notifyListeners 驱动重建，不依赖本地 setState。
@@ -876,6 +864,12 @@ class _SettingsTabState extends State<_SettingsTab> {
           ),
         ),
         const SizedBox(height: 12),
+        // B6：个人中心成为账号主页后，管理员的后台入口必须落在这里。
+        // 组件内部按 role 判定可见性，非管理员渲染为空。
+        PersonalCenterAdminEntry(
+          user: user,
+          onTap: () => Navigator.of(context).pushNamed(AppRoutes.accountAdmin),
+        ),
         Card(
           child: Column(
             children: [
@@ -892,13 +886,6 @@ class _SettingsTabState extends State<_SettingsTab> {
                     : const Icon(Icons.chevron_right),
                 onTap: _clearing ? null : _clearCache,
               ),
-              const Divider(height: 1),
-              ListTile(
-                leading: const Icon(Icons.info_outline),
-                title: const Text('关于我们'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _showAbout,
-              ),
             ],
           ),
         ),
@@ -914,7 +901,6 @@ class _SettingsTabState extends State<_SettingsTab> {
     );
   }
 }
-
 
 /// Tab 标签 + 未读红点。
 class _TabLabelWithBadge extends StatelessWidget {
@@ -997,10 +983,7 @@ class _AnnouncementsTab extends StatelessWidget {
               ),
             ),
           if (items.isEmpty)
-            const _EmptySection(
-              icon: Icons.campaign_outlined,
-              message: '暂无公告',
-            )
+            const _EmptySection(icon: Icons.campaign_outlined, message: '暂无公告')
           else ...[
             Row(
               children: [

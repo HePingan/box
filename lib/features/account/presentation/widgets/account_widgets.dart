@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../design_system/app_tokens.dart';
 import '../../domain/account_models.dart';
+import '../../domain/personal_center_models.dart';
 import '../../domain/usage_models.dart';
 
 class AccountStatusCard extends StatelessWidget {
@@ -75,7 +76,8 @@ class AccountStatusCard extends StatelessWidget {
             spacing: 10,
             runSpacing: 10,
             children: [
-              const _InfoChip(label: '版本', value: 'HTTPS 域名版'),
+              if (user.nickname.isNotEmpty && user.nickname != user.username)
+                _InfoChip(label: '昵称', value: user.nickname),
               _InfoChip(label: '账号 ID', value: user.id),
               _InfoChip(label: '状态', value: user.status),
               if (user.lastLoginAt != null)
@@ -366,10 +368,16 @@ class AccountUsageCard extends StatelessWidget {
     super.key,
     required this.records,
     required this.loading,
+    this.error,
+    this.onRetry,
   });
 
   final List<BoxUsageRecord> records;
   final bool loading;
+
+  /// 侧数据取不到时的提示。非空表示这一块降级了，但登录态仍然有效。
+  final String? error;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -404,7 +412,10 @@ class AccountUsageCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          if (loading && records.isEmpty)
+          if (error != null)
+            // 记录取不到不代表没登录：只降级这一块，并给出重试。
+            _QuotaMessage(message: error!, onRetry: onRetry, isError: true)
+          else if (loading && records.isEmpty)
             const Center(
               child: Padding(
                 padding: EdgeInsets.all(12),
@@ -583,6 +594,183 @@ class _RoleBadge extends StatelessWidget {
           fontWeight: FontWeight.w900,
         ),
       ),
+    );
+  }
+}
+
+/// 我的平台额度。数据来自 GET /api/image/quota，服务端按当前 token 判定归属。
+/// 加载失败只在卡内提示并可重试，不影响登录态。
+class AccountQuotaCard extends StatelessWidget {
+  const AccountQuotaCard({
+    super.key,
+    required this.quota,
+    required this.error,
+    required this.onRetry,
+  });
+
+  final PersonalQuota? quota;
+  final String? error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final data = quota;
+    return _AccountCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.bolt_rounded, color: AppTokens.primaryBlue),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  '我的额度',
+                  style: TextStyle(
+                    color: AppTokens.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: '刷新额度',
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                onPressed: onRetry,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (error != null)
+            _QuotaMessage(message: error!, onRetry: onRetry, isError: true)
+          else if (data == null)
+            const _QuotaMessage(message: '额度加载中…')
+          else
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: _QuotaMetric(
+                        value: '${data.remaining}',
+                        label: '剩余',
+                        highlight: data.remaining <= 0,
+                      ),
+                    ),
+                    Expanded(
+                      child: _QuotaMetric(
+                        value: '${data.usedToday}',
+                        label: '今日已用',
+                      ),
+                    ),
+                    Expanded(
+                      child: _QuotaMetric(
+                        value: data.dailyLimit > 0 ? '${data.dailyLimit}' : '—',
+                        label: '每日上限',
+                      ),
+                    ),
+                  ],
+                ),
+                if (data.dailyLimit > 0 || (data.totalLimit ?? 0) > 0) ...[
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+                    child: LinearProgressIndicator(
+                      value: data.progress,
+                      minHeight: 6,
+                      backgroundColor: AppTokens.surfaceMuted,
+                    ),
+                  ),
+                ],
+                if (data.message.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    data.message,
+                    style: const TextStyle(
+                      color: AppTokens.textSecondary,
+                      fontSize: 12,
+                      height: 1.45,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuotaMetric extends StatelessWidget {
+  const _QuotaMetric({
+    required this.value,
+    required this.label,
+    this.highlight = false,
+  });
+
+  final String value;
+  final String label;
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            color: highlight ? AppTokens.danger : AppTokens.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: const TextStyle(color: AppTokens.textSecondary, fontSize: 12),
+        ),
+      ],
+    );
+  }
+}
+
+class _QuotaMessage extends StatelessWidget {
+  const _QuotaMessage({
+    required this.message,
+    this.onRetry,
+    this.isError = false,
+  });
+
+  final String message;
+  final VoidCallback? onRetry;
+  final bool isError;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          isError ? Icons.cloud_off_rounded : Icons.hourglass_empty_rounded,
+          size: 18,
+          color: isError ? AppTokens.danger : AppTokens.textSecondary,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            message,
+            style: const TextStyle(
+              color: AppTokens.textSecondary,
+              fontSize: 12,
+              height: 1.45,
+            ),
+          ),
+        ),
+        if (onRetry != null)
+          TextButton(onPressed: onRetry, child: const Text('重试')),
+      ],
     );
   }
 }

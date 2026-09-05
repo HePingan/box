@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../../../design_system/app_tokens.dart';
@@ -8,6 +11,7 @@ import '../../../app/app_routes.dart';
 import '../data/account_client.dart';
 import '../data/account_store.dart';
 import '../domain/account_models.dart';
+import '../domain/personal_center_models.dart';
 import '../domain/usage_models.dart';
 import 'widgets/account_widgets.dart';
 
@@ -22,7 +26,7 @@ class _AccountPageState extends State<AccountPage> {
   final _client = BoxAccountClient();
   final _store = BoxAccountStore();
   final _serverController = TextEditingController();
-  final _usernameController = TextEditingController(text: 'admin');
+  final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _registerUsernameController = TextEditingController();
   final _registerPasswordController = TextEditingController();
@@ -32,6 +36,11 @@ class _AccountPageState extends State<AccountPage> {
   bool _loading = false;
   List<BoxUsageRecord> _usage = const [];
   String? _error;
+
+  /// 侧数据各自的错误，与会话级 `_error` 分开：它们失败不影响登录态。
+  String? _usageError;
+  PersonalQuota? _quota;
+  String? _quotaError;
 
   @override
   void initState() {
@@ -86,29 +95,85 @@ class _AccountPageState extends State<AccountPage> {
       );
       await _store.saveSession(refreshed);
       if (!mounted) return;
-      final usage = await _client.fetchMyUsage(
-        serverUrl: refreshed.serverUrl,
-        token: refreshed.token,
-        limit: 20,
-      );
-      if (!mounted) return;
       setState(() {
         _session = refreshed;
-        _usage = usage;
         _error = null;
       });
     } catch (error) {
       if (!mounted) return;
-      await _store.clearSession();
-      if (!mounted) return;
-      setState(() {
-        _session = null;
-        _error = _messageOf(error);
-      });
+      // 只有会话本身失效（401/403）才清登录态。网络抖动、后端 5xx、超时
+      // 都不该把用户踢下线——否则用户得重新输一遍密码。
+      if (_isSessionInvalid(error)) {
+        await _store.clearSession();
+        if (!mounted) return;
+        setState(() {
+          _session = null;
+          _error = _messageOf(error);
+        });
+      } else {
+        setState(() => _error = _messageOf(error));
+      }
+      return;
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+
+    // 额度与生图记录都是侧数据：任一挂了只影响自己那块，不影响登录态。
+    // 并行发出，互不阻塞。
+    await Future.wait([_loadQuota(), _loadUsage()]);
   }
+
+  /// 我的额度。失败只记 `_quotaError`，绝不动 `_session`。
+  Future<void> _loadQuota() async {
+    final session = _session;
+    if (session == null) return;
+    try {
+      final quota = await _client.fetchMyQuota(
+        serverUrl: session.serverUrl,
+        token: session.token,
+      );
+      if (!mounted) return;
+      setState(() {
+        _quota = quota;
+        _quotaError = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _quota = null;
+        _quotaError = _messageOf(error);
+      });
+    }
+  }
+
+  /// 侧数据加载。失败只记 `_usageError`，绝不动 `_session`。
+  Future<void> _loadUsage() async {
+    final session = _session;
+    if (session == null) return;
+    try {
+      final usage = await _client.fetchMyUsage(
+        serverUrl: session.serverUrl,
+        token: session.token,
+        limit: 20,
+      );
+      if (!mounted) return;
+      setState(() {
+        _usage = usage;
+        _usageError = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _usage = const [];
+        _usageError = _messageOf(error);
+      });
+    }
+  }
+
+  /// 会话是否已失效。只认 401/403，其余一律视为「暂时取不到」。
+  static bool _isSessionInvalid(Object error) =>
+      error is BoxAccountException &&
+      (error.statusCode == 401 || error.statusCode == 403);
 
   Future<void> _login() async {
     setState(() {
@@ -147,17 +212,19 @@ class _AccountPageState extends State<AccountPage> {
       _error = null;
     });
     try {
-      final session = await _client.register(
+      final result = await _client.register(
         serverUrl: _serverController.text,
         username: _registerUsernameController.text,
         password: password,
       );
+      final session = result.session;
       _usernameController.text = session.user.username;
       _registerPasswordController.clear();
       _registerConfirmController.clear();
       await _completeAuth(
         session,
         successMessage: '注册成功，已自动登录：${session.user.username}',
+        registerResult: result,
       );
     } catch (error) {
       if (!mounted) return;
@@ -170,20 +237,27 @@ class _AccountPageState extends State<AccountPage> {
   Future<void> _completeAuth(
     BoxAccountSession session, {
     required String successMessage,
+    BoxRegisterResult? registerResult,
   }) async {
     await _store.saveSession(session);
     _passwordController.clear();
-    final usage = await _client.fetchMyUsage(
-      serverUrl: session.serverUrl,
-      token: session.token,
-      limit: 20,
-    );
     if (!mounted) return;
+    // 先把登录态落地并提示成功：侧数据还没拉，但用户**已经**登录成功了。
+    // 过去把 fetchMyUsage 放在这里 await，它一失败就抛回 _login 的 catch，
+    // 用户会看到「登录失败」——而其实已经登上了。
     setState(() {
       _session = session;
-      _usage = usage;
+      _usage = const [];
+      _usageError = null;
+      // 注册响应自带 quota，省一次请求。
+      _quota = registerResult?.quota;
+      _quotaError = null;
     });
     _showSnack(successMessage);
+    await Future.wait([
+      if (registerResult?.quota == null) _loadQuota(),
+      _loadUsage(),
+    ]);
   }
 
   Future<void> _logout() async {
@@ -204,6 +278,9 @@ class _AccountPageState extends State<AccountPage> {
         setState(() {
           _session = null;
           _usage = const [];
+          _usageError = null;
+          _quota = null;
+          _quotaError = null;
           _loading = false;
           _error = null;
         });
@@ -226,9 +303,7 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _openRegisterSheet() async {
-    _registerUsernameController.text = _usernameController.text == 'admin'
-        ? ''
-        : _usernameController.text;
+    _registerUsernameController.text = _usernameController.text;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -268,7 +343,21 @@ class _AccountPageState extends State<AccountPage> {
 
   String _messageOf(Object error) {
     if (error is BoxAccountException) return error.message;
-    return error.toString();
+    // 非预期异常（SocketException / HandshakeException / TimeoutException 等）
+    // 的 toString() 是给开发者看的，直接糊到界面上用户读不懂也不知道该干什么。
+    if (error is SocketException) {
+      return '连不上服务器，请检查网络或服务器地址。';
+    }
+    if (error is HandshakeException || error is TlsException) {
+      return '与服务器建立安全连接失败，请确认服务器证书有效。';
+    }
+    if (error is TimeoutException) {
+      return '服务器响应超时，请稍后重试。';
+    }
+    if (error is FormatException) {
+      return '服务器返回内容无法解析，请确认服务器地址指向 Box 后端。';
+    }
+    return '操作失败，请稍后重试。';
   }
 
   @override
@@ -345,7 +434,18 @@ class _AccountPageState extends State<AccountPage> {
                   ),
                 if (session != null) ...[
                   const SizedBox(height: 12),
-                  AccountUsageCard(records: _usage, loading: _loading),
+                  AccountQuotaCard(
+                    quota: _quota,
+                    error: _quotaError,
+                    onRetry: _loadQuota,
+                  ),
+                  const SizedBox(height: 12),
+                  AccountUsageCard(
+                    records: _usage,
+                    loading: _loading,
+                    error: _usageError,
+                    onRetry: _loadUsage,
+                  ),
                 ],
                 const SizedBox(height: 12),
                 const AccountNoticeCard(),

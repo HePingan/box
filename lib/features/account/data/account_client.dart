@@ -3,7 +3,17 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../domain/account_models.dart';
+import '../domain/personal_center_models.dart';
 import '../domain/usage_models.dart';
+
+/// 注册结果。服务端注册响应里本来就带 `quota`，过去只取 token/user 白丢了，
+/// 导致刚注册完还要再打一次 /api/image/quota 才知道自己有多少额度。
+class BoxRegisterResult {
+  const BoxRegisterResult({required this.session, this.quota});
+
+  final BoxAccountSession session;
+  final PersonalQuota? quota;
+}
 
 class BoxAccountClient {
   BoxAccountClient({http.Client? httpClient})
@@ -11,7 +21,7 @@ class BoxAccountClient {
 
   final http.Client _httpClient;
 
-  Future<BoxAccountSession> register({
+  Future<BoxRegisterResult> register({
     required String serverUrl,
     required String username,
     required String password,
@@ -28,10 +38,16 @@ class BoxAccountClient {
     if (token.isEmpty || userJson is! Map<String, dynamic>) {
       throw const BoxAccountException('注册接口返回格式不完整。');
     }
-    return BoxAccountSession(
-      serverUrl: normalizedServer,
-      token: token,
-      user: BoxAccountUser.fromJson(userJson),
+    final quotaJson = decoded['quota'];
+    return BoxRegisterResult(
+      session: BoxAccountSession(
+        serverUrl: normalizedServer,
+        token: token,
+        user: BoxAccountUser.fromJson(userJson),
+      ),
+      quota: quotaJson is Map
+          ? PersonalQuota.fromJson(Map<String, dynamic>.from(quotaJson))
+          : null,
     );
   }
 
@@ -84,6 +100,19 @@ class BoxAccountClient {
       headers: {'Authorization': 'Bearer $token'},
     );
     return BoxAccountUser.fromJson(_decodeResponse(response));
+  }
+
+  /// 我的平台额度。服务端 GET /api/image/quota 按当前 token 判定归属，
+  /// 不接受任何客户端传入的 userId。
+  Future<PersonalQuota> fetchMyQuota({
+    required String serverUrl,
+    required String token,
+  }) async {
+    final response = await _httpClient.get(
+      _uri(normalizeServerUrl(serverUrl), '/api/image/quota'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return PersonalQuota.fromJson(_decodeResponse(response));
   }
 
   Future<List<BoxUsageRecord>> fetchMyUsage({
@@ -151,9 +180,15 @@ class BoxAccountClient {
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      final serverMessage = _extractError(decoded, preview);
+      final structured = _extractStructuredError(decoded);
+      final serverMessage = structured ?? (preview.isEmpty ? '请求失败' : preview);
       throw BoxAccountException(
-        _friendlyError(response.statusCode, serverMessage),
+        _friendlyError(
+          response.statusCode,
+          serverMessage,
+          structured: structured != null,
+          headers: response.headers,
+        ),
         statusCode: response.statusCode,
         rawPreview: preview,
       );
@@ -169,7 +204,9 @@ class BoxAccountClient {
     return decoded;
   }
 
-  static String _extractError(dynamic decoded, String preview) {
+  /// 只返回服务端**结构化**给出的错误文案（error.message / message）。
+  /// 返回 null 表示服务端没给结构化文案，调用方才退回 body 预览。
+  static String? _extractStructuredError(dynamic decoded) {
     if (decoded is Map) {
       final error = decoded['error'];
       if (error is Map && error['message'] != null) {
@@ -177,10 +214,23 @@ class BoxAccountClient {
       }
       if (decoded['message'] != null) return decoded['message'].toString();
     }
-    return preview.isEmpty ? '请求失败' : preview;
+    return null;
   }
 
-  static String _friendlyError(int statusCode, String message) {
+  static String _friendlyError(
+    int statusCode,
+    String message, {
+    required bool structured,
+    Map<String, String> headers = const {},
+  }) {
+    // 429 是登录节流：服务端已经把「请 N 秒后再试」说清楚了，
+    // 再拼一句通用的「请求失败。」会前后矛盾。
+    if (statusCode == 429) {
+      if (structured) return message;
+      final retryAfter = headers['retry-after'] ?? headers['Retry-After'];
+      final seconds = int.tryParse(retryAfter?.trim() ?? '');
+      return seconds != null ? '操作过于频繁，请 $seconds 秒后再试。' : '操作过于频繁，请稍后再试。';
+    }
     final hint = switch (statusCode) {
       401 => '账号或密码错误，或登录已失效。',
       403 => '账号不可用或没有权限。',

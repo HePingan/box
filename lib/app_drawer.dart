@@ -449,8 +449,15 @@ class _DrawerContentState extends State<_DrawerContent> {
     final user = session?.user;
 
     return InkWell(
+      key: const ValueKey('drawer_header_card'),
       borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-      onTap: () => _openRoute(context, AppRoutes.account),
+      // B6：已登录直达个人中心（额度/插件/题库/设置/公告 都在那里），未登录
+      // 才进账号中心登录。改之前无条件跳账号中心，已登录用户想看额度得走
+      // 抽屉 → 账号中心 → 个人中心 三层。
+      onTap: () => _openRoute(
+        context,
+        session == null ? AppRoutes.account : AppRoutes.personalCenter,
+      ),
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
