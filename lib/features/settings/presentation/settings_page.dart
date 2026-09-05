@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/app_routes.dart';
 import '../../../design_system/app_tokens.dart';
 
 /// 独立设置页。
@@ -60,7 +61,10 @@ class SettingsPage extends StatelessWidget {
                 icon: Icons.backup_outlined,
                 title: '备份与恢复',
                 subtitle: '导出或导入收藏、书架、阅读进度、本地题库',
-                onTap: () => Navigator.of(context).pushNamed('/settings/data'),
+                // 用常量而非字面量：路由改名时编译期就会报错，
+                // 不会留下一个点了没反应的入口。
+                onTap: () =>
+                    Navigator.of(context).pushNamed(AppRoutes.dataSettings),
               ),
             ],
           ),
@@ -124,9 +128,7 @@ class _SettingsTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 停用项调低对比度，但仍读得清说明文字——用户需要知道「为什么不能点」。
-    final titleColor = enabled
-        ? AppTokens.textPrimary
-        : AppTokens.textTertiary;
+    final titleColor = enabled ? AppTokens.textPrimary : AppTokens.textTertiary;
 
     return InkWell(
       onTap: enabled ? onTap : null,
@@ -138,9 +140,7 @@ class _SettingsTile extends StatelessWidget {
             Icon(
               icon,
               size: 20,
-              color: enabled
-                  ? AppTokens.primaryBlue
-                  : AppTokens.textTertiary,
+              color: enabled ? AppTokens.primaryBlue : AppTokens.textTertiary,
             ),
             const SizedBox(width: 12),
             Expanded(

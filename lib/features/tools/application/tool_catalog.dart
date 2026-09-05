@@ -18,6 +18,16 @@ class ToolCategory {
   });
 }
 
+/// 已经真正接线、点击能打开页面的工具名单。
+///
+/// 目录里绝大多数条目仍是占位（点击只弹「开发中」），所以「可用数」必须以
+/// 这份名单为准，不能拿分类的工具总数充当可用数。新工具接线后往这里补一条，
+/// UI 的可用徽标会自动跟上。
+const Set<String> kAvailableToolNames = {'在线PS', '汇率换算', '节假日查询', 'API能力中心'};
+
+/// 某个工具当前是否可用（已接线）。
+bool isToolAvailable(String toolName) => kAvailableToolNames.contains(toolName);
+
 List<ToolCategory> createDefaultToolCategories() {
   return [
     ToolCategory(
@@ -86,7 +96,7 @@ List<ToolCategory> createDefaultToolCategories() {
 
     ToolCategory(
       title: '查询工具',
-      subtitle: 'Query tools · 34个工具',
+      subtitle: '快递、天气、归属地等查询',
       icon: Icons.search_outlined,
       iconBgColor: const Color(0xFF4C5B99),
       tools: [
@@ -129,7 +139,7 @@ List<ToolCategory> createDefaultToolCategories() {
     ),
     ToolCategory(
       title: '文本工具',
-      subtitle: 'Text tools · 39个工具',
+      subtitle: '文本处理与随机文案',
       icon: Icons.text_fields,
       iconBgColor: const Color(0xFF7A8CD0),
       tools: [
@@ -145,7 +155,6 @@ List<ToolCategory> createDefaultToolCategories() {
         '搜题',
         '翻译',
         '滚动弹幕',
-        '历史上的今天',
         '藏头诗生成',
         '随机彩虹屁',
         '舔狗日记',
