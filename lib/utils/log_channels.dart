@@ -67,6 +67,12 @@ enum LogChannel {
         return LogChannel.video;
       case 'FLUTTER':
       case 'WINDOW':
+      // 小窗/分屏诊断的两个真实写入点。漏登记会让它们落进 system 兜底，
+      // 结果「窗口」筛选器是空的 —— 恰好是分屏排障唯一该看的频道。
+      // 见 WindowDiagnosticsChannel.logTag / FlutterViewportDiagnostics.logTag，
+      // 由 test/utils/log_channel_window_tag_test.dart 锁定。
+      case 'BOXFLUTTERWINDOW':
+      case 'BOXFLUTTERVIEWPORT':
         return LogChannel.window;
       case 'READER':
         return LogChannel.reader;
