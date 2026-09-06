@@ -22,6 +22,8 @@ import 'reader/reader_paginator.dart';
 import 'reader/reader_paged_view.dart';
 import 'reader/reader_progress_service.dart';
 import 'reader/reader_pagination_coordinator.dart';
+import 'reader/reader_recalc_scheduler.dart';
+import 'reader/reader_restore_retry.dart';
 import 'reader/reader_search_sheet.dart';
 import 'reader/reader_settings_sheet.dart';
 import 'reader/reader_status_views.dart';
@@ -49,7 +51,7 @@ class ReaderPage extends StatefulWidget {
   State<ReaderPage> createState() => _ReaderPageState();
 }
 
-class _ReaderPageState extends State<ReaderPage> {
+class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   late final ReaderController _controller;
   late final ReaderNavigationController _navigationController;
   late final PageController _pageController;
@@ -70,6 +72,10 @@ class _ReaderPageState extends State<ReaderPage> {
   double _lastFitWidth = 0.0;
   double _lastNormalHeight = 0.0;
 
+  /// 上一条已记录的 layout 约束签名。仅用于日志去重（LayoutBuilder 每帧都跑，
+  /// 不去重会把 AppLogger 的环形缓冲刷满，真正的证据反而被挤掉）。
+  String _lastLoggedLayoutSignature = '';
+
   // 菜单是否可见（用于通知 View 在菜单打开时不重算页高）
   bool _menuVisible = false;
 
@@ -78,7 +84,6 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _isSwiping = false;
   static const double _tapThreshold = 10.0; // 点击与滑动的位移阈值（像素）
 
-  bool _pageCalcScheduled = false;
   bool _scrollJumpScheduled = false;
   bool _paginatingRemaining = false;
 
@@ -125,16 +130,20 @@ class _ReaderPageState extends State<ReaderPage> {
         _navigationController.goNext(viewportHeight: size.height);
       case ReaderKeyIntent.previousChapter:
         if (!_controller.canGoPrev) return KeyEventResult.handled;
-        unawaited(_navigationController.switchChapter(
-          _controller.chapterIndex - 1,
-          target: ReaderJumpTarget.start,
-        ));
+        unawaited(
+          _navigationController.switchChapter(
+            _controller.chapterIndex - 1,
+            target: ReaderJumpTarget.start,
+          ),
+        );
       case ReaderKeyIntent.nextChapter:
         if (!_controller.canGoNext) return KeyEventResult.handled;
-        unawaited(_navigationController.switchChapter(
-          _controller.chapterIndex + 1,
-          target: ReaderJumpTarget.start,
-        ));
+        unawaited(
+          _navigationController.switchChapter(
+            _controller.chapterIndex + 1,
+            target: ReaderJumpTarget.start,
+          ),
+        );
       case ReaderKeyIntent.toggleMenu:
         _navigationController.toggleMenu();
       case ReaderKeyIntent.dismiss:
@@ -160,9 +169,9 @@ class _ReaderPageState extends State<ReaderPage> {
     final current = _controller.settings.fontSize;
     final next = (current + step).clamp(14.0, 30.0);
     if (next == current) return;
-    unawaited(_controller.updateSettings(
-      _controller.settings.copyWith(fontSize: next),
-    ));
+    unawaited(
+      _controller.updateSettings(_controller.settings.copyWith(fontSize: next)),
+    );
     // 字号变化必须清分页缓存，否则沿用旧页高会串行/截断。
     if (!_controller.isScrollMode) {
       setState(() => _textPages = <String>[]);
@@ -185,6 +194,12 @@ class _ReaderPageState extends State<ReaderPage> {
   @override
   void initState() {
     super.initState();
+
+    // 纯诊断用途：记录引擎层视图尺寸变化。小窗转圈的关键未知量是
+    // 「HyperOS freeform resize 后 Flutter 到底有没有走一次带新尺寸的 layout」。
+    // didChangeMetrics 触发但随后没有新的 LAYOUT 行 → 布局没跟上（承载层问题）；
+    // 压根不触发 → 引擎没收到尺寸变化（configChanges / TextureView 层面）。
+    WidgetsBinding.instance.addObserver(this);
 
     _controller = ReaderController(
       detail: widget.detail,
@@ -245,32 +260,59 @@ class _ReaderPageState extends State<ReaderPage> {
     // 初始化调试日志
     unawaited(ReaderDebugLog.init());
 
-    unawaited(_controller.bootstrap().then((_) {
-      // 常亮开关此前只在设置面板 onSettingsChanged 里生效，
-      // 进入阅读页时不会按已持久化的设置应用，
-      // 用户开了常亮、退出重进后屏幕照常息屏。
-      if (!mounted) return;
-      unawaited(_wakelock.apply(_controller.settings.keepScreenOn));
-      unawaited(_volumeKeys.attach(
-        enabled: _controller.settings.volumeKeyNav,
-      ));
-    }));
+    unawaited(
+      _controller.bootstrap().then((_) {
+        // 常亮开关此前只在设置面板 onSettingsChanged 里生效，
+        // 进入阅读页时不会按已持久化的设置应用，
+        // 用户开了常亮、退出重进后屏幕照常息屏。
+        if (!mounted) return;
+        unawaited(_wakelock.apply(_controller.settings.keepScreenOn));
+        unawaited(
+          _volumeKeys.attach(enabled: _controller.settings.volumeKeyNav),
+        );
+      }),
+    );
+  }
+
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    if (!mounted) return;
+    final view = View.maybeOf(context);
+    final size = view == null
+        ? null
+        : view.physicalSize / view.devicePixelRatio;
+    ReaderDebugLog.log(
+      'didChangeMetrics: logicalSize='
+      '${size == null ? 'null' : '${size.width.toStringAsFixed(1)}x'
+                '${size.height.toStringAsFixed(1)}'} '
+      'textPages=${_textPages.length} '
+      'recalcPending=${_recalcScheduler.hasPending}',
+    );
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _paginationCoordinator.cancel();
+    _recalcScheduler.cancel();
     // 清理所有 Timer。_pagedScrollDebounce 以前漏了 cancel：它的回调虽有
     // mounted/hasClients 双守卫不会崩，但 Timer 会存活到 dispose 之后才空转一次，
     // 且持有 State 引用妨碍回收。注释说「所有」就得真的是所有。
     _saveDebounce?.cancel();
     _pagedScrollDebounce?.cancel();
-    
+
     // 退出时立即保存进度。关键：使用 _currentViewPage（onPageChanged 已确认的页码），
     // 而不是 _pageController.page（可能还在动画中途、未 settle 到最终值）。
-    if (!_controller.isScrollMode && _textPages.isNotEmpty && !_pendingRestore) {
+    if (!_controller.isScrollMode &&
+        _textPages.isNotEmpty &&
+        !_pendingRestore) {
       final pageIdx = _currentViewPage.clamp(0, _textPages.length - 1);
-      final charOffset = charOffsetForPage(_textPages, _controller.content, pageIdx);
+      final charOffset = charOffsetForPage(
+        _textPages,
+        _controller.content,
+        pageIdx,
+      );
       final progress = ReadingProgress(
         bookId: widget.detail.book.id,
         chapterIndex: _controller.chapterIndex,
@@ -279,7 +321,9 @@ class _ReaderPageState extends State<ReaderPage> {
         charOffset: charOffset,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
       );
-      ReaderDebugLog.log('dispose: SAVING currentViewPage=$_currentViewPage charOffset=$charOffset');
+      ReaderDebugLog.log(
+        'dispose: SAVING currentViewPage=$_currentViewPage charOffset=$charOffset',
+      );
       unawaited(_persistProgress(progress));
     } else if (_controller.isScrollMode) {
       // 滚动模式仍走原逻辑
@@ -349,9 +393,7 @@ class _ReaderPageState extends State<ReaderPage> {
           style: TextStyle(color: _textColor),
         ),
         content: Text(
-          already
-              ? '取消当前章节书签？'
-              : '收藏「${_controller.currentChapterTitle}」？',
+          already ? '取消当前章节书签？' : '收藏「${_controller.currentChapterTitle}」？',
           style: TextStyle(color: _textColor.withValues(alpha: 0.8)),
         ),
         actions: [
@@ -391,19 +433,31 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
+  /// 分页重排调度器。合并同一帧内的多次请求，且**保留最后一次的尺寸**。
+  ///
+  /// 原先这里是 `if (_pageCalcScheduled) return;` —— 合并意图对，但它保留
+  /// 第一次的尺寸、丢掉后续更新，而调用点已经把 `_lastFitWidth` 更新成最新值，
+  /// 于是「分页用旧宽度、记录是新宽度」永久错位且再也无法触发重排。
+  /// 小窗切换会连发中间态+稳定态多帧，正是这个竞态的高发场景（小窗永久转圈）。
+  /// 见 ReaderRecalcScheduler 的文档与 test/novel/reader_recalc_coalescing_test.dart。
+  late final ReaderRecalcScheduler _recalcScheduler = ReaderRecalcScheduler(
+    schedule: (cb) => WidgetsBinding.instance.addPostFrameCallback((_) => cb()),
+    run: (fitWidth, firstHeight, normalHeight) {
+      if (!mounted) return;
+      _calculatePages(fitWidth, firstHeight, normalHeight);
+    },
+  );
+
   void _schedulePageRecalc(
     double fitWidth,
     double firstPageHeight,
     double normalPageHeight,
   ) {
-    if (_pageCalcScheduled) return;
-    _pageCalcScheduled = true;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _pageCalcScheduled = false;
-      if (!mounted) return;
-      _calculatePages(fitWidth, firstPageHeight, normalPageHeight);
-    });
+    _recalcScheduler.request(
+      fitWidth: fitWidth,
+      firstHeight: firstPageHeight,
+      normalHeight: normalPageHeight,
+    );
   }
 
   void _scheduleScrollJump() {
@@ -430,17 +484,22 @@ class _ReaderPageState extends State<ReaderPage> {
       ReaderDebugLog.log('_saveProgress: SKIPPED (pendingRestore=true)');
       return;
     }
-    ReaderDebugLog.log('_saveProgress: START pageController.hasClients=${_pageController.hasClients}, textPages=${_textPages.length}, chapter=${_controller.chapterIndex}');
+    ReaderDebugLog.log(
+      '_saveProgress: START pageController.hasClients=${_pageController.hasClients}, textPages=${_textPages.length}, chapter=${_controller.chapterIndex}',
+    );
 
     // PageView 已经 detach（页面正在销毁 / 还没 attach）时 page 读不到真值，
     // 此时 raw 会退化成 0，把 DB 里正确的进度覆盖成第 1 页。
     // 宁可不写，也不能写错——退出时的保存由 dispose() 用 _currentViewPage 完成。
     if (!_pageController.hasClients) {
-      ReaderDebugLog.log('_saveProgress: SKIPPED (pageController has no clients)');
+      ReaderDebugLog.log(
+        '_saveProgress: SKIPPED (pageController has no clients)',
+      );
       return;
     }
 
-    double raw = (_pageController.page ?? (_currentViewPage + 1).toDouble()) - 1.0;
+    double raw =
+        (_pageController.page ?? (_currentViewPage + 1).toDouble()) - 1.0;
 
     if (_textPages.isNotEmpty) {
       raw = raw.clamp(0.0, (_textPages.length - 1).toDouble());
@@ -465,7 +524,9 @@ class _ReaderPageState extends State<ReaderPage> {
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
 
-    ReaderDebugLog.log('_saveProgress: SAVING page=${raw.toStringAsFixed(2)} charOffset=$charOffset progress=$nextProgress');
+    ReaderDebugLog.log(
+      '_saveProgress: SAVING page=${raw.toStringAsFixed(2)} charOffset=$charOffset progress=$nextProgress',
+    );
     await _persistProgress(nextProgress);
     ReaderDebugLog.log('_saveProgress: DONE');
   }
@@ -509,7 +570,9 @@ class _ReaderPageState extends State<ReaderPage> {
               .catchError((Object e, StackTrace st) {
                 // 在 controller 上暴露最后一次保存错误，UI 可按需显示提示
                 _controller.lastSaveError = e;
-                debugPrint('进度保存失败: $e');
+                // 原来用 debugPrint：Release 包里报障用户完全拿不到，
+                // 「进度存不下来」这类反馈也就永远缺证据。走统一日志设施。
+                ReaderDebugLog.log('_persistProgress: FAILED $e');
                 return Future<void>.value();
               }),
         );
@@ -746,7 +809,16 @@ class _ReaderPageState extends State<ReaderPage> {
     double firstPageHeight,
     double normalPageHeight,
   ) {
-    if (_controller.content.isEmpty || _controller.isScrollMode) return;
+    if (_controller.content.isEmpty || _controller.isScrollMode) {
+      // 过去这条早返回完全静默 —— 「为什么没算」正是小窗转圈缺的证据。
+      ReaderDebugLog.log(
+        '_calculatePages: SKIPPED '
+        '(contentEmpty=${_controller.content.isEmpty} '
+        'scrollMode=${_controller.isScrollMode} '
+        'fitWidth=${fitWidth.toStringAsFixed(1)})',
+      );
+      return;
+    }
 
     // 取消之前的后台分页，并开启新一轮（代号自增让过期轮次自行退出）
     final generation = _paginationCoordinator.beginRound();
@@ -767,14 +839,13 @@ class _ReaderPageState extends State<ReaderPage> {
     );
 
     // 增量分页：先出 5 页，后台补全
-    final result = ReaderPaginator.paginateIncremental(
-      request,
-      chunkSize: 5,
-    );
+    final result = ReaderPaginator.paginateIncremental(request, chunkSize: 5);
 
     if (!mounted) return;
 
-    ReaderDebugLog.log('_calculatePages: START content.length=${_controller.content.length} fitWidth=$fitWidth firstHeight=$firstPageHeight normalHeight=$normalPageHeight pagesCount=${result.firstChunk.length} isDone=${result.remaining.isDone}');
+    ReaderDebugLog.log(
+      '_calculatePages: START content.length=${_controller.content.length} fitWidth=$fitWidth firstHeight=$firstPageHeight normalHeight=$normalPageHeight pagesCount=${result.firstChunk.length} isDone=${result.remaining.isDone}',
+    );
     setState(() {
       _textPages = result.firstChunk;
       _paginatingRemaining = !result.remaining.isDone;
@@ -835,23 +906,55 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
+  /// 等一帧。
+  Future<void> _waitOneFrame() => WidgetsBinding.instance.endOfFrame;
+
+  /// 等 PageView attach 上来再恢复位置。
+  ///
+  /// 小窗切换时重算分页会让 PageView 短暂离树（build 走转圈分支），此时
+  /// hasClients=false。旧实现在这里直接 return，导致 _pendingRestore 永远
+  /// 停在 true、进度永久存不下来、正文死转圈。
+  /// 详见 reader/reader_restore_retry.dart。
   Future<void> _restorePagePositionAfterPaginate() async {
-    ReaderDebugLog.log('_restorePagePositionAfterPaginate: START isScrollMode=${_controller.isScrollMode} hasClients=${_pageController.hasClients} textPages=${_textPages.length} jumpTarget=${_navigationController.jumpTarget} pendingRestore=$_pendingRestore');
-    if (_controller.isScrollMode ||
-        !_pageController.hasClients ||
-        _textPages.isEmpty) {
-      ReaderDebugLog.log('_restorePagePositionAfterPaginate: EARLY RETURN (isScrollMode=${_controller.isScrollMode} hasClients=${_pageController.hasClients} textPagesEmpty=${_textPages.isEmpty})');
-      return;
+    if (_controller.isScrollMode) return;
+
+    for (var attempt = 0; ; attempt++) {
+      final action = ReaderRestoreRetry.decide(
+        hasClients: _pageController.hasClients,
+        hasPages: _textPages.isNotEmpty,
+        mounted: mounted,
+        attempt: attempt,
+      );
+      if (action == ReaderRestoreAction.restoreNow) break;
+      if (action == ReaderRestoreAction.abandon) {
+        ReaderDebugLog.log(
+          '_restorePagePositionAfterPaginate: ABANDON after $attempt attempt(s) (hasClients=${_pageController.hasClients} textPagesEmpty=${_textPages.isEmpty} mounted=$mounted)',
+        );
+        return;
+      }
+      ReaderDebugLog.log(
+        '_restorePagePositionAfterPaginate: WAIT for attach, attempt=$attempt textPages=${_textPages.length}',
+      );
+      await _waitOneFrame();
+      if (!mounted) return;
     }
+
+    ReaderDebugLog.log(
+      '_restorePagePositionAfterPaginate: START isScrollMode=${_controller.isScrollMode} hasClients=${_pageController.hasClients} textPages=${_textPages.length} jumpTarget=${_navigationController.jumpTarget} pendingRestore=$_pendingRestore',
+    );
 
     int targetPage = 0;
 
     if (_navigationController.jumpTarget == ReaderJumpTarget.end) {
       targetPage = _textPages.length - 1;
-      ReaderDebugLog.log('_restorePagePositionAfterPaginate: using END target, targetPage=$targetPage');
+      ReaderDebugLog.log(
+        '_restorePagePositionAfterPaginate: using END target, targetPage=$targetPage',
+      );
     } else if (_navigationController.jumpTarget == ReaderJumpTarget.restoreDb) {
       // 优先用字符偏移定位（排版无关）
-      ReaderDebugLog.log('_restorePagePositionAfterPaginate: restoring from DB for chapter=${_controller.chapterIndex}');
+      ReaderDebugLog.log(
+        '_restorePagePositionAfterPaginate: restoring from DB for chapter=${_controller.chapterIndex}',
+      );
       final charOff = await _progressService.restoreCharOffsetForChapter(
         widget.detail.book.id,
         _controller.chapterIndex,
@@ -859,13 +962,22 @@ class _ReaderPageState extends State<ReaderPage> {
       ReaderDebugLog.log('_restorePagePositionAfterPaginate: charOff=$charOff');
 
       if (charOff != null) {
-        final offsets = computePageStartOffsets(_textPages, _controller.content);
-        ReaderDebugLog.log('_restorePagePositionAfterPaginate: computePageStartOffsets returned ${offsets.length} offsets');
+        final offsets = computePageStartOffsets(
+          _textPages,
+          _controller.content,
+        );
+        ReaderDebugLog.log(
+          '_restorePagePositionAfterPaginate: computePageStartOffsets returned ${offsets.length} offsets',
+        );
         targetPage = locatePageForCharOffset(offsets, charOff);
-        ReaderDebugLog.log('_restorePagePositionAfterPaginate: located page=$targetPage for charOff=$charOff');
+        ReaderDebugLog.log(
+          '_restorePagePositionAfterPaginate: located page=$targetPage for charOff=$charOff',
+        );
       } else {
         // 降级到旧逻辑：页索引
-        ReaderDebugLog.log('_restorePagePositionAfterPaginate: charOff is null, falling back to scrollOffset');
+        ReaderDebugLog.log(
+          '_restorePagePositionAfterPaginate: charOff is null, falling back to scrollOffset',
+        );
         final saved = await _progressService.restoreOffsetForChapter(
           widget.detail.book.id,
           _controller.chapterIndex,
@@ -877,7 +989,9 @@ class _ReaderPageState extends State<ReaderPage> {
           targetPage = rawPage
               .clamp(0.0, (_textPages.length - 1).toDouble())
               .toInt();
-          ReaderDebugLog.log('_restorePagePositionAfterPaginate: decoded page=$rawPage -> targetPage=$targetPage');
+          ReaderDebugLog.log(
+            '_restorePagePositionAfterPaginate: decoded page=$rawPage -> targetPage=$targetPage',
+          );
         }
       }
     }
@@ -886,7 +1000,9 @@ class _ReaderPageState extends State<ReaderPage> {
     if (targetView < 1) targetView = 1;
     if (targetView > _textPages.length) targetView = _textPages.length;
 
-    ReaderDebugLog.log('_restorePagePositionAfterPaginate: jumping to view=$targetView (page=$targetPage)');
+    ReaderDebugLog.log(
+      '_restorePagePositionAfterPaginate: jumping to view=$targetView (page=$targetPage)',
+    );
     _pageController.jumpToPage(targetView);
     await _saveProgress();
   }
@@ -951,7 +1067,31 @@ class _ReaderPageState extends State<ReaderPage> {
       isFirstPage: false,
     ).textHeight;
 
+    // 诊断：每次 layout 都记一次实测约束。小窗转圈三轮未定案的核心盲区是
+    // 「切小窗后 LayoutBuilder 到底有没有拿到新尺寸重跑」，这条是唯一判据。
+    final layoutSignature =
+        '${constraints.maxWidth.toStringAsFixed(1)}x'
+        '${constraints.maxHeight.toStringAsFixed(1)}';
+    if (layoutSignature != _lastLoggedLayoutSignature) {
+      _lastLoggedLayoutSignature = layoutSignature;
+      ReaderDebugLog.log(
+        'LAYOUT: constraints=$layoutSignature topPad=${topPad.toStringAsFixed(1)} '
+        'fitWidth=${fitWidth.toStringAsFixed(1)} '
+        'firstTextHeight=${firstTextHeight.toStringAsFixed(1)} '
+        'normalTextHeight=${normalTextHeight.toStringAsFixed(1)} '
+        'textPages=${_textPages.length} contentLen=${_controller.content.length} '
+        'loading=${_controller.loading} isError=${_controller.isError} '
+        'scrollMode=${_controller.isScrollMode}',
+      );
+    }
+
     if (fitWidth <= 0 || firstTextHeight <= 0 || normalTextHeight <= 0) {
+      ReaderDebugLog.log(
+        'LAYOUT: SPINNER#1 geometry guard '
+        '(fitWidth=${fitWidth.toStringAsFixed(1)} '
+        'firstTextHeight=${firstTextHeight.toStringAsFixed(1)} '
+        'normalTextHeight=${normalTextHeight.toStringAsFixed(1)})',
+      );
       return Center(
         child: CircularProgressIndicator(
           strokeWidth: 2,
@@ -963,12 +1103,31 @@ class _ReaderPageState extends State<ReaderPage> {
     if (fitWidth != _lastFitWidth ||
         normalTextHeight != _lastNormalHeight ||
         _textPages.isEmpty) {
+      ReaderDebugLog.log(
+        'LAYOUT: recalc SCHEDULED '
+        '(fitWidth ${_lastFitWidth.toStringAsFixed(1)}->'
+        '${fitWidth.toStringAsFixed(1)} '
+        'normalHeight ${_lastNormalHeight.toStringAsFixed(1)}->'
+        '${normalTextHeight.toStringAsFixed(1)} '
+        'textPagesEmpty=${_textPages.isEmpty})',
+      );
       _lastFitWidth = fitWidth;
       _lastNormalHeight = normalTextHeight;
       _schedulePageRecalc(fitWidth, firstTextHeight, normalTextHeight);
     }
 
     if (_textPages.isEmpty) {
+      // 这是三轮排查后唯一还站得住的转圈来源：几何健康、内容非空，
+      // 但页始终没落到 State 上。recalcPending 能区分「重排没被排期」
+      // 和「排期了但没产出」。
+      ReaderDebugLog.log(
+        'LAYOUT: SPINNER#2 textPages EMPTY '
+        '(contentLen=${_controller.content.length} '
+        'recalcPending=${_recalcScheduler.hasPending} '
+        'paginatingRemaining=$_paginatingRemaining '
+        'lastFitWidth=${_lastFitWidth.toStringAsFixed(1)} '
+        'lastNormalHeight=${_lastNormalHeight.toStringAsFixed(1)})',
+      );
       return Center(
         child: CircularProgressIndicator(
           strokeWidth: 2,
@@ -1025,123 +1184,132 @@ class _ReaderPageState extends State<ReaderPage> {
           autofocus: true,
           onKeyEvent: _handleKeyEvent,
           child: Scaffold(
-          backgroundColor: _bgColor,
-          body: SafeArea(
-            top: false,
-            bottom: false,
-            child: Stack(
-              children: [
-                // 主内容区。
-                //
-                // 用 Listener 而非 GestureDetector：PageView 内部的滚动识别器会
-                // 在手势竞技场中与 GestureDetector.onTapUp 竞争，导致点击时灵时不灵。
-                // Listener（translucent 行为）无论内部 widget 是否消费手势都能收到
-                // 指针事件，保证 menuVisible == false 时菜单切换始终可靠触发。
-                Listener(
-                  onPointerDown: (details) {
-                    _pointerDownPos = details.localPosition;
-                    _isSwiping = false;
-                  },
-                  onPointerMove: (details) {
-                    // 检测是否发生位移，超过阈值认为是滑动
-                    if (_pointerDownPos != null) {
-                      final dx = (details.localPosition.dx - _pointerDownPos!.dx).abs();
-                      final dy = (details.localPosition.dy - _pointerDownPos!.dy).abs();
-                      if (dx > _tapThreshold || dy > _tapThreshold) {
-                        _isSwiping = true;
+            backgroundColor: _bgColor,
+            body: SafeArea(
+              top: false,
+              bottom: false,
+              child: Stack(
+                children: [
+                  // 主内容区。
+                  //
+                  // 用 Listener 而非 GestureDetector：PageView 内部的滚动识别器会
+                  // 在手势竞技场中与 GestureDetector.onTapUp 竞争，导致点击时灵时不灵。
+                  // Listener（translucent 行为）无论内部 widget 是否消费手势都能收到
+                  // 指针事件，保证 menuVisible == false 时菜单切换始终可靠触发。
+                  Listener(
+                    onPointerDown: (details) {
+                      _pointerDownPos = details.localPosition;
+                      _isSwiping = false;
+                    },
+                    onPointerMove: (details) {
+                      // 检测是否发生位移，超过阈值认为是滑动
+                      if (_pointerDownPos != null) {
+                        final dx =
+                            (details.localPosition.dx - _pointerDownPos!.dx)
+                                .abs();
+                        final dy =
+                            (details.localPosition.dy - _pointerDownPos!.dy)
+                                .abs();
+                        if (dx > _tapThreshold || dy > _tapThreshold) {
+                          _isSwiping = true;
+                        }
                       }
-                    }
-                  },
-                  onPointerUp: (details) {
-                    if (_navigationController.menuVisible) return;
-                    // 滑动时不触发菜单（上一页/下一页由 PageView 内部处理）
-                    if (_isSwiping) return;
-                    unawaited(_navigationController.handleScreenTap(
-                      TapUpDetails(
-                        localPosition: details.localPosition,
-                        globalPosition: details.position,
-                        kind: PointerDeviceKind.touch,
-                      ),
-                      context,
-                    ));
-                  },
-                  child: IgnorePointer(
-                    ignoring: _navigationController.menuVisible,
-                    child: _buildContentArea(),
-                  ),
-                ),
-
-                // 菜单遮罩层：菜单打开时铺满全屏，独占关闭手势。
-                // 点击正文区域即关闭菜单（通过 _navigationController.handleScreenTap）。
-                if (_navigationController.menuVisible &&
-                    !_controller.loading &&
-                    !_controller.isError)
-                  Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _navigationController.dismissMenu,
-                      child: const SizedBox.expand(),
+                    },
+                    onPointerUp: (details) {
+                      if (_navigationController.menuVisible) return;
+                      // 滑动时不触发菜单（上一页/下一页由 PageView 内部处理）
+                      if (_isSwiping) return;
+                      unawaited(
+                        _navigationController.handleScreenTap(
+                          TapUpDetails(
+                            localPosition: details.localPosition,
+                            globalPosition: details.position,
+                            kind: PointerDeviceKind.touch,
+                          ),
+                          context,
+                        ),
+                      );
+                    },
+                    child: IgnorePointer(
+                      ignoring: _navigationController.menuVisible,
+                      child: _buildContentArea(),
                     ),
                   ),
 
-                // 亮度遮罩叠加层（brightness 0.2~1.0，越低越暗）。
-                // 必须排在顶部进度条之前：否则遮罩会把进度条一起压暗，
-                // 亮度调到最低时进度条几乎看不见。
-                if (!_controller.loading &&
-                    !_controller.isError &&
-                    _controller.settings.brightness < 1.0)
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: Container(
-                        color: Colors.black.withValues(
-                          alpha: 1.0 - _controller.settings.brightness,
+                  // 菜单遮罩层：菜单打开时铺满全屏，独占关闭手势。
+                  // 点击正文区域即关闭菜单（通过 _navigationController.handleScreenTap）。
+                  if (_navigationController.menuVisible &&
+                      !_controller.loading &&
+                      !_controller.isError)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _navigationController.dismissMenu,
+                        child: const SizedBox.expand(),
+                      ),
+                    ),
+
+                  // 亮度遮罩叠加层（brightness 0.2~1.0，越低越暗）。
+                  // 必须排在顶部进度条之前：否则遮罩会把进度条一起压暗，
+                  // 亮度调到最低时进度条几乎看不见。
+                  if (!_controller.loading &&
+                      !_controller.isError &&
+                      _controller.settings.brightness < 1.0)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: Container(
+                          color: Colors.black.withValues(
+                            alpha: 1.0 - _controller.settings.brightness,
+                          ),
                         ),
                       ),
                     ),
-                  ),
 
-                // 顶部阅读进度条（不受亮度遮罩影响）。
-                //
-                // 菜单展开时顶栏是不透明的整条，会把 top:0 的进度条完全盖住，
-                // 所以这时把进度条下移到顶栏下沿；菜单收起时仍贴屏幕顶边。
-                if (!_controller.loading && !_controller.isError)
-                  Positioned(
-                    top: _navigationController.menuVisible
-                        ? MediaQuery.of(context).padding.top +
-                              ReaderTopBar.contentHeight
-                        : 0,
-                    left: 0,
-                    right: 0,
-                    child: _buildTopProgressBar(),
-                  ),
+                  // 顶部阅读进度条（不受亮度遮罩影响）。
+                  //
+                  // 菜单展开时顶栏是不透明的整条，会把 top:0 的进度条完全盖住，
+                  // 所以这时把进度条下移到顶栏下沿；菜单收起时仍贴屏幕顶边。
+                  if (!_controller.loading && !_controller.isError)
+                    Positioned(
+                      top: _navigationController.menuVisible
+                          ? MediaQuery.of(context).padding.top +
+                                ReaderTopBar.contentHeight
+                          : 0,
+                      left: 0,
+                      right: 0,
+                      child: _buildTopProgressBar(),
+                    ),
 
-                // 切章转场遮罩
-                if (_controller.isTransitioning)
-                  Positioned.fill(
-                    child: _buildChapterTransitionOverlay(),
-                  ),
+                  // 切章转场遮罩
+                  if (_controller.isTransitioning)
+                    Positioned.fill(child: _buildChapterTransitionOverlay()),
 
-                // 菜单层
-                if (_navigationController.menuVisible &&
-                    !_controller.loading &&
-                    !_controller.isError)
-                  Positioned(top: 0, left: 0, right: 0, child: _buildTopBar()),
-                if (_navigationController.menuVisible &&
-                    !_controller.loading &&
-                    !_controller.isError)
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: _buildBottomBar(),
-                  ),
-                
-                // 原先这里常驻一个橙色虫子 FloatingActionButton，无 kDebugMode
-                // 判断，Release 包里也浮在正文上方遮挡阅读。调试日志已统一到
-                // 抽屉「更多 → 调试日志」，按「阅读」频道筛选即可，故移除。
-              ],
+                  // 菜单层
+                  if (_navigationController.menuVisible &&
+                      !_controller.loading &&
+                      !_controller.isError)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: _buildTopBar(),
+                    ),
+                  if (_navigationController.menuVisible &&
+                      !_controller.loading &&
+                      !_controller.isError)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: _buildBottomBar(),
+                    ),
+
+                  // 原先这里常驻一个橙色虫子 FloatingActionButton，无 kDebugMode
+                  // 判断，Release 包里也浮在正文上方遮挡阅读。调试日志已统一到
+                  // 抽屉「更多 → 调试日志」，按「阅读」频道筛选即可，故移除。
+                ],
+              ),
             ),
-          ),
           ),
         );
       },
@@ -1153,9 +1321,7 @@ class _ReaderPageState extends State<ReaderPage> {
     if (_controller.loading) return _buildLoadingSkeleton();
     if (_controller.isError) return _buildErrorState();
     if (_controller.isScrollMode) {
-      return _buildContinuousReaderView(
-        MediaQuery.of(context).padding.top,
-      );
+      return _buildContinuousReaderView(MediaQuery.of(context).padding.top);
     }
     return LayoutBuilder(
       builder: (context, constraints) {
