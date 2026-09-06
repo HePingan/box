@@ -57,9 +57,12 @@ class _WarehouseTabState extends State<WarehouseTab>
   bool _videosError = false;
   bool _comicsError = false;
 
-  /// 正在取详情准备进阅读器的书 id（null = 没有）。
-  /// 详情缓存未命中要走网络，没有这个遮罩用户会以为点了没反应而反复点。
-  String? _openingBookKey;
+  /// 打开条目前的阻塞提示文案（null = 不忙）。
+  ///
+  /// 书要取详情、影视要先加载片源目录，两者都可能走网络。
+  /// 单一字段而不是每类各留一个 bool：同时只可能有一个条目在打开，
+  /// 多套并行状态只会让遮罩出现「谁关谁」的竞态。
+  String? _busyHint;
 
   final ComicLibraryStore _comicStore = ComicLibraryStore();
   final FavoritesRepository _favoritesRepo = FavoritesRepository();
@@ -484,7 +487,7 @@ class _WarehouseTabState extends State<WarehouseTab>
   /// 所以必须先 `fetchDetail` —— 有 8h 缓存，命中时几乎瞬时；未命中就要走网络，
   /// 因此加载期间显示遮罩，失败退回详情页而不是把用户卡在原地。
   Future<void> _openBookForReading(NovelBook book) async {
-    setState(() => _openingBookKey = book.id);
+    setState(() => _busyHint = '正在打开…');
     NovelDetail? detail;
     try {
       detail = await NovelModule.repository.fetchDetail(
@@ -495,7 +498,7 @@ class _WarehouseTabState extends State<WarehouseTab>
       debugPrint('[warehouse] 取书籍详情失败，退回详情页: $e');
     }
     if (!mounted) return;
-    setState(() => _openingBookKey = null);
+    setState(() => _busyHint = null);
 
     // 章节拿不到就无法进阅读器，退回详情页让用户自己重试/换源。
     if (detail == null || detail.chapters.isEmpty) {
@@ -546,10 +549,29 @@ class _WarehouseTabState extends State<WarehouseTab>
     if (!mounted) return true;
 
     // 片源列表由 VideoController 持有；收藏只存了 sourceId/sourceUrl 字符串。
+    //
+    // 收藏库在影视模块之外，冷启动直接进这里时片源目录还没加载过
+    // （initSources 过去只有影视首页和管理后台会调），sources 是空 List，
+    // 于是必然匹配不到而误报「片源已失效」。所以先确保目录就绪再匹配。
     final videoController = context.read<VideoController>();
+    if (videoController.sources.isEmpty) {
+      setState(() => _busyHint = '正在加载片源…');
+      try {
+        await VideoModule.ensureCatalogReady(videoController);
+      } finally {
+        if (mounted) setState(() => _busyHint = null);
+      }
+      if (!mounted) return true;
+    }
+
     final source = findVideoSourceForFavorite(videoController.sources, fav);
     if (source == null) {
-      _showSnack('该视频的片源已失效或被移除');
+      // 目录已经加载过还是匹配不到，才是真的片源没了。
+      _showSnack(
+        videoController.sources.isEmpty
+            ? '片源目录加载失败，请检查网络后重试'
+            : '该视频的片源已失效或被移除',
+      );
       return true;
     }
     if (fav.vodId <= 0) {
@@ -1013,29 +1035,29 @@ class _WarehouseTabState extends State<WarehouseTab>
                 onCancel: _exitEditMode,
               ),
             ),
-          // 点书直接进阅读器时，取详情可能要走网络（缓存未命中）。
-          // 没有这层遮罩用户会以为点了没反应而反复点，重复触发跳转。
-          if (_openingBookKey != null)
-            const Positioned.fill(
+          // 打开条目前可能要走网络：书要取详情（缓存未命中），
+          // 影视要先加载片源目录。没有这层遮罩用户会以为点了没反应而反复点。
+          if (_busyHint != null)
+            Positioned.fill(
               child: ColoredBox(
-                color: Color(0x66000000),
+                color: const Color(0x66000000),
                 child: Center(
                   child: Card(
                     child: Padding(
-                      padding: EdgeInsets.symmetric(
+                      padding: const EdgeInsets.symmetric(
                         horizontal: 20,
                         vertical: 16,
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          SizedBox(
+                          const SizedBox(
                             width: 18,
                             height: 18,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           ),
-                          SizedBox(width: 12),
-                          Text('正在打开…'),
+                          const SizedBox(width: 12),
+                          Text(_busyHint!),
                         ],
                       ),
                     ),

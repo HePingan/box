@@ -4,6 +4,8 @@ import 'services/shared_http_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models/video_source.dart';
+import 'config/video_proxy_config.dart';
+import 'controller/video_controller.dart';
 import '../utils/app_logger.dart';
 
 /// 单个视频源的可见性记录
@@ -415,6 +417,24 @@ class VideoModule {
       tag: tag,
     );
     return null;
+  }
+
+  /// 确保片源目录已加载 —— 供影视模块**之外**的入口调用。
+  ///
+  /// 起因是一个真实误报：`initSources()` 过去只在影视首页和管理后台被调用，
+  /// 所以冷启动直接进「内容 → 收藏库」时 `VideoController.sources` 还是空 List，
+  /// 点影视收藏去匹配片源必然匹配不到，被当成「该视频的片源已失效或被移除」
+  /// 报给用户 —— 片源好得很，是调用方没加载就查。
+  ///
+  /// 幂等：已有片源就直接返回，不重复走网络。收藏库每次点击都会调它，
+  /// 不幂等的话弱网下每点一次都要重新等目录探测。
+  static Future<void> ensureCatalogReady(VideoController controller) async {
+    if (controller.sources.isNotEmpty) return;
+
+    final resolved = await resolveWorkingCatalogUrl();
+    final catalogUrl = resolved ?? kDefaultVideoCatalogUrlFormat0;
+
+    await controller.initSources(catalogUrl);
   }
 
   static void resetForTest() {
