@@ -32,6 +32,40 @@ bool isWarehouseNoSearchResult({
       totalMatched == 0;
 }
 
+/// 某个收藏分区是否应该显示。
+///
+/// 契约：可见性**只**由「该分区自己的命中结果 + 是否在搜索」决定，
+/// 不允许按分类硬编码。原实现里 videos/comics/music 在有搜索词时直接
+/// `return false`，配合 `_itemsForCategory` 对非 books 恒返回 const []，
+/// 造成用户报障的「影视收藏没显示出来」——数据在 Hive 里真实存在，
+/// 但分区永远不出现。
+///
+/// - 有搜索词：该分区有命中才显示（否则空分区刷屏）
+/// - 无搜索词：恒显示，空分区要展示自己的空态引导
+bool shouldShowWarehouseSection({
+  required String searchQuery,
+  required List<WarehouseItem> matchedInSection,
+}) {
+  if (searchQuery.trim().isEmpty) return true;
+  return matchedInSection.isNotEmpty;
+}
+
+/// 收藏总数 = 各分区之和。
+///
+/// 原实现只数 books，接上影视/漫画后不改会让顶部「共 N 项」撒谎。
+int warehouseTotalItems(List<List<WarehouseItem>> sections) {
+  var total = 0;
+  for (final section in sections) {
+    total += section.length;
+  }
+  return total;
+}
+
+/// 非空分区数。顶部统计用，空分区不计。
+int warehouseNonEmptySectionCount(List<List<WarehouseItem>> sections) {
+  return sections.where((e) => e.isNotEmpty).length;
+}
+
 /// 把选中集收敛到当前仍可见的项。
 ///
 /// 编辑模式下先勾选若干项、再输入搜索词时，不匹配的条目会从界面消失，

@@ -156,6 +156,14 @@ class _FakeCache implements CacheStore {
   @override
   Future<dynamic> read(String key) async => map[key];
 
+  // CacheStore 新增的轻量探测接口（存在性判断不再全量解码正文）。
+  // Fake 里 map 直接持对象，没有 TTL/文件概念，如实反映有无即可。
+  @override
+  Future<bool> exists(String key) async => map.containsKey(key);
+
+  @override
+  Future<int> sizeOf(String key) async => map.containsKey(key) ? 1 : 0;
+
   @override
   Future<void> remove(String key) async {
     map.remove(key);

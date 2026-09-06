@@ -14,12 +14,25 @@ class CacheStore {
   final bool webMode;
   final Map<String, String> _webCache = {};
 
+  /// 已解析的根目录缓存。
+  ///
+  /// 原实现每次 read/write/remove 都要走一遍
+  /// `getApplicationSupportDirectory()`（platform channel 往返）
+  /// + `dir.exists()` + 可能的 `create()`。批量操作时这是纯粹的重复开销：
+  /// 一本 1000 章的书统计一次缓存，就是 1000 次 channel 往返。
+  /// 目录一旦建好就不会变，缓存住即可。
+  Directory? _cachedRoot;
+
   Future<Directory> _rootDir() async {
+    final cached = _cachedRoot;
+    if (cached != null) return cached;
+
     final appDir = await getApplicationSupportDirectory();
     final dir = Directory('${appDir.path}/$namespace');
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
+    _cachedRoot = dir;
     return dir;
   }
 
@@ -73,6 +86,79 @@ class CacheStore {
     } catch (_) {
       return null;
     }
+  }
+
+  /// 轻量存在性探测：条目存在且未过期时返回 true。
+  ///
+  /// 为什么不直接用 `read(key) != null`：`read` 会把整个文件 readAsString 再
+  /// jsonDecode。判断「这一章缓存了吗」根本不需要正文，而章节正文动辄几 KB 到
+  /// 几十 KB —— 一本 1000 章的书统计一次缓存就要把整本书读进内存解码一遍，
+  /// 这是「缓存很慢」的主因。
+  ///
+  /// 这里只做两件事：文件是否存在 + 读文件头 [_headerProbeBytes] 字节取
+  /// `expiresAt`。payload 由 [write] 以固定顺序编码
+  /// （`savedAt` → `expiresAt` → `data`），所以 `expiresAt` 必定落在文件头部，
+  /// 不必碰正文。
+  ///
+  /// 探测不到 `expiresAt`（文件头被截断 / 旧格式）时按「未过期」处理：
+  /// 宁可多留一份可能过期的缓存，也不要把用户真实存在的缓存误报成没有。
+  Future<bool> exists(String key) async {
+    if (webMode) {
+      final raw = _webCache[_safeName(key)];
+      if (raw == null) return false;
+      return !_isExpiredHeader(raw);
+    }
+
+    final file = await _fileFor(key);
+    if (!await file.exists()) return false;
+
+    String header;
+    try {
+      final handle = await file.open();
+      try {
+        final bytes = await handle.read(_headerProbeBytes);
+        header = utf8.decode(bytes, allowMalformed: true);
+      } finally {
+        await handle.close();
+      }
+    } catch (_) {
+      // 读文件头失败不代表条目不存在，交给后续真实 read 去定性。
+      return true;
+    }
+    return !_isExpiredHeader(header);
+  }
+
+  /// 单个条目占用的真实字节数；不存在则返回 0。
+  ///
+  /// 用于替代「章节数 × 3072」这种拿魔法常量当磁盘占用的假统计。
+  Future<int> sizeOf(String key) async {
+    if (webMode) {
+      final raw = _webCache[_safeName(key)];
+      if (raw == null) return 0;
+      return utf8.encode(raw).length;
+    }
+    final file = await _fileFor(key);
+    if (!await file.exists()) return 0;
+    try {
+      return await file.length();
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// 文件头探测长度：`{"savedAt":<13位>,"expiresAt":<13位>,` 约 50 字节，
+  /// 128 足够覆盖并留出余量。
+  static const int _headerProbeBytes = 128;
+
+  static final RegExp _expiresAtPattern = RegExp(r'"expiresAt"\s*:\s*(\d+)');
+
+  /// 从 payload 头部判断是否已过期。取不到 `expiresAt` 视为未过期。
+  static bool _isExpiredHeader(String header) {
+    final match = _expiresAtPattern.firstMatch(header);
+    if (match == null) return false; // null 或缺失 → 永不过期
+    final expiresAt = int.tryParse(match.group(1)!);
+    if (expiresAt == null) return false;
+    return DateTime.now().millisecondsSinceEpoch > expiresAt;
   }
 
   Future<void> remove(String key) async {

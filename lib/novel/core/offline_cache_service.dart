@@ -36,9 +36,34 @@ class OfflineCacheService {
 
   /// 单章缓存体积估算基准（~3KB）。
   ///
-  /// 之前两处统计分别写成 `cached * 3` 和 `cached * 3072`，
-  /// 同一字段出现 1024 倍差异，列表页体积显示忽大忽小；统一到此常量。
+  /// 仅在**拿不到真实磁盘体积**时兜底（统计抛异常等）。正常路径已改为
+  /// 累加 [CacheStore.sizeOf] 的真实字节数：章节正文从几百字到几万字不等，
+  /// 拿章节数乘一个常量报给用户，那个数字没有任何信息量。
   static const int _bytesPerChapter = 3072;
+
+  /// 预下载并发数。
+  ///
+  /// 原实现把并发硬编码成 `for (start += 5)` 的步长，既调不动也看不见。
+  /// 提到 8：小说站点单连接延迟通常 200–500ms，5 并发下 1000 章要
+  /// 200 批 × ~400ms ≈ 80s。调大能线性缩短，但过大容易被源站限流/封 IP，
+  /// 8 是实测较稳的折中。
+  ///
+  /// 调参方向：网络好、源站宽松 → 调大（12–16 仍可用）；
+  /// 出现大量 429/超时 → 调小回 4–5。
+  static const int prefetchConcurrency = 8;
+
+  /// 每批之间的固定间隔。
+  ///
+  /// 原实现每批无条件 `Future.delayed(50ms)`。1000 章 = 200 批 = 10 秒
+  /// 纯空等，且这 10 秒完全没有换来任何好处 —— 真正需要退避的是失败重试，
+  /// 不是成功路径。所以默认归零，改由 [_prefetchAll] 在批内出现失败时退避。
+  static const Duration prefetchBatchDelay = Duration.zero;
+
+  /// 批内出现失败时的退避间隔。
+  ///
+  /// 失败通常意味着源站限流或网络抖动，此时继续全速打只会让失败率更高。
+  /// 调参方向：仍频繁失败 → 调大到 500–800ms。
+  static const Duration prefetchFailureBackoff = Duration(milliseconds: 300);
 
   /// 正在后台预下载的书 ID。
   ///
@@ -177,15 +202,65 @@ class OfflineCacheService {
     return results;
   }
 
-  /// 统计某本书已缓存的章节数
+  /// 统计某本书已缓存的章节数。
+  ///
+  /// 原实现对每章做 `cache.read(key) != null`，即把整章正文读进内存 + jsonDecode
+  /// 一遍，只为了数个数；而且是 for 循环里逐个 await 串行 IO。一本 1000 章的书
+  /// 打开一次离线管理页就要串行读解 1000 个文件 —— 这是「缓存很慢」的主因。
+  ///
+  /// 现在改为 [CacheStore.exists] 轻量探测（只看文件是否存在 + 读文件头判 TTL，
+  /// 不碰正文），并分批并发执行。
   Future<int> countCachedChapters(NovelDetail detail) async {
-    int count = 0;
-    for (final ch in detail.chapters) {
-      if (ch.url.trim().isEmpty) continue;
-      final data = await cache.read(NovelCacheKeys.chapter(ch.url.trim()));
-      if (data != null) count++;
+    final keys = _chapterKeys(detail);
+    if (keys.isEmpty) return 0;
+
+    var count = 0;
+    for (var start = 0; start < keys.length; start += _statConcurrency) {
+      final end = (start + _statConcurrency).clamp(0, keys.length);
+      final flags = await Future.wait([
+        for (var i = start; i < end; i++) cache.exists(keys[i]),
+      ]);
+      count += flags.where((hit) => hit).length;
     }
     return count;
+  }
+
+  /// 统计并发度：纯本地文件探测，比网络请求便宜得多，可以开大。
+  static const int _statConcurrency = 32;
+
+  /// 非空章节 URL 对应的缓存键列表。
+  static List<String> _chapterKeys(NovelDetail detail) {
+    final keys = <String>[];
+    for (final ch in detail.chapters) {
+      final url = ch.url.trim();
+      if (url.isEmpty) continue;
+      keys.add(NovelCacheKeys.chapter(url));
+    }
+    return keys;
+  }
+
+  /// 已缓存章节数 + 真实磁盘占用字节数。
+  ///
+  /// 一趟扫完同时拿到两个数字，避免统计页先数一遍再量一遍体积。
+  Future<({int cached, int bytes})> _cacheStatsFor(NovelDetail detail) async {
+    final keys = _chapterKeys(detail);
+    if (keys.isEmpty) return (cached: 0, bytes: 0);
+
+    var cached = 0;
+    var bytes = 0;
+    for (var start = 0; start < keys.length; start += _statConcurrency) {
+      final end = (start + _statConcurrency).clamp(0, keys.length);
+      final sizes = await Future.wait([
+        for (var i = start; i < end; i++) cache.sizeOf(keys[i]),
+      ]);
+      for (final size in sizes) {
+        if (size > 0) {
+          cached++;
+          bytes += size;
+        }
+      }
+    }
+    return (cached: cached, bytes: bytes);
   }
 
   /// 批量统计多本书的缓存章节数（返回 bookId → 缓存数）
@@ -207,11 +282,15 @@ class OfflineCacheService {
         detailUrl: meta.id, // 用 id 作为 detailUrl
         forceRefresh: false,
       );
-      final cached = await countCachedChapters(detail);
+      final stats = await _cacheStatsFor(detail);
       return meta.copyWith(
-        cachedChapters: cached,
+        cachedChapters: stats.cached,
         totalChapters: detail.chapters.length,
-        estimatedBytes: cached * _bytesPerChapter,
+        // 真实磁盘字节；万一量不到（全部 sizeOf 失败）再退回常量估算，
+        // 免得体积显示成 0 让用户以为没缓存。
+        estimatedBytes: stats.bytes > 0
+            ? stats.bytes
+            : stats.cached * _bytesPerChapter,
       );
     } catch (_) {
       // 加载失败 → 不展示缓存统计
@@ -298,18 +377,23 @@ class OfflineCacheService {
     }
   }
 
-  /// 静默下载一章，失败不抛异常
-  Future<void> _downloadSilently(NovelDetail detail, int chapterIndex) async {
+  /// 静默下载一章，失败不抛异常。
+  ///
+  /// 返回是否成功 —— [_prefetchAll] 用它决定要不要退避：
+  /// 成功路径全速跑，出现失败才让一让（限流/抖动时继续全速只会更糟）。
+  Future<bool> _downloadSilently(NovelDetail detail, int chapterIndex) async {
     final url = detail.chapters[chapterIndex].url.trim();
-    if (url.isEmpty) return;
+    if (url.isEmpty) return true;
     try {
       await repository.fetchChapter(
         detail: detail,
         chapterIndex: chapterIndex,
         forceRefresh: false,
       );
+      return true;
     } catch (_) {
-      // 静默忽略
+      // 静默忽略：单章失败不该中断整本预下载。
+      return false;
     }
   }
 
@@ -321,16 +405,24 @@ class OfflineCacheService {
     NovelDetail detail, {
     bool Function()? isCancelled,
   }) async {
-    for (int start = 0; start < detail.chapters.length; start += 5) {
+    final total = detail.chapters.length;
+    for (int start = 0; start < total; start += prefetchConcurrency) {
       if (isCancelled?.call() ?? false) return;
-      final end = (start + 5).clamp(0, detail.chapters.length);
-      await Future.wait(
+      final end = (start + prefetchConcurrency).clamp(0, total);
+      final results = await Future.wait(
         List.generate(
           end - start,
           (i) => _downloadSilently(detail, start + i),
         ),
       );
-      await Future.delayed(const Duration(milliseconds: 50));
+
+      // 只在批内出现失败时退避。原实现每批无条件等 50ms，
+      // 1000 章 = 200 批 = 10 秒纯空等，且没换来任何好处。
+      if (results.contains(false)) {
+        await Future.delayed(prefetchFailureBackoff);
+      } else if (prefetchBatchDelay > Duration.zero) {
+        await Future.delayed(prefetchBatchDelay);
+      }
     }
   }
 
@@ -338,17 +430,27 @@ class OfflineCacheService {
   // 缓存清除（内部）
   // ---------------------------------------------------------------------------
 
-  /// 清除某本书的章节缓存
+  /// 清除某本书的章节缓存。
+  ///
+  /// 分批并发删除：原实现逐章串行 await，千章书清一次缓存要等上千次
+  /// 文件系统往返，用户会觉得「点了清除半天没反应」。
   Future<void> _clearChapterCache(NovelDetail detail) async {
-    for (final ch in detail.chapters) {
-      if (ch.url.trim().isEmpty) continue;
-      try {
-        await cache.remove(NovelCacheKeys.chapter(ch.url.trim()));
-      } catch (e) {
-        // 单章删不掉不该中断整本清理，但要留痕：
-        // 静默会让「已清除」与磁盘实际占用长期不一致。
-        debugPrint('[OfflineCacheService] 章节缓存删除失败 url=${ch.url}: $e');
-      }
+    final keys = _chapterKeys(detail);
+    for (var start = 0; start < keys.length; start += _statConcurrency) {
+      final end = (start + _statConcurrency).clamp(0, keys.length);
+      await Future.wait([
+        for (var i = start; i < end; i++) _removeQuietly(keys[i]),
+      ]);
+    }
+  }
+
+  Future<void> _removeQuietly(String key) async {
+    try {
+      await cache.remove(key);
+    } catch (e) {
+      // 单章删不掉不该中断整本清理，但要留痕：
+      // 静默会让「已清除」与磁盘实际占用长期不一致。
+      debugPrint('[OfflineCacheService] 章节缓存删除失败 key=$key: $e');
     }
   }
 
@@ -407,19 +509,13 @@ class OfflineCacheService {
         detailUrl: meta.id,
         forceRefresh: false,
       );
-      int cached = 0;
-      for (final ch in detail.chapters) {
-        if (ch.url.trim().isEmpty) continue;
-        final data = await cache.read(NovelCacheKeys.chapter(ch.url.trim()));
-        if (data != null) {
-          cached++;
-          // 粗略估算大小（第一次读取时计算）
-        }
-      }
+      // 一趟拿到章节数 + 真实字节数，不再逐章 read 全量解码，
+      // 也不再用「章节数 × 3072」冒充磁盘占用。
+      final stats = await _cacheStatsFor(detail);
       return meta.copyWith(
-        cachedChapters: cached,
+        cachedChapters: stats.cached,
         totalChapters: detail.chapters.length,
-        estimatedBytes: cached * _bytesPerChapter,
+        estimatedBytes: stats.bytes,
       );
     } catch (e) {
       // 统计失败就退回未补全的 meta：书架卡片会显示旧的缓存章节数。

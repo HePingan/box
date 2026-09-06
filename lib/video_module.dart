@@ -19,6 +19,8 @@ export 'video/pages/video_search_page.dart';
 export 'video/video_compat_pages.dart';
 
 // Services
+export 'video/services/favorites_repository.dart'
+    show FavoritesRepository, FavoriteItem;
 export 'video/services/video_api_service.dart';
 
 // Widgets

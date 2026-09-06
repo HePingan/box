@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:box/design_system/app_tokens.dart';
+import 'package:box/features/content/domain/warehouse_adapters.dart';
 import 'package:box/design_system/widgets/app_bottom_sheet.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 
@@ -149,18 +150,10 @@ class FavoritesPage extends StatelessWidget {
     );
   }
 
-  VideoSource? _findSource(List<VideoSource> sources, FavoriteItem item) {
-    for (final source in sources) {
-      if (source.id == item.sourceId) return source;
-    }
-    // 回退：按 URL 匹配（收藏时 sourceId 可能取的是 url）。
-    for (final source in sources) {
-      if (source.url == item.sourceId || source.url == item.sourceUrl) {
-        return source;
-      }
-    }
-    return null;
-  }
+  // _findSource 已提到 domain 层的 findVideoSourceForFavorite，
+  // 与内容页收藏库共用同一份匹配逻辑，避免两处各自演化。
+  VideoSource? _findSource(List<VideoSource> sources, FavoriteItem item) =>
+      findVideoSourceForFavorite(sources, item);
 
   void _showSnackBar(BuildContext context, String message) {
     ScaffoldMessenger.of(

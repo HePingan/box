@@ -75,6 +75,14 @@ class FavoritesRepository {
     await Hive.box(_boxName).delete(key);
   }
 
+  /// 按存储键反查收藏记录。收藏库跳转时用来拿回 sourceUrl 等字段。
+  FavoriteItem? findByKey(String key) {
+    for (final item in getAll()) {
+      if ('${item.sourceId}::${item.vodId}' == key) return item;
+    }
+    return null;
+  }
+
   /// 全部收藏，按加入时间倒序。
   List<FavoriteItem> getAll() {
     final box = _box;

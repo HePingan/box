@@ -7,9 +7,17 @@ import 'package:provider/provider.dart';
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
-import 'package:box/features/api_hub/presentation/api_hub_page.dart';
+import 'package:box/features/comic/presentation/comic_library_page.dart';
+import 'package:box/features/comic/domain/comic_book.dart';
+import 'package:box/features/comic/domain/comic_library_store.dart';
+import 'package:box/features/comic/presentation/comic_reader_page.dart';
+import 'package:box/novel/core/models.dart';
+import 'package:box/novel/pages/reader_page.dart';
+import 'package:box/features/content/domain/warehouse_adapters.dart';
+import 'package:box/features/content/domain/warehouse_cleanup.dart';
 import 'package:box/features/content/domain/warehouse_models.dart';
 import 'package:box/features/content/presentation/warehouse_search.dart';
+import 'package:box/features/music/presentation/music_placeholder_page.dart';
 import 'package:box/novel/novel_module.dart';
 import 'package:box/video_module.dart';
 
@@ -27,21 +35,34 @@ class _WarehouseTabState extends State<WarehouseTab>
   final WarehouseStore _store = WarehouseStore();
 
   // 数据状态
+  //
+  // 三条**实时**数据通道，各自独立存储：
+  //  * books  —— NovelModule.bookshelf（小说书架）
+  //  * videos —— FavoritesRepository（Hive video_favorites_box，追剧收藏）
+  //  * comics —— ComicLibraryStore（CacheStore comic_library，本地漫画）
+  //
+  // 影视/漫画此前没接进来（`_itemsForCategory` 对非 books 恒返回 const []），
+  // 于是 Hive 里明明有收藏，页面却永远空白 —— 这就是用户报的
+  // 「内容页收藏库影视收藏没显示出来」。
+  //
+  // music 仍无数据通道（播放器未开发，入口进占位页），所以不建状态字段。
   List<WarehouseItem> _bookItems = [];
-  List<WarehouseItem> _comicItems = [];
   List<WarehouseItem> _videoItems = [];
-  List<WarehouseItem> _musicItems = [];
+  List<WarehouseItem> _comicItems = [];
   bool _booksLoaded = false;
-  bool _comicsLoaded = false;
   bool _videosLoaded = false;
-  bool _musicLoaded = false;
+  bool _comicsLoaded = false;
   bool _loading = true;
-
-  // 错误状态
   bool _booksError = false;
-  bool _comicsError = false;
   bool _videosError = false;
-  bool _musicError = false;
+  bool _comicsError = false;
+
+  /// 正在取详情准备进阅读器的书 id（null = 没有）。
+  /// 详情缓存未命中要走网络，没有这个遮罩用户会以为点了没反应而反复点。
+  String? _openingBookKey;
+
+  final ComicLibraryStore _comicStore = ComicLibraryStore();
+  final FavoritesRepository _favoritesRepo = FavoritesRepository();
 
   // 搜索状态
   final TextEditingController _searchController = TextEditingController();
@@ -62,12 +83,9 @@ class _WarehouseTabState extends State<WarehouseTab>
   void initState() {
     super.initState();
     _loadAllData();
-    // 延迟同步：等页面渲染完成后自动同步
-    Future.delayed(const Duration(milliseconds: 800), () {
-      if (mounted && !_hasLocalData()) {
-        _syncFromCloud();
-      }
-    });
+    // 这里原本挂了个 800ms 延迟的「自动同步」：本地没数据时调 _syncFromCloud()。
+    // 而 _syncFromCloud 现在就是重读本地三条通道，_loadAllData() 刚做完同一件事，
+    // 留着只是让空库用户白等 800ms 再读一遍 IO，所以撤掉。
   }
 
   @override
@@ -81,13 +99,70 @@ class _WarehouseTabState extends State<WarehouseTab>
 
   Future<void> _loadAllData() async {
     setState(() => _loading = true);
-    await Future.wait([
-      _loadBooks(),
-      _loadCategory(WarehouseCategory.comics),
-      _loadCategory(WarehouseCategory.videos),
-      _loadCategory(WarehouseCategory.music),
-    ]);
+    // 手填条目已随入口下线，先做一次性清理再读书架。
+    // 清理只删 sourceLabel == 手动收藏 的条目，书架数据是另一条通道，不受影响。
+    await _purgeLegacyManualEntries();
+    // 三条通道互不依赖，并行加载：串行会让首屏等三次 IO。
+    // 单条失败只影响自己的分区（各自有 error 标记），不拖垮整页。
+    await Future.wait([_loadBooks(), _loadVideoFavorites(), _loadComics()]);
     if (mounted) setState(() => _loading = false);
+  }
+
+  /// 影视收藏（Hive `video_favorites_box`）。
+  ///
+  /// 直接走 [FavoritesRepository] 而不是 context 里的 FavoritesController：
+  /// 收藏库要在页面 initState 阶段就拿到数据，而 controller 的 load() 由
+  /// app_shell 在别处触发，时机不保证；repository 自带 init() 幂等打开 box。
+  Future<void> _loadVideoFavorites() async {
+    try {
+      await _favoritesRepo.init();
+      final items = warehouseItemsFromFavorites(_favoritesRepo.getAll());
+      if (mounted) {
+        setState(() {
+          _videoItems = items;
+          _videosLoaded = true;
+          _videosError = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _videosLoaded = true;
+          _videosError = true;
+        });
+      }
+    }
+  }
+
+  /// 漫画收藏（CacheStore `comic_library`，本地导入的 CBZ/ZIP/文件夹）。
+  Future<void> _loadComics() async {
+    try {
+      final books = await _comicStore.fetch();
+      final items = warehouseItemsFromComicBooks(books);
+      if (mounted) {
+        setState(() {
+          _comicItems = items;
+          _comicsLoaded = true;
+          _comicsError = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _comicsLoaded = true;
+          _comicsError = true;
+        });
+      }
+    }
+  }
+
+  /// 一次性清掉手填收藏残留。失败不阻塞页面加载。
+  Future<void> _purgeLegacyManualEntries() async {
+    try {
+      await WarehouseCleanup(store: _store).run();
+    } catch (_) {
+      // 清理失败不影响正常浏览：手填条目已无入口，下次进页面会再试。
+    }
   }
 
   Future<void> _refresh() async {
@@ -130,53 +205,6 @@ class _WarehouseTabState extends State<WarehouseTab>
         setState(() {
           _booksLoaded = true;
           _booksError = true;
-        });
-      }
-    }
-  }
-
-  Future<void> _loadCategory(WarehouseCategory category) async {
-    try {
-      final items = await _store.load(category);
-      if (mounted) {
-        setState(() {
-          switch (category) {
-            case WarehouseCategory.books:
-              _bookItems = _mergeItems(_bookItems, items);
-              _booksLoaded = true;
-              _booksError = false;
-            case WarehouseCategory.comics:
-              _comicItems = items;
-              _comicsLoaded = true;
-              _comicsError = false;
-            case WarehouseCategory.videos:
-              _videoItems = items;
-              _videosLoaded = true;
-              _videosError = false;
-            case WarehouseCategory.music:
-              _musicItems = items;
-              _musicLoaded = true;
-              _musicError = false;
-          }
-        });
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          switch (category) {
-            case WarehouseCategory.books:
-              _booksLoaded = true;
-              _booksError = true;
-            case WarehouseCategory.comics:
-              _comicsLoaded = true;
-              _comicsError = true;
-            case WarehouseCategory.videos:
-              _videosLoaded = true;
-              _videosError = true;
-            case WarehouseCategory.music:
-              _musicLoaded = true;
-              _musicError = true;
-          }
         });
       }
     }
@@ -255,12 +283,9 @@ class _WarehouseTabState extends State<WarehouseTab>
     setState(() {
       _searchQuery = query;
       if (_editMode && _selectedKeys.isNotEmpty) {
-        final visible = [
-          ..._filtered(_bookItems),
-          ..._filtered(_comicItems),
-          ..._filtered(_videoItems),
-          ..._filtered(_musicItems),
-        ];
+        // 收敛范围必须覆盖全部分区，只看 books 会让搜索时残留的
+        // 影视/漫画选中项躲过收敛，被批量删除悄悄带走。
+        final visible = _allSections.expand(_filtered).toList();
         final kept = retainVisibleSelection(
           selected: _selectedKeys,
           visibleItems: visible,
@@ -272,33 +297,42 @@ class _WarehouseTabState extends State<WarehouseTab>
     });
   }
 
+  /// 全部分区，顺序即页面渲染顺序。
+  ///
+  /// 单一事实源：统计、搜索收敛、最近收藏、批量删除全部从这里取，
+  /// 避免再出现「接了新分区但某个统计忘了改」的漂移。
+  List<List<WarehouseItem>> get _allSections => [
+    _bookItems,
+    _videoItems,
+    _comicItems,
+  ];
+
   int get _totalFiltered =>
-      _filtered(_bookItems).length +
-      _filtered(_comicItems).length +
-      _filtered(_videoItems).length +
-      _filtered(_musicItems).length;
+      _allSections.fold(0, (sum, s) => sum + _filtered(s).length);
 
   // ── 动态指标 ──
 
-  int get _entryCount => 6;
+  /// 内容入口数：影视 / 小说 / 漫画 / 音乐。
+  /// 这里以前硬编码 6，改成四宫格后不改会让顶部统计撒谎。
+  int get _entryCount => 4;
 
-  int get _sectionCount =>
-      (_bookItems.isNotEmpty ? 1 : 0) +
-      (_comicItems.isNotEmpty ? 1 : 0) +
-      (_videoItems.isNotEmpty ? 1 : 0) +
-      (_musicItems.isNotEmpty ? 1 : 0);
+  int get _sectionCount => warehouseNonEmptySectionCount(_allSections);
 
-  int get _totalItems =>
-      _bookItems.length +
-      _comicItems.length +
-      _videoItems.length +
-      _musicItems.length;
+  int get _totalItems => warehouseTotalItems(_allSections);
 
-  String get _syncLabel =>
-      _bookItems.where((e) => e.sourceLabel == '书架').isNotEmpty ? '已同步' : '待同步';
+  /// 同步状态标签。
+  ///
+  /// 判定改为「三条实时通道是否都已读完」，而不是原来的
+  /// 「books 里有没有 sourceLabel == 书架 的条目」—— 后者在书架为空时
+  /// 恒显示「待同步」，而其实已经同步完了，只是没有书。
+  String get _syncLabel {
+    if (!_booksLoaded || !_videosLoaded || !_comicsLoaded) return '读取中';
+    if (_booksError || _videosError || _comicsError) return '部分失败';
+    return '本地已就绪';
+  }
 
   WarehouseItem? get _recentItem {
-    final all = [..._bookItems, ..._comicItems, ..._videoItems, ..._musicItems];
+    final all = _allSections.expand((e) => e).toList();
     if (all.isEmpty) return null;
     all.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return all.first;
@@ -349,36 +383,58 @@ class _WarehouseTabState extends State<WarehouseTab>
 
     if (confirmed != true) return;
 
+    // 删除必须打到条目真正所在的那个存储。
+    //
+    // 原实现一律调 `_store.remove(...)`（warehouse_center namespace），
+    // 而三个分区的数据其实都不在那里：书架在 BookshelfManager、影视在 Hive
+    // video_favorites_box、漫画在 comic_library。结果是弹「已删除 N 项」，
+    // 刷新后条目原封不动 —— 静默失效。
+    var deletedCount = 0;
+    var failedCount = 0;
     for (final key in _selectedKeys) {
-      for (final category in WarehouseCategory.values) {
-        final items = _itemsForCategory(category);
-        final idx = items.indexWhere((e) => e.uniqueKey == key);
-        if (idx >= 0) {
-          await _store.remove(category, key);
-          break;
-        }
+      final item = _findItemByKey(key);
+      if (item == null) continue;
+      try {
+        await _deleteItem(item);
+        deletedCount++;
+      } catch (_) {
+        failedCount++;
       }
     }
 
-    // 先取快照：_exitEditMode() 会清空 _selectedKeys，
-    // 清空后再读 length 恒为 0，提示会变成「已删除 0 项」。
-    final deletedCount = _selectedKeys.length;
-
     _exitEditMode();
     await _refresh();
-    if (mounted) _showSnack('已删除 $deletedCount 项');
+    if (mounted) {
+      _showSnack(
+        failedCount == 0 ? '已删除 $deletedCount 项' : '已删除 $deletedCount 项，$failedCount 项失败',
+      );
+    }
   }
 
-  List<WarehouseItem> _itemsForCategory(WarehouseCategory category) {
-    switch (category) {
+  WarehouseItem? _findItemByKey(String key) {
+    for (final section in _allSections) {
+      for (final item in section) {
+        if (item.uniqueKey == key) return item;
+      }
+    }
+    return null;
+  }
+
+  /// 把删除请求路由到条目真正所在的存储。
+  Future<void> _deleteItem(WarehouseItem item) async {
+    switch (item.category) {
       case WarehouseCategory.books:
-        return _bookItems;
-      case WarehouseCategory.comics:
-        return _comicItems;
+        // 书架条目的 id 就是 NovelBook.id（见 _loadBooks）。
+        await NovelModule.bookshelf.removeFromBookshelf(item.id);
       case WarehouseCategory.videos:
-        return _videoItems;
+        // item.id 就是 Hive 存储键 `sourceId::vodId`（见 warehouse_adapters），
+        // 走 removeByKey 就不必反查 VideoSource 实例。
+        await _favoritesRepo.removeByKey(item.id);
+      case WarehouseCategory.comics:
+        await _comicStore.remove(item.id);
       case WarehouseCategory.music:
-        return _musicItems;
+        // 无数据通道，理论上不会有条目落到这里。
+        break;
     }
   }
 
@@ -394,177 +450,152 @@ class _WarehouseTabState extends State<WarehouseTab>
       _syncStatus = '同步中…';
     });
 
+    // 这里原本是 `await Future.delayed(1s)` 然后无条件写「已同步（本地优先）」
+    // —— 什么都没同步，纯粹在骗用户。云端收藏同步服务端还没有，
+    // 所以这个按钮现在只做它真能做到的事：重新读三条本地通道。
+    // 文案也如实说明是本地刷新，不再暗示有云端。
     try {
-      // TODO: 实现真实的云端 API 调用
-      // final response = await http.get(Uri.parse('${ApiConfig.baseUrl}/api/warehouse/sync'));
-      // if (response.statusCode == 200) { ... }
-
-      // 模拟延迟
-      await Future.delayed(const Duration(seconds: 1));
-
+      await _refresh();
+      if (!mounted) return;
+      final failed = _booksError || _videosError || _comicsError;
+      setState(() {
+        _syncing = false;
+        _syncStatus = failed ? '部分读取失败' : '已刷新 $_totalItems 项';
+      });
+    } catch (e) {
       if (!mounted) return;
       setState(() {
         _syncing = false;
-        _syncStatus = '已同步（本地优先）';
+        _syncStatus = '刷新失败';
       });
-    } catch (e) {
-      setState(() {
-        _syncing = false;
-        _syncStatus = '同步失败: $e';
-      });
+      debugPrint('[warehouse] 本地收藏刷新失败: $e');
     }
-  }
-
-  bool _hasLocalData() {
-    return _bookItems.isNotEmpty ||
-        _comicItems.isNotEmpty ||
-        _videoItems.isNotEmpty ||
-        _musicItems.isNotEmpty;
-  }
-
-  // ── 添加对话框 ──
-
-  Future<void> _showAddDialog(WarehouseCategory category) async {
-    final titleController = TextEditingController();
-    final subtitleController = TextEditingController();
-    final coverController = TextEditingController();
-    final detailController = TextEditingController();
-    final metaController = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          title: Row(
-            children: [
-              CircleAvatar(
-                backgroundColor: category.color.withValues(alpha: 0.12),
-                child: Icon(category.icon, color: category.color),
-              ),
-              const SizedBox(width: 10),
-              Text('新增${category.hubLabel}'),
-            ],
-          ),
-          content: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.72,
-            ),
-            child: SizedBox(
-              width: double.infinity, // responsive to dialog width
-              child: Form(
-                key: formKey,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextFormField(
-                        controller: titleController,
-                        decoration: const InputDecoration(
-                          labelText: '名称',
-                          hintText: '请输入标题',
-                        ),
-                        validator: (v) =>
-                            (v == null || v.trim().isEmpty) ? '请输入标题' : null,
-                      ),
-                      const SizedBox(height: 10),
-                      TextFormField(
-                        controller: subtitleController,
-                        decoration: const InputDecoration(
-                          labelText: '副标题',
-                          hintText: '作者 / 分类 / 导演 / 艺人',
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      TextFormField(
-                        controller: coverController,
-                        decoration: const InputDecoration(
-                          labelText: '封面地址',
-                          hintText: 'https://...',
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      TextFormField(
-                        controller: detailController,
-                        decoration: const InputDecoration(
-                          labelText: '详情链接',
-                          hintText: '可选',
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      TextFormField(
-                        controller: metaController,
-                        decoration: const InputDecoration(
-                          labelText: '备注',
-                          hintText: '可填写简介、状态等信息',
-                        ),
-                        maxLines: 3,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('取消'),
-            ),
-            FilledButton.icon(
-              icon: const Icon(Icons.save_rounded),
-              onPressed: () async {
-                if (!(formKey.currentState?.validate() ?? false)) return;
-                final item = WarehouseItem(
-                  id: '${category.name}_${DateTime.now().millisecondsSinceEpoch}',
-                  title: titleController.text.trim(),
-                  subtitle: subtitleController.text.trim(),
-                  coverUrl: coverController.text.trim(),
-                  detailUrl: detailController.text.trim(),
-                  meta: metaController.text.trim(),
-                  category: category,
-                  sourceLabel: '手动收藏',
-                  createdAt: DateTime.now().millisecondsSinceEpoch,
-                );
-                await _store.add(item);
-                if (!mounted || !dialogContext.mounted) return;
-                Navigator.pop(dialogContext);
-                await _refresh();
-                _showSnack('已添加到${category.label}');
-              },
-              label: const Text('保存收藏'),
-            ),
-          ],
-        );
-      },
-    );
-
-    titleController.dispose();
-    subtitleController.dispose();
-    coverController.dispose();
-    detailController.dispose();
-    metaController.dispose();
   }
 
   // ── 详情 / 导航 ──
 
-  Future<void> _openItem(WarehouseItem item) async {
-    if (item.category == WarehouseCategory.books && item.raw != null) {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ChangeNotifierProvider(
-            create: (_) => NovelDetailController(entryBook: item.raw),
-            child: NovelDetailPage(entryBook: item.raw),
-          ),
-        ),
+  /// 收藏库点书 → 直接进阅读器续读。
+  ///
+  /// 用户原来的路径是：点书 → 详情页 → 再点「继续阅读」，两步才开始读。
+  /// 这里合成一步。
+  ///
+  /// 障碍：书架存的 [NovelBook] 不含章节列表（`getBookshelfBooks()` 返回
+  /// `chapters: const []`），而 [ReaderPage] 必须要有 `detail.chapters`。
+  /// 所以必须先 `fetchDetail` —— 有 8h 缓存，命中时几乎瞬时；未命中就要走网络，
+  /// 因此加载期间显示遮罩，失败退回详情页而不是把用户卡在原地。
+  Future<void> _openBookForReading(NovelBook book) async {
+    setState(() => _openingBookKey = book.id);
+    NovelDetail? detail;
+    try {
+      detail = await NovelModule.repository.fetchDetail(
+        bookId: book.id,
+        detailUrl: book.detailUrl,
       );
+    } catch (e) {
+      debugPrint('[warehouse] 取书籍详情失败，退回详情页: $e');
+    }
+    if (!mounted) return;
+    setState(() => _openingBookKey = null);
+
+    // 章节拿不到就无法进阅读器，退回详情页让用户自己重试/换源。
+    if (detail == null || detail.chapters.isEmpty) {
+      await _pushNovelDetail(book);
       return;
     }
 
+    // 续读定位：有进度就回到那一章，没有就从第一章开始。
+    int chapterIndex = 0;
+    try {
+      final progress = await NovelModule.repository.getProgress(book.id);
+      if (progress != null) {
+        chapterIndex = progress.chapterIndex.clamp(0, detail.chapters.length - 1);
+      }
+    } catch (e) {
+      debugPrint('[warehouse] 读取阅读进度失败，从头开始: $e');
+    }
+    if (!mounted) return;
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) =>
+            ReaderPage(detail: detail!, initialChapterIndex: chapterIndex),
+      ),
+    );
+    // 回来刷新书架，让「读到第几章」的副标题跟上。
+    if (mounted) await _loadBooks();
+  }
+
+  Future<void> _pushNovelDetail(NovelBook book) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChangeNotifierProvider(
+          create: (_) => NovelDetailController(entryBook: book),
+          child: NovelDetailPage(entryBook: book),
+        ),
+      ),
+    );
+    if (mounted) await _loadBooks();
+  }
+
+  /// 影视收藏 → 视频详情页。返回 false 表示没跳成功（调用方退回详情浮层）。
+  Future<bool> _openVideoFavorite(WarehouseItem item) async {
+    final fav = item.raw;
+    if (fav is! FavoriteItem) return false;
+    if (!mounted) return true;
+
+    // 片源列表由 VideoController 持有；收藏只存了 sourceId/sourceUrl 字符串。
+    final videoController = context.read<VideoController>();
+    final source = findVideoSourceForFavorite(videoController.sources, fav);
+    if (source == null) {
+      _showSnack('该视频的片源已失效或被移除');
+      return true;
+    }
+    if (fav.vodId <= 0) {
+      _showSnack('收藏记录中的视频ID无效');
+      return true;
+    }
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VideoDetailPage(source: source, vodId: fav.vodId),
+      ),
+    );
+    if (mounted) await _loadVideoFavorites();
+    return true;
+  }
+
+  Future<void> _openItem(WarehouseItem item) async {
+    // 每个分区都跳到「用户点这个卡片时真正想去的地方」，
+    // 而不是统一弹一个只能看不能用的详情浮层。
+    switch (item.category) {
+      case WarehouseCategory.books:
+        if (item.raw is NovelBook) {
+          await _openBookForReading(item.raw as NovelBook);
+          return;
+        }
+      case WarehouseCategory.videos:
+        if (await _openVideoFavorite(item)) return;
+      case WarehouseCategory.comics:
+        if (item.raw is ComicBook) {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ComicReaderPage(comicBook: item.raw as ComicBook),
+            ),
+          );
+          if (mounted) await _loadComics();
+          return;
+        }
+      case WarehouseCategory.music:
+        break;
+    }
+
+    // 兜底：拿不到跳转所需的原始对象时才退回详情浮层。
+    // 上面各分支可能 await 过（_openVideoFavorite），这里必须重新确认还挂着。
+    if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -673,39 +704,24 @@ class _WarehouseTabState extends State<WarehouseTab>
     );
   }
 
-  void _openOpenLibrarySearch() {
+  void _openComics() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const ApiHubPage(initialTool: 'books')),
+      MaterialPageRoute(builder: (_) => const ComicLibraryPage()),
     );
   }
 
-  void _openComicsDialog() => _showAddDialog(WarehouseCategory.comics);
-
-  void _openMusicDialog() => _showAddDialog(WarehouseCategory.music);
-
-  void _showQuickImport() => _showCategoryPicker();
-
-  Future<void> _showCategoryPicker() async {
-    final category = await showModalBottomSheet<WarehouseCategory>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: WarehouseCategory.values.map((category) {
-              return ListTile(
-                leading: Icon(category.icon, color: category.color),
-                title: Text(category.label),
-                onTap: () => Navigator.pop(sheetContext, category),
-              );
-            }).toList(),
-          ),
-        );
-      },
+  /// 音乐入口：播放器尚未开发。
+  ///
+  /// 以前这里是「滚动定位到同页音乐收藏区块」，那是手填收藏时代的兜底：
+  /// 音乐当时只是仓库的一个收藏分类。手填入口整体撤掉后该区块不再有数据，
+  /// 滚过去只会看到空白，比明说「开发中」更像功能坏了。
+  /// 现在进占位页，页面里写清规划（本地播放 + 在线源爬取下载）。
+  void _openMusic() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const MusicPlaceholderPage()),
     );
-    if (category != null) await _showAddDialog(category);
   }
 
   // ── Build ──
@@ -754,10 +770,8 @@ class _WarehouseTabState extends State<WarehouseTab>
                   ContentEntryGrid(
                     onOpenVideoCenter: _openVideoCenter,
                     onOpenNovelLibrary: _openNovelLibrary,
-                    onOpenOpenLibrarySearch: _openOpenLibrarySearch,
-                    onOpenComics: _openComicsDialog,
-                    onOpenMusic: _openMusicDialog,
-                    onQuickImport: _showQuickImport,
+                    onOpenComics: _openComics,
+                    onOpenMusic: _openMusic,
                   ),
                   const SizedBox(height: 10),
                   // 最近收藏：仅在非空或加载中时显示
@@ -767,7 +781,6 @@ class _WarehouseTabState extends State<WarehouseTab>
                       recentItem: _recentItem,
                       isLoading: _loading,
                       onOpenItem: _openItem,
-                      onQuickImport: _showCategoryPicker,
                     ),
                     const SizedBox(height: 12),
                   ],
@@ -779,7 +792,9 @@ class _WarehouseTabState extends State<WarehouseTab>
                           title: '收藏库',
                           subtitle: _showSearch
                               ? '搜索结果：$_totalFiltered 项'
-                              : '我的书架 / 影视收藏 / 漫画收藏 / 音乐收藏',
+                              // 只列真的有数据通道的三个分区。
+                              // 音乐播放器未开发，写进来就是承诺一个不存在的功能。
+                              : '我的书架 / 影视收藏 / 漫画收藏',
                         ),
                       ),
                       IconButton(
@@ -861,7 +876,8 @@ class _WarehouseTabState extends State<WarehouseTab>
                                 ),
                               const SizedBox(width: 4),
                               Text(
-                                _syncStatus ?? '同步',
+                                // 「同步」会被理解成云端同步，实际只是重读本地。
+                                _syncStatus ?? '刷新',
                                 style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.w600,
@@ -928,15 +944,17 @@ class _WarehouseTabState extends State<WarehouseTab>
                         _applySearchQuery('');
                       },
                     ),
-                  // 四个收藏分区（搜索模式下只显示有结果的分区）
+                  // 三个实时分区：书架 / 影视收藏 / 漫画收藏。
+                  //
+                  // music 不建分区：播放器还没做，入口进占位页，
+                  // 建一个永远空白的分区比不建更像功能坏了。
                   if (_shouldShowSection(WarehouseCategory.books))
                     WarehouseSection(
                       category: WarehouseCategory.books,
                       items: _filtered(_bookItems),
                       isLoading: !_booksLoaded,
                       hasError: _booksError,
-                      emptyText: '从小说书架同步最近阅读，也可以手动收藏书籍链接',
-                      onAdd: _showAddDialog,
+                      emptyText: '从小说书架同步最近阅读的书籍',
                       onOpenItem: _openItem,
                       onOpenVideoCenter: _openVideoCenter,
                       onOpenNovelLibrary: _openNovelLibrary,
@@ -945,33 +963,14 @@ class _WarehouseTabState extends State<WarehouseTab>
                       onToggleSelect: _toggleSelectItem,
                       searchQuery: _searchQuery,
                     ),
-                  if (_shouldShowSection(WarehouseCategory.comics)) ...[
-                    const SizedBox(height: 12),
-                    WarehouseSection(
-                      category: WarehouseCategory.comics,
-                      items: _filtered(_comicItems),
-                      isLoading: !_comicsLoaded,
-                      hasError: _comicsError,
-                      emptyText: '漫画资源会集中放在这里，方便后续扩展漫画入口',
-                      onAdd: _showAddDialog,
-                      onOpenItem: _openItem,
-                      onOpenVideoCenter: _openVideoCenter,
-                      onOpenNovelLibrary: _openNovelLibrary,
-                      editMode: _editMode,
-                      selectedKeys: _selectedKeys,
-                      onToggleSelect: _toggleSelectItem,
-                      searchQuery: _searchQuery,
-                    ),
-                  ],
                   if (_shouldShowSection(WarehouseCategory.videos)) ...[
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
                     WarehouseSection(
                       category: WarehouseCategory.videos,
                       items: _filtered(_videoItems),
                       isLoading: !_videosLoaded,
                       hasError: _videosError,
-                      emptyText: '先去影视搜索发现内容，后续播放历史和收藏会聚合到这里',
-                      onAdd: _showAddDialog,
+                      emptyText: '在影视详情页点收藏，这里就会出现',
                       onOpenItem: _openItem,
                       onOpenVideoCenter: _openVideoCenter,
                       onOpenNovelLibrary: _openNovelLibrary,
@@ -981,15 +980,14 @@ class _WarehouseTabState extends State<WarehouseTab>
                       searchQuery: _searchQuery,
                     ),
                   ],
-                  if (_shouldShowSection(WarehouseCategory.music)) ...[
-                    const SizedBox(height: 12),
+                  if (_shouldShowSection(WarehouseCategory.comics)) ...[
+                    const SizedBox(height: 10),
                     WarehouseSection(
-                      category: WarehouseCategory.music,
-                      items: _filtered(_musicItems),
-                      isLoading: !_musicLoaded,
-                      hasError: _musicError,
-                      emptyText: '音乐链接、歌单和历史记录会集中收纳到这里',
-                      onAdd: _showAddDialog,
+                      category: WarehouseCategory.comics,
+                      items: _filtered(_comicItems),
+                      isLoading: !_comicsLoaded,
+                      hasError: _comicsError,
+                      emptyText: '在漫画库导入 CBZ/ZIP 或文件夹',
                       onOpenItem: _openItem,
                       onOpenVideoCenter: _openVideoCenter,
                       onOpenNovelLibrary: _openNovelLibrary,
@@ -1015,25 +1013,63 @@ class _WarehouseTabState extends State<WarehouseTab>
                 onCancel: _exitEditMode,
               ),
             ),
+          // 点书直接进阅读器时，取详情可能要走网络（缓存未命中）。
+          // 没有这层遮罩用户会以为点了没反应而反复点，重复触发跳转。
+          if (_openingBookKey != null)
+            const Positioned.fill(
+              child: ColoredBox(
+                color: Color(0x66000000),
+                child: Center(
+                  child: Card(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 16,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 12),
+                          Text('正在打开…'),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
 
-  /// 判断分区是否应该显示：搜索时只显示有结果的分区
+  /// 判断分区是否应该显示：搜索时只显示有结果的分区。
+  ///
+  /// 判定逻辑收敛到 [shouldShowWarehouseSection]，不再按分类硬编码 false
+  /// —— 原实现对 videos/comics/music 一律 return false，是「影视收藏
+  /// 搜不出来」的直接原因。
   bool _shouldShowSection(WarehouseCategory category) {
-    if (_searchQuery.isNotEmpty) {
-      switch (category) {
-        case WarehouseCategory.books:
-          return _filtered(_bookItems).isNotEmpty;
-        case WarehouseCategory.comics:
-          return _filtered(_comicItems).isNotEmpty;
-        case WarehouseCategory.videos:
-          return _filtered(_videoItems).isNotEmpty;
-        case WarehouseCategory.music:
-          return _filtered(_musicItems).isNotEmpty;
-      }
+    return shouldShowWarehouseSection(
+      searchQuery: _searchQuery,
+      matchedInSection: _filtered(_itemsForCategory(category)),
+    );
+  }
+
+  List<WarehouseItem> _itemsForCategory(WarehouseCategory category) {
+    switch (category) {
+      case WarehouseCategory.books:
+        return _bookItems;
+      case WarehouseCategory.videos:
+        return _videoItems;
+      case WarehouseCategory.comics:
+        return _comicItems;
+      case WarehouseCategory.music:
+        return const [];
     }
-    return true;
   }
 }
