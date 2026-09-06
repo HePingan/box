@@ -289,6 +289,18 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       'textPages=${_textPages.length} '
       'recalcPending=${_recalcScheduler.hasPending}',
     );
+
+    // 关键修复（红米 K80 / HyperOS 小窗永久转圈）：原来这里只记日志，不做任何
+    // 事。真机日志证明这正是「永久」的成因 —— 切小窗途中 LayoutBuilder 收到
+    // 过一帧坏几何（constraints 正常 384x614，但 MediaQuery.padding.top 是脏
+    // 值，算出 availableForText <= 0），几何守卫据此返回 spinner；此后引擎在
+    // 26.47/26.48/26.50/27.70 反复报正确尺寸，而没有任何东西请求重建，
+    // LayoutBuilder 再也不重跑，spinner 就永久留在屏上。
+    //
+    // 只要引擎报了尺寸变化就主动重建一次：下一帧 MediaQuery 已刷新，
+    // 守卫拿到正常的 topPad 就会放行。代价：每次尺寸变化多一次 build
+    // （日志实测一轮切换约 10 次，都是 O(1) 的 setState，不触发重排）。
+    setState(() {});
   }
 
   @override
@@ -1069,9 +1081,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
     // 诊断：每次 layout 都记一次实测约束。小窗转圈三轮未定案的核心盲区是
     // 「切小窗后 LayoutBuilder 到底有没有拿到新尺寸重跑」，这条是唯一判据。
+    // 排重键必须带上 topPad：上一轮它只含 constraints，而坏帧的 constraints
+    // 与好帧完全相同（384.0x614.4），LAYOUT 行被判为重复而整条吞掉 ——
+    // 于是真机日志里只剩 SPINNER#1、看不到它的输入，白丢一轮取证。
     final layoutSignature =
         '${constraints.maxWidth.toStringAsFixed(1)}x'
-        '${constraints.maxHeight.toStringAsFixed(1)}';
+        '${constraints.maxHeight.toStringAsFixed(1)}'
+        '@${topPad.toStringAsFixed(1)}';
     if (layoutSignature != _lastLoggedLayoutSignature) {
       _lastLoggedLayoutSignature = layoutSignature;
       ReaderDebugLog.log(
@@ -1090,7 +1106,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         'LAYOUT: SPINNER#1 geometry guard '
         '(fitWidth=${fitWidth.toStringAsFixed(1)} '
         'firstTextHeight=${firstTextHeight.toStringAsFixed(1)} '
-        'normalTextHeight=${normalTextHeight.toStringAsFixed(1)})',
+        'normalTextHeight=${normalTextHeight.toStringAsFixed(1)} '
+        // 上一轮的盲区：守卫只报结果不报输入，无法区分「约束坏」还是
+        // 「topPad 脏」。constraints 已证明正常，故这两项是唯一嫌疑。
+        'constraints=${constraints.maxWidth.toStringAsFixed(1)}x'
+        '${constraints.maxHeight.toStringAsFixed(1)} '
+        'topPad=${topPad.toStringAsFixed(1)} '
+        'availableForText=${availableForText.toStringAsFixed(1)})',
       );
       return Center(
         child: CircularProgressIndicator(
