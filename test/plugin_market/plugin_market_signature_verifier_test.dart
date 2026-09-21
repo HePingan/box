@@ -127,5 +127,32 @@ void main() {
         'hmac-sha256',
       );
     });
+
+    // P0-4 安全默认：未知/拼错的值不得降级到 none（否则静默关闭验签）。
+    test('unknown sign mode 必须回落到 sha256，绝不降级到 none', () {
+      expect(
+        pluginMarketSignModeFromWireName('sha-256'),
+        PluginMarketSignMode.sha256,
+        reason: '拼写变体不得关闭验签',
+      );
+      expect(
+        pluginMarketSignModeFromWireName('hmac'),
+        PluginMarketSignMode.sha256,
+      );
+      expect(
+        pluginMarketSignModeFromWireName('SHA256 '),
+        PluginMarketSignMode.sha256,
+      );
+      expect(
+        pluginMarketSignModeFromWireName(''),
+        PluginMarketSignMode.sha256,
+        reason: '空串也应走安全默认',
+      );
+      // 显式 none 才允许关闭
+      expect(
+        pluginMarketSignModeFromWireName('none'),
+        PluginMarketSignMode.none,
+      );
+    });
   });
 }

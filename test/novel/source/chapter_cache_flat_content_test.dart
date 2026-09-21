@@ -11,8 +11,8 @@ import 'package:flutter_test/flutter_test.dart';
 /// 这正是用户连续报「还是一段」的真实原因：修的是 fetchChapter 的解析，
 /// 但 repository 层缓存命中直接 return，新解析代码根本没被执行。
 void main() {
-  final detail = NovelDetail(
-    book: const NovelBook(
+  const detail = NovelDetail(
+    book: NovelBook(
       id: 'b1',
       title: '测试书',
       author: '作者',
@@ -20,7 +20,7 @@ void main() {
       coverUrl: '',
       detailUrl: '/novel/b1',
     ),
-    chapters: const [NovelChapter(title: '第一章', url: '/chapter/1')],
+    chapters: [NovelChapter(title: '第一章', url: '/chapter/1')],
   );
 
   final key = NovelCacheKeys.chapter('/chapter/1');

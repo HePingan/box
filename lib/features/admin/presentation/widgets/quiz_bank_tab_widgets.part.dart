@@ -185,8 +185,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
   }
 
   Future<void> _pickImage() async {
-    final picked = await FilePicker.pickFiles(type: FileType.image);
-    final file = picked?.files.isNotEmpty == true ? picked!.files.first : null;
+    final file = await FilePicker.pickFile(type: FileType.image);
     if (file == null) return;
     final bytes = await file.readAsBytes();
     if (bytes.isEmpty) return;
@@ -393,6 +392,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
       ('草稿', 'draft'),
       ('待审核', 'pending'),
       ('已发布', 'published'),
+      ('问题题', 'incomplete'),
     ];
     final out = <Widget>[];
     for (final (label, val) in statuses) {
@@ -960,6 +960,7 @@ class _DiffConfirmDialog extends StatelessWidget {
   'pending' || 'pending_review' => (color: const Color(0xFFF59E0B), label: '待审核'),
   'rejected' => (color: const Color(0xFFEF4444), label: '已拒绝'),
   'draft' => (color: const Color(0xFF94A3B8), label: '草稿'),
+  'incomplete' => (color: const Color(0xFFF59E0B), label: '问题题'),
   _ => (color: const Color(0xFF94A3B8), label: status.isEmpty ? '未知' : status),
 };
 
@@ -1401,6 +1402,16 @@ class _IncompleteQueueDialogState extends State<_IncompleteQueueDialog> {
                           _reload();
                         },
                 ),
+                ChoiceChip(
+                  label: const Text('问题题'),
+                  selected: _filter == 'flagged',
+                  onSelected: _busy
+                      ? null
+                      : (_) {
+                          setState(() => _filter = 'flagged');
+                          _reload();
+                        },
+                ),
                 ActionChip(
                   label: Text('批量分类（${_selected.length}）'),
                   onPressed: _busy || _selected.isEmpty
@@ -1566,10 +1577,9 @@ class _IncompleteEditorState extends State<_IncompleteEditor> {
   }
 
   Future<void> _pickImage() async {
-    final picked = await FilePicker.pickFiles(
+    final file = await FilePicker.pickFile(
       type: FileType.image,
     );
-    final file = picked?.files.isNotEmpty == true ? picked!.files.first : null;
     if (file == null) return;
     final bytes = await file.readAsBytes();
     if (bytes.isEmpty) return;
@@ -2337,6 +2347,7 @@ class _FilterDialogState extends State<_FilterDialog> {
                 QuizFilterOption(QuizStatusFilter.pending, '待审核'),
                 QuizFilterOption(QuizStatusFilter.approved, '已通过'),
                 QuizFilterOption(QuizStatusFilter.rejected, '已驳回'),
+                QuizFilterOption(QuizStatusFilter.issue, '问题题'),
               ],
             ),
             const SizedBox(height: 16),
@@ -2451,6 +2462,7 @@ class _QuestionCard extends StatelessWidget {
     this.onEdit,
     this.onEditImage,
     this.onDelete,
+    this.onFlagIssue,
   });
 
   final QuizBankQuestion question;
@@ -2464,6 +2476,10 @@ class _QuestionCard extends StatelessWidget {
   final VoidCallback? onEdit;
   final VoidCallback? onEditImage;
   final VoidCallback? onDelete;
+
+  /// 标记/取消标记「问题题」（题干需按图判断、答案存疑等）。
+  /// 走既有「残缺」队列，标记后管理端「残缺」格可见。
+  final VoidCallback? onFlagIssue;
 
   @override
   Widget build(BuildContext context) {
@@ -2585,11 +2601,12 @@ class _QuestionCard extends StatelessWidget {
                           onSelected: (v) => switch (v) {
                             'edit' => onEdit?.call(),
                             'editImage' => onEditImage?.call(),
+                            'flagIssue' => onFlagIssue?.call(),
                             'delete' => onDelete?.call(),
                             _ => null,
                           },
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(
                               value: 'edit',
                               child: ListTile(
                                 dense: true,
@@ -2598,7 +2615,7 @@ class _QuestionCard extends StatelessWidget {
                                 title: Text('编辑'),
                               ),
                             ),
-                            PopupMenuItem(
+                            const PopupMenuItem(
                               value: 'editImage',
                               child: ListTile(
                                 dense: true,
@@ -2608,6 +2625,28 @@ class _QuestionCard extends StatelessWidget {
                               ),
                             ),
                             PopupMenuItem(
+                              value: 'flagIssue',
+                              child: ListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                leading: Icon(
+                                  question.status == 'incomplete'
+                                      ? Icons.flag_rounded
+                                      : Icons.flag_outlined,
+                                  size: 18,
+                                  color: const Color(0xFFF59E0B),
+                                ),
+                                title: Text(
+                                  question.status == 'incomplete'
+                                      ? '取消问题标记'
+                                      : '标记为问题题',
+                                  style: const TextStyle(
+                                    color: Color(0xFFF59E0B),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const PopupMenuItem(
                               value: 'delete',
                               child: ListTile(
                                 dense: true,

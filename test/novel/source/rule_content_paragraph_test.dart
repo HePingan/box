@@ -32,7 +32,7 @@ void main() {
   }
 
   NovelDetail detailWith(String url) => NovelDetail(
-        book: NovelBook(
+        book: const NovelBook(
           id: 'b1',
           title: '测试书',
           author: '作者',

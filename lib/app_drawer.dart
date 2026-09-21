@@ -4,10 +4,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import 'app/app_routes.dart';
-import 'config/app_config.dart';
 import 'design_system/app_tokens.dart';
-import 'update/update_dialog.dart';
-import 'update/update_service.dart';
+import 'update/manual_update_check.dart';
 import 'features/account/data/account_store.dart';
 import 'features/cloud_sync/domain/announcement_center.dart';
 import 'features/account/domain/account_models.dart';
@@ -172,136 +170,6 @@ class _DrawerContentState extends State<_DrawerContent> {
     );
   }
 
-  // ─── 关于对话框 ───
-
-  /// 弹「关于」框，同样不关抽屉：关掉框之后用户还站在抽屉里。
-  ///
-  /// 顺带消掉一个隐患 —— 原先先 pop 抽屉再 await，之后拿这个已经出栈的
-  /// context 去 showDialog / showSnackBar，「检查更新」就曾因此静默失效
-  /// （见 test/update/manual_check_snackbar_test.dart）。不 pop 之后
-  /// context 全程有效。
-  Future<void> _showAboutDialog(BuildContext context) async {
-    final info = await PackageInfo.fromPlatform();
-    if (!context.mounted) return;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppTokens.radiusSm),
-        ),
-        title: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                gradient: AppTokens.blueGradient,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Center(
-                child: Text(
-                  'G',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            const Text('Geek工具箱 Pro'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _aboutRow('版本', info.version),
-            const SizedBox(height: 6),
-            _aboutRow('构建', info.buildNumber),
-            const SizedBox(height: 6),
-            _aboutRow('平台', info.packageName),
-            const SizedBox(height: 12),
-            const Divider(height: 1, color: AppTokens.divider),
-            const SizedBox(height: 12),
-            const Text(
-              '智能工具集，为极客而生。',
-              style: TextStyle(fontSize: 13, color: AppTokens.textSecondary),
-            ),
-            const SizedBox(height: 12),
-            InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: () {
-                const url = 'https://github.com/HePingan/box';
-                Clipboard.setData(const ClipboardData(text: url));
-                Navigator.of(ctx).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('仓库地址已复制到剪贴板'),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  vertical: 8,
-                  horizontal: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: AppTokens.surfaceMuted,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.code_rounded,
-                      size: 16,
-                      color: AppTokens.textSecondary,
-                    ),
-                    SizedBox(width: 6),
-                    Text(
-                      'github.com/HePingan/box',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppTokens.primaryBlue,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    SizedBox(width: 4),
-                    Icon(
-                      Icons.open_in_new,
-                      size: 14,
-                      color: AppTokens.primaryBlue,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            // 用关于框自己的 ctx，并把「关掉宿主」交给 closeHost：
-            // 有新版本时先收掉关于框再弹更新框，否则两层弹窗叠在一起。
-            onPressed: () => _checkUpdateManually(
-              ctx,
-              info,
-              closeHost: () => Navigator.of(ctx).pop(),
-            ),
-            child: const Text('检查更新'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('关闭'),
-          ),
-        ],
-      ),
-    );
-  }
-
   /// 手动检查更新（A4）。
   ///
   /// 原先只有启动时那一次静默检查，用户既没有主动入口，出问题也看不到原因
@@ -320,84 +188,23 @@ class _DrawerContentState extends State<_DrawerContent> {
   /// ScaffoldMessenger 挂在主页面底部，会被抽屉整个盖住 —— 用户报过
   /// 「提示在最下层，关闭侧边栏才能看到」。对话框走 Navigator overlay，
   /// 稳定盖在抽屉之上。
+  /// 手动检查更新。实现已提取到 [ManualUpdateCheck.run]，因为关于页也要有
+  /// 同一个入口 —— 抄一份过去就会变成两套逻辑、修一处漏一处。
+  ///
+  /// 那些「必须在 await 前抓 messenger」「刻意不判 context.mounted」
+  /// 「resultInDialog 是因为 SnackBar 会被抽屉盖住」的坑都记在
+  /// [ManualUpdateCheck] 的类注释里，改动前请先读。
   Future<void> _checkUpdateManually(
     BuildContext context,
     PackageInfo info, {
     VoidCallback? closeHost,
     bool resultInDialog = false,
-  }) async {
-    final messenger = ScaffoldMessenger.of(context);
-    final navigator = Navigator.of(context);
-
-    // 「正在检查…」同样会被抽屉盖住，弹了也是白弹。抽屉那条路径改由
-    // 列表项自己转圈提示进行中（见 _checkUpdateFromDrawer）。
-    if (!resultInDialog) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text('正在检查更新…'),
-          duration: Duration(seconds: 1),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-
-    final outcome = await UpdateService.instance.checkUpdateDiagnostic(
-      checkUrl: AppConfig.updateCheckUrl,
-      appId: AppConfig.appId,
-      platform: AppConfig.updatePlatform,
-      channel: AppConfig.appChannel,
-      versionCode: int.tryParse(info.buildNumber) ?? 0,
-      packageName: info.packageName,
-      security: AppConfig.updateSecurityConfig,
-    );
-
-    // 这里刻意不判 context.mounted：messenger / navigator 已在 await 之前
-    // 抓好，它们的生命周期挂在 App 上而不是这个弹窗上。之前判 mounted 的写法
-    // 会在弹窗被关掉后把结果整个丢掉，用户只看到「没反应」。
-
-    final manifest = outcome.manifest;
-    if (outcome.hasUpdate && manifest != null) {
-      closeHost?.call();
-      // 判 navigator 而不是判弹窗 context：navigator 活得和 App 一样久，
-      // 弹窗 context 可能刚被 closeHost 关掉，判它必然提前 return。
-      if (!navigator.mounted) return;
-      await showDialog(
-        context: navigator.context,
-        builder: (_) => UpdateDialog(
-          manifest: manifest,
-          currentVersionName: info.version,
-          currentVersionCode: int.tryParse(info.buildNumber) ?? 0,
-          force: manifest.needForceUpdate(int.tryParse(info.buildNumber) ?? 0),
-          security: AppConfig.updateSecurityConfig,
-        ),
-      );
-      return;
-    }
-
-    if (resultInDialog) {
-      if (!navigator.mounted) return;
-      await showDialog<void>(
-        context: navigator.context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(outcome.isFailure ? '检查更新失败' : '检查更新'),
-          content: Text(outcome.describe()),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('知道了'),
-            ),
-          ],
-        ),
-      );
-      return;
-    }
-
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(outcome.describe()),
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: outcome.isFailure ? 6 : 2),
-      ),
+  }) {
+    return ManualUpdateCheck.run(
+      context,
+      info,
+      closeHost: closeHost,
+      resultInDialog: resultInDialog,
     );
   }
 
@@ -416,31 +223,6 @@ class _DrawerContentState extends State<_DrawerContent> {
     } finally {
       if (mounted) setState(() => _checkingUpdate = false);
     }
-  }
-
-  Widget _aboutRow(String label, String value) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 48,
-          child: Text(
-            label,
-            style: const TextStyle(
-              fontSize: 13,
-              color: AppTokens.textSecondary,
-            ),
-          ),
-        ),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: AppTokens.textPrimary,
-          ),
-        ),
-      ],
-    );
   }
 
   // ─── 头部卡片（合并账号入口，去除"账号"按钮） ───
@@ -679,8 +461,10 @@ class _DrawerContentState extends State<_DrawerContent> {
               context,
               icon: Icons.info_outline_rounded,
               title: '关于',
-              subtitle: null,
-              onTap: () => _showAboutDialog(context),
+              // 原先点这里弹 AlertDialog，装不下版本信息 / 软件介绍 / 使用文档 /
+              // 推荐教程 / 历史更新 / 用户协议 / 隐私政策，改成整页。
+              subtitle: '版本信息、使用文档、用户协议',
+              onTap: () => _openRoute(context, AppRoutes.about),
             ),
           ]),
           const SizedBox(height: 4),

@@ -34,6 +34,9 @@ enum LogChannel {
   /// 网络请求与更新检查。
   network('NETWORK', '网络'),
 
+  /// 远程存储插件：WebDAV 连接、目录浏览、上传下载、回环中继。
+  storage('STORAGE', '存储'),
+
   /// 异常与错误。单独成类，便于「只看出错的」。
   error('ERROR', '错误');
 
@@ -86,6 +89,12 @@ enum LogChannel {
       case 'NETWORK':
       case 'UPDATE':
         return LogChannel.network;
+      case 'STORAGE':
+        // 远程存储插件（WebDAV）的排障频道：兑现用户可见文案
+        // 「已记入调试日志」的承诺。锁定测试：
+        // test/utils/log_channel_storage_tag_test.dart（频道路由）+
+        // test/features/extensions/remote_storage/remote_storage_error_log_test.dart（归一化即落盘）。
+        return LogChannel.storage;
       case 'ERROR':
       // app_bootstrap 的 PlatformDispatcher.onError 写的是 'DART'。
       // 这是未捕获异常的崩溃现场，必须能被「错误」频道筛到。

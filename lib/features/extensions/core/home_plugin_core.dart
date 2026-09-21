@@ -5,18 +5,10 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../../daily_news_page.dart';
 import 'package:box/core/storage/cache_store.dart';
-import '../../../novel/novel_module.dart';
-import '../../../video_module.dart';
-import '../../image_generator/presentation/image_generator_page.dart';
-import '../market/domain/plugin_market_manifest.dart';
-import '../../quiz_plugin/presentation/quiz_entry_page.dart';
-import '../../quiz_plugin/presentation/quiz_plugin_entry.dart';
-import '../../quiz_plugin/presentation/quiz_bank_view_page.dart';
-import '../../policy/plugin_policy.dart';
-import '../plugins/plugin_toolbox.dart';
-import '../plugins/github_accel/github_accel_sheet.dart';
+import 'package:box/features/extensions/core/builtin_plugin_catalog.dart';
+import 'package:box/features/extensions/core/builtin_plugin_pages.dart';
+import 'package:box/features/extensions/market/domain/plugin_market_manifest.dart';
 
 String _asString(dynamic value, [String fallback = '']) {
   if (value == null) return fallback;
@@ -68,16 +60,91 @@ enum HomePluginArea {
         return '工具';
     }
   }
+
+  /// 顺序即 UI 下拉/标签的展示顺序（供投稿页等复用，避免再抄一份）。
+  static const List<HomePluginArea> displayOrder = [
+    HomePluginArea.recommend,
+    HomePluginArea.novel,
+    HomePluginArea.video,
+    HomePluginArea.music,
+    HomePluginArea.comic,
+  ];
 }
+
+/// 由 code 解析区域；未知 code 记日志并回落到 [HomePluginArea.center]。
+HomePluginArea homePluginAreaFromCode(String code) {
+  final text = code.trim();
+  for (final area in HomePluginArea.values) {
+    if (area.name == text) return area;
+  }
+  debugPrint('[plugin] 未知的 area code "$code"，已回落到 center');
+  return HomePluginArea.center;
+}
+
+/// 区域 code → 中文标签（单一事实源入口）。
+String homePluginAreaLabel(String code) => homePluginAreaFromCode(code).label;
 
 enum HomePluginActionType {
   toast,
+  navigate,
   openDailyNews,
   openNovelList,
   openVideoList,
   openImageGenerator,
   openGithubAccel,
+  openRemoteStorage;
+
+  /// 中文标签（单一事实源）。此前散落在市场页与投稿页各一份且已漂移
+  /// （toast：提示动作 vs 弹出提示）。
+  String get label {
+    switch (this) {
+      case HomePluginActionType.toast:
+        return '提示动作';
+      case HomePluginActionType.navigate:
+        return '路由跳转';
+      case HomePluginActionType.openDailyNews:
+        return '打开日报';
+      case HomePluginActionType.openNovelList:
+        return '打开小说';
+      case HomePluginActionType.openVideoList:
+        return '打开影视';
+      case HomePluginActionType.openImageGenerator:
+        return '打开生图';
+      case HomePluginActionType.openGithubAccel:
+        return '打开加速';
+      case HomePluginActionType.openRemoteStorage:
+        return '打开远程存储';
+    }
+  }
+
+  /// 顺序即 UI 下拉展示顺序（供投稿页复用）。
+  /// 附录 A-1：补齐遗漏的 openGithubAccel（投稿页下拉此前选不到「打开加速」）。
+  static const List<HomePluginActionType> displayOrder = [
+    HomePluginActionType.toast,
+    HomePluginActionType.navigate,
+    HomePluginActionType.openDailyNews,
+    HomePluginActionType.openNovelList,
+    HomePluginActionType.openVideoList,
+    HomePluginActionType.openImageGenerator,
+    HomePluginActionType.openGithubAccel,
+    HomePluginActionType.openRemoteStorage,
+  ];
 }
+
+/// 由 code 解析动作；未知 code 记日志并回落 [HomePluginActionType.toast]。
+HomePluginActionType homePluginActionTypeFromCode(String code) {
+  final text = code.trim();
+  for (final action in HomePluginActionType.values) {
+    if (action.name == text) return action;
+  }
+  debugPrint('[plugin] 未知的 action code "$code"，已回落到 toast');
+  return HomePluginActionType.toast;
+}
+
+/// 动作 code → 中文标签（单一事实源入口）。
+String homePluginActionLabel(String code) =>
+    homePluginActionTypeFromCode(code).label;
+
 
 class HomePluginActionContext {
   final String pluginId;
@@ -119,14 +186,9 @@ class HomePluginRouteRegistry {
   }
 
   static void registerDefaults() {
-    register('daily_news', (_) => const DailyNewsPage());
-    register('openDailyNews', (_) => const DailyNewsPage());
-    register('novel_list', (_) => const NovelListPageWithProvider());
-    register('openNovelList', (_) => const NovelListPageWithProvider());
-    register('video_list', (_) => const VideoListPage());
-    register('openVideoList', (_) => const VideoListPage());
-    register('image_generator', (_) => const ImageGeneratorPage());
-    register('openImageGenerator', (_) => const ImageGeneratorPage());
+    // P2-2：具体页面绑定已拆到 builtin_plugin_pages.dart，这里只做委托，
+    // core 因此不再直接 import 任何具体 UI 页面。
+    registerBuiltinRouteDefaults();
   }
 }
 
@@ -183,7 +245,7 @@ class HomePluginActionRegistry {
             : actionContext.payload.trim(),
       );
     },
-    'navigate': (context, actionContext) async {
+    HomePluginActionType.navigate.name: (context, actionContext) async {
       if (context == null) return;
       HomePluginRouteRegistry.registerDefaults();
       final routeCode = _payloadRouteCode(actionContext);
@@ -222,12 +284,16 @@ class HomePluginActionRegistry {
         },
     // GitHub 加速下载是个底部面板而不是整页，所以走 show 而不是 Navigator.push。
     // payload 若带链接就直接预填并自动转换，方便从别处「用加速下载打开」。
+    // P2-2：具体页面/面板的依赖已拆到 builtin_plugin_pages.dart。
     HomePluginActionType.openGithubAccel.name: (context, actionContext) async {
+      await showGithubAccelAction(context, _payloadUrl(actionContext));
+    },
+    HomePluginActionType.openRemoteStorage.name: (context, actionContext) async {
       if (context == null) return;
-      await GithubAccelSheet.show(
-        context,
-        initialUrl: _payloadUrl(actionContext),
-      );
+      HomePluginRouteRegistry.registerDefaults();
+      final builder = HomePluginRouteRegistry.lookup('openRemoteStorage');
+      if (builder == null) return;
+      await Navigator.push(context, MaterialPageRoute(builder: builder));
     },
   };
 
@@ -259,6 +325,9 @@ HomePluginArea _areaFromName(String name) {
       return value;
     }
   }
+  // P2-5：未知值不再静默回退，打日志留痕（回退值保持 recommend 不变）。
+  debugPrint('[plugin] 未知 area code "$name"，已回落到 '
+      '${HomePluginArea.recommend.name}');
   return HomePluginArea.recommend;
 }
 
@@ -268,6 +337,9 @@ HomePluginActionType _actionFromName(String name) {
       return value;
     }
   }
+  // P2-5：未知值不再静默回退，打日志留痕（回退值保持 toast 不变）。
+  debugPrint('[plugin] 未知 action code "$name"，已回落到 '
+      '${HomePluginActionType.toast.name}');
   return HomePluginActionType.toast;
 }
 
@@ -493,6 +565,9 @@ class HomeCustomPluginConfig {
   }
 }
 
+/// 插件快照结构版本。`toJson` 写出、`importSnapshotJson` 校验，二者须同源。
+const int kPluginSnapshotVersion = 1;
+
 class HomePluginSnapshot {
   final Map<String, bool> enabledMap;
   final List<HomeCustomPluginConfig> customPlugins;
@@ -508,7 +583,7 @@ class HomePluginSnapshot {
 
   Map<String, dynamic> toJson() {
     return {
-      'version': 1,
+      'version': kPluginSnapshotVersion,
       'enabledMap': enabledMap,
       'customPlugins': customPlugins.map((e) => e.toJson()).toList(),
     };
@@ -718,8 +793,10 @@ class HomePluginHost {
   final ValueNotifier<List<HomePlugin>> _notifier =
       ValueNotifier<List<HomePlugin>>(<HomePlugin>[]);
 
-  final HomePluginPersistence _persistence;
   final HomePluginLifecycle _lifecycle;
+
+  // 非 final：测试可注入内存实现（injectPersistenceForTesting）。
+  HomePluginPersistence _persistence;
 
   Future<void>? _bootFuture;
   bool _bootstrapped = false;
@@ -755,12 +832,27 @@ class HomePluginHost {
     _bootFuture = null;
   }
 
+  /// 测试专用：替换单例的持久化实现。
+  ///
+  /// 默认 [HomePluginPersistence] 走 path_provider（platform channel）+
+  /// dart:io 真实文件 IO，在 widget 测试的 FakeAsync zone 里这些 await
+  /// 永不完成 —— register / toggleEnabled 这类写路径会整体挂死
+  /// （与 [seedForTesting] 的注释同源，实测卡死 300s+）。注入
+  /// `CacheStore.inMemory` 支撑的 persistence 后写路径纯内存完成。
+  ///
+  /// [resetForTesting] 会恢复默认实现，避免用例间串扰。
+  @visibleForTesting
+  void injectPersistenceForTesting(HomePluginPersistence persistence) {
+    _persistence = persistence;
+  }
+
   /// 清掉单例里的插件状态，让下一个测试从干净的起点开始。
   @visibleForTesting
   void resetForTesting() {
     _notifier.value = <HomePlugin>[];
     _bootstrapped = false;
     _bootFuture = null;
+    _persistence = HomePluginPersistence();
   }
 
   HomePlugin? findById(String id) {
@@ -938,7 +1030,18 @@ class HomePluginHost {
     return jsonEncode(snapshot.toJson());
   }
 
-  Future<void> importSnapshotJson(String jsonText, {bool merge = false}) async {
+  /// 由 JSON 文本导入快照。
+  ///
+  /// 护栏（防止一次误粘/误拉远程内容静默清空用户配置）：
+  ///  - `version` 必须存在且为 [kPluginSnapshotVersion]（toJson 会写，旧实现忽略）；
+  ///  - 必须至少含 `enabledMap`(Map) 或 `customPlugins`(List) 之一；
+  ///  - 覆盖模式（merge=false）下若解析结果「两表皆空」而当前快照非空，
+  ///    除非显式 allowEmpty（清空即重置），否则拒绝。
+  Future<void> importSnapshotJson(
+    String jsonText, {
+    bool merge = false,
+    bool allowEmpty = false,
+  }) async {
     await bootstrap();
 
     final raw = jsonText.trim();
@@ -957,9 +1060,38 @@ class HomePluginHost {
       throw const FormatException('JSON 根节点必须是对象');
     }
 
+    // 1) 版本校验：缺失/不匹配一律拒绝，避免把无关 JSON 当成空快照。
+    final versionRaw = decoded['version'];
+    if (versionRaw is! num || versionRaw.toInt() != kPluginSnapshotVersion) {
+      throw FormatException(
+        '快照版本不受支持（期望 $kPluginSnapshotVersion，实际 ${versionRaw ?? '缺失'}）',
+      );
+    }
+
+    // 2) 必需字段校验：至少要有其中一个，否则视为无关 JSON。
+    final hasEnabled = decoded['enabledMap'] is Map;
+    final hasCustom = decoded['customPlugins'] is List;
+    if (!hasEnabled && !hasCustom) {
+      throw const FormatException('快照缺少必需字段（enabledMap / customPlugins）');
+    }
+
     final incoming = HomePluginSnapshot.fromJson(
       Map<String, dynamic>.from(decoded),
     );
+
+    // 3) 清库护栏：覆盖模式下不允许用空快照抹掉已有配置。
+    if (!merge && !allowEmpty) {
+      final emptiesIncoming =
+          incoming.enabledMap.isEmpty && incoming.customPlugins.isEmpty;
+      final current = _buildCurrentSnapshot();
+      final currentHasData =
+          current.enabledMap.isNotEmpty || current.customPlugins.isNotEmpty;
+      if (emptiesIncoming && currentHasData) {
+        throw const FormatException(
+          '快照为空，导入会清空现有配置；如确需重置请显式允许清空',
+        );
+      }
+    }
 
     final finalSnapshot = merge
         ? _mergeSnapshot(_buildCurrentSnapshot(), incoming)
@@ -989,6 +1121,9 @@ class HomePluginHost {
       customPlugins: customMap.values.toList(),
     );
   }
+
+  /// 当前生效快照（公开只读视图，供 UI 展示导入结果等）。
+  HomePluginSnapshot snapshot() => _buildCurrentSnapshot();
 
   HomePluginSnapshot _buildCurrentSnapshot() {
     final enabledMap = <String, bool>{};
@@ -1137,342 +1272,9 @@ class HomePluginHost {
   }
 
   List<HomePlugin> _buildDefaultPlugins() {
-    // 注册答题插件自动搜题的 MethodChannel handler
-    QuizPluginEntry.initAutoSearch();
-    return <HomePlugin>[
-      HomePlugin(
-        id: 'builtin_daily_news',
-        title: '日报详情',
-        subtitle: '查看完整热闻列表',
-        icon: Icons.newspaper_outlined,
-        color: Colors.deepPurple,
-        area: HomePluginArea.recommend,
-        builtIn: true,
-        sort: 10,
-        onTap: (context) async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const DailyNewsPage()),
-          );
-        },
-      ),
-      HomePlugin(
-        id: 'builtin_json_formatter',
-        title: 'JSON 格式化',
-        subtitle: '粘贴 JSON 一键格式化与校验',
-        icon: Icons.data_object_rounded,
-        color: Colors.orange,
-        area: HomePluginArea.recommend,
-        builtIn: true,
-        sort: 15,
-        onTap: (context) async {
-          await PluginToolbox.showJsonFormatter(context);
-        },
-      ),
-      HomePlugin(
-        id: 'builtin_base64',
-        title: 'Base64 编解码',
-        subtitle: '文本 ↔ Base64 双向转换',
-        icon: Icons.lock_outline,
-        color: Colors.teal,
-        area: HomePluginArea.recommend,
-        builtIn: true,
-        sort: 20,
-        onTap: (context) async {
-          await PluginToolbox.showBase64Tool(context);
-        },
-      ),
-      HomePlugin(
-        id: 'builtin_password_gen',
-        title: '密码生成器',
-        subtitle: '随机生成强密码，安全可靠',
-        icon: Icons.vpn_key_outlined,
-        color: Colors.red,
-        area: HomePluginArea.center,
-        builtIn: true,
-        sort: 25,
-        onTap: (context) async {
-          await PluginToolbox.showPasswordGenerator(context);
-        },
-      ),
-      HomePlugin(
-        id: 'builtin_timestamp',
-        title: '时间戳转换',
-        subtitle: 'Unix 时间戳 ↔ 日期互转',
-        icon: Icons.schedule_rounded,
-        color: Colors.deepPurple,
-        area: HomePluginArea.center,
-        builtIn: true,
-        sort: 30,
-        onTap: (context) async {
-          await PluginToolbox.showTimestampConverter(context);
-        },
-      ),
-      HomePlugin(
-        id: 'builtin_url_codec',
-        title: 'URL 编解码',
-        subtitle: 'URL 编码 / 解码转换工具',
-        icon: Icons.link_rounded,
-        color: Colors.indigo,
-        area: HomePluginArea.center,
-        builtIn: true,
-        sort: 35,
-        onTap: (context) async {
-          await PluginToolbox.showUrlCodec(context);
-        },
-      ),
-      HomePlugin(
-        id: 'builtin_qrcode',
-        title: '二维码生成',
-        subtitle: '文本/链接一键生成二维码',
-        icon: Icons.qr_code_2_rounded,
-        color: Colors.blueGrey,
-        area: HomePluginArea.center,
-        builtIn: true,
-        sort: 40,
-        onTap: (context) async {
-          await PluginToolbox.showQrCodeGenerator(context);
-        },
-      ),
-      HomePlugin(
-        id: 'builtin_quiz_entry',
-        title: '录入题目',
-        subtitle: '录入题目、选项、答案和解析',
-        icon: Icons.edit_note_rounded,
-        color: const Color(0xFF0891B2),
-        area: HomePluginArea.center,
-        builtIn: true,
-        sort: 50,
-        onTap: (context) async {
-          final denial = await PluginGate.denial(
-            PluginIds.quizEntry,
-            feature: PluginFeature.entry,
-            highRisk: false,
-          );
-          if (denial != null && context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(denial)),
-            );
-            return;
-          }
-          if (!context.mounted) return;
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const QuizEntryPage()),
-          );
-        },
-      ),
-      HomePlugin(
-        id: 'builtin_quiz_bank_view',
-        title: '题库查看',
-        subtitle: '查看、复制、删除已录入题目',
-        icon: Icons.library_books_outlined,
-        color: const Color(0xFF7C3AED),
-        area: HomePluginArea.center,
-        builtIn: true,
-        sort: 48,
-        onTap: (context) async {
-          final denial = await PluginGate.denial(
-            PluginIds.quizBankView,
-            feature: PluginFeature.view,
-            highRisk: false,
-          );
-          if (denial != null && context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(denial)),
-            );
-            return;
-          }
-          if (!context.mounted) return;
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const QuizBankViewPage()),
-          );
-        },
-      ),
-      HomePlugin(
-        id: 'builtin_quiz_plugin',
-        title: '答题助手',
-        subtitle: '捕获屏幕题目，自动搜索答案',
-        icon: Icons.quiz_outlined,
-        color: const Color(0xFF4F46E5),
-        area: HomePluginArea.center,
-        builtIn: true,
-        sort: 46,
-        onTap: (context) async {
-          final denial = await PluginGate.denial(
-            PluginIds.quizAnswer,
-            highRisk: false,
-          );
-          if (denial != null && context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(denial)),
-            );
-            // 仍打开配置页，但开关会被禁用
-          }
-          if (!context.mounted) return;
-          await QuizPluginEntry.showConfigSheet(context);
-        },
-      ),
-      HomePlugin(
-        id: 'builtin_video_search',
-        title: '公共影视搜索',
-        subtitle: '合法免费片源检索',
-        icon: Icons.video_collection_outlined,
-        color: Colors.indigo,
-        area: HomePluginArea.video,
-        builtIn: true,
-        sort: 10,
-        onTap: (context) async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const VideoListPage()),
-          );
-        },
-      ),
-      HomePlugin(
-        id: 'builtin_comic_shelf',
-        title: '漫画收藏',
-        subtitle: '管理你的漫画收藏列表',
-        icon: Icons.collections_bookmark_outlined,
-        color: Colors.teal,
-        area: HomePluginArea.comic,
-        builtIn: true,
-        sort: 10,
-        onTap: (context) async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => Scaffold(
-                appBar: AppBar(title: const Text('漫画收藏')),
-                body: const Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.collections_bookmark_outlined,
-                        size: 64,
-                        color: Colors.grey,
-                      ),
-                      SizedBox(height: 16),
-                      Text(
-                        '漫画功能将在后续版本上线',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-      HomePlugin(
-        id: 'builtin_novel_search',
-        title: '快速找书',
-        subtitle: '进入小说列表页',
-        icon: Icons.search,
-        color: Colors.orange,
-        area: HomePluginArea.novel,
-        builtIn: true,
-        sort: 8,
-        onTap: (context) async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => const NovelListPageWithProvider(),
-            ),
-          );
-        },
-      ),
-      HomePlugin(
-        id: 'builtin_image_generator',
-        title: 'AI 生图',
-        subtitle: '多模型、多方式 AI 图像生成',
-        icon: Icons.auto_awesome_rounded,
-        color: const Color(0xFF7C3AED),
-        area: HomePluginArea.recommend,
-        builtIn: true,
-        sort: 5,
-        onTap: (context) async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const ImageGeneratorPage()),
-          );
-        },
-      ),
-      HomePlugin(
-        id: 'builtin_plugin_help',
-        title: '插件接入说明',
-        subtitle: '查看注册方式与示例',
-        icon: Icons.help_outline,
-        color: Colors.blueGrey,
-        area: HomePluginArea.center,
-        builtIn: true,
-        sort: 1,
-        onTap: (context) async {
-          await showDialog<void>(
-            context: context,
-            builder: (ctx) {
-              return AlertDialog(
-                title: const Text('插件接入说明'),
-                content: const SelectableText(
-                  '可在任意模块中调用：\n\n'
-                  'HomePluginHost.instance.register(\n'
-                  '  HomePlugin(\n'
-                  "    id: 'my_plugin_id',\n"
-                  "    title: '我的插件',\n"
-                  "    subtitle: '一句描述',\n"
-                  '    icon: Icons.extension,\n'
-                  '    color: Colors.teal,\n'
-                  '    area: HomePluginArea.recommend,\n'
-                  '    onTap: (context) async { ... },\n'
-                  '  ),\n'
-                  ');\n',
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('知道了'),
-                  ),
-                ],
-              );
-            },
-          );
-        },
-      ),
-    ];
-  }
-}
-
-class HomePluginApi {
-  HomePluginApi._();
-
-  static Future<void> register(HomePlugin plugin, {bool replace = true}) {
-    return HomePluginHost.instance.register(plugin, replace: replace);
-  }
-
-  static Future<void> unregister(String id) {
-    return HomePluginHost.instance.unregister(id);
-  }
-
-  static Future<void> toggleEnabled(String id, bool enabled) {
-    return HomePluginHost.instance.toggleEnabled(id, enabled);
-  }
-
-  static Future<void> restoreDefaults() {
-    return HomePluginHost.instance.restoreDefaults();
-  }
-
-  static Future<String> exportSnapshotJson({bool pretty = true}) {
-    return HomePluginHost.instance.exportSnapshotJson(pretty: pretty);
-  }
-
-  static Future<void> importSnapshotJson(
-    String jsonText, {
-    bool merge = false,
-  }) {
-    return HomePluginHost.instance.importSnapshotJson(jsonText, merge: merge);
+    // P2-2：目录已拆到 builtin_plugin_catalog.dart，这里只做委托。
+    // core 因此不再直接 import 具体 UI 页面。
+    return buildDefaultPlugins();
   }
 }
 

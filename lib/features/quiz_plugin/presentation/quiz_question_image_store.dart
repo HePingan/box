@@ -32,10 +32,7 @@ class QuizQuestionImageStore {
   QuizQuestionImageStore._();
 
   static Future<QuizQuestionImage?> pickAndPersist() async {
-    final result = await FilePicker.pickFiles(type: FileType.image);
-    final picked = result?.files.isNotEmpty == true
-        ? result!.files.first
-        : null;
+    final picked = await FilePicker.pickFile(type: FileType.image);
     if (picked == null) return null;
     final bytes = await picked.readAsBytes();
     if (bytes.isEmpty) return null;

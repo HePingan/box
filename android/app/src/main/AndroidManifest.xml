@@ -16,8 +16,14 @@
     <!-- 视频下载：前台服务权限（Android 14+） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <!-- 视频下载：精确闹钟（用于断点续传恢复） -->
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- 分贝仪要读麦克风振幅。运行时动态申请（record 插件的 hasPermission）。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 说明：曾声明 USE_EXACT_ALARM（注释称"断点续传恢复"），已于本次移除。
+         原生侧全库没有 AlarmManager / setExact / canScheduleExactAlarms 的调用，
+         续传实际靠 VideoDownloadService 前台服务 + DownloadTaskStore 落盘，
+         不依赖闹钟。USE_EXACT_ALARM 属于 Android 13+ 的高敏感权限，
+         多余声明既要在隐私政策里解释，也是应用商店审核的扣分项。
+         若将来真要做「到点自动续传」，请改用 WorkManager，而不是恢复本权限。 -->
 
     <application
         android:label="box"

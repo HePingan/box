@@ -15,7 +15,7 @@ class _FakeKeyChannel {
   Future<dynamic> Function(MethodCall)? _handler;
 
   MethodChannel build() {
-    final channel = MethodChannel(name);
+    const channel = MethodChannel(name);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
       if (call.method == 'setVolumeKeyNavEnabled') {

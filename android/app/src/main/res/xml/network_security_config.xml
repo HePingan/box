@@ -4,4 +4,11 @@
          compatibility should be enabled deliberately per domain instead of via a
          global usesCleartextTraffic=true switch. -->
     <base-config cleartextTrafficPermitted="false" />
+    <!-- 远程存储插件：本机回环中继（§5.7 直连播）需明文豁免。
+         回环地址仅本机可达，外部设备无法访问，非全局放开；
+         Android 17+ 对回环隐式允许，低版本未定义，显式声明保证全版本一致。 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
 </network-security-config>

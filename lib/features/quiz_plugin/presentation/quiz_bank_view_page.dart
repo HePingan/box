@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -12,7 +13,10 @@ import '../data/quiz_cloud_pull.dart';
 import '../data/quiz_cloud_push.dart';
 import '../data/quiz_cloud_sync.dart';
 import 'quiz_question_image_store.dart';
+import 'quiz_vision_candidates_page.dart';
 import '../../../globals.dart';
+import '../../../utils/app_logger.dart';
+import '../../../utils/log_channels.dart';
 
 class QuizBankViewPage extends StatefulWidget {
   const QuizBankViewPage({super.key});
@@ -49,6 +53,12 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
   bool _selectMode = false;
   bool _busy = false;
   String? _cloudStatusText;
+
+  /// 拉取进度（真实数据，用于确定型进度条）：
+  /// [0] 已完成页数，[1] 预计总页数。总页数未知时为 -1 → 退化为不确定型。
+  int _pullDone = 0;
+  int _pullTotal = -1;
+  String? _coverageHint;
   String _originFilter = 'all'; // all | cloud | local | unpushed
   String _categoryFilter = ''; // empty = all
 
@@ -96,6 +106,39 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
           '云端：${status.lastSyncLabel} · ${status.lastSummary.isEmpty ? "点右上角云图标更新" : status.lastSummary}';
       _applyFilter();
     });
+    // 覆盖率自检：同步中断会让「已同步」与「搜不到」同时成立，
+    // 持久化一行缺口提示，避免用户以为功能坏了（不阻塞首屏，失败静默）。
+    unawaited(_refreshCoverageHint());
+  }
+
+  /// 本地题数 vs 云端目录；不足时把缺口追加到常驻状态行。
+  Future<void> _refreshCoverageHint() async {
+    try {
+      final catalogs = await _cloudPull.fetchCatalogSnapshot();
+      final localCount = _items.length;
+      final coverage = QuizBankCoverage.evaluate(
+        localCount: localCount,
+        catalogs: catalogs,
+      );
+      if (!mounted) return;
+      if (!coverage.isComplete) {
+        setState(() {
+          _coverageHint = '⚠ ${coverage.summaryText}';
+        });
+        return;
+      }
+      // 覆盖率对得上，但仍可能有一轮被中断/达页数上限的同步没走完
+      // （题库过万时单轮拉不完）。此时续传轨仍在，须常驻提示而非弹一次。
+      final pending = await _cloudPull.hasIncompleteSync();
+      if (!mounted) return;
+      setState(() {
+        _coverageHint = pending
+            ? '⚠ 上次同步未拉完，本地题库可能不完整，请点右上角云图标继续补齐'
+            : null;
+      });
+    } catch (_) {
+      // 未登录/离线：不打扰用户，也不覆盖已有提示。
+    }
   }
 
   /// 进入页面时静默对账「审核中」的本地投稿，避免永远停留在审核中。
@@ -303,6 +346,20 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('已复制 ${_filtered.length} 条到剪贴板')));
+  }
+
+  /// 打开「AI 命中候选」列表：读屏命中的题在此可查看截图/补充选项后投稿/删除。
+  ///
+  /// 用户 2026-09-13 拍板：A 档（选项不足/低置信/未登录）不自动提交，但**保留
+  /// 截图与识别信息**，由用户后续手动补充。本页面就是那个「手动补充」的入口。
+  Future<void> _openVisionCandidates() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const QuizVisionCandidatesPage(),
+      ),
+    );
+    if (!mounted) return;
+    await _load();
   }
 
   Future<void> _pushToCloud({QuizBankItem? single}) async {
@@ -535,7 +592,15 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
       );
       if (ok != true) return;
     }
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _pullDone = 0;
+      _pullTotal = -1;
+    });
+    AppLogger.instance.logTo(
+      LogChannel.quiz,
+      'UI 触发拉取 reset=$resetCursor（题库管理页）',
+    );
     try {
       final result = await _cloudPull.pullAll(
         resetCursor: resetCursor,
@@ -543,11 +608,21 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
           if (!mounted) return;
           setState(() => _cloudStatusText = msg);
         },
+        onPageProgress: (p) {
+          if (!mounted) return;
+          setState(() {
+            _pullDone = p.pagesDone;
+            _pullTotal = p.estimatedTotalPages;
+          });
+        },
       );
       await _load();
       // 拉取正式题库的同时对账自己投稿的审核结果，避免本地长期停留「审核中」。
       await _autoReconcileSubmissions();
       if (!mounted) return;
+      // 同步已完成：覆盖率提示由 _load → _refreshCoverageHint 重新判定，
+      // 先清掉旧缺口，避免同步成功后仍显示上一轮的告警。
+      setState(() => _coverageHint = null);
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('云端同步完成：${result.summaryText}')));
@@ -557,7 +632,13 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
         context,
       ).showSnackBar(SnackBar(content: Text('云端同步失败：$e')));
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _pullDone = 0;
+          _pullTotal = -1;
+        });
+      }
     }
   }
 
@@ -680,12 +761,11 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
     );
     if (mode == null) return;
 
-    final pick = await FilePicker.pickFiles(
+    final f = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const ['json', 'txt'],
     );
-    if (pick == null || pick.files.isEmpty) return;
-    final f = pick.files.first;
+    if (f == null) return;
     String raw;
     if (f.path != null) {
       raw = await File(f.path!).readAsString();
@@ -791,6 +871,9 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
                   case 'refresh':
                     _load();
                     break;
+                  case 'visionCandidates':
+                    _openVisionCandidates();
+                    break;
                 }
               },
               itemBuilder: (ctx) => [
@@ -849,6 +932,15 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
                     contentPadding: EdgeInsets.zero,
                   ),
                 ),
+                const PopupMenuItem(
+                  value: 'visionCandidates',
+                  child: ListTile(
+                    dense: true,
+                    leading: Icon(Icons.auto_awesome_rounded),
+                    title: Text('AI 命中候选'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
               ],
             ),
           ],
@@ -856,7 +948,43 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
       ),
       body: Column(
         children: [
-          if (_busy) const LinearProgressIndicator(minHeight: 2),
+          if (_busy) ...[
+            // 确定型进度条：页数已知时显示真实比例 + 「第 N/M 页」，
+            // 未知时退化为不确定型（不再是只能干等的空转条）。
+            LinearProgressIndicator(
+              minHeight: 3,
+              value: _pullTotal > 0
+                  ? (_pullDone / _pullTotal).clamp(0.0, 1.0)
+                  : null,
+            ),
+            if (_pullTotal > 0)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                child: Row(
+                  children: [
+                    Text(
+                      _pullTotal > 0
+                          ? '拉取进度：第 $_pullDone/$_pullTotal 页'
+                          : '',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Colors.black54,
+                      ),
+                    ),
+                    const Spacer(),
+                    if (_pullTotal > 0)
+                      Text(
+                        '${((_pullDone / _pullTotal) * 100).clamp(0, 100).toStringAsFixed(0)}%',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.black54,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+          ],
           if (_cloudStatusText != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -884,6 +1012,24 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
                       ),
                     ],
                   ),
+                  if (_coverageHint != null) ...[
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _coverageHint!,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFFB25E00),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 4),
                   Wrap(
                     spacing: 8,

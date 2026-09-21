@@ -21,7 +21,7 @@ import 'package:box/features/home/presentation/quick_action_picker_page.dart';
 import 'package:box/features/home/presentation/widgets/ai_hot_section.dart';
 import 'package:box/features/home/presentation/widgets/continue_rail.dart';
 
-import 'widgets/home_widgets.dart';
+import 'widgets/home_feed_card.dart';
 
 /// 首页热闻预览条数。
 ///
@@ -366,15 +366,28 @@ class _HomePageState extends State<HomePage>
             SliverToBoxAdapter(child: _buildQuickActions()),
             SliverToBoxAdapter(child: _buildPluginSection()),
             SliverToBoxAdapter(child: _buildContinueRail()),
-            SliverToBoxAdapter(child: _buildDailyNewsCard()),
-            // AI 热点接在「今日热闻」下面（用户指定的位置）。
+            // 热闻和 AI 热点合成一张带 Tab 的资讯卡。
+            //
+            // 改版前是两个上下紧邻的独立分区，外框/行高/条数完全一致，实测像
+            // 同一个组件贴了两遍，且合计吃掉首屏近六成高度。合并省掉一个分区
+            // 标题 + 一套边框，两个数据源都保留，各自的空态互不影响。
             SliverToBoxAdapter(
-              child: AiHotSection(
-                isLoading: _isLoadingAiHot,
-                feed: _aiHotFeed,
-                onOpenItem: _openAiHotItem,
-                onOpenAll: _openAiHotSite,
-                onRetry: () => _fetchAiHot(forceRefresh: true),
+              child: HomeFeedCard(
+                isLoadingNews: _isLoadingNews,
+                newsItems: _newsItems,
+                newsError: _newsError,
+                onOpenNews: _openNewsItem,
+                onOpenNewsAll: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const DailyNewsPage()),
+                  );
+                },
+                isLoadingAiHot: _isLoadingAiHot,
+                aiHotFeed: _aiHotFeed,
+                onOpenAiHot: _openAiHotItem,
+                onOpenAiHotAll: _openAiHotSite,
+                onRetryAiHot: () => _fetchAiHot(forceRefresh: true),
               ),
             ),
             // 底部留白给悬浮胶囊导航栏避让。数值由 AppPageScaffold
@@ -649,112 +662,6 @@ class _HomePageState extends State<HomePage>
   }
 
   // ── 每日新闻 ───────────────────────────────
-  Widget _buildDailyNewsCard() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppTokens.shellPageGutter,
-        0,
-        AppTokens.shellPageGutter,
-        8,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 标题行提到卡片外，和「快捷入口 / 已安装插件 / 继续使用」
-          // 保持同一套分区标题样式（此前这里是渐变图标 + 卡内标题，重量不一致）。
-          _buildSectionHeader(
-            title: '今日热闻',
-            accent: AppTokens.orange,
-            actions: [
-              TextButton(
-                style: TextButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  minimumSize: const Size(0, 30),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  foregroundColor: AppTokens.primaryBlue,
-                ),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const DailyNewsPage()),
-                  );
-                },
-                child: const Text(
-                  '更多',
-                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-                ),
-              ),
-            ],
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppTokens.surface,
-              borderRadius: BorderRadius.circular(AppTokens.radiusCard),
-              border: Border.all(color: AppTokens.divider),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (_isLoadingNews)
-                  const Center(
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(vertical: 14),
-                      child: SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    ),
-                  )
-                else if (_newsError.isNotEmpty)
-                  // 错误态是独立分支，不再混进数据列表（A4）。
-                  HomeNewsLine(
-                    text: _newsError,
-                    showDivider: false,
-                    isPlaceholder: true,
-                  )
-                else
-                  ..._newsItems.asMap().entries.map((entry) {
-                    final item = entry.value;
-                    final line = HomeNewsLine(
-                      text: item.title,
-                      // 最后一条不画分隔线，避免卡片底部出现悬空的线。
-                      showDivider: entry.key != _newsItems.length - 1,
-                    );
-                    // 上游偶尔给不出 url，这种条目点开会是空白详情页，
-                    // 所以不挂手势也不显示箭头。
-                    if (!item.isOpenable) {
-                      return HomeNewsLine(
-                        text: item.title,
-                        showDivider: entry.key != _newsItems.length - 1,
-                        isPlaceholder: true,
-                      );
-                    }
-                    return GestureDetector(
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => DailyNewsPage(initialUrl: item.url),
-                          ),
-                        );
-                      },
-                      child: line,
-                    );
-                  }),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 快捷入口一个都没选时的占位。
-  ///
-  /// 不显示空白：给一句话 + 直达管理页，否则用户清空后会以为首页坏了。
   Widget _buildQuickActionsEmpty() {
     return GestureDetector(
       onTap: _openQuickActionPicker,
@@ -767,8 +674,8 @@ class _HomePageState extends State<HomePage>
           borderRadius: BorderRadius.circular(AppTokens.radiusCard),
           border: Border.all(color: AppTokens.divider),
         ),
-        child: Row(
-          children: const [
+        child: const Row(
+          children: [
             Icon(
               Icons.add_circle_outline_rounded,
               size: 18,
@@ -791,6 +698,17 @@ class _HomePageState extends State<HomePage>
   ///
   /// 走站内 WebView（DailyNewsPage）而不是外部浏览器：和「今日热闻」
   /// 的行为保持一致，用户返回时还在 App 里。
+  /// 打开一条热闻。
+  ///
+  /// 抽成方法而不是内联在卡片里：合并后的资讯卡是独立 widget，
+  /// 导航逻辑留在页面侧，卡片只负责回调出去。
+  void _openNewsItem(DailyNewsItem item) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => DailyNewsPage(initialUrl: item.url)),
+    );
+  }
+
   void _openAiHotItem(AiHotItem item) {
     final url = item.openUrl;
     if (url == null) {

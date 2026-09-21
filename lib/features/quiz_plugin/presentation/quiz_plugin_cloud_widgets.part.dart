@@ -14,6 +14,10 @@ class _CloudQuizBankCardState extends State<_CloudQuizBankCard> {
   bool _autoEnabled = true;
   String? _progress;
 
+  /// 拉取进度：已完成页数 / 预计总页数（-1 = 未知，进度条退化不确定型）。
+  int _pullDone = 0;
+  int _pullTotal = -1;
+
   @override
   void initState() {
     super.initState();
@@ -64,13 +68,26 @@ class _CloudQuizBankCardState extends State<_CloudQuizBankCard> {
     setState(() {
       _busy = true;
       _progress = resetCursor ? '准备全量重拉…' : '准备同步…';
+      _pullDone = 0;
+      _pullTotal = -1;
     });
+    AppLogger.instance.logTo(
+      LogChannel.quiz,
+      'UI 触发拉取 reset=$resetCursor（题库查看插件）',
+    );
     try {
       final result = await _pull.pullAll(
         resetCursor: resetCursor,
         onProgress: (msg) {
           if (!mounted) return;
           setState(() => _progress = msg);
+        },
+        onPageProgress: (p) {
+          if (!mounted) return;
+          setState(() {
+            _pullDone = p.pagesDone;
+            _pullTotal = p.estimatedTotalPages;
+          });
         },
       );
       await _refreshStatus();
@@ -88,6 +105,8 @@ class _CloudQuizBankCardState extends State<_CloudQuizBankCard> {
         setState(() {
           _busy = false;
           _progress = null;
+          _pullDone = 0;
+          _pullTotal = -1;
         });
       }
     }
@@ -214,7 +233,37 @@ class _CloudQuizBankCardState extends State<_CloudQuizBankCard> {
             ),
             if (_busy) ...[
               const SizedBox(height: 8),
-              const LinearProgressIndicator(minHeight: 2),
+              // 确定型进度条：页数已知时显示真实比例，未知时退化不确定型。
+              LinearProgressIndicator(
+                minHeight: 3,
+                value: _pullTotal > 0
+                    ? (_pullDone / _pullTotal).clamp(0.0, 1.0)
+                    : null,
+              ),
+              if (_pullTotal > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Row(
+                    children: [
+                      Text(
+                        '拉取进度：第 $_pullDone/$_pullTotal 页',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.black54,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '${((_pullDone / _pullTotal) * 100).clamp(0, 100).toStringAsFixed(0)}%',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.black54,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
             ],
             const SizedBox(height: 4),
             Wrap(

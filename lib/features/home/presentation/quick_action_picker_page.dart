@@ -61,7 +61,7 @@ class _QuickActionPickerPageState extends State<QuickActionPickerPage> {
     if (_selected.length >= HomeQuickActionPrefs.maxSlots) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+        const SnackBar(
           content: Text(
             '最多只能放 ${HomeQuickActionPrefs.maxSlots} 个快捷入口，'
             '先移除一个再添加',
@@ -147,14 +147,16 @@ class _QuickActionPickerPageState extends State<QuickActionPickerPage> {
         physics: const NeverScrollableScrollPhysics(),
         buildDefaultDragHandles: false,
         itemCount: selectedPlugins.length,
-        onReorder: (oldIndex, newIndex) async {
-          // ReorderableListView 的 newIndex 语义是「插入点」，
-          // 往后拖时要减 1 才是最终下标，否则会差一位。
-          var target = newIndex;
-          if (target > oldIndex) target -= 1;
+        // 用 onReorderItem 而不是已废弃的 onReorder（v3.41.0 起废弃）。
+        //
+        // 两者签名相同，但 newIndex 语义不同：onReorder 给的是「插入点」，
+        // 调用方要自己 `if (newIndex > oldIndex) newIndex -= 1`；
+        // onReorderItem 由框架的 _handleReorderItem 先减好再回调。
+        // 所以迁移时必须把原来手动减 1 的那两行删掉，否则会多减一次、差一位。
+        onReorderItem: (oldIndex, newIndex) async {
           final next = List<String>.from(_selected);
           final moved = next.removeAt(oldIndex);
-          next.insert(target, moved);
+          next.insert(newIndex, moved);
           await _persist(next);
         },
         itemBuilder: (context, index) {

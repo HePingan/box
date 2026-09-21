@@ -16,116 +16,219 @@
         android:clipChildren="false">
 
         <!-- 标题栏（仅此区域可拖动） -->
+        <!-- ===== 标题栏（用户 2026-09-15 拍板方案 A：按钮区可横向滑动）=====
+             结构：
+               [左侧拖动区: 相似度胶囊 + 占位]  [HorizontalScrollView: 6 个功能按钮]
+             拖动区在滑动区之外 → 横向滑动不会抢走拖窗手势；
+             滑动区内部才可横滑，两侧互不干扰。
+             窗口宽度不足时按钮可滑动取用，不再被右侧裁掉。 -->
         <LinearLayout
             android:id="@+id/title_bar"
             android:layout_width="match_parent"
             android:layout_height="36dp"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:paddingStart="10dp"
-            android:paddingEnd="6dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="0dp"
             android:background="@drawable/quiz_overlay_title_bg">
 
-            <!-- 左侧留白作为拖动区域：标题栏只保留相似度、眼睛与关闭。 -->
-            <View
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
+            <!-- ===== 左侧：拖动手柄区（不参与横向滑动）=====
+                 双击此区域仍触发折叠/展开；横向拖动此区域移动整个悬浮窗。
+                 相似度胶囊放这里，既不挤占按钮滑动区，又天然成为拖动热区。 -->
             <TextView
-                android:id="@+id/tv_title"
+                android:id="@+id/tv_similarity_badge"
                 android:layout_width="wrap_content"
-                android:layout_height="20dp"
+                android:layout_height="18dp"
                 android:minWidth="0dp"
-                android:maxWidth="56dp"
-                android:layout_marginEnd="4dp"
+                android:maxWidth="44dp"
+                android:layout_marginStart="0dp"
+                android:layout_marginEnd="6dp"
                 android:gravity="center"
-                android:paddingStart="6dp"
-                android:paddingEnd="6dp"
+                android:paddingStart="5dp"
+                android:paddingEnd="5dp"
                 android:background="@drawable/quiz_similarity_badge_bg"
+                android:maxLines="1"
+                android:ellipsize="end"
                 android:text="检索中"
                 android:textColor="#FFFFFF"
                 android:textSize="9sp"
-                android:textStyle="bold"
-                android:maxLines="1"
-                android:ellipsize="end" />
+                android:textStyle="bold" />
 
-            <!-- 眼睛 / 关闭：统一 26dp 轻量圆形按钮，避免系统大图标显笨 -->
-            <!-- 区域选择：与眼睛同规格，点进框选 -->
+            <!-- 拖动死区：胶囊与按钮滑动区之间的固定空白，专供拖窗/双击。
+                 有真实宽度（非 0dp），确保手指一定有地方能抓住窗口拖动。
+                 importantForAccessibility=no：它是纯手势热区、无独立语义，
+                 否则 TalkBack 会把「拖动窗口」当成一个点不动的幽灵节点念出来。 -->
+            <View
+                android:id="@+id/title_drag_handle"
+                android:layout_width="20dp"
+                android:layout_height="match_parent"
+                android:importantForAccessibility="no" />
+
+            <!-- 状态色条已并入胶囊，保留 id 供旧逻辑兼容（1dp 不可见） -->
+            <View
+                android:id="@+id/status_bar"
+                android:layout_width="1dp"
+                android:layout_height="1dp"
+                android:visibility="gone" />
+
+            <!-- ===== 右侧：可横向滑动的按钮区 =====
+                 scrollbars=none：标题栏只有 36dp 高，滚动条会压住按钮。
+                 overScrollMode=never：避免滑到尽头出现光晕，干扰浮层观感。 -->
+            <HorizontalScrollView
+                android:id="@+id/title_actions_scroll"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:scrollbars="none"
+                android:overScrollMode="never"
+                android:fillViewport="false"
+                android:clipToPadding="false">
+
+                <LinearLayout
+                    android:id="@+id/title_actions_row"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+            <!-- 溢出菜单：区域选择 / 一键录入等低频动作收进这里，给眼睛留出空间 -->
             <ImageButton
-                android:id="@+id/btn_area"
+                android:id="@+id/btn_more"
                 android:layout_width="26dp"
                 android:layout_height="26dp"
-                android:layout_marginEnd="4dp"
+                android:layout_marginEnd="5dp"
                 android:padding="5dp"
-                android:src="@drawable/ic_region_overlay"
+                android:src="@drawable/ic_more_overlay"
                 android:background="@drawable/quiz_title_action_bg"
+                android:foreground="@drawable/quiz_btn_ripple"
                 android:scaleType="fitCenter"
                 android:tint="#F8FAFC"
                 android:alpha="0.95"
-                android:contentDescription="设置识别区域" />
-
-            <!-- 考试模式：一键进入题目录入，复用 OCR 校验/去重/保存链路 -->
-            <ImageButton
-                android:id="@+id/btn_quiz_entry"
-                android:layout_width="26dp"
+                android:contentDescription="更多功能（识别区域 / 一键录入）" />
+            <!-- AI 读屏：唯一「联网搜题」入口。
+                 用户 2026-09-13 第三次反馈：按钮带 sparkle 图标太宽，挤掉了
+                 左边的相似度胶囊。去掉图标、收窄到纯「AI」文字胶囊。 -->
+            <LinearLayout
+                android:id="@+id/btn_ai_vision"
+                android:layout_width="wrap_content"
                 android:layout_height="26dp"
                 android:layout_marginEnd="4dp"
-                android:padding="5dp"
-                android:src="@drawable/ic_quiz_entry_overlay"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="9dp"
+                android:paddingEnd="9dp"
+                android:minWidth="0dp"
+                android:background="@drawable/quiz_ai_button_bg"
+                android:foreground="@drawable/quiz_btn_ripple"
+                android:clickable="true"
+                android:focusable="true"
+                android:contentDescription="AI 联网搜题">
+                <TextView
+                    android:id="@+id/tv_ai_vision_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="AI"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:maxLines="1" />
+            </LinearLayout>
+
+            <!-- 框选识别范围：用户 2026-09-13 第五次反馈「帮框选识别范围的按钮
+                 也加回来」——此前为了保证标题栏不溢出，把它收进了 ⋯ 菜单，
+                 但用户找不到。现恢复为标题栏常驻按钮（眼睛图标，与「隐藏为
+                 小圆点」区分：这里是「框选」语义，用裁剪框图标）。
+                 宽度 26dp，与其它图标按钮一致；标题栏不够宽时会被
+                 applyTitleBarAdaptation 按优先级收起（眼睛/AI 优先保留）。 -->
+            <ImageButton
+                android:id="@+id/btn_region_entry"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:layout_marginEnd="4dp"
+                android:padding="4dp"
+                android:src="@drawable/ic_region_select"
                 android:background="@drawable/quiz_title_action_bg"
+                android:foreground="@drawable/quiz_btn_ripple"
                 android:scaleType="fitCenter"
                 android:tint="#F8FAFC"
                 android:alpha="0.95"
-                android:contentDescription="一键录入并保存题目" />
+                android:contentDescription="框选识别范围" />
 
             <ImageButton
                 android:id="@+id/btn_hide_overlay"
                 android:layout_width="26dp"
                 android:layout_height="26dp"
-                android:layout_marginEnd="4dp"
+                android:layout_marginEnd="3dp"
                 android:padding="5dp"
                 android:src="@drawable/ic_eye_overlay"
                 android:background="@drawable/quiz_title_action_bg"
+                android:foreground="@drawable/quiz_btn_ripple"
                 android:scaleType="fitCenter"
                 android:tint="#F8FAFC"
                 android:alpha="0.95"
                 android:contentDescription="隐藏为小圆点" />
 
+            <!-- 录入题目：用户 2026-09-13 明确要求「保留录入题目按钮」直接可见，
+                 不再藏进 ⋯ 菜单。图标 + 短标签，宽度与眼睛一致（26dp）。 -->
             <ImageButton
-                android:id="@+id/btn_close"
+                android:id="@+id/btn_quiz_entry"
                 android:layout_width="26dp"
                 android:layout_height="26dp"
+                android:layout_marginEnd="3dp"
                 android:padding="5dp"
-                android:src="@drawable/ic_close_overlay"
+                android:src="@drawable/ic_quiz_entry_overlay"
                 android:background="@drawable/quiz_title_action_bg"
+                android:foreground="@drawable/quiz_btn_ripple"
                 android:scaleType="fitCenter"
                 android:tint="#F8FAFC"
                 android:alpha="0.95"
-                android:contentDescription="关闭" />
+                android:contentDescription="录入题目" />
 
-            <!-- 保留旧操作 id 供无障碍/普通浮窗路径兼容；操作入口已从标题栏移除。 -->
+            <!-- 右安全边距（2026-09-18 截图定位「录入」按钮贴窗口右缘被裁）：
+                 12dp 留白从 title_actions_row 的 paddingEnd 移到内容里固定宽度的 Space。
+                 机制：HorizontalScrollView clipToPadding=false + fillViewport=false，
+                 超宽时 padding 会被吞、末按钮贴边裁切；而内容自带的 Space 随内容滚动，
+                 滚到最右仍有 12dp 余量。importantForAccessibility=no：纯留白热区，
+                 免 TalkBack 念出幽灵节点。 -->
+            <Space
+                android:layout_width="12dp"
+                android:layout_height="match_parent"
+                android:importantForAccessibility="no" />
+
+            <!-- 关闭按钮已移除（用户 2026-09-13：「那个叉没有必要」）。
+                 保留 id 为恒 GONE 占位，避免旧 findViewById 路径 NPE。 -->
+            <ImageButton
+                android:id="@+id/btn_close"
+                android:layout_width="1dp"
+                android:layout_height="1dp"
+                android:visibility="gone"
+                android:contentDescription="关闭（已废弃）" />
+
+            <!-- 区域/折叠/探针等保留旧 id 供无障碍/普通浮窗路径兼容。 -->
+            <View android:id="@+id/btn_area" android:layout_width="1dp" android:layout_height="1dp" android:visibility="gone" />
             <View android:id="@+id/btn_collapse" android:layout_width="1dp" android:layout_height="1dp" android:visibility="gone" />
             <View android:id="@+id/btn_probe" android:layout_width="1dp" android:layout_height="1dp" android:visibility="gone" />
             <View android:id="@+id/btn_search" android:layout_width="1dp" android:layout_height="1dp" android:visibility="gone" />
-            <View android:id="@+id/btn_more" android:layout_width="1dp" android:layout_height="1dp" android:visibility="gone" />
+                </LinearLayout><!-- /title_actions_row -->
+            </HorizontalScrollView><!-- /title_actions_scroll -->
         </LinearLayout>
 
-        <!-- 状态条：捕获/搜题/命中/未命中 -->
-        <View
-            android:id="@+id/status_bar"
+        <!-- 状态行：已并入标题栏胶囊（2026-09-13 第二轮优化）。
+             保留容器与 id 供旧渲染路径 findViewById 兼容，但高度归零不占位。 -->
+        <LinearLayout
+            android:id="@+id/status_row"
             android:layout_width="match_parent"
-            android:layout_height="3dp"
-            android:background="#4F46E5" />
+            android:layout_height="0dp"
+            android:orientation="horizontal"
+            android:visibility="gone" />
 
-        <!-- 摘要条已移除：相似度只在标题显示，答案只在正文显示，避免重复占高。 -->
 
         <!-- 题目区：限高，长题干在区内自滚，不挤占答案首屏 -->
         <ScrollView
             android:id="@+id/scroll_question"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:maxHeight="96dp"
+            android:maxHeight="80dp"
             android:fillViewport="false"
             android:overScrollMode="ifContentScrolls"
             android:scrollbars="vertical">
@@ -152,12 +255,54 @@
             android:layout_height="0.5dp"
             android:background="#E6EAF2" />
 
-        <!-- 答案区优先占剩余高度 -->
+        <!-- 读屏进度区：仅 AI 读屏期间可见。
+             用户 2026-09-13 第三次反馈「ai搜索时没有看到提示与进度」——
+             旧实现只有一条 2dp 细线，且倒计时文案写进**相似度胶囊**，
+             而窄窗下胶囊会被自适应收起 → 进度写进不可见的 View，等于没提示。
+             现改为「独立横幅（文字 + 进度条）」，不依赖胶囊是否可见。 -->
+        <LinearLayout
+            android:id="@+id/vision_progress_box"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#FFF7E6"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tv_vision_progress"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="4dp"
+                android:text="正在识别题目…"
+                android:textColor="#B45309"
+                android:textSize="11sp"
+                android:maxLines="1"
+                android:ellipsize="end" />
+
+            <ProgressBar
+                android:id="@+id/vision_progress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="3dp"
+                android:max="100"
+                android:progress="0"
+                android:progressTint="#F59E0B"
+                android:progressBackgroundTint="#FDE68A" />
+        </LinearLayout>
+
+        <!-- 答案区：**不**再独占剩余高度（weight），否则它会把下方的 AI 过程框
+             顶出窗外、被窗口底边裁掉 —— 用户 2026-09-14 反馈「ai搜题这个显示咋
+             只有一半，我看不完全」的真因就是它。
+             改为：内容驱动(wrap_content) + 自身可滚(maxHeight)，把剩余空间让给
+             过程框；AI 过程框常驻在最底部（窗口内），永远看得全。 -->
         <ScrollView
             android:id="@+id/scroll_answer"
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:maxHeight="200dp"
             android:fillViewport="false"
             android:overScrollMode="ifContentScrolls"
             android:nestedScrollingEnabled="true"
@@ -178,6 +323,80 @@
                 android:lineSpacingExtra="3dp"
                 android:textIsSelectable="false" />
         </ScrollView>
+
+        <!-- AI 作答过程：用户 2026-09-13 第五次反馈「ai回答时在答题悬浮窗下面
+             显示作答过程」。显示 AI 识图/推理/检索各阶段耗时与结论依据，
+             默认收起（不打断看答案），有过程内容时展开为可滚动的窄条。
+             注意：这是「过程」不是「思维链原文」——只展示可核对的阶段记录，
+             避免把上游模型的英文思维链直接糊给用户。 -->
+        <LinearLayout
+            android:id="@+id/ai_process_box"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#F1F5F9"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/ai_process_header"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="12dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="5dp"
+                android:paddingBottom="5dp"
+                android:background="#E2E8F0">
+
+                <TextView
+                    android:id="@+id/tv_ai_process_title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="AI 作答过程"
+                    android:textColor="#334155"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
+
+                <TextView
+                    android:id="@+id/tv_ai_process_toggle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="展开"
+                    android:textColor="#4F46E5"
+                    android:textSize="11sp"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="4dp"
+                    android:maxLines="1" />
+            </LinearLayout>
+
+            <ScrollView
+                android:id="@+id/scroll_ai_process"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxHeight="200dp"
+                android:minHeight="40dp"
+                android:visibility="gone"
+                android:scrollbars="vertical">
+
+                <TextView
+                    android:id="@+id/tv_ai_process"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="8dp"
+                    android:text=""
+                    android:textColor="#475569"
+                    android:textSize="12sp"
+                    android:lineSpacingExtra="3dp"
+                    android:textIsSelectable="true" />
+            </ScrollView>
+        </LinearLayout>
     </LinearLayout>
 
     <!-- 隐身态入口：仅显示极小半透明眼睛圆点，点击立即恢复完整答案窗。 -->
@@ -188,6 +407,7 @@
         android:layout_gravity="center"
         android:src="@drawable/ic_eye_overlay"
         android:background="@drawable/quiz_hidden_dot_bg"
+        android:foreground="@drawable/quiz_btn_ripple"
         android:padding="6dp"
         android:tint="#FFFFFF"
         android:alpha="0.48"
@@ -230,6 +450,7 @@
             android:layout_height="32dp"
             android:src="@drawable/ic_chevron_down"
             android:background="@android:color/transparent"
+            android:foreground="@drawable/quiz_btn_ripple"
             android:scaleType="center"
             android:tint="#FFFFFF"
             android:alpha="0.85"

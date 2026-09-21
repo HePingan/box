@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 框选识别范围图标：四角裁剪框（crop 语义），与「眼睛=隐藏」明确区分。
+     用户 2026-09-13 反馈「帮框选识别范围的按钮也加回来」，需要一眼可辨。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 左上角 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M3,9 V5 a2,2 0 0 1 2,-2 h4 v2 H5 v4 z" />
+    <!-- 右上角 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M15,3 h4 a2,2 0 0 1 2,2 v4 h-2 V5 h-4 z" />
+    <!-- 右下角 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M21,15 v4 a2,2 0 0 1 -2,2 h-4 v-2 h4 v-4 z" />
+    <!-- 左下角 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M9,21 H5 a2,2 0 0 1 -2,-2 v-4 h2 v4 h4 z" />
+</vector>

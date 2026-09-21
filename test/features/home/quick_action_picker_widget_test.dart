@@ -8,6 +8,7 @@
 //     但也不静默改存储（插件装回来顺序还能恢复）。
 library;
 
+import 'package:flutter/gestures.dart' show kLongPressTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -175,6 +176,53 @@ void main() {
     // 存储没被顺手清理——插件装回来后顺序还能恢复。
     final saved = await HomeQuickActionPrefs(cache: cache).readSelectedIds();
     expect(saved, contains('plugin_that_was_uninstalled'));
+  });
+
+  testWidgets('拖动已选项到后面，落盘顺序与视觉一致（不差一位）', (tester) async {
+    final cache = CacheStore.inMemory('picker_reorder_down');
+    final prefs = HomeQuickActionPrefs(cache: cache);
+
+    // 用 4 个真实插件，顺序已知，方便断言「移到第几位」。
+    final enabled = _builtIns.where((p) => p.enabled).take(4).toList();
+    expect(enabled.length, 4, reason: '需要 4 个启用插件才能测出差一位');
+    final ids = enabled.map((p) => p.id).toList();
+    await prefs.saveSelectedIds(ids);
+
+    await _pumpPicker(tester, prefs);
+
+    // 把第 0 项往下拖过第 1 项。ReorderableDragStartListener 包的是整个
+    // ListTile，所以直接拖标题所在位置。
+    final firstTitle = find.text(enabled[0].title);
+    final secondTitle = find.text(enabled[1].title);
+    final dy =
+        tester.getCenter(secondTitle).dy - tester.getCenter(firstTitle).dy;
+    expect(dy, greaterThan(0), reason: '第二项应排在第一项下方');
+
+    // longPress 起手（buildDefaultDragHandles: false + 手动 listener），
+    // 然后分几步移动，让框架的 _insertIndex 跟上。
+    final drag = await tester.startGesture(tester.getCenter(firstTitle));
+    await tester.pump(kLongPressTimeout + const Duration(milliseconds: 100));
+    for (var i = 0; i < 8; i++) {
+      await drag.moveBy(Offset(0, dy / 8));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await drag.up();
+    await tester.pumpAndSettle();
+
+    // 关键断言：原来的 [0,1,2,3] 应变成 [1,0,2,3]。
+    //
+    // 这里钉的正是 onReorder → onReorderItem 迁移的坑：框架的
+    // `_handleReorderItem` 对 onReorderItem 已经做了 `newIndex -= 1`，
+    // 而 onReorder 拿到的是未调整的「插入点」。迁移时若保留业务代码里
+    // 手动的 `if (target > oldIndex) target -= 1`，就会多减一次，
+    // 拖动结果差一位（这里会变成 [0,1,2,3] 没动或顺序错乱）。
+    final saved = await HomeQuickActionPrefs(cache: cache).readSelectedIds();
+    expect(
+      saved,
+      <String>[ids[1], ids[0], ids[2], ids[3]],
+      reason: '把第一项拖到第二项之后，落盘顺序应为 [1,0,2,3]；'
+          '若差一位说明 newIndex 被重复调整或漏调整。实测：$saved',
+    );
   });
 
   testWidgets('全部清空后显示引导文案而不是空白', (tester) async {

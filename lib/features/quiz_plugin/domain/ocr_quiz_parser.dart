@@ -1,3 +1,5 @@
+import 'quiz_diag.dart';
+
 /// 从 OCR 全文解析题干 / 选项 / 答案（适配驾考宝典等常见 UI）。
 ///
 /// 支持题型（用户截图样式）：
@@ -72,7 +74,36 @@ class OcrQuizParser {
     '查看完整技巧',
     '查看完整技巧>',
     '查看完整技巧>>',
+    // 计时练习模式顶部导航栏的纯标签（无数字时单独成行）。
+    '倒计时',
+    '剩余时间',
+    '答题时长',
+    '用时',
   };
+
+  /// 导航栏时间噪点：「倒计时40:10」「剩余时间 01:23」「用时 1:23:45」。
+  ///
+  /// 真实现象（2026-09-12 用户截图）：题库 App 顶部导航栏的「倒计时39:50」
+  /// 被 OCR 一起抓取，混进悬浮窗「题目」框首行。间歇性出现——只在计时练习
+  /// 模式下才显示该行。
+  ///
+  /// 设计取舍（为什么带前缀而不是裸 `^\d{1,3}:\d{2}$`）：
+  /// 裸时间正则会误伤题干正文里的时间（如「记分周期12:00」类表述），
+  /// 故必须要求「倒计时/剩余时间/用时/答题时长」等导航栏前缀词才判定为噪点。
+  /// 宁可漏掉无前缀的孤立时间行，也不能删掉题干里的真实内容。
+  static final _noiseTimeWithLabel = RegExp(
+    r'^\s*(倒计时|剩余时间|答题时长|用时)\s*[:：]?\s*\d{1,3}(?::\d{2}){1,2}\s*$',
+  );
+
+  /// 顶部导航栏整行：「← 倒计时33:43 设置」这类「返回箭头 + 倒计时 + 右侧图标名」。
+  ///
+  /// 与 [_noiseTimeWithLabel] 的区别：那是「该行只有倒计时」，这是「倒计时
+  /// 夹在导航栏其他 chrome 词中间」。两个正则都要求出现倒计时前缀词，因此
+  /// 同样不会误伤正文里的时间。
+  static final _noiseTimeInline = RegExp(
+    r'^[\s←→<>＜＞\-—–]*(倒计时|剩余时间|答题时长|用时)\s*[:：]?\s*'
+    r'\d{1,3}(?::\d{2}){1,2}\s*[\s|｜•·]*(设置|答题|背题|读题|收藏|速记|分享|客服|反馈|更多)?\s*[←→<>＜＞\-—–\s]*$',
+  );
 
   static final _noiseContains = <RegExp>[
     RegExp(r'适用于\d+道题'),
@@ -83,6 +114,12 @@ class OcrQuizParser {
     RegExp(r'点我讲'),
     RegExp(r'有问题'),
     RegExp(r'^[-—–\s]+$'),
+    // 答题页/首页进度条文案：「做题进度 41/100题 继续答题」。
+    // 真机 1.18.10 (233) 报告：这行曾被当成题干检索（fp=做题进度41/100题继续答题）。
+    // 必须**锚定**「做题进度」+数字/题，避免误杀含「进度」「答题」的真题干。
+    RegExp(r'^做题进度\s*\d+\s*/\s*\d+\s*题'),
+    RegExp(r'^做题进度\s*\d+\s*/\s*\d+\s*题?\s*继续答题$'),
+    RegExp(r'^继续答题$'),
   ];
 
   static OcrQuizParseResult parse(String raw) {
@@ -205,8 +242,10 @@ class OcrQuizParser {
         continue;
       }
 
-      // 题干：仅选项出现前收集
-      if (!sawOption && !_looksLikeChrome(line)) {
+      // 题干：仅选项出现前收集。
+      // 用 isAnalysisChrome（含解析页区块标记）而非旧的 _looksLikeChrome：
+      // 后者漏掉「视频讲解/相关问题」等，导致解析页帧会被解析成假题干。
+      if (!sawOption && !isAnalysisChrome(line)) {
         questionParts.add(line);
       }
     }
@@ -237,6 +276,35 @@ class OcrQuizParser {
 
     final mapped = _mapAnswerToOption(answer, finalOptions, isTrueFalse);
 
+    // 识别阶段现场：报障时最常问「字到底认对没有」。
+    // 记原始行数/去噪后行数，是为了区分两种失败：
+    //   行数正常但题干空 → 正则没吃到（解析器问题）
+    //   行数异常少       → 读屏/OCR 本身没拿到字（采集问题）
+    QuizDiag.log(
+      QuizDiagStage.parse,
+      'parsed',
+      fields: {
+        'rawLines': text.split('\n').length,
+        'lines': lines.length,
+        'type': isTrueFalse ? 'true_false' : 'single_choice',
+        'qLen': question.length,
+        'opts': finalOptions.length,
+        'answer': mapped.isEmpty ? '(空)' : mapped,
+        'sawOpt': sawOption,
+        'q': '"${QuizDiag.snip(question)}"',
+      },
+      level: (question.isEmpty || finalOptions.isEmpty)
+          ? LogLevel.warn
+          : LogLevel.info,
+    );
+    if (question.isEmpty) {
+      QuizDiag.warn(
+        QuizDiagStage.parse,
+        '题干为空：题库必然查不到，属解析器/采集问题',
+        fields: {'text': '"${QuizDiag.snip(text)}"'},
+      );
+    }
+
     return OcrQuizParseResult(
       question: question,
       options: finalOptions,
@@ -255,15 +323,97 @@ class OcrQuizParser {
     for (final re in _noiseContains) {
       if (re.hasMatch(t)) return true;
     }
+    // 导航栏时间噪点：「倒计时40:10」等（带前缀词，避免误伤题干里的时间）。
+    if (_noiseTimeWithLabel.hasMatch(t)) return true;
+    if (_noiseTimeInline.hasMatch(t)) return true;
     if (RegExp(r'收藏').hasMatch(t) && t.length < 12) return true;
     return false;
   }
 
-  static bool _looksLikeChrome(String line) {
-    return _isNoiseLine(line) ||
-        line.contains('技巧') ||
-        line.contains('解析') ||
-        line.contains('收藏');
+  /// 解析/技巧页的区块标记（题意外的页面结构文字）。
+  ///
+  /// 真机 1.18.9 (232) 日志（2026-09-12T21:19:20~21:19:28）暴露：
+  /// 用户答完题后 App 跳到解析页，采集抓到该帧 → 解析器正确判出题干为空，
+  /// 但**上游兜底逻辑**（`quiz_plugin_entry._questionFingerprint`）为拿到
+  /// 非空搜索键，取「第一个非选项行」→ 拿到 `本题技巧`
+  /// → `fp=本题技巧` 拿去做全量检索，必然不中且污染节流状态。
+  ///
+  /// 这里把「哪些行属于解析页结构」收敛成**单一事实源**，供兜底逻辑复用，
+  /// 避免各处再自发一套关键词表（历史缺陷：同类清单散落多处）。
+  static final _analysisChrome = RegExp(
+    r'(本题技巧|本题口诀|试题详解|题目解析|答案解析|视频讲解|相关问题|'
+    r'相关法规|答题技巧|记忆技巧|答案解析|查看解析|技巧解析)',
+  );
+
+  /// 该行是否为「解析页结构文字」而非题目正文。
+  /// 供兜底搜索键构造使用：若整帧只剩这类文字，说明屏幕上没有题干，
+  /// 应放弃本次检索，**绝不能**拿它当题干去搜。
+  ///
+  /// 注意：这里只判**结构性**标记（噪声行 / 整行就是区块标题 / 行首是解析区块标记）。
+  /// **不得**用裸子串 `contains('技巧')` 之类的判定 —— 真机 1.18.10 (233) 回归证明
+  /// 那会误杀「正确使用灯光的技巧是什么？」这类**正常题干**（题干里含「技巧」二字）。
+  static bool isAnalysisChrome(String line) {
+    final t = line.trim();
+    if (t.isEmpty) return true;
+    if (_isNoiseLine(t)) return true;
+    // 整行只是区块标题（如「视频讲解」「相关问题」「收藏」）
+    if (_analysisChrome.hasMatch(t) &&
+        _analysisChrome.firstMatch(t)!.group(0)!.length >= t.replaceAll(RegExp(r'[\s\W]'), '').length) {
+      return true;
+    }
+    // 行首是解析区块起始标记（如「- 试题详解」「本题技巧」「解析：」）
+    if (_analysisStart.hasMatch(t)) return true;
+    return false;
+  }
+
+  /// 整帧是否「没有任何可用题干候选」。
+  ///
+  /// 返回 true 时调用方应放弃检索（宁可不搜，也不要发假题干）。
+  ///
+  /// 关键语义（真机 1.18.10 (233) 报告修正）：**解析区块一旦开始，其后所有内容
+  /// 都是解析正文**，不可能是题干。仅逐行判断关键词是不够的 —— 解析正文本身
+  /// （如「红三角是危险报警闪光灯，人为.」）不含任何关键词，会被误判成候选。
+  static bool hasNoQuestionCandidate(String raw) {
+    final parsed = parse(raw);
+    if (parsed.question.trim().isNotEmpty) return false;
+    var inAnalysis = false;
+    for (final line in raw.split('\n')) {
+      final t = line.trim();
+      if (t.isEmpty) continue;
+      // 解析区块开始 → 其后全部是解析正文（含分析结论），不再有题干候选
+      if (_analysisStart.hasMatch(t) || _analysisChrome.hasMatch(t)) {
+        inAnalysis = true;
+        continue;
+      }
+      if (inAnalysis) continue;
+      if (isAnalysisChrome(t)) continue;
+      if (RegExp(r'^[A-HＡ-Ｈ][.、．:：)]').hasMatch(t)) continue;
+      return false; // 解析区之前存在非结构行 → 仍有题干候选
+    }
+    return true;
+  }
+
+  /// 从原始整帧里取「第一个解析区之前、且不是结构行/选项行」的行，
+  /// 作为兜底题干候选。解析区一旦开始，其后内容一律不取。
+  ///
+  /// 单一事实源：把「解析区边界」语义集中在这里，避免调用方各自实现一套
+  /// （历史缺陷：同类清单散落多处；1.18.10 (233) 就是因为兜底没复用该边界
+  /// 而把解析正文「红三角是危险报警闪光灯，人为.」当成题干去搜）。
+  static String firstQuestionCandidateLine(String raw) {
+    var inAnalysis = false;
+    for (final line in raw.split('\n')) {
+      final t = line.trim();
+      if (t.isEmpty) continue;
+      if (_analysisStart.hasMatch(t) || _analysisChrome.hasMatch(t)) {
+        inAnalysis = true;
+        continue;
+      }
+      if (inAnalysis) continue;
+      if (isAnalysisChrome(t)) continue;
+      if (RegExp(r'^[A-HＡ-Ｈ][.、．:：)]').hasMatch(t)) continue;
+      return t;
+    }
+    return '';
   }
 
   static String _cleanOptionBody(String body) {

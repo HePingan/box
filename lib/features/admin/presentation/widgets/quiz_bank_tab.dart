@@ -12,7 +12,73 @@ import '../../domain/quiz_bank_filter.dart';
 import '../../domain/quiz_bank_models.dart';
 import '../../domain/quiz_thumb_image_source.dart';
 
+import 'package:box/features/quiz_plugin/presentation/quiz_question_image_store.dart';
+
 part 'quiz_bank_tab_widgets.part.dart';
+
+/// 管理面板补图时算出的题图指纹。
+///
+/// 契约（见 box-quiz-ocr-plugin/references/manual-question-image-region-hash.md）：
+/// 用户上传的是**纯题目图片**（只有插图、无题干无选项），因此整图 dHash
+/// **同时**作为 `imagePerceptualHash` 与 `imageRegionHash`，两值相同。
+class QuizBankImageHashes {
+  const QuizBankImageHashes({
+    required this.perceptualHash,
+    required this.regionHash,
+  });
+
+  final String perceptualHash;
+  final String regionHash;
+}
+
+/// 补图指纹工具 —— 与 `QuizQuestionImageStore.computeDHash` 同源，
+/// 保证写进题库的 hash 与引擎 `_isValidDHash`（`^[0-9a-f]{16}$`）及
+/// 原生截图探针使用**同一套算法**。
+class QuizBankImageHash {
+  const QuizBankImageHash._();
+
+  /// 从 data URL（`data:image/png;base64,...`）算指纹。
+  ///
+  /// 解析失败返回 null（调用方降级为只传图，不阻断补图流程）。
+  static Future<QuizBankImageHashes?> computeFromDataUrl(String dataUrl) async {
+    final bytes = _bytesFromDataUrl(dataUrl);
+    if (bytes == null || bytes.isEmpty) return null;
+    return computeFromBytes(bytes);
+  }
+
+  /// 从原始字节算指纹。
+  static Future<QuizBankImageHashes?> computeFromBytes(Uint8List bytes) async {
+    if (bytes.isEmpty) return null;
+    try {
+      final dHash = await QuizQuestionImageStore.computeDHash(bytes);
+      if (dHash.isEmpty) return null;
+      return QuizBankImageHashes(perceptualHash: dHash, regionHash: dHash);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 把指纹塞进 payload（仅在算出来时），返回 payload 本身以便链式调用。
+  static void applyTo(Map<String, dynamic> payload, QuizBankImageHashes? hashes) {
+    if (hashes == null) return;
+    payload['imagePerceptualHash'] = hashes.perceptualHash;
+    payload['imageRegionHash'] = hashes.regionHash;
+  }
+
+  static Uint8List? _bytesFromDataUrl(String dataUrl) {
+    final trimmed = dataUrl.trim();
+    if (trimmed.isEmpty) return null;
+    final comma = trimmed.indexOf(',');
+    if (comma < 0) return null;
+    final payload = trimmed.substring(comma + 1);
+    if (payload.isEmpty) return null;
+    try {
+      return base64Decode(payload);
+    } catch (_) {
+      return null;
+    }
+  }
+}
 
 class QuizBankResourceProvider implements ResourceProvider<QuizBankQuestion> {
   QuizBankResourceProvider({QuizBankAdminClient? client})
@@ -62,6 +128,22 @@ class QuizBankResourceProvider implements ResourceProvider<QuizBankQuestion> {
         token: _required(token, '管理员令牌'),
         id: id,
       );
+
+  /// 标记/取消标记「问题题」—— 复用既有「残缺」队列。
+  /// 不走 [ResourceProvider] 接口，因为它是题库特有的语义，不是通用 CRUD。
+  Future<QuizBankQuestion> flagIssue(
+    String? serverUrl,
+    String? token,
+    String id, {
+    String reason = '',
+    bool flagged = true,
+  }) => _client.flagQuestionAsIssue(
+    serverUrl: _required(serverUrl, '服务器地址'),
+    token: _required(token, '管理员令牌'),
+    id: id,
+    reason: reason,
+    flagged: flagged,
+  );
 
   @override
   Widget buildListPage({
@@ -175,6 +257,8 @@ class QuizBankResourceProvider implements ResourceProvider<QuizBankQuestion> {
     required List<String> ids,
     String category = '',
     String image = '',
+    String imagePerceptualHash = '',
+    String imageRegionHash = '',
   }) => _client.bulkUpdateQuestions(
     serverUrl: serverUrl,
     token: token,
@@ -182,6 +266,8 @@ class QuizBankResourceProvider implements ResourceProvider<QuizBankQuestion> {
     ids: ids,
     category: category,
     image: image,
+    imagePerceptualHash: imagePerceptualHash,
+    imageRegionHash: imageRegionHash,
   );
 
   Future<void> completeIncomplete(
@@ -192,6 +278,8 @@ class QuizBankResourceProvider implements ResourceProvider<QuizBankQuestion> {
     String category = '',
     String analysis = '',
     String? image,
+    String imagePerceptualHash = '',
+    String imageRegionHash = '',
   }) => _client.completeIncomplete(
     serverUrl: serverUrl,
     token: token,
@@ -200,6 +288,8 @@ class QuizBankResourceProvider implements ResourceProvider<QuizBankQuestion> {
     category: category,
     analysis: analysis,
     image: image,
+    imagePerceptualHash: imagePerceptualHash,
+    imageRegionHash: imageRegionHash,
   );
 
   Future<String> uploadQuizImage(
@@ -543,6 +633,7 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
                     }),
                     onEdit: () => _edit(question),
                     onEditImage: () => _editImage(question),
+                    onFlagIssue: () => _flagIssue(question),
                     onDelete: () => _delete(question),
                   );
                 },
@@ -671,11 +762,10 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
 
   Future<void> _bulkSetImage() async {
     if (_selectedIds.isEmpty) return;
-    final pick = await FilePicker.pickFiles(
+    final file = await FilePicker.pickFile(
       type: FileType.image,
     );
-    if (pick == null || pick.files.isEmpty) return;
-    final file = pick.files.first;
+    if (file == null) return;
     Uint8List bytes;
     try {
       bytes = await file.readAsBytes();
@@ -704,12 +794,17 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
         widget.token,
         dataUrl,
       );
+      // 补图必须同时带指纹：服务端从不计算 dHash，只从请求体读。
+      // 不带 ⇒ 入库题「有图无指纹」⇒ 引擎 _bestImageScore 直接 -1 ⇒ 仍二选一。
+      final hashes = await QuizBankImageHash.computeFromBytes(bytes);
       final result = await widget.provider.bulkUpdateQuestions(
         widget.serverUrl,
         widget.token,
         action: 'set_image',
         ids: _selectedIds.toList(),
         image: url,
+        imagePerceptualHash: hashes?.perceptualHash ?? '',
+        imageRegionHash: hashes?.regionHash ?? '',
       );
       if (!mounted) return;
       _exitSelection();
@@ -747,7 +842,9 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
         items: items,
         onComplete: (id, answer, category, analysis, imageData) async {
           String? imageUrl;
+          QuizBankImageHashes? hashes;
           if (imageData != null && imageData.isNotEmpty) {
+            hashes = await QuizBankImageHash.computeFromDataUrl(imageData);
             imageUrl = await widget.provider.uploadQuizImage(
               widget.serverUrl,
               widget.token,
@@ -762,6 +859,8 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
             category: category,
             analysis: analysis,
             image: imageUrl,
+            imagePerceptualHash: hashes?.perceptualHash ?? '',
+            imageRegionHash: hashes?.regionHash ?? '',
           );
         },
         onBulk: (action, ids, category, {String correctAnswer = ''}) async {
@@ -833,15 +932,14 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
 
   Future<void> _importJson() async {
     try {
-      final picked = await FilePicker.pickFiles(
+      final picked = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: const ['json'],
       );
-      final files = picked?.files ?? const <PlatformFile>[];
-      if (files.length != 1) {
+      if (picked == null) {
         return;
       }
-      final bytes = await files.first.readAsBytes();
+      final bytes = await picked.readAsBytes();
       if (bytes.isEmpty) {
         return;
       }
@@ -947,12 +1045,15 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
       final payload = Map<String, dynamic>.from(data);
       final imageData = payload.remove('imageData')?.toString();
       if (imageData != null && imageData.isNotEmpty) {
+        final hashes = await QuizBankImageHash.computeFromDataUrl(imageData);
         final url = await widget.provider.uploadQuizImage(
           widget.serverUrl,
           widget.token,
           imageData,
         );
         if (url.isNotEmpty) payload['image'] = url;
+        // 新建/编辑只要挂了图，就必须一并写指纹（否则又是「有图无指纹」）。
+        QuizBankImageHash.applyTo(payload, hashes);
       }
       if (question == null) {
         final created = await widget.provider.create(
@@ -1027,11 +1128,86 @@ class _QuizBankAdminTabState extends State<QuizBankAdminTab> {
     }
   }
 
+  /// 标记/取消标记「问题题」。走既有「残缺」队列：标记后 status=incomplete，
+  /// 管理端「残缺」格可见、可逐条补答案/传图；取消标记则回到 published。
+  ///
+  /// 不猜答案：题干相同而答案由图决定的题，无图无从判断对错，
+  /// 标记出来等真实题图出现时再定，比瞎猜安全。
+  Future<void> _flagIssue(QuizBankQuestion question) async {
+    final isFlagged = question.status == 'incomplete';
+    var note = '需按图确认答案';
+    if (!isFlagged) {
+      final controller = TextEditingController(text: note);
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('标记为问题题？'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${question.question}\n\n'
+                '标记后进入「残缺」队列，可在那里逐条补答案或传题图。',
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                maxLength: 120,
+                decoration: const InputDecoration(
+                  labelText: '问题说明（可选，便于以后回看）',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('标记', style: TextStyle(color: Color(0xFFF59E0B))),
+            ),
+          ],
+        ),
+      );
+      note = controller.text.trim();
+      controller.dispose();
+      if (confirmed != true) return;
+    }
+    try {
+      final updated = await widget.provider.flagIssue(
+        widget.serverUrl,
+        widget.token,
+        question.id,
+        reason: isFlagged ? '' : note,
+        flagged: !isFlagged,
+      );
+      if (!mounted) return;
+      setState(() {
+        _questions = _questions
+            .map((item) => item.id == question.id ? updated : item)
+            .toList(growable: false);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(isFlagged ? '已取消问题标记' : '已标记为问题题')),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
   Future<void> _editImage(QuizBankQuestion question) async {
-    final picked = await FilePicker.pickFiles(
+    final file = await FilePicker.pickFile(
       type: FileType.image,
     );
-    final file = picked?.files.isNotEmpty == true ? picked!.files.first : null;
     if (file == null) return;
     final bytes = await file.readAsBytes();
     if (bytes.isEmpty) return;

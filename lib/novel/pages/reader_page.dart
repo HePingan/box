@@ -76,6 +76,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// 不去重会把 AppLogger 的环形缓冲刷满，真正的证据反而被挤掉）。
   String _lastLoggedLayoutSignature = '';
 
+  /// 上一条已记录的脏 inset 签名（原始 topPad/窗口高）。同样只为日志去重：
+  /// 脏帧可能连续多帧出现，不去重会把 BOGUS_INSET 刷满缓冲。
+  String _lastLoggedBogusInset = '';
+
   // 菜单是否可见（用于通知 View 在菜单打开时不重算页高）
   bool _menuVisible = false;
 
@@ -297,9 +301,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // 26.47/26.48/26.50/27.70 反复报正确尺寸，而没有任何东西请求重建，
     // LayoutBuilder 再也不重跑，spinner 就永久留在屏上。
     //
-    // 只要引擎报了尺寸变化就主动重建一次：下一帧 MediaQuery 已刷新，
-    // 守卫拿到正常的 topPad 就会放行。代价：每次尺寸变化多一次 build
+    // 只要引擎报了尺寸变化就主动重建一次。代价：每次尺寸变化多一次 build
     // （日志实测一轮切换约 10 次，都是 O(1) 的 setState，不触发重排）。
+    //
+    // 更正（v1.14.1+215 真机日志）：这里原本写「下一帧 MediaQuery 已刷新，
+    // 守卫拿到正常的 topPad 就会放行」—— 那个前提是错的。日志显示其后
+    // 20:41:42 连续三次重建拿到的 topPad 依旧是脏的 614.4，脏值不会自愈。
+    // 真正的修复在 ReaderLayoutMetrics.resolveTopPad（几何层丢弃脏 inset）；
+    // 这里的重建只负责「尺寸真的变好时能重跑布局」，不再承担消脏职责。
     setState(() {});
   }
 
@@ -1058,7 +1067,30 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     BuildContext context,
     BoxConstraints constraints,
   ) {
-    final topPad = MediaQuery.of(context).padding.top;
+    // OriginOS 在多窗口过渡帧里会把 padding.top 报成整个窗口高度
+    // （v1.14.1+215 真机日志 topPad=614.4 / 窗口高 614.4），照用会算出
+    // availableForText=-54.0 → 正文高 0 → SPINNER#1 永久转圈。
+    // 脏值不会自愈（日志里其后三次重建拿到的仍是 614.4），必须在这里丢弃。
+    final rawTopPad = MediaQuery.of(context).padding.top;
+    final topPad = ReaderLayoutMetrics.resolveTopPad(
+      rawTopPad,
+      maxHeight: constraints.maxHeight,
+    );
+    if (topPad != rawTopPad) {
+      // 报障人无 adb，脏值是否发生过只能靠 App 内日志取证。
+      // 按签名去重，避免每帧刷一条把真正的证据挤出环形缓冲。
+      final insetSignature =
+          '${rawTopPad.toStringAsFixed(1)}/${constraints.maxHeight.toStringAsFixed(1)}';
+      if (insetSignature != _lastLoggedBogusInset) {
+        _lastLoggedBogusInset = insetSignature;
+        ReaderDebugLog.log(
+          'LAYOUT: BOGUS_INSET discarded rawTopPad=${rawTopPad.toStringAsFixed(1)} '
+          'maxHeight=${constraints.maxHeight.toStringAsFixed(1)} '
+          'fraction=${(rawTopPad / constraints.maxHeight).toStringAsFixed(2)} '
+          'usedTopPad=${topPad.toStringAsFixed(1)}',
+        );
+      }
+    }
     // 小窗里窗口可以窄到 100dp 上下，绝不能给排版宽加 200 的下限。
     // 判据与理由见 ReaderLayoutMetrics.resolveFitWidth。
     final fitWidth = ReaderLayoutMetrics.resolveFitWidth(constraints.maxWidth);

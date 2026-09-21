@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'package:box/core/storage/cache_store.dart';
+import 'package:box/features/content/domain/warehouse_cleanup.dart'
+    show warehouseNamespace;
 
 enum WarehouseCategory { books, comics, videos, music }
 
@@ -118,7 +120,7 @@ class WarehouseItem {
       detailUrl: json['detailUrl']?.toString() ?? '',
       meta: json['meta']?.toString() ?? '',
       category: category,
-      sourceLabel: json['sourceLabel']?.toString() ?? '手动收藏',
+      sourceLabel: json['sourceLabel']?.toString() ?? manualSourceLabel,
       createdAt: _asInt(
         json['createdAt'],
         DateTime.now().millisecondsSinceEpoch,
@@ -129,7 +131,7 @@ class WarehouseItem {
 
 class WarehouseStore {
   WarehouseStore({CacheStore? cache})
-    : _cache = cache ?? CacheStore(namespace: 'warehouse_center');
+    : _cache = cache ?? CacheStore(namespace: warehouseNamespace);
 
   final CacheStore _cache;
 
@@ -137,7 +139,10 @@ class WarehouseStore {
 
   Future<List<WarehouseItem>> load(WarehouseCategory category) async {
     final raw = await _cache.read(_key(category));
-    if (raw is! List) return const [];
+    // 必须返回可变空列表：add()/remove() 会直接对返回值 removeWhere/insert，
+    // 返回 const [] 会在「首次收藏（缓存里还没有这个 key）」时抛
+    // Unsupported operation: Cannot remove from an unmodifiable list。
+    if (raw is! List) return <WarehouseItem>[];
 
     final list = <WarehouseItem>[];
     for (final item in raw) {
@@ -186,7 +191,41 @@ class WarehouseStore {
     list.removeWhere((e) => e.uniqueKey == key);
     await save(category, list);
   }
+
+  /// 手填收藏入口下线后的一次性清理。
+  ///
+  /// 手填对话框（`_showAddDialog`）是内容页 ＋ 和「导入资源」卡背后的同一个
+  /// 实现，写出的条目 `sourceLabel == '手动收藏'`。入口撤掉后这些条目再没有
+  /// 任何可维护它们的界面 —— 既不能编辑也不能新增，只能看着，属于死数据。
+  ///
+  /// 清理只动 `warehouse_center` 这个 namespace 里 `sourceLabel == '手动收藏'`
+  /// 的条目。书架条目（`sourceLabel == '书架'`）来自
+  /// `NovelModule.bookshelf` 实时同步，压根不落在这个 store 里，因此不受影响；
+  /// 万一历史数据里混进了非手填条目，这里也会原样保留，不做连带删除。
+  ///
+  /// 幂等：重复调用只会返回 0。返回实际清理的条目数。
+  Future<int> purgeManualEntries() async {
+    var removed = 0;
+    for (final category in WarehouseCategory.values) {
+      final list = await load(category);
+      if (list.isEmpty) continue;
+      final kept = list
+          .where((e) => e.sourceLabel != manualSourceLabel)
+          .toList();
+      final delta = list.length - kept.length;
+      if (delta == 0) continue;
+      await save(category, kept);
+      removed += delta;
+    }
+    return removed;
+  }
 }
+
+/// 手填收藏的来源标记。
+///
+/// 以前这个字符串在对话框构造处和 `fromJson` 兜底处各写一遍字面量，
+/// 清理逻辑要认这个值，散着写迟早对不上。
+const String manualSourceLabel = '手动收藏';
 
 int _asInt(dynamic value, [int fallback = 0]) {
   if (value == null) return fallback;

@@ -8,22 +8,22 @@ void main() {
     test('同文同选项不同图片指纹：decide 不会错误关联不同图片版本', () {
       // 本地有两道同题干同选项但图片不同的待审核题
       final locals = [
-        QuizBankItem(
+        const QuizBankItem(
           id: 'local-a',
           question: '以下哪项是正确的？',
           type: QuizQuestionType.singleChoice,
-          options: const ['选项A', '选项B', '选项C', '选项D'],
+          options: ['选项A', '选项B', '选项C', '选项D'],
           correctAnswer: 'A',
           imageSha256: 'aaaaaa',
           imagePerceptualHash: 'ffff0000ffff0000',
           syncStatus: QuizSyncStatus.pendingReview,
           remoteSubmissionId: 'remote-a',
         ),
-        QuizBankItem(
+        const QuizBankItem(
           id: 'local-b',
           question: '以下哪项是正确的？',
           type: QuizQuestionType.singleChoice,
-          options: const ['选项A', '选项B', '选项C', '选项D'],
+          options: ['选项A', '选项B', '选项C', '选项D'],
           correctAnswer: 'A',
           imageSha256: 'bbbbbb',
           imagePerceptualHash: '0000ffff0000ffff',
@@ -34,19 +34,19 @@ void main() {
 
       // 云端有两条对应的投稿（均已审核通过）
       final remotes = [
-        QuizCloudSubmission(
+        const QuizCloudSubmission(
           id: 'remote-a',
           status: 'approved',
           question: '以下哪项是正确的？',
-          options: const ['选项A', '选项B', '选项C', '选项D'],
+          options: ['选项A', '选项B', '选项C', '选项D'],
           imageSha256: 'aaaaaa',
           imagePerceptualHash: 'ffff0000ffff0000',
         ),
-        QuizCloudSubmission(
+        const QuizCloudSubmission(
           id: 'remote-b',
           status: 'approved',
           question: '以下哪项是正确的？',
-          options: const ['选项A', '选项B', '选项C', '选项D'],
+          options: ['选项A', '选项B', '选项C', '选项D'],
           imageSha256: 'bbbbbb',
           imagePerceptualHash: '0000ffff0000ffff',
         ),
@@ -67,11 +67,11 @@ void main() {
 
     test('同文同选项同图片指纹：decide 正确关联同一图片版本', () {
       final locals = [
-        QuizBankItem(
+        const QuizBankItem(
           id: 'local-1',
           question: '以下哪项是正确的？',
           type: QuizQuestionType.singleChoice,
-          options: const ['选项A', '选项B', '选项C', '选项D'],
+          options: ['选项A', '选项B', '选项C', '选项D'],
           correctAnswer: 'A',
           imageSha256: 'aaaaaa',
           imagePerceptualHash: 'ffff0000ffff0000',
@@ -80,11 +80,11 @@ void main() {
       ];
 
       final remotes = [
-        QuizCloudSubmission(
+        const QuizCloudSubmission(
           id: 'remote-same',
           status: 'approved',
           question: '以下哪项是正确的？',
-          options: const ['选项A', '选项B', '选项C', '选项D'],
+          options: ['选项A', '选项B', '选项C', '选项D'],
           imageSha256: 'aaaaaa',
           imagePerceptualHash: 'ffff0000ffff0000',
         ),
@@ -102,22 +102,22 @@ void main() {
 
     test('无图片指纹时回退到题干+选项指纹进行兜底关联', () {
       final locals = [
-        QuizBankItem(
+        const QuizBankItem(
           id: 'local-noimage',
           question: '以下哪项是正确的？',
           type: QuizQuestionType.singleChoice,
-          options: const ['选项A', '选项B', '选项C', '选项D'],
+          options: ['选项A', '选项B', '选项C', '选项D'],
           correctAnswer: 'A',
           syncStatus: QuizSyncStatus.pendingReview,
         ),
       ];
 
       final remotes = [
-        QuizCloudSubmission(
+        const QuizCloudSubmission(
           id: 'remote-noimage',
           status: 'approved',
           question: '以下哪项是正确的？',
-          options: const ['选项A', '选项B', '选项C', '选项D'],
+          options: ['选项A', '选项B', '选项C', '选项D'],
           // 无 imageSha256/imagePerceptualHash
         ),
       ];
@@ -134,11 +134,11 @@ void main() {
 
     test('云端同文同选项多版本时，仅单匹配才关联', () {
       final locals = [
-        QuizBankItem(
+        const QuizBankItem(
           id: 'local-ambiguous',
           question: '以下哪项是正确的？',
           type: QuizQuestionType.singleChoice,
-          options: const ['选项A', '选项B', '选项C', '选项D'],
+          options: ['选项A', '选项B', '选项C', '选项D'],
           correctAnswer: 'A',
           syncStatus: QuizSyncStatus.pendingReview,
           // 无图片指纹，使用兜底文本指纹
@@ -146,19 +146,19 @@ void main() {
       ];
 
       final remotes = [
-        QuizCloudSubmission(
+        const QuizCloudSubmission(
           id: 'remote-v1',
           status: 'approved',
           question: '以下哪项是正确的？',
-          options: const ['选项A', '选项B', '选项C', '选项D'],
+          options: ['选项A', '选项B', '选项C', '选项D'],
           imageSha256: 'version1',
           imagePerceptualHash: 'hash1',
         ),
-        QuizCloudSubmission(
+        const QuizCloudSubmission(
           id: 'remote-v2',
           status: 'approved',
           question: '以下哪项是正确的？',
-          options: const ['选项A', '选项B', '选项C', '选项D'],
+          options: ['选项A', '选项B', '选项C', '选项D'],
           imageSha256: 'version2',
           imagePerceptualHash: 'hash2',
         ),

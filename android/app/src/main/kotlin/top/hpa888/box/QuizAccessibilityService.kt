@@ -63,6 +63,11 @@ class QuizAccessibilityService : AccessibilityService() {
         private const val KEY_IMAGE_REGION = "quiz_image_region"
         private const val KEY_OVERLAY_GEOMETRY = "quiz_overlay_geometry"
         private const val KEY_OVERLAY_COMPACT_MIGRATED = "quiz_overlay_compact_migrated_v4"
+        // v5：修复 defaultOverlaySize() 的 px/dp 混用（旧窗仅 137dp，标题栏放不下）。
+        // 记录已迁移的尺寸 schema 版本，避免每次启动都重算覆盖用户手动缩放的尺寸。
+        private const val KEY_OVERLAY_SIZE_SCHEMA = "quiz_overlay_size_schema"
+        // 折叠卡死修复的一次性迁移标记（见 loadPersistedState 里的说明）。
+        private const val KEY_OVERLAY_COLLAPSE_SCHEMA = "quiz_overlay_collapse_schema"
         private const val KEY_OVERLAY_OPACITY = "quiz_overlay_opacity"
         private const val KEY_OVERLAY_FONT_SCALE = "quiz_overlay_font_scale"
         private const val KEY_HIDDEN_DOT = "quiz_overlay_hidden_dot"
@@ -70,7 +75,17 @@ class QuizAccessibilityService : AccessibilityService() {
         private const val KEY_ANSWER_ONLY = "quiz_answer_only"
         private const val KEY_ANSWER_ONLY_BEFORE_EXAM = "quiz_answer_only_before_exam"
         private const val KEY_PRE_EXAM_GEOMETRY = "quiz_pre_exam_geometry"
+        /** 考试窗记忆位置 "x,y"（P1-1：与普通模式位置分离，互不污染）。 */
+        private const val KEY_EXAM_GEOMETRY = "quiz_exam_geometry"
         private const val KEY_EXAM_OVERLAY_SIZE = "quiz_exam_overlay_size"
+        /**
+         * 手动开关考试模式的持久化标志。
+         *
+         * 2026-09-17 P1：区分「⋯ 菜单手动开」与「前台 App 自动进入」。
+         * 只有前者跨服务重启存活；后者是会话级状态，启动时清除，
+         * 避免 e7382f5 的「残留 examMode」stuck-state 复发。
+         */
+        private const val KEY_EXAM_MODE_MANUAL = "quiz_exam_mode_manual"
         private const val KEY_CLICK_THROUGH = "quiz_click_through_collapsed"
         private const val KEY_THEME_COLOR = "quiz_theme_color"
         private const val KEY_COLLAPSED = "quiz_overlay_collapsed"
@@ -81,6 +96,15 @@ class QuizAccessibilityService : AccessibilityService() {
         // 悬浮窗尺寸/字号约束（默认更宽，避免标题按钮挤压与文字被截断）
         private const val OVERLAY_MIN_WIDTH_DP = 240
         private const val OVERLAY_MIN_HEIGHT_DP = 140
+
+        /**
+         * 内容自适应时预留的竖向余量（dp）：覆盖 padding 与区块间距。
+         *
+         * 少了它会「刚好差几行」把过程框最后一行裁掉 —— 用户看到的就是
+         * 「AI 作答过程只显示一半」。调大 = 留更多余量（窗口略高）；调小反之。
+         */
+        private const val OVERLAY_VERTICAL_SLACK_DP = 28
+        // 用户 2026-09-13 明确要求「扩大长宽高，扩大 1.5 倍」。
         private val FONT_SCALE_STEPS = floatArrayOf(0.85f, 1.0f, 1.2f, 1.45f)
         private val THEME_COLORS = intArrayOf(
             0xFF4F46E5.toInt(), // 靛蓝
@@ -264,6 +288,13 @@ class QuizAccessibilityService : AccessibilityService() {
             return true
         }
 
+        /** 更新 AI 作答过程（供 Flutter 侧在搜题各阶段推送，显示在答案下方）。 */
+        fun updateAiProcessIfRunning(text: String?): Boolean {
+            val svc = runningService ?: return false
+            svc.updateAiProcess(text)
+            return true
+        }
+
         /** 用题图区域截图并计算 dHash（供 Flutter 侧消歧用）。 */
         fun captureImageRegionIfRunning(
             requestId: Int,
@@ -435,6 +466,14 @@ class QuizAccessibilityService : AccessibilityService() {
     private var overlayAnswers = ""
     private var overlayStatus = "idle"
     private var overlayAnswerKey: String? = null
+
+    // 读屏进度 ticker（2026-09-13）：每秒刷新徽章倒计时/阶段文案/进度条。
+    // 最坏要等满 45s，静态文案会让用户以为卡死。
+    private val visionTickerHandler = Handler(Looper.getMainLooper())
+    private var visionTickerRunnable: Runnable? = null
+    private var visionStartedAt = 0L
+    /** 手动 AI 读屏是否在运行（markVisionRunning 维护；汇聚点按 VisionRunningStatePolicy 消费）。 */
+    @Volatile private var visionRunning = false
     private var overlaySimilarity: Int? = null
     private var overlayMatchIndex = 0
     private var overlayMatchCount = 1
@@ -474,6 +513,17 @@ class QuizAccessibilityService : AccessibilityService() {
     private var lastVolumeDownAt = 0L
     private var volumeDownTapPending = false
     private var volumeDownResetTask: Runnable? = null
+    // D4（2026-09-19）：双击计时跨 attachDragHandler 保留（旧版是闭包局部，
+    // 重建视图后清零，导致跨重建的双击被误判）。lastTitleTapInTitleArea 记录
+    // "上一次 tap 是否落在标题区"，配合 D2 放宽判据。
+    private var lastTitleTapTime = 0L
+    private var lastTitleTapInTitleArea = false
+    // E1（2026-09-19）：前台包重算节流时间戳。TYPE_WINDOW_CONTENT_CHANGED /
+    // TYPE_VIEW_SCROLLED 可能在一秒内连发几十条（同题动画/滚动），但其中
+    // 携带的前台包名变化才是切题信号。用固定间隔节流，去重后仅当包名真的
+    // 变了才走 handleForegroundPackage（自动进/出考试态），避免动画连发
+    // 导致考试态反复抖动。
+    private var lastAutoExamRecheckAt = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -499,12 +549,85 @@ class QuizAccessibilityService : AccessibilityService() {
         runningService = this
         isActive = true
         // 恢复持久化外观
+        // ⚠️ 用户 2026-09-15 第 N+1 次反馈「答题悬浮窗大小还是没有变化」，并附真机日志。
+        //
+        // ## 真因（本次由日志闭环实证，非推测）
+        // 日志显示尺寸决策**完全正确**：
+        //   overlay.default  screen=1260x2800px density=3.5 -> 1184x1540px (338x440dp)
+        //   overlay.result(no-prefs) 1184x1540px (338x440dp)   ← 94% 屏宽，正是期望值
+        // 但真机截图里窗口只有 ~500px（40% 屏宽），且**贴右上角、文字被底边裁断**。
+        //
+        // 500px + 右上角 + 内容返回 0 —— 三者同时出现只对应一条路径：
+        // **考试模式**（examOverlayDimensions() 的 else 分支 = 0.46*屏宽 夹到 [300,500]，
+        //   定位 x = 屏宽 - w - 3%、y = 8%）。且 decideOverlayGeometry() 的
+        //   ① if (input.examMode) 分支在**最前面**直接返回考试尺寸，绕过所有宽高/下限逻辑；
+        //   currentContentNeededHeight() 又因 `if (examMode || answerOnlyMode) return 0`
+        //   恒返回 0 → 过程/答案框永远只放得下一行 → 「只显示一半」。
+        // 这就是为什么此前每一次「尺寸修复」在真机上都像没生效 —— 修复压根不在被执行的路径上。
+        //
+        // ## 为什么会卡住（与 KEY_COLLAPSED 同型的 stuck-state bug）
+        // 考试模式由**前台 App 自动进入**（handleForegroundPackage → autoExamByForeground），
+        // 而 autoExamByForeground 是**内存标志**，examMode 却**持久化**。
+        // 服务被杀/重启后 autoExamByForeground 归 false、examMode 从 prefs 恢复 true，
+        // 两个退出条件（:676 / :684）都要求 autoExamByForeground == true → **永不触发**。
+        // 用户从此永久卡在考试小窗，且 UI 上没有任何「已进入考试模式」的提示。
+        //
+        // ## 修法
+        // 自动进入的考试模式**本质上是会话级状态**，跨重启存活没有任何合法语义
+        // （真正的考试模式有独立开关，重启后会重新进入）。故启动时无条件清掉持久化的
+        // examMode，让它回到普通大窗；用户若确实在考试，前台切换会立刻重新进入。
+        // 与 KEY_COLLAPSED 的一次性迁移同理，但这里**每次启动都清**——
+        // 因为「残留的 examMode」永远是 bug，不存在需要保留的场景。
+        // ⚠️ 2026-09-17 P1：只清除「自动进入」的残留考试态，保留「手动开关」的。
+        //
+        // 背景（e7382f5 的 stuck-state 修复）：考试模式可**自动进入**（前台 App
+        // 触发 → autoExamByForeground，内存标志）也可**手动开关**（⋯ 菜单）。
+        // 自动进入是会话级状态，服务重启后 autoExamByForeground 归 false 而
+        // examMode 从 prefs 恢复 true，两个退出条件都要求 autoExamByForeground==true
+        // → 永不触发 → 用户永久卡在考试小窗。
+        //
+        // 但 e7382f5 的做法是**无条件**清 examMode，把手动开的也一并清掉了 ——
+        // 手动是用户明确意图，跨重启应存活。现用 KEY_EXAM_MODE_MANUAL 区分：
+        // 手动路径 setExamMode 时置 true，自动路径（handleForegroundPackage /
+        // reapplyAutoExamFromConfig）不置。启动时只清「非手动」的残留。
+        run {
+            val p = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val manual = p.getBoolean(KEY_EXAM_MODE_MANUAL, false)
+            if (p.getBoolean(KEY_EXAM_MODE, false) && !manual) {
+                logDebug("migrate: clear auto-entered stale exam mode (stuck small-window fix)")
+                p.edit()
+                    .putBoolean(KEY_EXAM_MODE, false)
+                    .apply()
+            }
+        }
         examMode = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(KEY_EXAM_MODE, false)
         answerOnlyMode = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(KEY_ANSWER_ONLY, false)
         clickThroughWhenCollapsed = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(KEY_CLICK_THROUGH, false)
+        // ⚠️ 用户 2026-09-15 第 N 次反馈「答题悬浮窗还是没有变化，ai搜题显示也没有优化」。
+        // 真因之一：折叠态是**持久化**的（KEY_COLLAPSED），而折叠时窗口是
+        // WRAP_CONTENT 窄条（真机实测仅 39% 屏宽）。用户折叠过一次后，除手动点
+        // 「重置悬浮窗大小」外无任何清除点 → 跨重启、跨升级永久卡在小窗，
+        // 于是每次升级用户都说「还是没变化」——其实新版的大窗逻辑根本没机会生效。
+        //
+        // 一次性 schema：升级到含本次修复的版本时，无条件清掉历史折叠态。
+        // 与 :3345 那段「别做一次性迁移」的告诫不冲突 —— 那条针对的是**尺寸**
+        // 迁移（改的是「已保存值 ×N」，跑过即作废且会被手拖值覆盖）；这里清的是
+        // 一个**卡死的布尔状态**，且只在升级当次需要（用户之后再折叠仍被尊重）。
+        run {
+            val p = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            if (p.getInt(KEY_OVERLAY_COLLAPSE_SCHEMA, 0) < 1) {
+                if (p.getBoolean(KEY_COLLAPSED, false)) {
+                    logDebug("migrate: clear stale collapsed state (stuck-sliver fix)")
+                }
+                p.edit()
+                    .putBoolean(KEY_COLLAPSED, false)
+                    .putInt(KEY_OVERLAY_COLLAPSE_SCHEMA, 1)
+                    .apply()
+            }
+        }
         overlayCollapsed = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(KEY_COLLAPSED, false)
         overlayHiddenDot = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -580,12 +703,8 @@ class QuizAccessibilityService : AccessibilityService() {
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 // 前台包名感知：离开 box 自动考试模式，回到 box 恢复
-                val eventPkg = event.packageName?.toString().orEmpty()
-                val pkg = resolveForegroundPackageForAutoExam(eventPkg)
-                if (pkg.isNotBlank() && pkg != lastForegroundPkg) {
-                    lastForegroundPkg = pkg
-                    handleForegroundPackage(pkg)
-                }
+                // （E1：窗口状态是切 App 的**最强**信号，不走节流，立即重算。）
+                recheckForegroundForAutoExam(event, /*throttled=*/false)
                 val now = System.currentTimeMillis()
                 // 窗口切换是新题强信号；仅按窗口事件独立限流。
                 if (now - lastWindowCaptureAt < 300) return
@@ -607,8 +726,42 @@ class QuizAccessibilityService : AccessibilityService() {
                 if (now - lastContentCaptureAt < 500) return
                 extractAndSend(bestCaptureRoot(event.source))
                 lastContentCaptureAt = now
+                // E1（2026-09-19）：切题 App 常**不发** WINDOW_STATE_CHANGED
+                // （单 Activity + 内部 Fragment/WebView 切题），只发 content/
+                // scroll。旧版这些事件只抓题、不重算前台包 → 离开 box 时
+                // 自动考试态"进不去/出不来"，用户感知"不灵敏"。此处补一次
+                // **节流 + 去重**的前台包重算（仅包名真变才走 handleForeground
+                // Package），不影响抓题节流。
+                recheckForegroundForAutoExam(event, /*throttled=*/true)
             }
         }
+    }
+
+    /**
+     * E1（2026-09-19）：统一的前台包重算入口，供 WINDOW_STATE_CHANGED（即时）
+     * 与 WINDOW_CONTENT_CHANGED / VIEW_SCROLLED（节流）共用，保证"进/出考试
+     * 态"只有**一条**判定路径（单一事实源）。
+     *
+     * @param throttled 为 true 时按 [lastAutoExamRecheckAt] 节流（同题动画
+     *   一秒几十条事件里只放行一条重算），避免考试态反复抖动；窗口状态事件
+     *   是强信号，传 false 立即执行。
+     * @return 是否真正执行了一次重算（包名有变化）。
+     */
+    private fun recheckForegroundForAutoExam(event: AccessibilityEvent, throttled: Boolean): Boolean {
+        if (throttled) {
+            val now = System.currentTimeMillis()
+            // E1：节流门委托纯函数（单一事实源），仅放行一条重算。
+            if (!AutoExamForegroundPolicy.shouldRecheck(now, lastAutoExamRecheckAt)) return false
+            lastAutoExamRecheckAt = now
+        } else {
+            lastAutoExamRecheckAt = System.currentTimeMillis()
+        }
+        val eventPkg = event.packageName?.toString().orEmpty()
+        val pkg = resolveForegroundPackageForAutoExam(eventPkg)
+        if (pkg.isBlank() || pkg == lastForegroundPkg) return false
+        lastForegroundPkg = pkg
+        handleForegroundPackage(pkg)
+        return true
     }
 
     /**
@@ -623,19 +776,24 @@ class QuizAccessibilityService : AccessibilityService() {
 
     private fun handleForegroundPackage(pkg: String) {
         val self = packageName
-        if (pkg == self) {
-            if (autoExamByForeground && examMode) {
-                autoExamByForeground = false
+        // E1/E3（2026-09-19）：进/出考试态的决策抽成纯函数
+        // AutoExamForegroundPolicy.decide（单一事实源，可单测）。服务只负责
+        // 执行副作用（setExamMode / loadRegion）。
+        val decision = AutoExamForegroundPolicy.decide(
+            isSelf = pkg == self,
+            inWhitelist = pkg.isNotBlank() && pkg != self && shouldAutoExamForPackage(pkg),
+            examMode = examMode,
+            autoExamByForeground = autoExamByForeground,
+        )
+        when {
+            decision.enterExamMode -> {
+                autoExamByForeground = true
+                setExamMode(true)
+            }
+            decision.exitExamMode -> {
+                if (decision.resetAutoFlag) autoExamByForeground = false
                 setExamMode(false)
             }
-        } else if (shouldAutoExamForPackage(pkg) && !examMode) {
-            // 切到第三方 App：按配置自动考试模式（少挡题）
-            autoExamByForeground = true
-            setExamMode(true)
-        } else if (!shouldAutoExamForPackage(pkg) && autoExamByForeground && examMode) {
-            // 配置已关 / 不在白名单：若当前是自动进的考试模式则退出
-            autoExamByForeground = false
-            setExamMode(false)
         }
         // 按 App 切换识别区域（不在区域调节中时）
         if (regionWindowView == null && pkg.isNotBlank() && pkg != self) {
@@ -699,25 +857,31 @@ class QuizAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 考试窗尺寸：按答案卡片设计（接近方形），不沿用普通窗或历史手动尺寸。
-     * 高度直接由宽度推导，避免不同长屏设备上再次退化成横向长条。
+     * 考试窗尺寸（px）——**委托** [OverlayGeometryPolicy.examSize]。
+     *
+     * ⚠️ 2026-09-16 修复：本函数原先在此处**自己算**，且写成：
+     *
+     * ```kotlin
+     * val w = (dm.widthPixels * 0.46f).toInt().coerceIn(300, 500)
+     * ```
+     *
+     * 在 px 域算出 579，却用**照 dp 直觉写的** 300/500 去夹 →
+     * `LayoutParams.width` 单位是 px，真机（1260px / density 3.5）被夹成
+     * `500px = 143dp`（只占屏宽 40%）。三档固定上限 390/500/590 全部中招，
+     * **连「大」档都只有 169dp** —— 而标题栏需 204dp，于是按钮必然被裁、
+     * 用户看到的永远是「小窗」。这就是用户报的「开启考试模式就一直是小窗」。
+     *
+     * 现改为单一事实源：比例与 dp 口径都在 policy 里，本函数只做数据搬运。
+     * 尺寸决策散落在 service 内正是该 bug 得以长期存活的原因。
      */
     private fun examOverlayDimensions(): Pair<Int, Int> {
         val dm = resources.displayMetrics
-        return when (examOverlaySizePreference()) {
-            "small" -> {
-                val w = (dm.widthPixels * 0.36f).toInt().coerceIn(250, 390)
-                w to (w * 0.90f).toInt().coerceIn(225, 350)
-            }
-            "large" -> {
-                val w = (dm.widthPixels * 0.54f).toInt().coerceIn(360, 590)
-                w to (w * 0.92f).toInt().coerceIn(330, 540)
-            }
-            else -> {
-                val w = (dm.widthPixels * 0.46f).toInt().coerceIn(300, 500)
-                w to (w * 0.92f).toInt().coerceIn(275, 460)
-            }
-        }
+        return OverlayGeometryPolicy.examSize(
+            screenW = dm.widthPixels,
+            screenH = dm.heightPixels,
+            density = dm.density,
+            preference = examOverlaySizePreference(),
+        )
     }
 
     private fun applyExamOverlayDimensions(
@@ -728,10 +892,18 @@ class QuizAccessibilityService : AccessibilityService() {
         val (w, h) = examOverlayDimensions()
         params.width = w
         params.height = h
-        // 考试模式必须突破普通窗的历史几何；统一靠右上定位并立即更新。
+        // 考试模式：位置记忆优先（用户拖过就尊重），否则靠右上、少挡题干。
+        // 决策委托 OverlayGeometryPolicy —— 与普通模式口径统一，且可 JVM 单测。
         val dm = resources.displayMetrics
-        params.x = (dm.widthPixels - w - dm.widthPixels * 0.03f).toInt().coerceAtLeast(0)
-        params.y = (dm.heightPixels * 0.08f).toInt()
+        val (px, py) = OverlayGeometryPolicy.examPosition(
+            loadExamPosition(),
+            dm.widthPixels,
+            dm.heightPixels,
+            w,
+            h,
+        )
+        params.x = px
+        params.y = py
         clampParamsToScreen(params)
         try { windowManager?.updateViewLayout(view, params) } catch (e: Throwable) {
             Log.w(TAG, "apply exam overlay geometry failed: ${e.javaClass.simpleName}", e)
@@ -867,6 +1039,16 @@ class QuizAccessibilityService : AccessibilityService() {
         }
         overlayAnswers = answers
         if (status.isNotBlank()) overlayStatus = status
+        // 任何一次「终态」渲染结果都是「读屏已结束」的信号：把手动读屏键恢复可点。
+        // 放在这个唯一汇聚点，避免 Dart 侧每条 return 路径都要显式复位（漏一条就锁死按钮）。
+        // 2026-09-19 修复：searching 推送（手动读屏开始时 Dart _tryVisionFallback 必推
+        // 「新题 · AI 读屏中…」）不再是结束信号——旧实现这里无条件 resetVisionButton()
+        // → stopVisionTicker()，横幅被 GONE、ticker 停转、按钮「AI…」永不还原
+        //（真机截图 img_8920e96fae97：AI… 在转而胶囊/正文全是旧 miss 渲染）。
+        if (VisionRunningStatePolicy.endsVisionRun(status)) {
+            visionRunning = false
+            resetVisionButton()
+        }
         if (status == "ambiguous") {
             overlayAnswerKey = null
         } else if (answerKey != null) {
@@ -892,7 +1074,25 @@ class QuizAccessibilityService : AccessibilityService() {
         }
         accessibilityOverlayCreateFailed = false
         updateAccessibilityOverlayView()
+        // 决策 1.B：答案就绪 → 自动收起 AI 过程，把首屏让给答案。
+        // 放在这个**唯一汇聚点**（每次答案渲染都过这里），避免 Dart 侧每条
+        // return 路径各自调用（漏一条就不会收起）。
+        if (isAnswerReadyStatus(status)) {
+            accessibilityOverlayView?.let { autoCollapseAiProcessOnAnswerReady(it) }
+        }
         return true
+    }
+
+    /**
+     * 该状态是否表示「答案已就绪」（决策 1.B 的自动收起触发条件）。
+     *
+     * `searching` = 还在搜，**不该**收起过程（用户正要看 AI 干活）；
+     * `ambiguous` = 需人工确认，也保留过程（用户要据此判断）。
+     */
+    private fun isAnswerReadyStatus(status: String): Boolean {
+        val s = status.trim().lowercase()
+        if (s.isEmpty()) return false
+        return s != "searching" && s != "ambiguous" && s != "idle"
     }
 
     /**
@@ -981,12 +1181,38 @@ class QuizAccessibilityService : AccessibilityService() {
             view.findViewById<View>(R.id.btn_search)?.setOnClickListener {
                 resolveChannel()?.invokeMethod("manualSearch", mapOf("question" to overlayQuestion))
             }
+            // AI 读屏：手动按键，绕过自动流程直接让大模型读屏作答。
+            // 与 btn_search 的区别：search 走「题干 → 本地/外部题库」，
+            // 本键走「截图 → 大模型直接给答案」，能处理读图题。
+            view.findViewById<View>(R.id.btn_ai_vision)?.setOnClickListener {
+                val ch = resolveChannel()
+                if (ch == null) {
+                    toast("请先打开 box 应用")
+                } else {
+                    // 立即进入「读屏中」态：大模型最坏要走 45s 重试窗口，
+                    // 不给反馈的话用户会以为按钮没反应，然后反复点。
+                    markVisionRunning(view, true)
+                    ch.invokeMethod("visionSearch", mapOf("question" to overlayQuestion))
+                }
+            }
             view.findViewById<View>(R.id.btn_close)?.setOnClickListener { hideAccessibilityOverlay() }
             view.findViewById<View>(R.id.btn_font)?.setOnClickListener { cycleFontScale(view) }
             view.findViewById<View>(R.id.btn_collapse)?.setOnClickListener { toggleCollapse(view) }
             view.findViewById<View>(R.id.btn_hide_overlay)?.setOnClickListener { toggleHiddenDot(view) }
             view.findViewById<View>(R.id.btn_expand)?.setOnClickListener { toggleCollapse(view) }
             view.findViewById<View>(R.id.btn_more)?.setOnClickListener { showMoreMenu(it, view) }
+            // 框选识别范围：用户 2026-09-13 第五次反馈「帮框选识别范围的按钮
+            // 也加回来」——此前被收进 ⋯ 菜单，用户找不到。现标题栏常驻。
+            // 进 OCR 框选（含题干+选项），保存后自动继续搜题。
+            view.findViewById<View>(R.id.btn_region_entry)?.setOnClickListener {
+                regionMode = "ocr"
+                pendingProbeAfterRegion = "answer"
+                enterRegionMode()
+            }
+            // AI 作答过程折叠开关（默认收起，不挤占答案首屏）。
+            view.findViewById<View>(R.id.ai_process_header)?.setOnClickListener {
+                toggleAiProcessExpanded(it)
+            }
             view.findViewById<View>(R.id.tv_answer)?.setOnLongClickListener {
                 copyAnswerToClipboard()
                 true
@@ -1038,8 +1264,15 @@ class QuizAccessibilityService : AccessibilityService() {
                 params.width = examW
                 params.height = examH
                 val dm = resources.displayMetrics
-                params.x = (dm.widthPixels - examW - dm.widthPixels * 0.03f).toInt().coerceAtLeast(0)
-                params.y = (dm.heightPixels * 0.08f).toInt()
+                val (px, py) = OverlayGeometryPolicy.examPosition(
+                    loadExamPosition(),
+                    dm.widthPixels,
+                    dm.heightPixels,
+                    examW,
+                    examH,
+                )
+                params.x = px
+                params.y = py
                 clampParamsToScreen(params)
             }
             // 考试态从首次创建起强制卡片几何，绝不复用普通态的持久化长条尺寸。
@@ -1101,8 +1334,11 @@ class QuizAccessibilityService : AccessibilityService() {
         val q = view.findViewById<TextView>(R.id.tv_question)
         val a = view.findViewById<TextView>(R.id.tv_answer)
         val baseQ = 14f
-        // 答案通常含完整选项/解析；默认缩小一档，窄屏长答案更紧凑且减少遮挡。
-        val baseA = 11f
+        // A1'（2026-09-19）：11f → 12f。原 11f 与静态默认 13sp（quiz_overlay.xml +
+        // applyAnswerStyle）口径分裂：用户按一次字号循环，答案骤缩 2sp 观感像 bug。
+        // 12f = 「略小于题干但可读」，与 13f 静态默认只差 1 档，切换不再跳变。
+        // 考试模式 16.5f 大卡口径在 applyAnswerStyle 内独立，不经本函数。
+        val baseA = 12f
         q?.textSize = baseQ * scale
         a?.textSize = baseA * scale
     }
@@ -1117,11 +1353,126 @@ class QuizAccessibilityService : AccessibilityService() {
         } catch (_: Throwable) {}
     }
 
+    /** AI 作答过程：展开/收起（默认收起，避免挤占答案首屏）。 */
+    private fun toggleAiProcessExpanded(anyView: View) {
+        val root = accessibilityOverlayView ?: return
+        val scroll = root.findViewById<View>(R.id.scroll_ai_process) ?: return
+        val expanding = scroll.visibility != View.VISIBLE
+        scroll.visibility = if (expanding) View.VISIBLE else View.GONE
+        root.findViewById<TextView>(R.id.tv_ai_process_toggle)?.text =
+            if (expanding) "收起" else "展开"
+        // 记住用户意图（三态策略，见 AiProcessPanelPolicy）：手动展开后
+        // 答案就绪不再自动收起（2026-09-19 报障：展开 <1s 被同题重复渲染收回）。
+        if (expanding) {
+            aiProcessIntent = AiProcessPanelPolicy.UserIntent.EXPANDED
+            root.findViewById<TextView>(R.id.tv_ai_process_title)?.text = "AI 作答过程"
+            // 优化显示：展开后内容占位变了，重算窗口高度避免底边裁切
+            //（与 updateAiProcess 同一条 ensure 路径，不新开第二套尺寸逻辑）。
+            ensureAnswerOverlayFitsContent(root)
+        } else {
+            aiProcessIntent = AiProcessPanelPolicy.UserIntent.COLLAPSED
+            // 折叠态时把内容摘要放进标题右侧，让用户不展开也能看到关键一步。
+            val full = root.findViewById<TextView>(R.id.tv_ai_process)?.text?.toString().orEmpty()
+            val firstLine = full.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty()
+            root.findViewById<TextView>(R.id.tv_ai_process_title)?.text =
+                if (firstLine.isBlank()) "AI 作答过程" else "AI 作答过程 · $firstLine"
+        }
+    }
+
+    /**
+     * 更新 AI 作答过程文本（在答题悬浮窗下方显示）。
+     *
+     * 用户 2026-09-13 第五次反馈「ai回答时在答题悬浮窗下面显示作答过程」。
+     * 由 Flutter 侧在搜题各阶段经 `aiProcess` 方法调用推过来；传入空串表示
+     * 本次不是 AI 作答（如本地题库命中），此时整块隐藏，保持界面干净。
+     */
+    fun updateAiProcess(text: String?) {
+        val root = accessibilityOverlayView ?: return
+        mainHandler.post {
+            val box = root.findViewById<View>(R.id.ai_process_box) ?: return@post
+            val body = text?.trim().orEmpty()
+            if (body.isEmpty()) {
+                box.visibility = View.GONE
+                // 新一轮搜题：用户意图清零，自动化重新接管（AiProcessPanelPolicy）。
+                aiProcessIntent = AiProcessPanelPolicy.resetForNewSearch()
+                root.findViewById<TextView>(R.id.tv_ai_process)?.text = ""
+                return@post
+            }
+            // ⚠️ 用户 2026-09-15 第 N 次反馈「答题悬浮窗还是没有变化，ai搜题显示也没有优化」。
+            // 真因：窗口被**持久化**成折叠态（KEY_COLLAPSED），折叠时参数是
+            // WRAP_CONTENT（窄条），而 ensureAnswerOverlayFitsContent 又在折叠态直接
+            // return → 过程框只放得下一行，看起来就是「没变化 + 只显示一半」。
+            // 新的过程内容 = 新一轮搜题的明确信号 → 必须保证窗口处于展开态。
+            // 走 toggleCollapse 的既有路径（它会应用 flooredExpandedSize() 下限），
+            // 不新开第二套尺寸逻辑。
+            if (overlayCollapsed) {
+                logDebug("aiProcess: auto-expand overlay (was collapsed, stuck-sliver fix)")
+                toggleCollapse(root)
+            }
+            root.findViewById<TextView>(R.id.tv_ai_process)?.text = body
+            root.findViewById<TextView>(R.id.tv_ai_process_title)?.text = "AI 作答过程"
+            box.visibility = View.VISIBLE
+            // 首次出现过程内容时**自动展开**（决策 1.B：默认展开）。
+            // 用户 2026-09-14 反馈「显示只有一半，我看不完全」——默认收起时
+            // 用户只能看到一个标题条，以为内容丢了。用户一旦手动点过「收起」，
+            // 就不再自动弹开（尊重用户选择）。
+            if (AiProcessPanelPolicy.shouldAutoExpandOnContent(aiProcessIntent)) {
+                root.findViewById<View>(R.id.scroll_ai_process)?.visibility = View.VISIBLE
+                root.findViewById<TextView>(R.id.tv_ai_process_toggle)?.text = "收起"
+            } else if (root.findViewById<View>(R.id.scroll_ai_process)?.visibility != View.VISIBLE) {
+                // 保持用户的手动收起态，但把最新摘要放进标题，不展开也能看到进展。
+                val latest = body.lineSequence().lastOrNull { it.isNotBlank() }.orEmpty()
+                root.findViewById<TextView>(R.id.tv_ai_process_title)?.text =
+                    if (latest.isBlank()) "AI 作答过程" else "AI 作答过程 · $latest"
+            }
+            // 自适应：过程框占位后重算窗口高度，保证它不被窗口底边裁掉。
+            // 走 ensureAnswerOverlayFitsContent 这一条既有路径，避免第二套尺寸
+            // 计算逻辑（单一事实源）；它会把过程框计入 needed。
+            ensureAnswerOverlayFitsContent(root)
+        }
+    }
+
+    /**
+     * 答案已就绪 → 自动收起 AI 过程（决策 1.B：默认展开，出答案后自动收起）。
+     *
+     * ## 为什么需要这一步
+     *
+     * 决策 1.B 的完整语义是「过程默认展开（让用户看到 AI 在干活）**且**答案出来
+     * 后自动收起（把首屏让给答案）」。只做前半段会让答案与过程抢首屏，
+     * 出现用户已明确抱怨过的「拥挤」。
+     *
+     * 与 [aiProcessIntent] 的关系：这里是**系统自动**收起，不动用户意图；
+     * 但用户本轮手动展开（[AiProcessPanelPolicy.UserIntent.EXPANDED]）时跳过——
+     * 否则同题重复渲染会把用户刚展开的面板收回去（2026-09-19 报障）。
+     */
+    private fun autoCollapseAiProcessOnAnswerReady(root: View) {
+        val scroll = root.findViewById<View>(R.id.scroll_ai_process) ?: return
+        if (scroll.visibility != View.VISIBLE) return
+        // 用户本轮手动展开过 → 不收（2026-09-19 报障：手动展开 <1s 被同题
+        // 重复渲染收回）。决策 1.B 只管默认态，不凌驾用户当前意图。
+        if (!AiProcessPanelPolicy.shouldAutoCollapseOnAnswerReady(aiProcessIntent)) {
+            logDebug("aiProcess: skip auto-collapse (user expanded this round)")
+            return
+        }
+        scroll.visibility = View.GONE
+        root.findViewById<TextView>(R.id.tv_ai_process_toggle)?.text = "展开"
+        // 收起后标题右侧保留关键一步摘要，用户不展开也能看到结论。
+        val full = root.findViewById<TextView>(R.id.tv_ai_process)?.text?.toString().orEmpty()
+        val firstLine = full.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty()
+        root.findViewById<TextView>(R.id.tv_ai_process_title)?.text =
+            if (firstLine.isBlank()) "AI 作答过程" else "AI 作答过程 · $firstLine"
+        logDebug("aiProcess: auto-collapsed on answer ready (decision 1.B)")
+    }
+
+    /** 用户对过程面板的最近一次手动操作意图（三态策略，见 AiProcessPanelPolicy）。 */
+    private var aiProcessIntent = AiProcessPanelPolicy.UserIntent.NONE
+
     private fun showMoreMenu(anchor: View, root: View) {
         try {
             val popup = android.widget.PopupMenu(this, anchor)
             popup.menu.add(0, 1, 0, "字号")
             popup.menu.add(0, 2, 1, "识别区域")
+            popup.menu.add(0, 10, 9, "一键录入")
             popup.menu.add(0, 3, 2, "复制答案")
             popup.menu.add(0, 4, 3, if (answerOnlyMode) "显示题目+答案" else "仅显示答案")
             popup.menu.add(0, 5, 4, if (examMode) "退出考试模式" else "考试模式")
@@ -1138,7 +1489,7 @@ class QuizAccessibilityService : AccessibilityService() {
                     2 -> { regionMode = "ocr"; enterRegionMode(); true }
                     3 -> { copyAnswerToClipboard(); true }
                     4 -> { toggleAnswerOnly(root); true }
-                    5 -> { setExamMode(!examMode); true }
+                    5 -> { setExamMode(!examMode, manual = true); true }
                     6 -> {
                         clickThroughWhenCollapsed = !clickThroughWhenCollapsed
                         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
@@ -1157,6 +1508,16 @@ class QuizAccessibilityService : AccessibilityService() {
                     }
                     9 -> {
                         resetOverlayGeometry(root)
+                        true
+                    }
+                    // 一键录入：原标题栏按钮迁入溢出菜单（2026-09-13 排版调整）
+                    10 -> {
+                        val ch = resolveChannel()
+                        if (ch == null) {
+                            toast("请先打开 box 应用")
+                        } else {
+                            ch.invokeMethod("examQuickEntry", null)
+                        }
                         true
                     }
                     else -> false
@@ -1192,8 +1553,9 @@ class QuizAccessibilityService : AccessibilityService() {
     /** 一键恢复正常大窗尺寸，并退出折叠/考试小窗污染。 */
     private fun resetOverlayGeometry(root: View) {
         if (examMode) {
-            // 先退出考试模式（会恢复备份）；再强制默认大窗
-            setExamMode(false)
+            // 先退出考试模式（会恢复备份）；再强制默认大窗。
+            // 重置 = 手动清理，清掉手动标志，避免重启后又残留。
+            setExamMode(false, manual = true)
         }
         val (dw, dh) = defaultOverlaySize()
         val (dx, dy) = loadOverlayPosition()
@@ -1207,6 +1569,8 @@ class QuizAccessibilityService : AccessibilityService() {
             .putBoolean(KEY_COLLAPSED, false)
             .putBoolean(KEY_HIDDEN_DOT, false)
             .remove(KEY_PRE_EXAM_GEOMETRY)
+            .remove(KEY_EXAM_GEOMETRY)
+            .remove(KEY_EXAM_MODE_MANUAL)
             .apply()
         preExamGeometry = null
         val params = overlayParams
@@ -1233,6 +1597,114 @@ class QuizAccessibilityService : AccessibilityService() {
         } catch (_: Throwable) {}
     }
 
+    /**
+     * 手动 AI 读屏的运行态反馈。
+     *
+     * 大模型读屏最坏要等满 45s 重试窗口（截图 → 压缩 → 退避重试）。
+     * 期间若界面毫无变化，用户会以为「按了没反应」并反复点击，
+     * 反而把请求打散。这里做两件事：置 searching 态（标题徽章显示「检索中」），
+     * 以及禁用按钮防止重复触发。结果回来时由 Dart 侧 updateOverlay 复位。
+     */
+    private fun markVisionRunning(root: View, running: Boolean) {
+        // 运行态标志：汇聚点（showOrUpdateAccessibilityOverlay）据此判定
+        // searching 推送是「过程态」而非「结束信号」（VisionRunningStatePolicy）。
+        visionRunning = running
+        if (running) overlayStatus = "searching"
+        val btn = root.findViewById<View>(R.id.btn_ai_vision)
+        btn?.isEnabled = !running
+        btn?.alpha = if (running) 0.45f else 0.95f
+        // 用户 2026-09-13 第三次反馈「ai搜索时没有看到提示与进度」：
+        // 仅把按钮变淡 + 一个小进度条，用户感知不到。这里把按钮**文字本身**
+        // 改成进行中态，配合每秒倒计时，一按下去就能看到画面在动。
+        val label = root.findViewById<View>(R.id.tv_ai_vision_label) as? TextView
+        if (label != null) {
+            label.text = if (running) "AI…" else "AI"
+        }
+        root.findViewById<View>(R.id.status_bar)?.setBackgroundColor(0xFFF59E0B.toInt())
+        if (running) {
+            visionStartedAt = System.currentTimeMillis()
+            startVisionTicker(root)
+        } else {
+            stopVisionTicker(root)
+        }
+    }
+
+    /**
+     * 读屏进度：每秒刷新徽章倒计时 + 正文阶段文案 + 不定型进度条。
+     *
+     * 静态一句「最长约 45 秒」用户会以为卡死（最坏要等满 45s：截图 + 压缩 +
+     * 2s/5s/10s/15s 退避重试）。阶段文案口径与 Dart 侧
+     * `QuizPluginEntry.visionProgressText` 保持一致（改一处需改两处）。
+     */
+    private fun startVisionTicker(root: View) {
+        stopVisionTicker(root)
+        val answer = root.findViewById<View>(R.id.tv_answer) as? TextView
+        // 进度展示改为**独立横幅**（vision_progress_box + tv_vision_progress +
+        // vision_progress），不再写进相似度胶囊 —— 胶囊在窄窗下会被自适应收起，
+        // 写进去等于没提示（用户 2026-09-13 反馈「看不到进度」的真因之一）。
+        root.findViewById<View>(R.id.vision_progress_box)?.visibility = View.VISIBLE
+        val progressBar = root.findViewById<View>(R.id.vision_progress) as? android.widget.ProgressBar
+        val label = root.findViewById<View>(R.id.tv_vision_progress) as? TextView
+        val tick = object : Runnable {
+            override fun run() {
+                val elapsedMs = System.currentTimeMillis() - visionStartedAt
+                val s = (elapsedMs / 1000).toInt().coerceAtLeast(0)
+                label?.text = visionPhaseText(s)
+                answer?.text = visionPhaseText(s)
+                // 进度条按 45s 总超时推进，封顶 95% 留出等待余量，避免「满格却没结果」
+                progressBar?.progress = ((s * 100 / 45).coerceIn(0, 95))
+                // 超过 45s 硬超时后停止 ticker：旧实现会一直每秒刷新下去，
+                // 用户看到「还在转」以为没反应（而底层其实已经失败返回了）。
+                if (s >= 45) {
+                    // 先停 ticker（会隐藏进度横幅），再把横幅重新显示成「超时」终态，
+                    // 否则刚写进去的文案会被 stopVisionTicker 的 GONE 一起藏掉。
+                    stopVisionTicker(root)
+                    // 超时即本次读屏终止：对称还原运行态（visionRunning + 按钮 label），
+                    // 不等 Dart 侧迟到的终态推送（其间用户看到的是「AI…」+超时提示的矛盾态）。
+                    visionRunning = false
+                    (root.findViewById<View>(R.id.tv_ai_vision_label) as? TextView)?.text = "AI"
+                    root.findViewById<View>(R.id.vision_progress_box)
+                        ?.visibility = View.VISIBLE
+                    label?.text = "AI 读屏已超时，可重新点击 AI 重试。"
+                    return
+                }
+                visionTickerHandler.postDelayed(this, 1000)
+            }
+        }
+        visionTickerRunnable = tick
+        visionTickerHandler.post(tick)
+    }
+
+    private fun stopVisionTicker(root: View) {
+        visionTickerRunnable?.let { visionTickerHandler.removeCallbacks(it) }
+        visionTickerRunnable = null
+        root.findViewById<View>(R.id.vision_progress_box)?.visibility = View.GONE
+    }
+
+    /** 分阶段文案：与 Dart 侧 visionProgressText 同口径。 */
+    private fun visionPhaseText(s: Int): String = when {
+        s < 3 -> "正在识别题目…"
+        s < 15 -> "正在请求大模型（首次较慢，请稍候）…"
+        s < 45 -> "仍在重试（网络波动，最长约 45 秒）…"
+        else -> "等待超时，可重新点击 AI 读屏重试。"
+    }
+
+    /** 供 Dart 侧在收到读屏结果/失败后复位按钮。结果内容由 updateOverlay 统一重绘。 */
+    private fun resetVisionButton() {
+        accessibilityOverlayView?.let { stopVisionTicker(it) }
+        accessibilityOverlayView
+            ?.findViewById<View>(R.id.btn_ai_vision)
+            ?.let { btn ->
+                btn.isEnabled = true
+                btn.alpha = 0.95f
+                // 2026-09-19 修复：markVisionRunning(true) 把按钮文字改成「AI…」，
+                // 这里必须对称还原成「AI」，否则结束后「AI…」永久残留
+                //（真机截图证据：搜索早已 miss 返回，按钮仍显示 AI…）。
+                (btn.findViewById<View>(R.id.tv_ai_vision_label) as? TextView)
+                    ?.text = "AI"
+            }
+    }
+
     private fun cycleThemeColor(root: View) {
         val idx = THEME_COLORS.indexOf(themeColor).let { if (it < 0) 0 else (it + 1) % THEME_COLORS.size }
         themeColor = THEME_COLORS[idx]
@@ -1251,7 +1723,14 @@ class QuizAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun setExamMode(enabled: Boolean) {
+    /**
+     * 切换考试模式。
+     *
+     * @param manual true = 用户经 ⋯ 菜单**手动**开关（跨服务重启存活）；
+     *               false = 前台 App **自动**进入/退出（会话级，重启清除）。
+     *               2026-09-17 P1：用 KEY_EXAM_MODE_MANUAL 区分，启动时只清自动残留。
+     */
+    private fun setExamMode(enabled: Boolean, manual: Boolean = false) {
         val view = accessibilityOverlayView
         val params = overlayParams
         val wm = windowManager
@@ -1358,6 +1837,8 @@ class QuizAccessibilityService : AccessibilityService() {
         }
         prefs.edit()
             .putBoolean(KEY_EXAM_MODE, examMode)
+            // 手动标志：手动开→true；手动关→false；自动路径保持原值（不改这个键）。
+            .putBoolean(KEY_EXAM_MODE_MANUAL, if (manual) examMode else prefs.getBoolean(KEY_EXAM_MODE_MANUAL, false))
             .putBoolean(
                 KEY_ANSWER_ONLY,
                 if (examMode) {
@@ -1399,7 +1880,7 @@ class QuizAccessibilityService : AccessibilityService() {
     private fun applyAnswerOnlyVisibility(view: View) {
         val scrollQ = view.findViewById<View>(R.id.scroll_question)
         val divider = view.findViewById<View>(R.id.answer_divider)
-        // 中间摘要条已移除；相似度只在标题，答案只在正文。
+        // 中间摘要条已移除；相似度在状态行徽章，答案只在正文。
         if (answerOnlyMode || examMode) {
             scrollQ?.visibility = View.GONE
             divider?.visibility = View.GONE
@@ -1428,11 +1909,18 @@ class QuizAccessibilityService : AccessibilityService() {
             view.findViewById<View>(id)?.visibility =
                 if (exam) View.GONE else View.VISIBLE
         }
-        // 考试态仍保留「一键录入」入口；普通态隐藏，避免与现有答题操作混杂。
-        view.findViewById<View>(R.id.btn_quiz_entry)?.visibility =
-            if (exam) View.VISIBLE else View.GONE
-        // 关闭按钮考试态仍保留，方便关掉悬浮窗
-        view.findViewById<View>(R.id.btn_close)?.visibility = View.VISIBLE
+        // 相似度已并入标题栏胶囊（2026-09-13 第二轮优化）：status_row 恒隐藏，
+        // 不要在此恢复 VISIBLE，否则空行会把卡片撑出一条白带。
+        view.findViewById<View>(R.id.status_row)?.visibility = View.GONE
+        // AI 联网搜题是**核心功能**（答题搜不出答案时唯一的联网出路），不是低频
+        // 装饰入口 —— 考试模式下也必须可见。用户 2026-09-13 报障：驾考 App 触发
+        // autoExam 后 AI 按钮消失，正文却还在指路「点右上角 AI 按钮」，
+        // 指路指向一个被自己藏起来的按钮。此处显式保活，且严禁再收进 hideIds。
+        view.findViewById<View>(R.id.btn_ai_vision)?.visibility = View.VISIBLE
+        // 考试态极简：隐藏低频入口，但 AI搜题/眼睛/录入 三键必须常驻
+        // （用户 2026-09-13 第三次拍板：删掉关闭，保留这三键）。
+        view.findViewById<View>(R.id.btn_hide_overlay)?.visibility = View.VISIBLE
+        view.findViewById<View>(R.id.btn_quiz_entry)?.visibility = View.VISIBLE
         // 考试态答案区保持紧凑内容高度；避免 weight=1 把卡片拉成空白长条。
         val scrollA = view.findViewById<View>(R.id.scroll_answer)
         if (scrollA != null) {
@@ -1447,6 +1935,176 @@ class QuizAccessibilityService : AccessibilityService() {
         view.findViewById<View>(R.id.title_bar)?.let { bar ->
             val h = 36 * resources.displayMetrics.density
             bar.layoutParams = bar.layoutParams.apply { height = h.toInt() }
+        }
+        // 按可用宽度重排标题栏（窄窗让位，AI 优先保位）。放在 chrome 之后，
+        // 保证模式切换完成后按最终可见集合重新分配宽度。
+        applyTitleBarAdaptive(view)
+    }
+
+    /**
+     * 标题栏按**可用宽度**自适应。
+     *
+     * 为什么需要：`defaultOverlaySize()` 用 `(widthPixels*0.52).coerceIn(280,480)`
+     * 把 480 当成 **px** 上限，iQOO 1440px/密度3.5 上窗实际只有 137dp，
+     * 而标题栏静态需求 193~224dp → 横向溢出，右侧按钮被裁掉（用户截图里
+     * AI 联网搜题 + 更多 正好消失，正文却还在指路「点右上角 AI 按钮」）。
+     *
+     * 用户 2026-09-13 第三次拍板：
+     *   · 关闭(✕) 没必要 → 已从布局移除；
+     *   · 标题栏只保留 **AI / 眼睛 / 录入题目** 三键，三键都必须常驻；
+     *   · AI 按钮过大挤掉相似度胶囊 → 收窄（去图标 + 缩 padding）。
+     *
+     * 因此这里不再有 close、也不再让眼睛/录入参与让位：三键恒可见。
+     * 只有「相似度胶囊」和低频「更多」按剩余宽度伸缩。
+     */
+    private fun applyTitleBarAdaptive(view: View) {
+        val badge = view.findViewById<View>(R.id.tv_similarity_badge)
+        val more = view.findViewById<View>(R.id.btn_more)
+        val ai = view.findViewById<View>(R.id.btn_ai_vision)
+        val eye = view.findViewById<View>(R.id.btn_hide_overlay)
+        val entry = view.findViewById<View>(R.id.btn_quiz_entry)
+        val region = view.findViewById<View>(R.id.btn_region_entry)
+
+        // 用户指定的三键 + 低频更多：全部常驻，不因宽度让位。
+        ai?.visibility = View.VISIBLE
+        eye?.visibility = View.VISIBLE
+        entry?.visibility = View.VISIBLE
+        // 框选识别范围：用户第 5 次反馈要求「加回来」→ 也常驻。
+        // （窗口已按新下限放大到约 94% 屏宽，容纳得住第六个按钮。）
+        region?.visibility = View.VISIBLE
+
+        // 相似度胶囊在左侧拖动区常驻，不参与让位。
+        view.findViewById<View>(R.id.tv_similarity_badge)?.visibility = View.VISIBLE
+
+        // ===== 方案 A（用户 2026-09-15 拍板）：按钮区横向可滑动 =====
+        // 原来的宽度预算裁剪逻辑（budget -= ... 按顺序把 ⋯ / 胶囊 GONE 掉）
+        // 在引入 HorizontalScrollView 后已成为**有害**逻辑：
+        //   - 按钮滑得动，就不该因为「一屏放不下」而隐藏；
+        //   - 隐藏反而让用户以为功能没了（用户第 5 次反馈「框选按钮找不到」即此因）。
+        // 故此处不再按宽度隐藏任何按钮，溢出部分交给横向滑动。
+        more?.visibility = View.VISIBLE
+
+        // ===== 方案 B（用户 2026-09-16 拍板）：空间不足时收拢低频按钮 =====
+        // 滑动能解决「按钮被裁」，但**滑动手势是隐式的** —— 用户不知道右边还有东西，
+        // 于是仍会认为「框选按钮不见了」（与第 5 次反馈同源）。所以：
+        //   够宽 → 全部平铺（最优，零学习成本）；
+        //   不够宽 → 把最低频的「框选识别区域」「题库」收进既有 ⋯ 菜单，
+        //            给 AI / 眼睛这两个高频键让位。菜单项**本来就有**
+        //            （识别区域 / 一键录入），故这是复用而非新建。
+        //
+        // 阈值走 policy（单一事实源），不在 service 里写死。
+        if (TITLE_ACTIONS_SCROLL_ENABLED) {
+            applyTitleBarCollapseIfNeeded(view, more, region, entry, ai, eye)
+        } else {
+            applyTitleBarBudgetLegacy(view, more, badge)
+        }
+    }
+
+    /**
+     * 方案 B：按**实测宽度**决定是否把低频按钮收进 ⋯ 菜单。
+     *
+     * 判定经 [OverlayGeometryPolicy.titleBarFits]（dp 口径，单一事实源）。
+     * 收拢只隐藏**低频两键**（框选 / 题库），AI、眼睛、⋯ 三键恒常驻 ——
+     * 它们是用户 2026-09-13 拍板点名保底的功能入口。
+     *
+     * 代价（如实标注）：收拢后框选/题库需多点一次 ⋯。这是有意的取舍 ——
+     * 窄窗下「按钮可见但被裁掉一半」比「多点一次」糟糕得多。
+     */
+    private fun applyTitleBarCollapseIfNeeded(
+        view: View,
+        more: View?,
+        region: View?,
+        entry: View?,
+        ai: View?,
+        eye: View?,
+    ) {
+        val dm = resources.displayMetrics
+        val d = if (dm.density > 0f) dm.density else 1f
+
+        // 高频三键宽度（dp）：⋯26 + AI40 + 眼睛26。
+        // 2026-09-17：数值收进 OverlayGeometryPolicy.TITLE_BAR_HIGH_FREQ_DP（单一事实源）。
+        // ⚠️ 仍为估算值，真机（如红米 K80 density 4.0）校准时只改 policy，不动此处。
+        val highFreqDp = OverlayGeometryPolicy.TITLE_BAR_HIGH_FREQ_DP
+        // 标题栏左右内边距合计（dp）：收进 policy，与高频三键同口径。
+        val availPx = (dm.widthPixels - OverlayGeometryPolicy.TITLE_BAR_SIDE_PADDING_DP * d).toInt()
+
+        // 先假定全部平铺，用它判断放不放得下。
+        val fullFits = OverlayGeometryPolicy.titleBarFits(availPx, d)
+
+        // 已收拢时的高频部分是否放得下（收拢后宽度需求 = highFreqDp + 余量）。
+        val collapsedFits = availPx >= highFreqDp * d
+
+        val shouldCollapse = !fullFits
+
+        if (shouldCollapse && collapsedFits) {
+            // 收拢：低频两键进 ⋯ 菜单（菜单项已存在：识别区域 / 一键录入）。
+            region?.visibility = View.GONE
+            entry?.visibility = View.GONE
+            ai?.visibility = View.VISIBLE
+            eye?.visibility = View.VISIBLE
+            more?.visibility = View.VISIBLE
+            logDebug(
+                "titlebar.collapse low-freq→more avail=${availPx}px(${availPx / d}dp) " +
+                    "need=${OverlayGeometryPolicy.TITLE_BAR_REQUIRED_DP}dp",
+            )
+        } else if (shouldCollapse) {
+            // 极端窄窗：连高频三键都放不下 → 只留 ⋯（菜单里含全部功能，永不丢入口）。
+            region?.visibility = View.GONE
+            entry?.visibility = View.GONE
+            ai?.visibility = View.GONE
+            eye?.visibility = View.GONE
+            more?.visibility = View.VISIBLE
+            logDebug("titlebar.collapse all→more avail=${availPx}px (extremely narrow)")
+        } else {
+            // 放得下：全部平铺，零学习成本。
+            region?.visibility = View.VISIBLE
+            entry?.visibility = View.VISIBLE
+            ai?.visibility = View.VISIBLE
+            eye?.visibility = View.VISIBLE
+            more?.visibility = View.VISIBLE
+        }
+    }
+
+    /** 方案 A 开关：true = 按钮区横向可滑动（不再按宽度隐藏按钮）。 */
+    private val TITLE_ACTIONS_SCROLL_ENABLED = true
+
+    /**
+     * 历史「宽度预算裁剪」逻辑（方案 A 之前的实现），仅在
+     * [TITLE_ACTIONS_SCROLL_ENABLED] = false 时启用，供快速回退。
+     */
+    private fun applyTitleBarBudgetLegacy(view: View, more: View?, badge: View?) {
+        val dm = resources.displayMetrics
+        val d = if (dm.density > 0f) dm.density else 1f
+        val bar = view.findViewById<View>(R.id.title_bar)
+        var availPx = bar?.width ?: 0
+        if (availPx <= 0) availPx = defaultOverlaySize().first
+        val padPx = (12 + 12) * d
+        var budget = availPx - padPx
+
+        val morePx = (26 + 5) * d
+        val aiPx = (26 + 4) * d   // 纯「AI」胶囊：9+13+9 文字 + marginEnd4，收窄后约 30dp
+        val eyePx = (26 + 3) * d
+        val entryPx = (26 + 3) * d
+        val regionPx = (26 + 3) * d
+
+        // 1) 三键 + 更多恒占位（用户指定保留，不参与让位）。
+        budget -= (aiPx + eyePx + entryPx + regionPx)
+        val showMore = budget >= morePx
+        more?.visibility = if (showMore) View.VISIBLE else View.GONE
+        if (showMore) budget -= morePx
+        // 2) 相似度胶囊：此时剩余全部给它，够就正常显示，勉强够就缩窄，实在不够才隐。
+        // 注意：只调 maxWidth（配合布局里的 wrap_content + ellipsize=end），
+        // 不要写死 layoutParams.width —— 那会把胶囊撑成固定宽度，短文案
+        // （如「90%」）反而被拉长，破坏「内容自适应」的观感。
+        if (badge is TextView) {
+            val minBadge = 22 * d
+            when {
+                budget < minBadge -> badge.visibility = View.GONE
+                else -> {
+                    badge.visibility = View.VISIBLE
+                    badge.maxWidth = minOf(44 * d, budget).toInt()
+                }
+            }
         }
     }
 
@@ -1523,8 +2181,11 @@ class QuizAccessibilityService : AccessibilityService() {
             params.height = d
             clampParamsToScreen(params)
         } else {
-            params.width = if (overlayExpandedWidth > 0) overlayExpandedWidth else defaultOverlaySize().first
-            params.height = if (overlayExpandedHeight > 0) overlayExpandedHeight else defaultOverlaySize().second
+            // 展开消费点：统一走 flooredExpandedSize()，确保历史小值/WRAP_CONTENT
+            // 污染不会让窗口退回小窗（用户「没变化」真因）。
+            val (ew, eh) = flooredExpandedSize()
+            params.width = ew
+            params.height = eh
             container?.visibility = View.VISIBLE
             pill?.visibility = View.GONE
             resize?.visibility = if (examMode) View.GONE else View.VISIBLE
@@ -1659,18 +2320,37 @@ class QuizAccessibilityService : AccessibilityService() {
             // 折叠小窗：仍显示答案区（含相似度），只收起题目（answerOnly 时题目本就 GONE）
             // 不隐藏 answer_container，避免小窗下看不到答案/相似度
             pill?.visibility = View.GONE
+            // P0-1b 反转（2026-09-19 D1）：折叠**一律成功**。
+            // 旧逻辑：此刻若有 AI 作答过程/内容（decideOverlayGeometry 返回
+            // shouldExpand），双击折叠会被自动弹回展开——用户点折叠没反应。
+            // 现改为：折叠方向只看用户意图（forceCollapsed），有内容也折成小窗；
+            // 再双击展开时下方 else 分支仍走 decideOverlayGeometry()，会自动
+            // 按内容高度撑回（不会丢内容）。这样"有内容也能折"且展开仍可复现。
             params.width = WindowManager.LayoutParams.WRAP_CONTENT
             params.height = WindowManager.LayoutParams.WRAP_CONTENT
         } else {
-            params.width = if (overlayExpandedWidth > 0) overlayExpandedWidth else defaultOverlaySize().first
-            params.height = if (overlayExpandedHeight > 0) overlayExpandedHeight else defaultOverlaySize().second
+            // 展开消费点：统一走 decideOverlayGeometry()（与 applyHiddenDotUi 同口径）。
+            val decision = decideOverlayGeometry(
+                collapsed = false,
+                contentNeededH = currentContentNeededHeight(view),
+            )
+            params.width = decision.width
+            params.height = decision.height
             resizeHandle?.visibility = View.VISIBLE
             collapseBtn?.setImageResource(R.drawable.ic_chevron_up)
             container?.visibility = View.VISIBLE
             pill?.visibility = View.GONE
             clampParamsToScreen(params)
+            logDebug("overlay.expand reason=" + decision.reason + " applied=" + params.width + "x" + params.height + "px")
         }
         try { wm.updateViewLayout(view, params) } catch (_: Throwable) {}
+        // 诊断：记录最终真正生效的窗口尺寸（关于页 → 调试日志可查），
+        // 与 overlay.load/default 对照可立刻判断「改了没变化」卡在哪一环。
+        logDebug(
+            "overlay.apply collapsed=" + overlayCollapsed + " expandedField=" +
+                overlayExpandedWidth + "x" + overlayExpandedHeight +
+                " applied=" + params.width + "x" + params.height + "px"
+        )
         applyClickThroughFlags()
     }
 
@@ -1841,15 +2521,41 @@ class QuizAccessibilityService : AccessibilityService() {
     private fun attachDragHandler(view: View, params: WindowManager.LayoutParams, wm: WindowManager) {
         val slop = ViewConfiguration.get(this).scaledTouchSlop
         val titleBar = view.findViewById<View>(R.id.title_bar)
+        val dragHandle = view.findViewById<View>(R.id.title_drag_handle)
         val pill = view.findViewById<View>(R.id.collapsed_pill)
-        val dragTargets = listOfNotNull(titleBar, pill)
+        // 用户 2026-09-15 拍板方案 A：标题栏右侧按钮区改为横向可滑动。
+        //
+        // ## 为什么拖动目标不能再是整个 title_bar
+        // 现在 title_bar 内含一个 HorizontalScrollView（btn_more/AI/框选/眼睛/题库）。
+        // 若仍把 title_bar 当拖动目标，DOWN 时返回 true 会把横向手势全吃掉，
+        // 导致按钮区**永远滑不动**；反之若让 ScrollView 先接，窗口又拖不动。
+        // 两者只能二选一，因此把「拖动」收窄到左侧专用热区：
+        //   tv_similarity_badge（相似度胶囊）+ title_drag_handle（28dp 死区）
+        // 滑动区内不再挂拖动监听 —— 横滑归按钮，拖动归左侧，互不抢。
+        //
+        // 代价（如实记录）：拖动热区从「整条标题栏」缩小为「左侧约 90dp」。
+        // 双击折叠同理，只在拖动区生效；按钮区双击不再折叠。
+        // 拖动目标 = 左侧「非滑动区」的全部元素 + 折叠态胶囊：
+        //   title_drag_handle（28dp 死区）+ tv_similarity_badge（相似度胶囊）
+        //   + collapsed_pill（折叠成小圆点时的整卡，必须还能拖）
+        // 显式包含胶囊，是因为 attachDragToTarget 用的是「目标自身」的
+        // OnTouchListener（非拦截式）—— 只挂 handle 的话，手指按在胶囊上
+        // 不会拖动窗口。前两者都在 ScrollView 之外，不会抢按钮的横滑手势。
+        // 兜底：若布局被改回旧版（无 handle），退回整个 titleBar 作拖动目标。
+        val badge = view.findViewById<View>(R.id.tv_similarity_badge)
+        val dragTargets = if (dragHandle != null || badge != null) {
+            listOfNotNull(dragHandle, badge, pill)
+        } else {
+            listOfNotNull(titleBar, pill)
+        }
+        val dragRoot = view
         if (dragTargets.isEmpty()) {
             // minimal view fallback
-            attachDragToTarget(view, view, params, wm, slop)
+            attachDragToTarget(dragRoot, view, params, wm, slop)
             return
         }
         for (target in dragTargets) {
-            attachDragToTarget(view, target, params, wm, slop)
+            attachDragToTarget(dragRoot, target, params, wm, slop)
         }
         // pill 整卡点击展开（未拖动时）
         pill?.setOnClickListener {
@@ -1871,7 +2577,6 @@ class QuizAccessibilityService : AccessibilityService() {
         var touchY = 0f
         var dragging = false
         var downTime = 0L
-        var lastTapTime = 0L
         var frameScheduled = false
         var pendingLayout = false
         var lastAppliedX = Int.MIN_VALUE
@@ -1929,9 +2634,11 @@ class QuizAccessibilityService : AccessibilityService() {
                     val dy = event.rawY - touchY
                     if (!dragging && hypot(dx.toDouble(), dy.toDouble()) > slop) {
                         dragging = true
-                        // 拖动中半透明
-                        root.findViewById<View>(R.id.answer_container)?.alpha = 0.55f
-                        root.findViewById<View>(R.id.collapsed_pill)?.alpha = 0.55f
+                        // D5（2026-09-19）：拖动不再突变半透明（旧版写死 0.55f，
+                        // 与用户自己设的透明度不一致、观感突兀）。改为只轻微降 0.9，
+                        // 松手时恢复 loadOverlayOpacity()。
+                        root.findViewById<View>(R.id.answer_container)?.alpha = baseAlpha() * 0.9f
+                        root.findViewById<View>(R.id.collapsed_pill)?.alpha = baseAlpha() * 0.9f
                     }
                     if (dragging) {
                         params.x = initialX + dx.toInt()
@@ -1950,26 +2657,38 @@ class QuizAccessibilityService : AccessibilityService() {
                         // 将最后一个尚未到帧回调的位置立即落盘，避免松手少移动一截。
                         flushLayout()
                         snapToEdge(params, root)
-                        // 考试模式只挪位置也不污染「正常态」持久化（备份在 preExamGeometry）
-                        if (!examMode) {
+                        // 考试模式拖拽**不写**「正常大窗」持久化（否则污染普通态位置），
+                        // 但写入**考试窗自己的**记忆位置：用户把考试窗挪开过，下次应还在这儿。
+                        if (examMode) {
+                            saveExamPosition(params.x, params.y)
+                        } else {
                             saveOverlayPosition(params.x, params.y)
                         }
                     } else {
                         val now = System.currentTimeMillis()
-                        // 双击标题栏折叠/展开
-                        if (v.id == R.id.title_bar && now - lastTapTime < 280) {
+                        // D2+D3+D4（2026-09-19）：双击判据放宽。
+                        //  旧版要求「第二次松手仍停在标题区」才折叠，第二次点
+                        //  到按钮上就失效；且计时窗口 280ms 偏短、lastTapTime
+                        //  是闭包局部（跨 attach 清零）。
+                        //  现改为：两次 tap 都发生在标题区（lastTitleTapInTitleArea
+                        //  记录上一次）且间隔 < 350ms 才折叠；计时/标记存成员
+                        //  字段跨 attach 保留。
+                        val isTitleArea = v.id == R.id.title_bar ||
+                            v.id == R.id.title_drag_handle ||
+                            v.id == R.id.tv_similarity_badge
+                        if (isTitleArea && lastTitleTapInTitleArea && now - lastTitleTapTime < 350) {
                             toggleCollapse(root)
-                            lastTapTime = 0L
+                            lastTitleTapTime = 0L
+                            lastTitleTapInTitleArea = false
                         } else if (v.id == R.id.collapsed_pill && !wasDragging) {
                             // 单击 pill 展开
                             if (overlayCollapsed) toggleCollapse(root)
-                            lastTapTime = now
+                            lastTitleTapTime = now
+                            lastTitleTapInTitleArea = false
                         } else {
-                            lastTapTime = now
+                            lastTitleTapTime = now
+                            lastTitleTapInTitleArea = isTitleArea
                             // 让子按钮还能收到点击：未拖动时不拦截 UP 给 click
-                            if (v.id == R.id.title_bar) {
-                                // 标题栏空白区单击：不做事；子 ImageButton 有自己的 listener
-                            }
                         }
                     }
                     dragging = false
@@ -2932,17 +3651,158 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         return x to y
     }
 
+    /**
+     * 把原生侧诊断写入 Flutter 调试日志库（LogChannel.quiz）。
+     *
+     * 为什么需要它：悬浮窗尺寸/dp 计算全在原生侧，而用户能看到的调试日志
+     * （抽屉→更多→调试日志）在 Flutter 侧。用户 2026-09-13 反复反馈
+     * 「悬浮窗大小没有变化」，没有原生真实 density/取值就无法判断是
+     * 迁移没命中、还是设备密度假设错了 —— 这里把事实直接送进日志。
+     */
+    private fun logDebug(message: String) {
+        try {
+            resolveChannel()?.invokeMethod("nativeDebugLog", mapOf("message" to message))
+        } catch (_: Throwable) {
+            // 日志失败绝不影响主流程
+        }
+    }
+
     private fun loadOverlayPosition(): Pair<Int, Int> {
         val (w, h) = loadOverlaySize()
         return loadOverlayPosition(w, h)
     }
 
+    /**
+     * 悬浮窗几何**一行式快照**（P1-2），把报障定位从「猜」变成「读一行」。
+     *
+     * ## 为什么需要
+     *
+     * 用户 2026-09-13 起连续五次报尺寸问题，每次都要来回追问：机型？折叠态？
+     * prefs 里的值？实际生效值？是否被下限夹过？—— 因为这些信息分散在
+     * 8 个写点里，没有任何一处能一次说清。
+     *
+     * 本函数把这些全部拼成一行，在每次决策后由 [logDebug] 打进既有的
+     * 「调试日志」页（无 adb 的普通用户可直接复制），**不新建悬浮按钮**。
+     *
+     * 典型输出：
+     * `geom snapshot | screen=1080x2400 d=2.75 | collapsed=false exam=false |
+     *  floor=825x1200 | saved=825x1620 | applied=825x1620 | contentNeed=1480`
+     *
+     * @param decision 本次决策（可空 = 只快照当前状态）
+     * @param contentNeededH 内容需要高度，便于判断是否该继续长高
+     */
+    private fun describeGeometry(
+        decision: OverlayGeometryPolicy.Decision? = null,
+        contentNeededH: Int = 0,
+    ): String {
+        val dm = resources.displayMetrics
+        val (floorW, floorH) = overlaySizeFloor()
+        val applied = overlayParams?.let { it.width.toString() + "x" + it.height } ?: "null"
+        val sb = StringBuilder()
+        sb.append("geom snapshot | screen=").append(dm.widthPixels).append('x').append(dm.heightPixels)
+        sb.append(" d=").append(dm.density)
+        sb.append(" | collapsed=").append(overlayCollapsed)
+        sb.append(" exam=").append(examMode)
+        sb.append(" answerOnly=").append(answerOnlyMode)
+        sb.append(" | floor=").append(floorW).append('x').append(floorH)
+        sb.append(" | saved=").append(overlayExpandedWidth).append('x').append(overlayExpandedHeight)
+        sb.append(" | applied=").append(applied)
+        if (decision != null) {
+            sb.append(" | decision=").append(decision.width).append('x').append(decision.height)
+            sb.append(" reason=").append(decision.reason)
+            if (decision.shouldExpand) sb.append(" shouldExpand=true")
+        }
+        if (contentNeededH > 0) sb.append(" | contentNeed=").append(contentNeededH)
+        return sb.toString()
+    }
+
+    /**
+     * 组装 [OverlayGeometryPolicy.Input] 并调用唯一权威决策（P0-1b 的收口点）。
+     *
+     * 所有需要「窗口该多大 / 该不该自动展开」的地方都走这里，
+     * 不再各自 `coerceIn` —— 这是「同一现象五连报」的结构性修复。
+     *
+     * @param contentNeededH 内容需要的高度（px）；0 表示无内容需求。
+     */
+    private fun decideOverlayGeometry(
+        savedW: Int? = null,
+        savedH: Int? = null,
+        collapsed: Boolean = overlayCollapsed,
+        contentNeededH: Int = 0,
+    ): OverlayGeometryPolicy.Decision {
+        val dm = resources.displayMetrics
+        val (examW, examH) = if (examMode) examOverlayDimensions() else (0 to 0)
+        val decision = OverlayGeometryPolicy.decide(
+            OverlayGeometryPolicy.Input(
+                screenW = dm.widthPixels,
+                screenH = dm.heightPixels,
+                density = dm.density,
+                savedW = savedW,
+                savedH = savedH,
+                collapsed = collapsed,
+                examMode = examMode,
+                examW = examW,
+                examH = examH,
+                contentNeededH = contentNeededH,
+            )
+        )
+        // 每次决策都留一行完整快照：下次报障只需用户复制这一行。
+        logDebug(describeGeometry(decision, contentNeededH))
+        return decision
+    }
+
+    /**
+     * 大窗默认尺寸（px）。
+     *
+     * P0-1b：公式已迁到 [OverlayGeometryPolicy.defaultSize]（单一事实源），
+     * 这里只做委托与日志 —— 保留本函数是因为历史调用点很多，改动调用点风险更大。
+     */
     private fun defaultOverlaySize(): Pair<Int, Int> {
         val dm = resources.displayMetrics
-        // 普通答题窗使用紧凑 5:4 卡片，避免覆盖题图/选项并消除横向长条感。
-        val w = (dm.widthPixels * 0.52f).toInt().coerceIn(280, 480)
-        val h = (w * 0.80f).toInt().coerceIn(230, 390)
-        return w to h
+        val (wPx, hPx) = OverlayGeometryPolicy.defaultSize(
+            dm.widthPixels, dm.heightPixels, dm.density,
+        )
+        logDebug(
+            "overlay.default screen=" + dm.widthPixels + "x" + dm.heightPixels + "px " +
+                "density=" + dm.density + " -> " + wPx + "x" + hPx + "px " +
+                "(" + (wPx / dm.density).toInt() + "x" + (hPx / dm.density).toInt() + "dp)"
+        )
+        return wPx to hPx
+    }
+
+    /**
+     * 悬浮窗「大窗下限」的**单一事实源**：(floorW, floorH)，单位 px。
+     *
+     * P0-1b：公式已迁到 [OverlayGeometryPolicy.floorSize]，这里只做委托。
+     * 历史教训（保留原文以免回退）：下限逻辑一旦散落多处（loadOverlaySize 一套、
+     * 展开路径另一套），就会出现「改了 prefs 下限却没变化」——因为渲染走的是另一条路。
+     */
+    private fun overlaySizeFloor(): Pair<Int, Int> {
+        val dm = resources.displayMetrics
+        return OverlayGeometryPolicy.floorSize(dm.widthPixels, dm.heightPixels, dm.density)
+    }
+
+    /**
+     * 产出**已施加下限**的展开尺寸。
+     *
+     * 真因：`overlayExpandedWidth/Height` 是与 prefs 脱钩的内存字段，折叠/恢复等场景
+     * 会把当时的（可能很小的、甚至是 WRAP_CONTENT 的）尺寸捕获进去，展开时又原样
+     * 消费 → 窗口永远回不到大窗，用户看到的仍是「没变化」。所有展开路径都必须走这里。
+     */
+    private fun flooredExpandedSize(): Pair<Int, Int> {
+        val dm = resources.displayMetrics
+        val (floorW, floorH) = overlaySizeFloor()
+        return OverlayGeometryPolicy.expandedSize(
+            OverlayGeometryPolicy.Input(
+                screenW = dm.widthPixels,
+                screenH = dm.heightPixels,
+                density = dm.density,
+                savedW = if (overlayExpandedWidth > 0) overlayExpandedWidth else null,
+                savedH = if (overlayExpandedHeight > 0) overlayExpandedHeight else null,
+            ),
+            floorW,
+            floorH,
+        )
     }
 
     private fun saveOverlayPosition(x: Int, y: Int) {
@@ -2951,34 +3811,98 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
             .apply()
     }
 
+    /**
+     * 考试窗位置独立持久化。
+     *
+     * 2026-09-16 P1-1：此前考试窗位置**硬编码右上角**，用户拖走后下次进入必被弹回；
+     * 而普通模式位置有记忆 → 同一件事两套口径。现改为独立记忆键：
+     * 与普通模式位置互不污染（考试窗尺寸/位置本就与普通大窗是两套语义）。
+     */
+    private fun saveExamPosition(x: Int, y: Int) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString(KEY_EXAM_GEOMETRY, "$x,$y")
+            .apply()
+    }
+
+    /** 读取考试窗记忆位置；无记录返回 null → policy 回退右上锚点。 */
+    private fun loadExamPosition(): String? =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_EXAM_GEOMETRY, null)
+
     private fun loadOverlaySize(): Pair<Int, Int> {
         val dm = resources.displayMetrics
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val raw = prefs.getString("${KEY_OVERLAY_GEOMETRY}_size", null)
+        // 大窗下限：用户 2026-09-13 起连续五次反馈「悬浮窗太小 / 还很拥挤 /
+        // 扩大 1.5 倍 / 大小没有变化 / 还是没有变化」。
+        //
+        // 历史教训（务必别回退成一次性 schema 迁移）：
+        //   v4/v5/v6 都是「schema < N 时改一次并置位」的一次性迁移。一次性
+        //   迁移有三个致命缺陷：①升级后只要跑过一次就再也不生效（用户下一次
+        //   反馈时它已经作废）；②它改的是「已保存值 ×1.5」，若保存值本身就
+        //   很小，乘完依然很小；③用户手拖过窗口后保存值会把它盖掉。
+        //   结果就是用户反复报「没有变化」。
+        //
+        // 现方案：改成**每次启动无条件施加的 dp 下限**（不是一次性迁移）。
+        //   用户保存的尺寸仍被尊重（比下限大就用手拖的值），但只要比下限小，
+        //   就会被抬到下限。这样无论 prefs 里躺着什么历史值、无论升级多少次，
+        //   窗口都不会再退回小窗。用户想变小仍可用右下角手柄拖动（拖动值若
+        //   大于下限则保留）。
+        val minW = (OVERLAY_MIN_WIDTH_DP * dm.density).toInt()
+        val minH = (OVERLAY_MIN_HEIGHT_DP * dm.density).toInt()
+        // 大窗下限：走单一事实源 overlaySizeFloor()。
+        val (floorW, floorH) = overlaySizeFloor()
+        logDebug(
+            "overlay.load raw=" + raw + " schema=" +
+                prefs.getInt(KEY_OVERLAY_SIZE_SCHEMA, 0) + " compactMigrated=" +
+                prefs.getBoolean(KEY_OVERLAY_COMPACT_MIGRATED, false) +
+                " density=" + dm.density +
+                " screen=" + dm.widthPixels + "x" + dm.heightPixels + "px" +
+                " floor=" + floorW + "x" + floorH + "px (" +
+                (floorW / dm.density).toInt() + "x" + (floorH / dm.density).toInt() + "dp)"
+        )
         if (raw != null) {
+            // 2026-09-19 紧凑迁移（schema v8）：0.80 新默认（ab80376）长期被旧 SAVED
+            // 尺寸顶住（Reason.SAVED 优先级高于 Reason.DEFAULT，新默认永远轮不到），
+            // 且 254 的 floor 抬升会把抬升值写回 prefs 永久固化。低于 v8 的历史
+            // 保存值清除一次让新默认落地；此后用户手拖照常记忆（schema ≥ 8 不再清）。
+            val savedSchema = prefs.getInt(KEY_OVERLAY_SIZE_SCHEMA, 0)
+            if (OverlayGeometryPolicy.shouldDropSavedSizeForCompact(savedSchema)) {
+                logDebug(
+                    "overlay.compact-migrate drop saved=$raw schema=$savedSchema" +
+                        " -> default(" + (floorW / dm.density).toInt() + "x" +
+                        (floorH / dm.density).toInt() + "dp)"
+                )
+                prefs.edit()
+                    .remove("${KEY_OVERLAY_GEOMETRY}_size")
+                    .putInt(KEY_OVERLAY_SIZE_SCHEMA, OverlayGeometryPolicy.COMPACT_SIZE_SCHEMA)
+                    .apply()
+                logDebug("overlay.result(no-prefs) " + floorW + "x" + floorH + "px (" +
+                    (floorW / dm.density).toInt() + "x" + (floorH / dm.density).toInt() + "dp)")
+                return floorW to floorH
+            }
             val p = raw.split(',').mapNotNull { it.toIntOrNull() }
             if (p.size >= 2) {
-                val minW = (OVERLAY_MIN_WIDTH_DP * dm.density).toInt()
-                val minH = (OVERLAY_MIN_HEIGHT_DP * dm.density).toInt()
                 var w = p[0].coerceIn(minW, dm.widthPixels)
                 var h = p[1].coerceIn(minH, dm.heightPixels)
-                // v4 强制把历史宽窗（含手动遗留的 88% 宽长条）迁移为紧凑卡片；
-                // 后续用户通过缩放手柄调整的卡片尺寸会保留。
-                val isLegacyWide = w > (dm.widthPixels * 0.62f).toInt() ||
-                    h * 100 < w * 70
-                if (!prefs.getBoolean(KEY_OVERLAY_COMPACT_MIGRATED, false) && isLegacyWide) {
-                    val compact = defaultOverlaySize()
-                    w = compact.first
-                    h = compact.second
+                // 若保存值小于大窗下限 → 抬到下限（真机上报「没变化」的正面修复）。
+                if (w < floorW || h < floorH) {
+                    logDebug("overlay.floor raise " + w + "x" + h + " -> " + floorW + "x" + floorH)
+                    w = w.coerceAtLeast(floorW)
+                    h = h.coerceAtLeast(floorH)
                     prefs.edit()
-                        .putBoolean(KEY_OVERLAY_COMPACT_MIGRATED, true)
+                        .putInt(KEY_OVERLAY_SIZE_SCHEMA, OverlayGeometryPolicy.COMPACT_SIZE_SCHEMA)
                         .putString("${KEY_OVERLAY_GEOMETRY}_size", "$w,$h")
                         .apply()
                 }
+                logDebug("overlay.result " + w + "x" + h + "px (" +
+                    (w / dm.density).toInt() + "x" + (h / dm.density).toInt() + "dp)")
                 return w to h
             }
         }
-        return defaultOverlaySize()
+        logDebug("overlay.result(no-prefs) " + floorW + "x" + floorH + "px (" +
+            (floorW / dm.density).toInt() + "x" + (floorH / dm.density).toInt() + "dp)")
+        return floorW to floorH
     }
 
     private fun saveOverlaySize(w: Int, h: Int) {
@@ -3035,23 +3959,129 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         saveOverlayPosition(params.x, params.y)
     }
 
+    /**
+     * 当前内容**实际需要**的高度（px），供 [decideOverlayGeometry] 决策。
+     *
+     * ## 为什么不用 `answer.height`（P1-1 的根因）
+     *
+     * 原先 `ensureAnswerOverlayFitsContent` 用 `answer.height` 求和，但那是
+     * ScrollView 在**窗口被夹过之后**的高度 —— 是滞后测量：窗口小 → 测得小 →
+     * 决定不长大 → 窗口还是小，形成死锁，用户永远看不到「长大」。
+     * 这里改用**内容固有高度**（`measuredHeight` 兜底 `height`），并显式加上
+     * 过程框需要的高度，避免滞后。
+     *
+     * @return 内容需要的高度（px）；无内容需求返回 0。
+     */
+    private fun currentContentNeededHeight(view: View): Int {
+        // 注意：这里**不再**因 examMode 直接 return 0。
+        // 旧版 `if (examMode || answerOnlyMode) return 0` 与真机观察矛盾：用户截图里
+        // 考试小窗的文字被底边裁断（说明内容确实有高度需求，只是没被计入）。
+        // answerOnlyMode 早期退出同理 —— 仅答案模式下答案文本依然需要高度。
+        // 保留一个真正的空数据守卫即可：无内容时返回 0。
+        val answer = view.findViewById<View>(R.id.scroll_answer)
+        val processBox = view.findViewById<View>(R.id.ai_process_box)
+        val hasProcess = hasPendingAiProcess(view)
+        if (answer == null && !hasProcess) return 0
+
+        // 标题栏 + 答案区 + 过程区 + 内边距，逐块用固有高度累加。
+        val titleBar = view.findViewById<View>(R.id.title_bar)
+        var total = 0
+        total += intrinsicHeight(titleBar)
+        total += intrinsicHeight(answer)
+        if (hasProcess) total += intrinsicHeight(processBox)
+        // 竖向 padding + 区块间距余量（避免刚好差几 px 又被裁一行）。
+        total += (OVERLAY_VERTICAL_SLACK_DP * resources.displayMetrics.density).toInt()
+        return total.coerceAtLeast(0)
+    }
+
+    /**
+     * 取视图的**固有高度**（px）——优先 `measuredHeight`，退回 `height`。
+     *
+     * 不用 `height` 优先，是因为窗口被夹时 `height` 会跟着缩水，
+     * 用它做决策会形成「越小越不涨」的死锁（P1-1）。
+     */
+    private fun intrinsicHeight(v: View?): Int {
+        if (v == null || v.visibility == View.GONE) return 0
+        return if (v.measuredHeight > 0) v.measuredHeight else v.height.coerceAtLeast(0)
+    }
+
+    /**
+     * 折叠态下判断是否该自动展开：折叠是用户选择，不能一见内容就弹开，
+     * 但过程框一旦有可见内容且窗口是 WRAP_CONTENT 窄条，就必然被裁 →
+     * 这时才展开。与 updateAiProcess 的 box 可见性同口径（单一事实源）。
+     */
+    private fun hasPendingAiProcess(view: View): Boolean {
+        val box = view.findViewById<View>(R.id.ai_process_box) ?: return false
+        if (box.visibility != View.VISIBLE) return false
+        // CharSequence?.orEmpty() 不存在（.trim() 后仍是 CharSequence）→ 先 toString()。
+        val text = view.findViewById<TextView>(R.id.tv_ai_process)?.text?.toString()?.trim().orEmpty()
+        return text.isNotEmpty()
+    }
+
+    /**
+     * 构建 miss 态正文（纯函数，可单测调用，不依赖 View）。
+     *
+     * @param rawAnswer 去掉 SIM marker 后的 overlayAnswers 文本（已 trim）。
+     * @return 应展示在 tv_answer 的内容：
+     *   - 空 / 仅"未命中" → 兜底句「未搜到答案。点右上角紫色 AI 按钮…」
+     *   - 首行已含完整 hint（endsWith 或 contains 后缀）→ 直接展示首行，
+     *     **不**再追加后缀（2026-09-18 去重：Dart 侧 visionMissHint 推送的
+     *     就是完整 hint 句，旧逻辑会拼成「完整句 + 换行 + 后半句」造成
+     *     紫色首行与黑色正文视觉重复）。
+     *   - 其他内容 → "首行 + 空行 + 指路后缀"。
+     */
+    @JvmOverloads
+    fun buildMissDisplayAnswer(rawAnswer: String): String =
+        missDisplayAnswer(rawAnswer)
+
     private fun ensureAnswerOverlayFitsContent(view: View) {
-        if (examMode || answerOnlyMode || overlayCollapsed) return
-        val answer = view.findViewById<TextView>(R.id.tv_answer) ?: return
-        // TextView 在本次赋值后的真实换行数决定最小内容高度；避免失败文案变两三行后
-        // 被旧的手动窗口高度裁掉。只增高，不破坏用户主动缩小后的宽度/位置。
+        if (examMode || answerOnlyMode) return
+        // ⚠️ 用户 2026-09-15 反馈「答题悬浮窗还是没有变化，ai搜题显示也没有优化」。
+        // 原先这里对 overlayCollapsed 也直接 return → 折叠态下按内容自适应**完全不跑**，
+        // 窗口保持 WRAP_CONTENT，AI 过程框只能显示一行（用户看到的就是「没优化」）。
+        // 折叠是用户主动选择，不该被无声取消；但**内容确实需要按需增高**时，
+        // 说明用户正在看新一轮结果 → 先退出折叠态，再正常走自适应。
+        if (overlayCollapsed) {
+            val needsMore = hasPendingAiProcess(view)
+            if (!needsMore) return
+            logDebug("ensureFits: expand from collapsed (content needs full height)")
+            toggleCollapse(view)
+        }
+        val answer = view.findViewById<View>(R.id.scroll_answer) ?: return
+        // ⚠️ 历史坑（用户 2026-09-14 报障「ai搜题这个显示咋只有一半，我看不完全」
+        // 的真因）：旧实现写成 `needed = title + status + divider + question +
+        // answer.height`，**完全没算下方 ai_process_box**。于是 AI 作答过程一出现，
+        // 它就落在窗口底边之外被裁掉 —— 用户只能看到一半。
+        //
+        // P1-1 修复：改用 currentContentNeededHeight()（固有高度，非滞后 height）
+        // 并统一走 OverlayGeometryPolicy.decide()，同时**允许收敛**（此前是
+        // `if (needed > current.height)` 单向棘轮：窗口一旦被夹小，测得的
+        // 内容高度也跟着小，于是永远不涨 —— 用户看到「没变化」的死锁）。
         answer.post {
             val current = overlayParams ?: return@post
-            val content = view.findViewById<View>(R.id.answer_container) ?: return@post
-            val titleH = view.findViewById<View>(R.id.title_bar)?.height ?: 0
-            val statusH = view.findViewById<View>(R.id.status_bar)?.height ?: 0
-            val dividerH = view.findViewById<View>(R.id.answer_divider)?.height ?: 0
-            val questionH = view.findViewById<View>(R.id.scroll_question)?.height ?: 0
-            val needed = titleH + statusH + dividerH + questionH + answer.height
-            if (needed > current.height) {
-                current.height = needed.coerceAtMost((resources.displayMetrics.heightPixels * 0.82f).toInt())
+            val needed = currentContentNeededHeight(view)
+            if (needed <= 0) return@post
+            val decision = decideOverlayGeometry(
+                collapsed = false,
+                contentNeededH = needed,
+            )
+            val targetH = decision.height
+            // 收敛：过高过低都调（下限由 policy 保证），不再只增不减。
+            if (targetH != current.height || decision.width != current.width) {
+                current.width = decision.width
+                current.height = targetH
                 clampParamsToScreen(current)
+                if (!examMode) {
+                    overlayExpandedWidth = current.width
+                    overlayExpandedHeight = current.height
+                }
                 try { windowManager?.updateViewLayout(view, current) } catch (_: Throwable) {}
+                // 诊断：把「决定」与「实际生效」都打出来，报障时一眼定位。
+                logDebug(
+                    "ensureFits reason=" + decision.reason + " needed=" + needed +
+                        " target=" + decision.width + "x" + targetH +
+                        " applied=" + current.width + "x" + current.height + "px"
+                )
             }
         }
     }
@@ -3062,7 +4092,8 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         val aTv = view.findViewById<TextView>(R.id.tv_answer)
         val status = view.findViewById<View>(R.id.status_bar)
         val pillLabel = view.findViewById<TextView>(R.id.tv_pill_label)
-        val title = view.findViewById<TextView>(R.id.tv_title)
+        // 相似度徽章已从标题栏迁到状态行（2026-09-13），不再与功能按钮抢宽度。
+        val title = view.findViewById<TextView>(R.id.tv_similarity_badge)
 
         val q = overlayQuestion.ifEmpty { "等待捕获题目…" }
         val rawAnswer = overlayAnswers.ifEmpty { "等待搜题结果…" }
@@ -3075,14 +4106,17 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         // 检索中：标题已有「新题 · 检索中」，正文与摘要条不再重复。
         val displayAnswer = when {
             isSearchingNow -> ""
-            overlayStatus == "miss" -> a.lineSequence()
-                .map { it.trim() }
-                .firstOrNull { it.isNotEmpty() && !it.contains("相似度") }
-                ?: a.ifBlank { "未命中" }
+            overlayStatus == "miss" -> buildMissDisplayAnswer(a)
             overlayStatus == "ambiguous" -> a.ifBlank { "存在多个候选，请手动确认" }
             else -> compactAnswerForExam(a, includeSimilarity = false)
         }
         qTv?.text = q
+        // A3 占位弱化（2026-09-19）：无真实题时（占位文案）整行半透明 + 灰色，
+        // 与真实题干（全不透明 + 深色）在视觉上区分「还没出题 / 已出题」。
+        // 占位判定复用 updateAccessibilityOverlayView 本地的 q 常量兜底值。
+        val isPlaceholderQuestion = overlayQuestion.isBlank()
+        qTv?.alpha = if (isPlaceholderQuestion) 0.55f else 1.0f
+        qTv?.setTextColor(if (isPlaceholderQuestion) 0xFF94A3B8.toInt() else 0xFF101828.toInt())
         // 检索中清空正文，避免与标题三重复
         if (isSearchingNow) {
             aTv?.text = ""
@@ -3107,29 +4141,27 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         val key = overlayAnswerKey
         val sim = overlaySimilarity ?: simFromMarker ?: extractSimilarity(a)
 
-        // 标题栏只显示固定相似度标签：进一步缩短文案，给眼睛与关闭按钮保留固定空间。
-        val badgeText = when {
-            isSearchingNow -> "检索中"
-            overlayStatus == "ambiguous" && overlayMatchCount > 1 -> "请确认 ${overlayMatchIndex + 1}/$overlayMatchCount"
-            overlayStatus == "ambiguous" -> "请确认"
-            sim == null -> "待匹配"
-            sim >= 90 -> "$sim%"
-            sim >= 70 -> "$sim%"
-            else -> "$sim%"
-        }
-        val badgeColor = when {
-            isSearchingNow -> 0xFFB45309.toInt()
-            overlayStatus == "ambiguous" -> 0xFFB45309.toInt()
-            sim == null -> 0xFF475467.toInt()
-            sim >= 90 -> 0xFF15803D.toInt()
-            sim >= 70 -> 0xFFB45309.toInt()
-            else -> 0xFFB91C1C.toInt()
-        }
+        // 相似度胶囊现内联在标题栏（2026-09-13 第二轮优化：原独立 status_row
+        // 白底+蓝条横贯整卡视觉割裂）。配色与 Dart 侧 similarityPillColor 同口径：
+        // 绿=命中 / 琥珀=检索中 / 灰=未命中。改一处需改两处。
+        // 命中态（hit）无相似度（AI 读屏 confidence=0）时绝不能落「未命中」，
+        // 否则会正文「答案：C」紫色命中 + 徽章「未命中」灰 的自相矛盾（2026-09-18 截图）。
+        val (badgeText, badgeColor) = badgeState(
+            isSearchingNow = isSearchingNow,
+            status = overlayStatus,
+            matchCount = overlayMatchCount,
+            matchIndex = overlayMatchIndex,
+            sim = sim,
+        )
         title?.text = badgeText
         title?.backgroundTintList = android.content.res.ColorStateList.valueOf(badgeColor)
         // 多匹配的切换仍可从正文长按/更多入口完成；相似度标签仅承担状态展示。
         title?.setOnClickListener(null)
         view.findViewById<View>(R.id.answer_container)?.alpha = loadOverlayOpacity()
+        // B4 合成提示（2026-09-19）：elevation 阴影 + 圆角背景交给 GPU 硬件层合成，
+        // 国产 ROM 上滚动/重排时阴影重绘更顺。视图未失效时系统直接复用层级位图。
+        // LAYER_TYPE_NONE 还原默认行为（调透明度动画等场景不再需要时可改回）。
+        view.findViewById<View>(R.id.answer_container)?.setLayerType(View.LAYER_TYPE_HARDWARE, null)
     }
 
     /** 题目区限高：长题干区内自滚，避免挤掉答案/相似度首屏。 */
@@ -3713,4 +4745,76 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
             saveOverlayOpacity(op.coerceIn(0.3f, 1.0f))
         }
     }
+}
+
+/**
+ * miss 态悬浮窗正文拼接（纯函数，可单测，不依赖 Service 实例）。
+ *
+ * 根因（2026-09-18 用户截图定位）：
+ * Dart 侧 [visionMissHint] 推送的是完整句「未搜到答案。点右上角紫色 AI 按钮…」，
+ * 旧内联逻辑走 else 分支拼成「完整句 + \n\n + 后半句」，
+ * [applyAnswerStyle] 又把首行（含「答案」二字）染成主题色加粗，
+ * 黑色后半行保留默认色 → 用户看到「紫色一行 + 黑色一行，内容重复」。
+ *
+ * 修复：当 firstLine 已包含指路后缀时，直接展示 firstLine，不再追加。
+ *
+ * @param rawAnswer 去掉 SIM marker 后的 overlayAnswers 文本（已 trim）。
+ */
+internal fun missDisplayAnswer(rawAnswer: String): String {
+    val suffix = "点右上角紫色 AI 按钮，用 AI 联网搜题。"
+    val firstLine = rawAnswer.lineSequence()
+        .map { it.trim() }
+        .firstOrNull { it.isNotEmpty() && !it.contains("相似度") }
+    return if (firstLine.isNullOrBlank() || firstLine == "未命中") {
+        "未搜到答案。$suffix"
+    } else if (firstLine.endsWith(suffix) || firstLine.contains(suffix)) {
+        firstLine
+    } else {
+        "$firstLine\n\n$suffix"
+    }
+}
+
+/** 标题栏相似度胶囊（徽章）的文案 + 配色（纯函数，可单测，不依赖 Service 实例）。 */
+internal data class OverlayBadge(
+    val text: String,
+    /** @hide */
+    val colorArgb: Int,
+)
+
+/**
+ * 计算标题栏相似度胶囊（徽章）的文案与配色。
+ *
+ * 口径（与 Dart 侧 similarityPillColor 同口径，改一处需改两处）：
+ * - 检索中 / 歧义 / 未命中 → 琥珀 / 琥珀 / 灰
+ * - 命中（hit）有相似度 → 显示「X%」，配色按阈值（≥90 绿 / ≥70 琥珀 / 其余灰）
+ * - 命中（hit）无相似度（AI 读屏 confidence=0）→ 显示「命中」（绿），
+ *   绝不能落「未命中」灰 —— 否则正文命中 + 徽章「未命中」自相矛盾
+ *   （2026-09-18 用户截图：「答案：C」紫色命中，徽章却灰「未命中」）。
+ */
+internal fun badgeState(
+    isSearchingNow: Boolean,
+    status: String,
+    matchCount: Int,
+    matchIndex: Int,
+    sim: Int?,
+): OverlayBadge = when {
+    isSearchingNow -> OverlayBadge("读屏中", 0xFFF59E0B.toInt())
+    status == "ambiguous" && matchCount > 1 ->
+        OverlayBadge("确认 ${matchIndex + 1}/$matchCount", 0xFFF59E0B.toInt())
+    status == "ambiguous" -> OverlayBadge("请确认", 0xFFF59E0B.toInt())
+    status == "miss" -> OverlayBadge("未命中", 0xFF98A2B3.toInt())
+    // 命中态：有相似度显示百分比；无相似度（AI 读屏）显示「命中」绿底，不再误判未命中。
+    status == "hit" ->
+        if (sim == null) OverlayBadge("命中", 0xFF12B76A.toInt())
+        else OverlayBadge("$sim%", hitSimilarityColor(sim))
+    // 未携带结构化 status 的旧调用路径：按相似度兜底，无相似度才算未命中。
+    sim == null -> OverlayBadge("未命中", 0xFF98A2B3.toInt())
+    else -> OverlayBadge("$sim%", hitSimilarityColor(sim))
+}
+
+/** 命中态相似度配色：≥90 绿 / ≥70 琥珀 / 其余灰。 */
+private fun hitSimilarityColor(sim: Int): Int = when {
+    sim >= 90 -> 0xFF12B76A.toInt()
+    sim >= 70 -> 0xFFF59E0B.toInt()
+    else -> 0xFF98A2B3.toInt()
 }

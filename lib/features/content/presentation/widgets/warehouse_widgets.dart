@@ -120,30 +120,35 @@ class _ContentLightIconButton extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// ContentEntryGrid — 3×2 均衡入口网格
+// ContentEntryGrid — 2×2 内容入口网格
 // ═══════════════════════════════════════════════════════════════════
 
+/// 四个内容入口：影视 / 小说 / 漫画 / 音乐。
+///
+/// 曾经是 3×2 六个格子：影视、小说搜索、书架、漫画、音乐、导入资源。
+/// 问题是副标题写着「影视 / 小说 / 漫画 / 音乐」却渲染六个，且
+///   - 「小说搜索」去的是 ApiHubPage（OpenLibrary 查书目元数据），
+///     和「书架」（本地阅读）被拆成两个格子，用户要找小说得先分辨去哪个；
+///   - 「导入资源」和收藏库标题栏的 ＋ 调的是同一个手填对话框，重复入口。
+/// 现在按「一个模块一个入口」收敛：小说合并为一格（书架为主），
+/// 图书搜索移交工具页，手填入口整体撤掉。
 class ContentEntryGrid extends StatelessWidget {
   const ContentEntryGrid({
     super.key,
     required this.onOpenVideoCenter,
     required this.onOpenNovelLibrary,
-    required this.onOpenOpenLibrarySearch,
     required this.onOpenComics,
     required this.onOpenMusic,
-    required this.onQuickImport,
   });
 
   final VoidCallback onOpenVideoCenter;
   final VoidCallback onOpenNovelLibrary;
-  final VoidCallback onOpenOpenLibrarySearch;
   final VoidCallback onOpenComics;
   final VoidCallback onOpenMusic;
-  final VoidCallback onQuickImport;
 
   @override
   Widget build(BuildContext context) {
-    // 紧凑 3×2：缩短副标题、减小内边距，避免入口区占半屏
+    // 紧凑 2×2：每行两格，卡片可以给到更完整的副标题而不截断
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
@@ -174,18 +179,8 @@ class ContentEntryGrid extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: AppCompactActionCard(
-                  title: '小说搜索',
-                  subtitle: 'OpenLib 搜索',
-                  icon: Icons.auto_stories_rounded,
-                  color: AppTokens.orange,
-                  onTap: onOpenOpenLibrarySearch,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: AppCompactActionCard(
-                  title: '书架',
-                  subtitle: '本地阅读',
+                  title: '小说',
+                  subtitle: '书架与阅读',
                   icon: Icons.menu_book_rounded,
                   color: AppTokens.amber,
                   onTap: onOpenNovelLibrary,
@@ -199,7 +194,7 @@ class ContentEntryGrid extends StatelessWidget {
               Expanded(
                 child: AppCompactActionCard(
                   title: '漫画',
-                  subtitle: '导入收藏',
+                  subtitle: '书架与阅读',
                   icon: Icons.collections_bookmark_rounded,
                   color: AppTokens.violet,
                   onTap: onOpenComics,
@@ -209,20 +204,12 @@ class ContentEntryGrid extends StatelessWidget {
               Expanded(
                 child: AppCompactActionCard(
                   title: '音乐',
-                  subtitle: '歌单历史',
+                  // 音乐规划为「本地播放 + 在线源爬取下载」，当前仅占位页说明规划，
+                  // 副标题不能写「本地收藏」——那是撤掉的手填收藏时代的说法。
+                  subtitle: '播放器开发中',
                   icon: Icons.library_music_rounded,
                   color: AppTokens.emerald,
                   onTap: onOpenMusic,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: AppCompactActionCard(
-                  title: '导入资源',
-                  subtitle: '手动添加',
-                  icon: Icons.add_link_rounded,
-                  color: AppTokens.orange,
-                  onTap: onQuickImport,
                 ),
               ),
             ],
@@ -739,7 +726,6 @@ class WarehouseSection extends StatefulWidget {
     required this.isLoading,
     required this.hasError,
     required this.emptyText,
-    required this.onAdd,
     required this.onOpenItem,
     required this.onOpenVideoCenter,
     required this.onOpenNovelLibrary,
@@ -754,7 +740,6 @@ class WarehouseSection extends StatefulWidget {
   final bool isLoading;
   final bool hasError;
   final String emptyText;
-  final ValueChanged<WarehouseCategory> onAdd;
   final ValueChanged<WarehouseItem> onOpenItem;
   final VoidCallback onOpenVideoCenter;
   final VoidCallback onOpenNovelLibrary;
@@ -866,12 +851,6 @@ class _WarehouseSectionState extends State<WarehouseSection>
                         color: Colors.grey.shade500,
                       ),
                     ),
-                    const SizedBox(width: 4),
-                    IconButton(
-                      tooltip: '新增',
-                      onPressed: () => widget.onAdd(widget.category),
-                      icon: const Icon(Icons.add_circle_outline),
-                    ),
                   ],
                 ),
               ),
@@ -905,16 +884,15 @@ class _WarehouseSectionState extends State<WarehouseSection>
         title: '还没有${widget.category.hubLabel}',
         message: widget.emptyText,
         icon: widget.category.icon,
+        // 手填收藏撤掉后，空态只剩「去真实来源」这一种动作：
+        // books 去小说书架，videos 去影视搜索。原来的 '添加一个' 兜底分支
+        // 指向已删除的手填对话框，留着会变成点了没反应的死按钮。
         actionLabel: widget.category == WarehouseCategory.videos
             ? '打开影视搜索'
-            : widget.category == WarehouseCategory.books
-            ? '打开小说书架'
-            : '添加一个',
+            : '打开小说书架',
         onAction: widget.category == WarehouseCategory.videos
             ? widget.onOpenVideoCenter
-            : widget.category == WarehouseCategory.books
-            ? widget.onOpenNovelLibrary
-            : () => widget.onAdd(widget.category),
+            : widget.onOpenNovelLibrary,
       );
     }
 

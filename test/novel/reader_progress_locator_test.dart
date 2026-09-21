@@ -10,12 +10,12 @@ void main() {
 
     test('single page', () {
       final pages = ['Hello'];
-      final content = 'Hello';
+      const content = 'Hello';
       expect(computePageStartOffsets(pages, content), [0]);
     });
 
     test('multiple consecutive pages', () {
-      final content = 'ABCDEFGHIJ';
+      const content = 'ABCDEFGHIJ';
       final pages = ['ABC', 'DEF', 'GHI', 'J'];
       final offsets = computePageStartOffsets(pages, content);
       expect(offsets, [0, 3, 6, 9]);
@@ -23,7 +23,7 @@ void main() {
 
     test('pages with skipped newlines', () {
       // 分页器会跳过页首换行，所以 "BCD" 实际在原文 offset=4
-      final content = 'ABC\n\nBCD';
+      const content = 'ABC\n\nBCD';
       final pages = ['ABC', 'BCD'];
       final offsets = computePageStartOffsets(pages, content);
       expect(offsets, [0, 5]);
@@ -31,7 +31,7 @@ void main() {
 
     test('page not found fallback', () {
       // 页内容在原文中不存在 —— 理论上不该发生，但要保证单调不减
-      final content = 'ABC';
+      const content = 'ABC';
       final pages = ['ABC', 'XYZ', 'DEF'];
       final offsets = computePageStartOffsets(pages, content);
       expect(offsets[0], 0);
@@ -40,7 +40,7 @@ void main() {
     });
 
     test('empty page', () {
-      final content = 'ABCDEF';
+      const content = 'ABCDEF';
       final pages = ['ABC', '', 'DEF'];
       final offsets = computePageStartOffsets(pages, content);
       expect(offsets[0], 0);
@@ -83,14 +83,14 @@ void main() {
   group('charOffsetForPage', () {
     test('page index out of bounds', () {
       final pages = ['AB', 'CD'];
-      final content = 'ABCD';
+      const content = 'ABCD';
       expect(charOffsetForPage(pages, content, -1), isNull);
       expect(charOffsetForPage(pages, content, 2), isNull);
     });
 
     test('valid page index', () {
       final pages = ['AB', 'CD', 'EF'];
-      final content = 'ABCDEF';
+      const content = 'ABCDEF';
       expect(charOffsetForPage(pages, content, 0), 0);
       expect(charOffsetForPage(pages, content, 1), 2);
       expect(charOffsetForPage(pages, content, 2), 4);
@@ -99,7 +99,7 @@ void main() {
 
   group('end-to-end: save and restore', () {
     test('simulate save at page 2, restore after re-paginate', () {
-      final content = 'ABCDEFGHIJKLMNOP';
+      const content = 'ABCDEFGHIJKLMNOP';
       final originalPages = ['ABCD', 'EFGH', 'IJKL', 'MNOP'];
 
       // 用户在第 2 页（0-based），即 "IJKL"
@@ -121,7 +121,7 @@ void main() {
       // 旧进度只有页索引 1（"EFGH"），新分页后边界变了，
       // 页索引 1 现在指向 "DEFGHI"，内容已不同 —— 这就是旧逻辑的缺陷。
       // 但有了 charOffset 后，应该定位到原文 offset=4 附近。
-      final content = 'ABCDEFGHIJKLMNOP';
+      const content = 'ABCDEFGHIJKLMNOP';
       final newPages = ['ABC', 'DEFGHI', 'JKLMN', 'OP'];
       final offsets = computePageStartOffsets(newPages, content);
 

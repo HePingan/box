@@ -53,9 +53,13 @@ class _DailyNewsPageState extends State<DailyNewsPage> {
         backgroundColor: Colors.white,
         scrolledUnderElevation: 0,
         elevation: 0,
+        // label 故意留空：当前页名交给下面的 title。
+        // 这里曾经也传了同一个字符串，AppBar.leading 宽度固定（内容区仅约 34dp）
+        // 装不下「图标+4 汉字」，溢出后与紧邻的 title 水平重叠 —— 用户截图里
+        // 「热点」和「热点详情」糊在一起就是这个。
+        // label 的语义是「返回到哪儿」（目的地），不是「当前页叫什么」。
         leading: AppBackButton(
           onPressed: () => Navigator.pop(context),
-          label: widget.initialUrl != null ? '热点详情' : '视界日报',
         ),
         title: Text(
           widget.initialUrl != null ? '热点详情' : '视界日报',

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -5,6 +6,9 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:crypto/crypto.dart';
+
+import '../../../utils/app_logger.dart';
+import '../../../utils/log_channels.dart';
 
 import '../../account/data/account_client.dart';
 import '../domain/quiz_bank.dart';
@@ -27,8 +31,15 @@ class QuizCloudSyncService {
        _deleteCloudItem = deleteCloudItem ?? QuizBankStorage.deleteCloudItem;
 
   static const _cursorPrefix = 'quiz_cloud_cursor_v1';
+  /// 未走完的同步续传点；存在即代表本地库可能不完整。
+  static const _incompletePrefix = 'quiz_cloud_incomplete_v1';
   static const _syncPageLimit = 100;
   static const _maxSyncPages = 100;
+
+  /// 单页瞬时失败的重试次数与退避基数。
+  /// 调大 [_syncPageMaxAttempts] / [_syncPageRetryDelay] = 更耐弱网但同步更慢。
+  static const _syncPageMaxAttempts = 3;
+  static const _syncPageRetryDelay = Duration(milliseconds: 800);
   static const _maxSubmissionPages = 50;
   static const _apiTimeout = Duration(seconds: 15);
   static const _imageTimeout = Duration(seconds: 20);
@@ -56,6 +67,9 @@ class QuizCloudSyncService {
     required String serverUrl,
     String category = '',
     bool resetCursor = false,
+    void Function(String message)? onProgress,
+    void Function(QuizCloudSyncProgress progress)? onPageProgress,
+    int expectedTotal = 0,
   }) async {
     final normalizedServer = BoxAccountClient.normalizeServerUrl(serverUrl);
     final prefs = await SharedPreferences.getInstance();
@@ -66,6 +80,11 @@ class QuizCloudSyncService {
     }
     final cursor = prefs.getInt(key) ?? 0;
     var requestCursor = cursor;
+    AppLogger.instance.logTo(
+      LogChannel.quiz,
+      'sync 开始 server=$normalizedServer category=${category.isEmpty ? "(全库)" : category}'
+      ' reset=$resetCursor startCursor=$cursor',
+    );
     String? pageToken;
     String? afterSequence;
     var inserted = 0;
@@ -85,14 +104,23 @@ class QuizCloudSyncService {
       if (afterSequence != null) {
         queryParameters['afterSequence'] = afterSequence;
       }
-      final response = await _httpClient
-          .get(
-            _uri(
-              normalizedServer,
-              '/api/quiz/sync',
-            ).replace(queryParameters: queryParameters),
-          )
-          .timeout(_apiTimeout);
+      final http.Response response;
+      try {
+        response = await _getSyncPage(
+          normalizedServer,
+          queryParameters,
+        );
+      } on Object catch (error) {
+        // 重试到底仍然拉不动：必须落下续传点再抛出，
+        // 否则用户看到的只是「同步失败」，而库里缺了一批题却无人知晓。
+        await _markIncomplete(normalizedServer, category, requestCursor);
+        AppLogger.instance.logTo(
+          LogChannel.quiz,
+          'sync 中断 page=${pages + 1} reqCursor=$requestCursor '
+          'err=$error（已记录续传点）',
+        );
+        rethrow;
+      }
       final body = _decode(response);
       final changes = body['changes'];
       if (changes is List) {
@@ -137,8 +165,44 @@ class QuizCloudSyncService {
       final nextPageToken = _continuationToken(body);
       final nextAfterSequence = _token(body['afterSequence']);
       pages++;
+      // 逐页留痕：这是「同步过却搜不到题」唯一能定位根因的证据。
+      //
+      // 真实踩过的两种残缺：
+      //   1) 单页请求超时/抖动，旧代码直接把整轮同步抛出 → 库停在中途
+      //      （真机 234：本地 3513 / 云端 3611）。现已改为退避重试 + 落续传点。
+      //   2) 带 category 过滤时，服务端只回该分类的题（实测 3456 道），
+      //      而用户搜的题若不在已订阅分类里，就永远同步不到。
+      //      → 所以这里必须把 category 与累计题数写进日志，才能一眼看出差异。
+      // 只写 debugPrint 的话 release 包不落盘，用户按提示去日志页什么都搜不到。
+      // 这条必须进 AppLogger（日志页搜 `sync page` 即可）。
+      AppLogger.instance.logTo(
+        LogChannel.quiz,
+        'sync page=$pages reqCursor=$requestCursor'
+        ' nextCursor=$nextCursor hasMore=${body['hasMore'] == true}'
+        ' recv=${changes is List ? changes.length : 0} total=$inserted'
+        ' category=${category.isEmpty ? "(全库)" : category}',
+      );
+      onProgress?.call(
+        '拉取中：第 $pages 页 · 本轮已入库 $inserted 题'
+        '${category.isEmpty ? '' : ' · $category'}',
+      );
+      onPageProgress?.call(
+        QuizCloudSyncProgress(
+          pagesDone: pages,
+          insertedSoFar: inserted,
+          expectedTotal: expectedTotal,
+          category: category,
+        ),
+      );
       if (body['hasMore'] != true) {
         await prefs.setInt(key, nextCursor);
+        await _clearIncomplete(normalizedServer, category);
+        AppLogger.instance.logTo(
+          LogChannel.quiz,
+          'sync 完成 pages=$pages 入库=$inserted 删=$deleted'
+          ' 图缓存=$imagesCached 图失败=$imageFailures'
+          ' endCursor=$nextCursor category=${category.isEmpty ? "(全库)" : category}',
+        );
         return QuizCloudSyncResult(
           cursor: nextCursor,
           inserted: inserted,
@@ -159,6 +223,7 @@ class QuizCloudSyncService {
       if (nextAfterSequence != null && nextAfterSequence != afterSequence) {
         afterSequence = nextAfterSequence;
         requestCursor = cursor;
+        await _markIncomplete(normalizedServer, category, nextCursor);
         continue;
       }
       if (nextCursor > requestCursor) {
@@ -166,6 +231,7 @@ class QuizCloudSyncService {
         // itself was the continuation marker.
         requestCursor = nextCursor;
         pageToken = null;
+        await _markIncomplete(normalizedServer, category, nextCursor);
         continue;
       }
       // A repeated token/cursor would otherwise retry the same page forever.
@@ -179,6 +245,7 @@ class QuizCloudSyncService {
         pages: pages,
       );
     }
+    await _markIncomplete(normalizedServer, category, requestCursor);
     return QuizCloudSyncResult(
       cursor: cursor,
       inserted: inserted,
@@ -188,6 +255,84 @@ class QuizCloudSyncService {
       pages: pages,
       reachedPageLimit: true,
     );
+  }
+
+  /// 拉取一页同步数据，带瞬时失败重试。
+  ///
+  /// 真机现场（1.18.11 / 234，2026-09-13）：本地库停在 3513 题，云端 3611 题，
+  /// 缺的 98 题里就有「已取得C1准驾车型资格多久后可以申请增驾C6？」，
+  /// 导致引擎只能拿「增驾中型客车」凑答案，悬浮窗给出「候选1：2」。
+  /// 根因是这里：单页请求超时/抖动会直接抛出，把整轮同步打断在半路。
+  /// 全库 3611 题按 100/页要 37 页，弱网下任何一页抖动都会让库里缺一批题。
+  ///
+  /// 因此对**瞬时网络异常**（超时、连接失败）重试若干次并退避；
+  /// 只有确实拉不动时才放弃，由调用方落下续传点。
+  Future<http.Response> _getSyncPage(
+    String serverUrl,
+    Map<String, String> queryParameters,
+  ) async {
+    Object? lastError;
+    for (var attempt = 1; attempt <= _syncPageMaxAttempts; attempt++) {
+      try {
+        return await _httpClient
+            .get(
+              _uri(
+                serverUrl,
+                '/api/quiz/sync',
+              ).replace(queryParameters: queryParameters),
+            )
+            .timeout(_apiTimeout);
+      } on Object catch (error) {
+        lastError = error;
+        final transient = error is TimeoutException ||
+            error is http.ClientException ||
+            error is SocketException;
+        if (!transient || attempt == _syncPageMaxAttempts) {
+          rethrow;
+        }
+        AppLogger.instance.logTo(
+          LogChannel.quiz,
+          'sync 第$attempt次失败，${_syncPageRetryDelay * attempt}ms 后重试'
+          ' cursor=${queryParameters['cursor']} err=$error',
+        );
+        await Future<void>.delayed(_syncPageRetryDelay * attempt);
+      }
+    }
+    throw StateError('unreachable: $lastError');
+  }
+
+  /// 记录「本轮未走完」的续传点：进程被杀/断网/达页数上限时，
+  /// 下次启动可据此自动补齐，避免用户看到「同步过却搜不到题」。
+  Future<void> _markIncomplete(
+    String serverUrl,
+    String category,
+    int resumeCursor,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_incompleteKey(serverUrl, category), resumeCursor);
+  }
+
+  Future<void> _clearIncomplete(String serverUrl, String category) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_incompleteKey(serverUrl, category));
+  }
+
+  String _incompleteKey(String serverUrl, String category) =>
+      '$_incompletePrefix:${_safeKey(serverUrl)}:${category.trim()}';
+
+  /// 是否有一轮被中断、尚未补齐的同步。
+  Future<bool> hasIncompleteSync({
+    required String serverUrl,
+    String category = '',
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(
+          _incompleteKey(
+            BoxAccountClient.normalizeServerUrl(serverUrl),
+            category,
+          ),
+        ) !=
+        null;
   }
 
   /// 仅扫描本地缺图/远程图项并补缓存，不改游标。
@@ -495,6 +640,46 @@ class QuizCloudSyncService {
   static String _safeKey(String raw) =>
       base64Url.encode(utf8.encode(raw)).replaceAll('=', '');
   void dispose() => _httpClient.close();
+}
+
+/// 拉取进度快照。用于「题库查看」插件的确定型进度条与调试日志——
+/// 用户排查「拉了几次还是没拉完」时，唯一能区分
+/// 「页数走完但服务端本来就少」和「中途被打断」的证据。
+class QuizCloudSyncProgress {
+  const QuizCloudSyncProgress({
+    required this.pagesDone,
+    required this.insertedSoFar,
+    required this.expectedTotal,
+    required this.category,
+  });
+
+  /// 本轮已完成页数。
+  final int pagesDone;
+
+  /// 本轮累计入库题数。
+  final int insertedSoFar;
+
+  /// 云端目录声明的总题数（0 = 未知）。用于估算总页数，仅作进度参考，
+  /// 不作为「是否拉完」的判据（判据永远是服务端 hasMore）。
+  final int expectedTotal;
+
+  final String category;
+
+  /// 估算总页数（向上取整）。未知时返回 -1 → UI 退化为不确定型进度条。
+  int get estimatedTotalPages {
+    if (expectedTotal <= 0) return -1;
+    const pageSize = QuizCloudSyncService._syncPageLimit;
+    final pages = (expectedTotal + pageSize - 1) ~/ pageSize;
+    return pages < 1 ? 1 : pages;
+  }
+
+  /// 0.0–1.0 的完成度；总页数未知时返回 null。
+  double? get fraction {
+    final total = estimatedTotalPages;
+    if (total <= 0) return null;
+    final f = pagesDone / total;
+    return f.clamp(0.0, 1.0);
+  }
 }
 
 class QuizCloudCatalog {

@@ -21,7 +21,8 @@ class QuizAnswerAlignment {
   /// 是否成功对齐到卷面某一选项
   final bool aligned;
 
-  /// exact | letter | multi | contains | token | synonym | similarity | bank_raw | empty
+  /// exact | letter | multi | contains | token | synonym | similarity |
+  /// bank_index | bank_raw | empty
   final String method;
 
   final int? optionIndex;
@@ -45,6 +46,11 @@ class QuizAnswerAlignment {
         return 0.92;
       case 'similarity':
         return score >= 92 ? 0.94 : 0.88;
+      case 'bank_index':
+        // 卷面漏捕了被选中那一项，靠题库选项序补出字母。
+        // 题库自身的「答案 → 选项序号」是确定的，但卷面缺项意味着
+        // 无法逐项核对，所以给略低于 exact 的置信度。
+        return 0.90;
       default:
         return 0.70;
     }
@@ -281,12 +287,23 @@ class QuizAnswerAligner {
     if (tokenHit != null) return tokenHit;
 
     // 5) 相似度（短串门槛略降）
+    //
+    // 区间型选项（金额/时长/速度/距离）的判别位是数字，不是汉字：
+    // 「20元以上200元以下」与「200元以上500元以下」字面相似度极高，
+    // 但它们是两个不同的法定罚则。数字不一致时不参与相似度竞争，
+    // 否则会稳定地贴到近亲选项上（2026-09-06 20:01 真实误报）。
+    final bankCoreNums = _numberGroups(bankCore);
     var bestI = -1;
     var bestScore = 0;
     for (var i = 0; i < options.length; i++) {
       final opt = options[i].trim();
       final optCore = _coreOptionText(opt);
       if (optCore.isEmpty) continue;
+      final optNums = _numberGroups(optCore);
+      if ((bankCoreNums.isNotEmpty || optNums.isNotEmpty) &&
+          bankCoreNums.join(',') != optNums.join(',')) {
+        continue;
+      }
       final s = _similarity(bankCore, optCore);
       if (s > bestScore) {
         bestScore = s;
@@ -309,6 +326,25 @@ class QuizAnswerAligner {
       );
     }
 
+    // 5.5) 卷面漏捕兜底：答案在题库选项里有确定序号，但卷面没捕到那一项。
+    //
+    // 真实场景（2026-09-06 19:05 校车题）：选项是圈码「②③ / ② / ③ / ①」，
+    // 被选中的 D「①」在屏幕上渲染为蓝底勾选态，读屏拿不到文字，
+    // 卷面只剩 3 项。此时答案「①」与剩下 3 项都对不上，
+    // 于前面所有文本策略全部失败，落到 bank_raw 显示「答案：①（未对齐卷面选项）」——
+    // 而题库里 ① 明确是第 4 项，本该直接显示 D。
+    //
+    // 只在「卷面是题库选项的子集」时启用：确认卷面与题库是同一套选项、
+    // 只是漏了几项，而不是两套不同的选项文本。这样不会把异文题库的
+    // 序号硬贴到卷面上。
+    final indexFallback = _alignByBankIndex(
+      raw: raw,
+      bankResolved: bankResolved,
+      bankOptions: bankOptions,
+      probeOptions: surface,
+    );
+    if (indexFallback != null) return indexFallback;
+
     // 6) 失败：保留题库原文，并标明未对齐
     return QuizAnswerAlignment(
       displayAnswer: raw,
@@ -316,6 +352,77 @@ class QuizAnswerAligner {
       method: 'bank_raw',
       bankAnswer: raw,
       score: bestScore,
+    );
+  }
+
+  /// 卷面漏捕时按题库选项序补字母。
+  ///
+  /// 成立条件（全部满足才启用，避免把异文题库的序号硬贴到卷面）：
+  /// 1. 题库答案能在题库选项里定位到唯一序号；
+  /// 2. 卷面每一项都能在题库选项里找到对应（卷面 ⊆ 题库），
+  ///    即两侧是同一套选项，只是卷面漏了几项；
+  /// 3. 卷面确实缺了项（数量少于题库），否则说明是真的对不上，
+  ///    不该用序号掩盖；
+  /// 4. 答案对应的那一项正是卷面缺失的那项。
+  static QuizAnswerAlignment? _alignByBankIndex({
+    required String raw,
+    required String bankResolved,
+    required List<String> bankOptions,
+    required List<String> probeOptions,
+  }) {
+    if (probeOptions.isEmpty) return null;
+    final bankSurface = bankOptions
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (bankSurface.length < 2) return null;
+    if (probeOptions.length >= bankSurface.length) return null;
+
+    // 1) 答案在题库选项中的唯一序号
+    final answerNorm = QuizBankTextNormalizer.normalizeOption(bankResolved);
+    if (answerNorm.isEmpty) return null;
+    var answerIndex = -1;
+    for (var i = 0; i < bankSurface.length; i++) {
+      if (QuizBankTextNormalizer.normalizeOption(bankSurface[i]) ==
+          answerNorm) {
+        if (answerIndex >= 0) return null; // 题库选项重复，序号不唯一
+        answerIndex = i;
+      }
+    }
+    if (answerIndex < 0) return null;
+
+    // 2) 卷面每一项都能在题库里对上，且各占不同序号
+    final matchedBankIndices = <int>{};
+    for (final probe in probeOptions) {
+      final probeNorm = QuizBankTextNormalizer.normalizeOption(probe);
+      if (probeNorm.isEmpty) return null;
+      var hit = -1;
+      for (var i = 0; i < bankSurface.length; i++) {
+        if (matchedBankIndices.contains(i)) continue;
+        if (QuizBankTextNormalizer.normalizeOption(bankSurface[i]) ==
+            probeNorm) {
+          hit = i;
+          break;
+        }
+      }
+      if (hit < 0) return null; // 卷面有题库里没有的项 → 不是同一套选项
+      matchedBankIndices.add(hit);
+    }
+
+    // 3) 答案那一项必须正是卷面漏掉的
+    if (matchedBankIndices.contains(answerIndex)) return null;
+
+    final letter = String.fromCharCode(0x41 + answerIndex);
+    final answerText = bankSurface[answerIndex];
+    return QuizAnswerAlignment(
+      displayAnswer: '$letter. $answerText',
+      aligned: true,
+      method: 'bank_index',
+      optionIndex: answerIndex,
+      optionLetter: letter,
+      probeOption: answerText,
+      bankAnswer: raw,
+      score: 95,
     );
   }
 
@@ -487,11 +594,45 @@ class QuizAnswerAligner {
       // 关键 token 覆盖：短串 token 全在长串中
       final short = a.length <= b.length ? a : b;
       final long = a.length <= b.length ? b : a;
+
+      // 真实反馈（2026-09-06 20:01）：金额区间题误配。
+      //   答案「20元以上200元以下」token 走 2 字滑窗 → {20, 元以, 上2, 00}，
+      //   这四个碎片在「1000元以上2000元以下」里全部出现（2000 含 20、
+      //   1000 含 00、上2000 含 上2），于是判为「关键词全覆盖」拿到 92 分，
+      //   抢在后续策略之前把答案贴到了错误选项。
+      //
+      // 滑窗碎片没有语义，只有真实分隔符切出的 token 才配得上
+      // 「关键词全覆盖」这种强结论。两侧都没有分隔符时，本分支放弃打分，
+      // 交给 similarity 阶段按整体相似度决定（那里会正确地把
+      // 20元以上200元以下 与 1000元以上2000元以下 判为不同）。
+      if (!_hasDelimitedTokens(short) || !_hasDelimitedTokens(long)) {
+        return 0;
+      }
+
+      // 数字型选项（金额/时长/速度/距离区间）必须数字一致才算覆盖：
+      // 「200元以上500元以下」与「200元以上1000元以下」共享大量汉字，
+      // 仅靠文字 token 无法区分，数字才是这类选项的判别位。
+      final shortNums = _numberGroups(short);
+      final longNums = _numberGroups(long);
+      if (shortNums.isNotEmpty || longNums.isNotEmpty) {
+        if (shortNums.join(',') != longNums.join(',')) return 0;
+      }
+
       final tokens = _tokens(short);
       if (tokens.isNotEmpty && tokens.every(long.contains)) {
         final cover = tokens.join().length;
         return (78 + cover * 20 ~/ max(1, long.length)).clamp(78, 96);
       }
+      return 0;
+    }
+
+    // 一侧完整包含另一侧，但双方数字不一致 → 区间型选项的近亲，不是同一项。
+    // 例：「200元以上500元以下」⊄「200元以上1000元以下」文本虽高度重叠，
+    // 金额不同即不同选项。
+    final aNums = _numberGroups(a);
+    final bNums = _numberGroups(b);
+    if ((aNums.isNotEmpty || bNums.isNotEmpty) &&
+        aNums.join(',') != bNums.join(',')) {
       return 0;
     }
     final shorter = min(a.length, b.length);
@@ -511,11 +652,22 @@ class QuizAnswerAligner {
   ) {
     final tokens = _tokens(bankCore);
     if (tokens.isEmpty || bankCore.length < 2) return null;
+    // 与 _containmentScore 同一条约束：2 字滑窗碎片不构成「关键词覆盖」。
+    // 金额区间题（20元以上200元以下 vs 1000元以上2000元以下）的碎片
+    // {20,元以,上2,00} 会在近亲选项里全部命中，拿到 score=100 的假阳性。
+    if (!_hasDelimitedTokens(bankCore)) return null;
+    final bankNums = _numberGroups(bankCore);
     var bestI = -1;
     var bestScore = 0;
     for (var i = 0; i < options.length; i++) {
       final optCore = _coreOptionText(options[i]);
       if (optCore.isEmpty) continue;
+      // 数字是区间型选项的判别位：数字不同即不同选项，不看文字覆盖率。
+      final optNums = _numberGroups(optCore);
+      if ((bankNums.isNotEmpty || optNums.isNotEmpty) &&
+          bankNums.join(',') != optNums.join(',')) {
+        continue;
+      }
       final hit = tokens.where(optCore.contains).length;
       if (hit == 0) continue;
       final score = (hit * 100 / tokens.length).round();
@@ -540,6 +692,22 @@ class QuizAnswerAligner {
       score: bestScore,
     );
   }
+
+  /// token 是否来自真实分隔符（而非 2 字滑窗碎片）。
+  ///
+  /// 滑窗碎片没有语义，只能作为「长句子近似」的弱信号，绝不能当作
+  /// 「关键词全覆盖」的强证据 —— 见 _containmentScore 里的说明。
+  static bool _hasDelimitedTokens(String norm) {
+    final parts = norm
+        .split(RegExp(r'[，,、；;：:（）()\[\]【】\s]+'))
+        .where((e) => e.trim().isNotEmpty)
+        .toList();
+    return parts.length >= 2 && parts.where((e) => e.length >= 2).length >= 2;
+  }
+
+  /// 提取选项中的数字串（用于金额/时长/距离等区间型选项的判别）。
+  static List<String> _numberGroups(String norm) =>
+      RegExp(r'\d+').allMatches(norm).map((m) => m.group(0)!).toList();
 
   static List<String> _tokens(String norm) {
     if (norm.isEmpty) return const [];

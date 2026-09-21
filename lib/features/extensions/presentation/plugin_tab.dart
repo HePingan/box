@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
+import 'package:box/features/extensions/market/data/plugin_market_api.dart';
 import 'package:box/features/extensions/market/data/plugin_market_local_sync.dart';
 import 'package:box/features/extensions/market/data/plugin_market_manifest_repository.dart';
 import 'package:box/features/extensions/market/presentation/plugin_submit_page.dart';
@@ -15,6 +16,8 @@ import 'package:box/novel/novel_module.dart';
 import 'package:box/plugin_manager.dart';
 import 'package:box/plugin_market/models/plugin_market_security.dart';
 import 'package:box/plugin_market_page.dart';
+import 'package:box/utils/app_logger.dart';
+import 'package:box/utils/log_channels.dart';
 import 'package:box/video_module.dart';
 import 'package:http/http.dart' as http;
 
@@ -107,8 +110,23 @@ class _PluginTabState extends State<PluginTab>
           await PluginMarketLocalSync().syncInstalledStatuses(force: force);
       if (!mounted || result.skipped) return;
       setState(() => _pluginRisks = result.risks);
-    } catch (_) {
-      // 网络失败静默，保留上次风险状态
+      // P1-1：清除风险后必须告知用户，否则他无从知道插件已恢复上架、
+      // 可以手动启用（此前 riskCleared 被完整丢弃，界面无任何反馈）。
+      final cleared = result.riskCleared;
+      if (cleared > 0) {
+        _showSnack(
+          context,
+          '有 $cleared 个插件已恢复上架，可手动启用',
+        );
+      }
+    } catch (e, st) {
+      // P1-6：以前是 `catch (_) {}` 静默。同步失败时风险列表保留旧值，
+      // 用户完全看不出「刚才那次同步是失败的」。记入统一调试日志并
+      // 提示去哪复制（报障人多是无 adb 的普通用户）。
+      AppLogger.instance.logChannelError(LogChannel.system, e, st);
+      if (mounted) {
+        _showSnack(context, '插件状态同步失败，已记入调试日志');
+      }
     }
   }
 
@@ -177,21 +195,32 @@ class _PluginTabState extends State<PluginTab>
   Future<void> _batchToggleEnabled(bool enabled) async {
     final ids = _selectedPluginIds.toList();
     var changedCount = 0;
+    final blockedNames = <String>[];
     for (final id in ids) {
       final plugin = _pluginHost.findById(id);
       if (plugin == null) continue;
       // 跳过已经处于目标状态的插件
       if (plugin.enabled == enabled) continue;
-      await _togglePluginEnabled(plugin, enabled);
-      changedCount++;
+      final ok = await _togglePluginEnabled(plugin, enabled);
+      if (ok) {
+        changedCount++;
+      } else {
+        // 被拦截（已下架/风险插件拒绝启用）：不计入成功数，如实提示。
+        blockedNames.add(plugin.title);
+      }
     }
     if (!mounted) return;
+    final String message;
+    if (enabled && blockedNames.isNotEmpty) {
+      final names = blockedNames.length <= 3
+          ? blockedNames.join('、')
+          : '${blockedNames.take(3).join('、')} 等';
+      message = '已启用 $changedCount 个插件，${blockedNames.length} 个未能启用：$names';
+    } else {
+      message = enabled ? '已启用 $changedCount 个插件' : '已禁用 $changedCount 个插件';
+    }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          enabled ? '已启用 $changedCount 个插件' : '已禁用 $changedCount 个插件',
-        ),
-      ),
+      SnackBar(content: Text(message)),
     );
     _exitSelectMode();
   }
@@ -417,18 +446,12 @@ class _PluginTabState extends State<PluginTab>
     }
   }
 
+  /// 由 --dart-define=PLUGIN_MARKET_SIGN_MODE 解析验签模式。
+  ///
+  /// 委托给 [pluginMarketSignModeFromWireName]（单一事实源），其安全默认保证
+  /// 未知/拼错的值**绝不降级到 none**（旧实现此处 `default:` 直通 none，P0-4）。
   PluginMarketSignMode _marketSignModeFromEnv() {
-    switch (_marketSignModeEnv.trim().toLowerCase()) {
-      case 'sha256':
-        return PluginMarketSignMode.sha256;
-      case 'hmac-sha256':
-      case 'hmac_sha256':
-      case 'hmacsha256':
-        return PluginMarketSignMode.hmacSha256;
-      case 'none':
-      default:
-        return PluginMarketSignMode.none;
-    }
+    return pluginMarketSignModeFromWireName(_marketSignModeEnv);
   }
 
   // ── Navigation ──
@@ -474,6 +497,10 @@ class _PluginTabState extends State<PluginTab>
           ),
         ),
       );
+      // P1-2：打开商店页本身不触发状态同步。返回后补一次 force 同步，
+      // 让「刚在商店里装好/卸掉」立刻反映到已装列表与风险清单，
+      // 而不是等下一次回前台或手动点刷新。
+      if (mounted) await _syncInstalledStatuses(force: true);
     }
   }
 
@@ -693,14 +720,23 @@ class _PluginTabState extends State<PluginTab>
                       }
                       await _pluginHost.importSnapshotJson(raw, merge: merge);
                       navigator.pop();
+                      // 显示真实导入条目数，避免「静默成功」——用户须能判断是否真导入了东西。
+                      final snap = _pluginHost.snapshot();
                       messenger.showSnackBar(
                         SnackBar(
-                          content: Text(merge ? '导入成功（已合并）' : '导入成功（已覆盖）'),
+                          content: Text(
+                            '${merge ? '导入成功（已合并）' : '导入成功（已覆盖）'}'
+                            '：启用状态 ${snap.enabledMap.length} 项，'
+                            '自定义插件 ${snap.customPlugins.length} 个',
+                          ),
                         ),
                       );
                     } catch (e) {
+                      final msg = e is FormatException
+                          ? e.message
+                          : e.toString();
                       messenger.showSnackBar(
-                        SnackBar(content: Text('导入失败：$e')),
+                        SnackBar(content: Text('导入失败：$msg')),
                       );
                     }
                   },
@@ -760,24 +796,29 @@ class _PluginTabState extends State<PluginTab>
       await plugin.onTap(context);
     } catch (e) {
       if (!context.mounted) return;
-      _showSnack(context, '插件执行失败: $e');
+      _showSnack(context, '插件执行失败：${pluginMarketFriendlyError(e)}');
     }
   }
 
-  Future<void> _togglePluginEnabled(HomePlugin plugin, bool enabled) async {
+  /// 切换单个插件的启用状态。
+  ///
+  /// 返回 false 表示被拦截、没有真正切换（已下架/风险插件拒绝启用）；
+  /// 批量操作据此把「未生效」的项从成功计数里剔除并单独提示。
+  Future<bool> _togglePluginEnabled(HomePlugin plugin, bool enabled) async {
     if (enabled &&
         (plugin.customConfig?.marketRisk == true ||
             plugin.customConfig?.marketStatus == 'yanked')) {
-      if (!mounted) return;
+      if (!mounted) return false;
       _showSnack(
         context,
         plugin.customConfig?.marketRiskNote.isNotEmpty == true
             ? plugin.customConfig!.marketRiskNote
             : '该插件已下架，无法启用',
       );
-      return;
+      return false;
     }
     await _pluginHost.toggleEnabled(plugin.id, enabled);
+    return true;
   }
 
   Future<void> _uninstallPlugin(HomePlugin plugin) async {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../app/app_routes.dart';
 import '../../../design_system/app_tokens.dart';
+import '../../../design_system/settings_list.dart';
 
 /// 独立设置页。
 ///
@@ -34,17 +35,17 @@ class SettingsPage extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
-          const _SettingsSection(
+          const SettingsSection(
             title: '通用设置',
             children: [
-              _SettingsTile(
+              SettingsTile(
                 icon: Icons.dark_mode_outlined,
                 title: '深色模式',
                 subtitle: '暂不可用：全局配色仍是固定亮色，开了会导致文字与背景撞色',
                 enabled: false,
                 onTap: null,
               ),
-              _SettingsTile(
+              SettingsTile(
                 icon: Icons.palette_outlined,
                 title: '主题配色',
                 subtitle: '暂不可用：等配色改为可切换后开放',
@@ -54,10 +55,10 @@ class SettingsPage extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          _SettingsSection(
+          SettingsSection(
             title: '数据设置',
             children: [
-              _SettingsTile(
+              SettingsTile(
                 icon: Icons.backup_outlined,
                 title: '备份与恢复',
                 subtitle: '导出或导入收藏、书架、阅读进度、本地题库',
@@ -69,113 +70,6 @@ class SettingsPage extends StatelessWidget {
             ],
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _SettingsSection extends StatelessWidget {
-  const _SettingsSection({required this.title, required this.children});
-
-  final String title;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 6),
-          child: Text(
-            title,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: AppTokens.textSecondary,
-              letterSpacing: 0.4,
-            ),
-          ),
-        ),
-        Container(
-          decoration: BoxDecoration(
-            color: AppTokens.surface,
-            borderRadius: BorderRadius.circular(AppTokens.radiusSm),
-            border: Border.all(color: AppTokens.divider),
-          ),
-          child: Column(children: children),
-        ),
-      ],
-    );
-  }
-}
-
-class _SettingsTile extends StatelessWidget {
-  const _SettingsTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-    this.enabled = true,
-  });
-
-  final IconData icon;
-  final String title;
-  final String? subtitle;
-  final VoidCallback? onTap;
-  final bool enabled;
-
-  @override
-  Widget build(BuildContext context) {
-    // 停用项调低对比度，但仍读得清说明文字——用户需要知道「为什么不能点」。
-    final titleColor = enabled ? AppTokens.textPrimary : AppTokens.textTertiary;
-
-    return InkWell(
-      onTap: enabled ? onTap : null,
-      borderRadius: BorderRadius.circular(AppTokens.radiusSm),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              size: 20,
-              color: enabled ? AppTokens.primaryBlue : AppTokens.textTertiary,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: titleColor,
-                    ),
-                  ),
-                  if (subtitle != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle!,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppTokens.textSecondary,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            if (enabled)
-              const Icon(
-                Icons.chevron_right_rounded,
-                size: 20,
-                color: AppTokens.textTertiary,
-              ),
-          ],
-        ),
       ),
     );
   }

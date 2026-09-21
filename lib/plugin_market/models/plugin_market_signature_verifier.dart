@@ -1,33 +1,14 @@
 import 'dart:convert';
 
+import 'package:box/utils/json_canonical.dart';
 import 'package:crypto/crypto.dart';
 
 import 'plugin_market_security.dart';
 
-dynamic _canonicalizeJsonValue(dynamic value) {
-  if (value is Map) {
-    final entries = <MapEntry<String, dynamic>>[];
-    value.forEach((key, val) {
-      entries.add(MapEntry(key.toString(), val));
-    });
-    entries.sort((a, b) => a.key.compareTo(b.key));
-
-    final result = <String, dynamic>{};
-    for (final e in entries) {
-      result[e.key] = _canonicalizeJsonValue(e.value);
-    }
-    return result;
-  }
-
-  if (value is List) {
-    return value.map(_canonicalizeJsonValue).toList(growable: false);
-  }
-
-  return value;
-}
-
+/// [pluginMarketCanonicalJson] 与 [pluginMarketSha256Hex] 保留原公开 API，
+/// 调用点与既有测试不用改（单一实现见 lib/utils/json_canonical.dart）。
 String pluginMarketCanonicalJson(dynamic value) {
-  return jsonEncode(_canonicalizeJsonValue(value));
+  return canonicalJsonEncode(value);
 }
 
 String pluginMarketSha256Hex(String text) {

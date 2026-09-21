@@ -49,6 +49,35 @@ class ReaderLayoutMetrics {
     return raw > maxFitWidth ? maxFitWidth : raw;
   }
 
+  /// 允许的状态栏 inset 占窗口高度的最大比例。
+  ///
+  /// 超过这个比例就判定是系统给的脏值而非真实安全区。0.5 是启发式取值：
+  /// 真实状态栏在极端矮窗（614dp 小窗配 37dp 状态栏）下也只占 6%，
+  /// 而现场脏值直接占到 100%，两者之间有一个数量级的余量。
+  /// 调小（如 0.3）会更早拦下脏值但可能误伤极矮窗上的真实 inset；
+  /// 调大（如 0.8）更保守、误伤更少，但对「只报一半窗口高」这类脏值失效。
+  static const double maxTopPadFraction = 0.5;
+
+  /// 过滤 `MediaQuery.padding.top` 的脏值。
+  ///
+  /// iQOO / OriginOS 在多窗口过渡帧里会报出 `padding.top == 窗口高度`
+  /// （v1.14.1+215 真机日志：`constraints=384.0x614.4@614.4 topPad=614.4`），
+  /// 直接代入算式得 `availableForText=-54.0` → 正文高 0 → 永久转圈。
+  ///
+  /// 关键事实（本轮真机日志推翻了 v1.13.3 的假设）：**脏值不会自愈**。
+  /// 那之后引擎连报三次正确尺寸、重建也确实发生了，`topPad` 依旧是 614.4。
+  /// 所以必须在几何层丢弃，不能等下一帧。
+  ///
+  /// 丢弃时返回 0：宁可正文顶到状态栏下面（最坏顶部一行被遮，仍可阅读），
+  /// 也不要一整页永久转圈。
+  static double resolveTopPad(double rawTopPad, {required double maxHeight}) {
+    if (rawTopPad <= 0) return 0;
+    // 窗口高还没就绪，无从判断 inset 是否合理，交给上层 spinner 守卫。
+    if (maxHeight <= 0) return 0;
+    if (rawTopPad > maxHeight * maxTopPadFraction) return 0;
+    return rawTopPad;
+  }
+
   static ReaderLayoutMetrics resolve({
     required double availableHeight,
     required bool isFirstPage,

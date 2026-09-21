@@ -165,7 +165,7 @@ void main() {
           coverUrl: '',
           detailUrl: 'b3',
         ),
-        chapters: const [
+        chapters: [
           NovelChapter(title: 'a', url: ''),
           NovelChapter(title: 'b', url: '   '),
         ],

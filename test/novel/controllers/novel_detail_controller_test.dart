@@ -4,7 +4,6 @@ import 'package:box/novel/core/models.dart';
 import 'package:box/novel/core/novel_exceptions.dart';
 import 'package:box/novel/core/novel_repository.dart';
 import 'package:box/novel/core/novel_source.dart';
-import 'package:box/novel/controllers/novel_detail_controller.dart';
 import 'package:box/novel/novel_module.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';

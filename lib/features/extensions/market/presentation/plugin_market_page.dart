@@ -5,6 +5,7 @@ import 'package:box/core/load_generation.dart';
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_bottom_sheet.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
+import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/extensions/market/data/plugin_market_api.dart';
 import 'package:box/features/extensions/market/data/plugin_market_manifest_repository.dart';
 import 'package:box/features/extensions/market/domain/plugin_market_manifest.dart';
@@ -160,7 +161,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       // 还会弹一条与当前频道无关的错误提示。
       if (!mounted || !_marketGeneration.isCurrent(token)) return;
       setState(() => _marketLoading = false);
-      _showSnack('加载插件市场失败：$e');
+      _showSnack('加载插件市场失败：${_err(e)}');
     }
   }
 
@@ -267,39 +268,11 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     return _signatureVerified ? '通过' : '未通过';
   }
 
-  String _areaLabel(String code) {
-    switch (code) {
-      case 'recommend':
-        return '推荐';
-      case 'music':
-        return '音乐';
-      case 'video':
-        return '影视';
-      case 'comic':
-        return '漫画';
-      case 'novel':
-        return '小说';
-      default:
-        return code;
-    }
-  }
+  // 区域/动作标签统一走单一事实源（home_plugin_core.dart 的枚举），
+  // 此前各页硬编码副本已真实漂移（video：影视/视频，toast：提示动作/弹出提示）。
+  String _areaLabel(String code) => homePluginAreaLabel(code);
 
-  String _actionLabel(String code) {
-    switch (code) {
-      case 'toast':
-        return '提示动作';
-      case 'openDailyNews':
-        return '打开日报';
-      case 'openNovelList':
-        return '打开小说';
-      case 'openVideoList':
-        return '打开影视';
-      case 'openImageGenerator':
-        return '打开生图';
-      default:
-        return code;
-    }
-  }
+  String _actionLabel(String code) => homePluginActionLabel(code);
 
   Future<PluginCompatibilityResult> _checkCompatibility(
     MarketPluginTemplate item,
@@ -488,28 +461,72 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
 
     var success = 0;
     var skipped = 0;
-    final packageInfo = await PackageInfo.fromPlatform();
-    for (final item in target) {
-      final compatibility = PluginCompatibilityChecker.check(
-        item,
-        currentAppVersion: packageInfo.version,
-      );
-      if (!compatibility.canInstall || compatibility.warningIssues.isNotEmpty) {
-        skipped++;
-        continue;
-      }
+    Object? bulkError;
+    // P2-5：逐条记录失败项，避免「只报总数、原因全吞」。
+    final failedIds = <String>[];
+    final failedReasons = <String>[];
+    // P1-5：跳过项同样逐条留名。原来只报「已跳过 N 个」，用户不知道
+    // 是哪几个、各自是不兼容还是需确认，只能逐个再点开看 —— 批量安装
+    // 本来就为省掉逐点操作。
+    final skippedNames = <String>[];
+    // try/finally 保证 _bulkRunning 一定复位：否则 PackageInfo / onInstall 抛错
+    // 会让按钮永久置灰，只能重启页面（P0-2）。catch 让异常不逃逸并给出原因。
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      for (final item in target) {
+        final compatibility = PluginCompatibilityChecker.check(
+          item,
+          currentAppVersion: packageInfo.version,
+        );
+        if (!compatibility.canInstall ||
+            compatibility.warningIssues.isNotEmpty) {
+          skipped++;
+          // P1-5：記名并区分原因，让 SnackBar 能说出「谁被跳过、为什么」。
+          final blockers = compatibility.blockingIssues;
+          final warnings = compatibility.warningIssues;
+          skippedNames.add(
+            blockers.isNotEmpty
+                ? '${item.title}（${blockers.first.message}）'
+                : '${item.title}（需确认：${warnings.first.message}）',
+          );
+          continue;
+        }
 
-      try {
-        await widget.onInstall(item);
-        _installedIds.add(item.id);
-        success++;
-      } catch (_) {}
+        try {
+          await widget.onInstall(item);
+          _installedIds.add(item.id);
+          success++;
+        } catch (e) {
+          // P2-5：单个插件失败原因此前被完全吞掉，只在末尾报总数，
+          // 用户无法知道是哪几个、为什么失败。这里逐条留痕并聚合。
+          failedIds.add(item.id);
+          failedReasons.add('${item.title}：${_err(e)}');
+          debugPrint('[plugin] 批量安装失败 id=${item.id} 原因=$e');
+        }
+      }
+    } catch (e) {
+      bulkError = e;
+    } finally {
+      if (mounted) setState(() => _bulkRunning = false);
+    }
+    // 异常不得逃逸（否则会冒泡到 Flutter 错误区，且用户看不到原因）。
+    if (bulkError != null) {
+      if (mounted) _showSnack('批量安装失败：${_err(bulkError)}');
+      return;
     }
 
     if (!mounted) return;
-    setState(() => _bulkRunning = false);
-    final skippedText = skipped > 0 ? '，已跳过 $skipped 个不兼容/需确认插件' : '';
-    _showSnack('批量安装完成：$success / ${target.length}$skippedText');
+    // P1-5：跳过名单逐条带出（与 failedText 同样的 take(3)+等 折叠），
+    // 用户无需逐个再点开就能知道谁被跳过、为什么。
+    final skippedText = skipped == 0
+        ? ''
+        : '，已跳过 $skipped 个：'
+          '${skippedNames.take(3).join('；')}${skippedNames.length > 3 ? ' 等' : ''}';
+    final failedText = failedIds.isEmpty
+        ? ''
+        : '，失败 ${failedIds.length} 个：${failedReasons.take(3).join('；')}'
+            '${failedReasons.length > 3 ? ' 等' : ''}';
+    _showSnack('批量安装完成：$success / ${target.length}$skippedText$failedText');
   }
 
   Future<void> _removeVisible() async {
@@ -535,17 +552,39 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     setState(() => _bulkRunning = true);
 
     var success = 0;
-    for (final item in target) {
-      try {
-        await widget.onUninstall(item.id);
-        _installedIds.remove(item.id);
-        success++;
-      } catch (_) {}
+    Object? bulkError;
+    // P2-5：逐条记录失败项，避免「只报总数、原因全吞」。
+    final failedIds = <String>[];
+    final failedReasons = <String>[];
+    // 同 _installVisible：异常也必须复位 _bulkRunning（P0-2）。
+    try {
+      for (final item in target) {
+        try {
+          await widget.onUninstall(item.id);
+          _installedIds.remove(item.id);
+          success++;
+        } catch (e) {
+          failedIds.add(item.id);
+          failedReasons.add('${item.title}：${_err(e)}');
+          debugPrint('[plugin] 批量卸载失败 id=${item.id} 原因=$e');
+        }
+      }
+    } catch (e) {
+      bulkError = e;
+    } finally {
+      if (mounted) setState(() => _bulkRunning = false);
     }
 
     if (!mounted) return;
-    setState(() => _bulkRunning = false);
-    _showSnack('批量卸载完成：$success / ${target.length}');
+    if (bulkError != null) {
+      _showSnack('批量卸载失败：${_err(bulkError)}');
+      return;
+    }
+    final failedText = failedIds.isEmpty
+        ? ''
+        : '，失败 ${failedIds.length} 个：${failedReasons.take(3).join('；')}'
+            '${failedReasons.length > 3 ? ' 等' : ''}';
+    _showSnack('批量卸载完成：$success / ${target.length}$failedText');
   }
 
   Future<bool> _confirmBulkAction({
@@ -1076,10 +1115,8 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
-  String _err(Object e) {
-    if (e is PluginMarketApiException) return e.friendlyMessage;
-    return e.toString();
-  }
+  /// 委托单一事实源（含超时/断网的可读提示），不再自建弱化副本。
+  String _err(Object e) => pluginMarketFriendlyError(e);
 
   @override
   Widget build(BuildContext context) {

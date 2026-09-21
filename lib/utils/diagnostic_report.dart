@@ -66,18 +66,32 @@ class DiagnosticHeader {
   /// 版本号去等 platform channel。插件没注册或 ROM 异常时那次 await 可能
   /// 迟迟不返回，用户点复制却毫无反应——报障流程自己失效，最不该发生。
   /// 启动时取一次存下来，之后复制路径全程同步。
+  ///
+  /// 注意缓存的是**版本信息**，不含 `generatedAt`：见 [cachedOrPlaceholder]。
   static DiagnosticHeader? _cached;
 
   /// 同步读取头部信息。取不到缓存就返回一份「未知」占位，绝不阻塞。
-  static DiagnosticHeader get cachedOrPlaceholder =>
-      _cached ??
-      DiagnosticHeader(
-        appVersion: '未知',
-        buildNumber: '未知',
-        packageName: '未知',
-        osVersion: _osVersion(),
-        generatedAt: DateTime.now(),
-      );
+  ///
+  /// `generatedAt` 一律取**调用这一刻**的时间，不沿用缓存里那份。
+  ///
+  /// 起因是一个真实缺陷：朋友机回传的报告里「生成时间」比第一行日志还早
+  /// 29 秒，日志不可能来自未来。根因是 [prime] 在启动时 `collect()` 取了
+  /// 一次 `DateTime.now()` 存进缓存，之后整个进程复用，于是「生成时间」
+  /// 实际是 **App 启动时间**——偏差多少取决于 App 开了多久，开两小时就偏
+  /// 两小时。而接收方会拿它当报障时刻，直接误导排查。
+  ///
+  /// 版本三项继续走缓存（不能为了刷新时间去重打 channel），时间单独取。
+  static DiagnosticHeader get cachedOrPlaceholder {
+    final cached = _cached;
+    return DiagnosticHeader(
+      appVersion: cached?.appVersion ?? '未知',
+      buildNumber: cached?.buildNumber ?? '未知',
+      packageName: cached?.packageName ?? '未知',
+      // 系统版本走 dart:io、不经 channel，没缓存也能实时取。
+      osVersion: cached?.osVersion ?? _osVersion(),
+      generatedAt: DateTime.now(),
+    );
+  }
 
   /// 应用启动时调用一次，把版本信息缓存下来。失败不抛，只是后续显示「未知」。
   static Future<void> prime() async {

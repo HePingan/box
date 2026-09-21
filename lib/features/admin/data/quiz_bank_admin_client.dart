@@ -162,11 +162,48 @@ class QuizBankAdminClient {
     required String token,
     required String id,
     required String imageUrl,
+    String imagePerceptualHash = '',
+    String imageRegionHash = '',
   }) async {
     final response = await _httpClient.patch(
       _uri(serverUrl, '/admin/quiz/questions/${Uri.encodeComponent(id)}'),
       headers: _headers(token, json: true),
-      body: jsonEncode({'image': imageUrl}),
+      body: jsonEncode({
+        'image': imageUrl,
+        // 新图必须带新指纹；清空图片时两者都不发。
+        if (imageUrl.trim().isNotEmpty && imagePerceptualHash.trim().isNotEmpty)
+          'imagePerceptualHash': imagePerceptualHash.trim(),
+        if (imageUrl.trim().isNotEmpty && imageRegionHash.trim().isNotEmpty)
+          'imageRegionHash': imageRegionHash.trim(),
+      }),
+    );
+    return QuizBankQuestion.fromJson(_questionPayload(_decode(response)));
+  }
+
+  /// 把一道题标记为「问题题」/取消标记 —— 复用既有「残缺」队列。
+  ///
+  /// 题库里有「题干相同、答案由图决定」的冲突题，无图无法判断对错。
+  /// 服务端已有 `incomplete` 队列与 `/admin/quiz/incomplete` 端点，但那只收
+  /// **导入时校验失败**的题；已发布的题标不进去。这里用同一套语义：把已发布题
+  /// PATCH 成 `status: incomplete`，它就出现在管理端「残缺」格里，可逐条补答案/传图。
+  ///
+  /// 只发 `status`（+ 可选 `reason`），**绝不回传 question/options**：服务端
+  /// PATCH 带查重，请求体里出现 `question` + `options` 会命中这道题自己并报
+  /// 「题干与完整选项已存在，不能合并覆盖」（与 [updateQuestionImage] 同一个坑）。
+  Future<QuizBankQuestion> flagQuestionAsIssue({
+    required String serverUrl,
+    required String token,
+    required String id,
+    String reason = '',
+    bool flagged = true,
+  }) async {
+    final response = await _httpClient.patch(
+      _uri(serverUrl, '/admin/quiz/questions/${Uri.encodeComponent(id)}'),
+      headers: _headers(token, json: true),
+      body: jsonEncode({
+        'status': flagged ? 'incomplete' : 'published',
+        if (flagged && reason.trim().isNotEmpty) 'issueReason': reason.trim(),
+      }),
     );
     return QuizBankQuestion.fromJson(_questionPayload(_decode(response)));
   }
@@ -275,12 +312,20 @@ class QuizBankAdminClient {
     required List<String> ids,
     String category = '',
     String image = '',
+    String imagePerceptualHash = '',
+    String imageRegionHash = '',
   }) async {
     final body = <String, dynamic>{
       'action': action,
       'ids': ids,
       if (category.trim().isNotEmpty) 'category': category.trim(),
       if (image.trim().isNotEmpty) 'image': image.trim(),
+      // 服务端 fromRequest 只从请求体读这两个字段，且从不自行计算 dHash。
+      // 不带它们 ⇒ 入库的题「有图无指纹」⇒ 引擎 _bestImageScore 直接 -1。
+      if (imagePerceptualHash.trim().isNotEmpty)
+        'imagePerceptualHash': imagePerceptualHash.trim(),
+      if (imageRegionHash.trim().isNotEmpty)
+        'imageRegionHash': imageRegionHash.trim(),
     };
     final response = await _httpClient.post(
       _uri(serverUrl, '/admin/quiz/questions/bulk'),
@@ -298,11 +343,19 @@ class QuizBankAdminClient {
     String category = '',
     String analysis = '',
     String? image,
+    String imagePerceptualHash = '',
+    String imageRegionHash = '',
   }) async {
     final body = <String, dynamic>{'correctAnswer': correctAnswer};
     if (category.isNotEmpty) body['category'] = category;
     if (analysis.isNotEmpty) body['analysis'] = analysis;
     if (image != null && image.isNotEmpty) body['image'] = image;
+    if (imagePerceptualHash.trim().isNotEmpty) {
+      body['imagePerceptualHash'] = imagePerceptualHash.trim();
+    }
+    if (imageRegionHash.trim().isNotEmpty) {
+      body['imageRegionHash'] = imageRegionHash.trim();
+    }
     final response = await _httpClient.patch(
       _uri(serverUrl, '/admin/quiz/incomplete/${Uri.encodeComponent(id)}'),
       headers: _headers(token, json: true),

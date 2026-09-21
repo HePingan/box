@@ -114,6 +114,19 @@ String _ambiguousCandidatesForOverlay(QuizResult result) {
   ].join('\n');
 }
 
+/// 同题干候选爆炸（标志图题）专用正文。
+///
+/// 绝不列出任何候选 —— 243 条同题干题有 220 种互斥答案，列出即误导。
+/// 明确告诉用户：这题必须看题图，本插件判不了。
+String _quizImageQuestionOverlayBody(QuizResult result) {
+  final n = result.stemExplosionCount;
+  return <String>[
+    '该题需看题图作答',
+    n > 0 ? '题库中同题干共 $n 条，仅凭文字无法区分' : '题库中同题干过多，仅凭文字无法区分',
+    '请对照悬浮窗上方的题图自行判断',
+  ].join('\n');
+}
+
 String _answerValueWithoutPrefix(String source) {
   var value = source.trim();
   value = value.replaceFirst(RegExp(r'^\s*答案\s*[：:]?\s*'), '');

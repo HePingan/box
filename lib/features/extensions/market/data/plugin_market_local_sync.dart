@@ -5,6 +5,8 @@ import 'package:crypto/crypto.dart';
 import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/extensions/market/data/plugin_market_api.dart';
 import 'package:box/features/extensions/market/domain/plugin_market_manifest.dart';
+import 'package:box/utils/app_logger.dart';
+import 'package:box/utils/log_channels.dart';
 
 /// 已装市场插件与云端状态联动（下架禁用 / 安装校验）。
 class PluginMarketLocalSync {
@@ -51,7 +53,16 @@ class PluginMarketLocalSync {
       statuses = await _api.fetchStatus(
         marketPlugins.map((e) => e.id).toList(growable: false),
       );
-    } catch (_) {
+    } catch (e, st) {
+      // P1-6：以前这里是 `catch (_) { return failed:true }`，异常原文被丢，
+      // 而 failed 字段全仓零消费者 —— 「同步失败过」在 App 里查不到，
+      // 无 adb 的报障人拿不出任何证据。统一走 AppLogger（抽屉
+      // 「更多 → 调试日志」），保留现场。
+      AppLogger.instance.logChannelError(
+        LogChannel.system,
+        e,
+        st,
+      );
       return const PluginMarketSyncResult(failed: true);
     }
 
@@ -83,9 +94,13 @@ class PluginMarketLocalSync {
           enabled: false,
         );
         await _host.addCustomPlugin(next);
-        if (plugin.enabled) {
-          await _host.toggleEnabled(id, false);
-        }
+        // P1-3：改为无条件禁用。原先这里是 `if (plugin.enabled) { toggle }`，
+        // 而 plugin.enabled 是**本次同步开始时的列表快照**，与 addCustomPlugin
+        // 非原子：若另一路径在循环中途启用该插件，快照仍是旧值（false），
+        // 就会漏掉禁用，插件带着 marketRisk 保持启用直到下次同步。
+        // addCustomPlugin 内的 _normalizeForRegister 已按 config.enabled
+        // 归一化，此处再次 toggle 幂等，保证「下架必禁用」不依赖时序。
+        await _host.toggleEnabled(id, false);
         yanked++;
         risks.add(PluginRiskEntry(
           pluginId: id,
@@ -96,15 +111,22 @@ class PluginMarketLocalSync {
         ));
       } else if (status == 'unknown') {
         // 商店已无此插件（下架并移除记录）
+        //
+        // P1-4 双保险：除 marketRisk 外，marketStatus 也一并落 'yanked'。
+        // 此前这里只置 marketRisk，导致本分支与上面的 'yanked' 分支状态不一致：
+        // 下游多处按 `marketStatus == 'yanked'` 判定风险（见 :119 wasRisk、
+        // home_plugin_core.dart 列表项门禁、plugin_tab.dart 安装提示），
+        // 只置 marketRisk 会让「商店已无此插件」漏过这些按状态判定的门禁，
+        // 且 UI「已下架」文案也取不到正确状态。
         final next = cfg.copyWith(
+          marketStatus: 'yanked',
           marketRisk: true,
           marketRiskNote: '商店已无此插件，建议卸载',
           enabled: false,
         );
         await _host.addCustomPlugin(next);
-        if (plugin.enabled) {
-          await _host.toggleEnabled(id, false);
-        }
+        // P1-3：同 'yanked' 分支，无条件禁用（不再依赖快照 plugin.enabled）。
+        await _host.toggleEnabled(id, false);
         yanked++;
         risks.add(PluginRiskEntry(
           pluginId: id,

@@ -727,17 +727,41 @@ class QuizBankCache {
     return cache;
   }
 
+  /// 测试用：注入自定义加载器并重置已加载状态，用于验证冷启动并发保护。
+  factory QuizBankCache.forTestingWithLoader(
+    Future<List<QuizBankItem>> Function() loader,
+  ) {
+    final cache = QuizBankCache._();
+    cache._testLoader = loader;
+    return cache;
+  }
+
+  Future<List<QuizBankItem>> Function()? _testLoader;
+
   static final QuizBankCache instance = QuizBankCache._();
   List<QuizBankItem> _items = const [];
   Map<String, List<QuizBankItem>> _index = const {};
   Map<String, List<QuizBankItem>> _exactIndex = const {};
   bool _loaded = false;
+  Future<void>? _loadFuture;
 
   List<QuizBankItem> get items => _items;
 
   Future<void> ensureLoaded() async {
     if (_loaded) return;
-    assign(await QuizBankStorage.loadAll());
+    // 冷启动并发保护：首题检索会同时触发多条 ensureLoaded（读屏首搜 +
+    // 重试/OCR 兜底）。若每条都全量查库，首题会明显卡顿。
+    // 注意：既有实现（finally 里清 _loadFuture）在「同一事件循环内并发调用」时
+    // 已能共享同一次加载（下面的并发回归测试证实 5 路只加载 1 次），
+    // 因此这里保留原语义，不做多余改动 —— 避免引入无收益的行为变化。
+    _loadFuture ??= () async {
+      try {
+        assign(await (_testLoader ?? QuizBankStorage.loadAll)());
+      } finally {
+        _loadFuture = null;
+      }
+    }();
+    await _loadFuture;
   }
 
   Future<void> reload() async {

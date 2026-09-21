@@ -17,147 +17,17 @@ import 'package:box/features/home/data/ai_hot_models.dart';
 /// 再多这一屏就滚不完了。看更多走「全部」按钮。
 const int kAiHotPreviewCount = 3;
 
-class AiHotSection extends StatelessWidget {
-  const AiHotSection({
-    super.key,
-    required this.isLoading,
-    required this.feed,
-    required this.onOpenItem,
-    required this.onOpenAll,
-    required this.onRetry,
-  });
+// 说明：原先的 `AiHotSection`（独立的「AI 热点」分区）已被 `HomeFeedCard` 取代，
+// 首页不再有单独的 AI 分区。类本体已删除，避免同一份 AI 渲染逻辑存在两套实现；
+// 下面三个 widget 和 `kAiHotPreviewCount` 是被合并卡复用的公共件，保留在此。
 
-  final bool isLoading;
-  final AiHotFeed? feed;
+class AiHotEmptyState extends StatelessWidget {
+  const AiHotEmptyState({super.key, required this.onRetry});
 
-  /// 点某一条，参数是该条要打开的地址。
-  final void Function(AiHotItem item) onOpenItem;
-
-  /// 点「全部」，进 AI HOT 站点。
-  final VoidCallback onOpenAll;
-
-  /// 加载失败时点「重试」。
   final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
-    final items = feed?.items ?? const <AiHotItem>[];
-    final visible = items.take(kAiHotPreviewCount).toList();
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppTokens.shellPageGutter,
-        0,
-        AppTokens.shellPageGutter,
-        14,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          _header(context),
-          Container(
-            decoration: BoxDecoration(
-              color: AppTokens.surface,
-              borderRadius: BorderRadius.circular(AppTokens.radiusCard),
-              border: Border.all(color: AppTokens.divider),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                if (isLoading && visible.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 18),
-                    child: Center(
-                      child: SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    ),
-                  )
-                else if (visible.isEmpty)
-                  _emptyState()
-                else
-                  ...List<Widget>.generate(visible.length, (int index) {
-                    final AiHotItem item = visible[index];
-                    return _AiHotRow(
-                      item: item,
-                      showDivider: index != visible.length - 1,
-                      onTap: () => onOpenItem(item),
-                    );
-                  }),
-                if (visible.isNotEmpty) _footer(),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _header(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: <Widget>[
-          Container(
-            width: 3,
-            height: 14,
-            decoration: BoxDecoration(
-              color: AppTokens.violet,
-              borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-            ),
-          ),
-          const SizedBox(width: 8),
-          const Text(
-            'AI 热点',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w900,
-              color: AppTokens.textPrimary,
-              letterSpacing: -0.2,
-            ),
-          ),
-          const SizedBox(width: 6),
-          // 离线提示：内容来自缓存时明确告诉用户，别让人以为是最新的。
-          if (feed?.fromCache == true)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: AppTokens.surfaceMuted,
-                borderRadius: BorderRadius.circular(AppTokens.radiusChip),
-              ),
-              child: const Text(
-                '缓存',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: AppTokens.textTertiary,
-                ),
-              ),
-            ),
-          const Spacer(),
-          GestureDetector(
-            onTap: onOpenAll,
-            behavior: HitTestBehavior.opaque,
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-              child: Text(
-                '全部 ›',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: AppTokens.textSecondary,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _emptyState() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
       child: Row(
@@ -193,13 +63,19 @@ class AiHotSection extends StatelessWidget {
       ),
     );
   }
+}
 
-  /// 署名栏。
-  ///
-  /// 不是装饰——AI HOT 接口返回的每条数据都带 attribution 字段，
-  /// 用它的内容就该把来源标出来。
-  Widget _footer() {
-    final String label = feed?.attributionLabel ?? 'AIHOT';
+/// 署名栏。
+///
+/// 不是装饰——AI HOT 接口返回的每条数据都带 attribution 字段，
+/// 用它的内容就该把来源标出来。空态下不显示（既有约定）。
+class AiHotAttributionFooter extends StatelessWidget {
+  const AiHotAttributionFooter({super.key, required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: const BoxDecoration(
@@ -230,8 +106,13 @@ class AiHotSection extends StatelessWidget {
   }
 }
 
-class _AiHotRow extends StatelessWidget {
-  const _AiHotRow({
+/// AI 热点单行。
+///
+/// 公开（而不是私有）是为了让合并后的 [HomeFeedCard] 直接复用同一套行样式，
+/// 避免出现第二份「长得一样但各自维护」的实现。
+class AiHotRow extends StatelessWidget {
+  const AiHotRow({
+    super.key,
     required this.item,
     required this.showDivider,
     required this.onTap,

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 
+import '../utils/json_canonical.dart';
 import 'update_models.dart';
 
 enum UpdateManifestSignatureMode { none, sha256, hmacSha256 }
@@ -60,30 +61,10 @@ String updateSignatureModeName(UpdateManifestSignatureMode mode) {
   }
 }
 
-dynamic _canonicalizeJsonValue(dynamic value) {
-  if (value is Map) {
-    final entries = <MapEntry<String, dynamic>>[];
-    value.forEach((key, val) {
-      entries.add(MapEntry(key.toString(), val));
-    });
-    entries.sort((a, b) => a.key.compareTo(b.key));
-
-    final result = <String, dynamic>{};
-    for (final entry in entries) {
-      result[entry.key] = _canonicalizeJsonValue(entry.value);
-    }
-    return result;
-  }
-
-  if (value is List) {
-    return value.map(_canonicalizeJsonValue).toList(growable: false);
-  }
-
-  return value;
-}
-
+/// [updateManifestCanonicalJson] 与 [updateManifestSha256Hex] 保留原公开
+/// API，调用点与既有测试不用改（单一实现见 lib/utils/json_canonical.dart）。
 String updateManifestCanonicalJson(dynamic value) {
-  return jsonEncode(_canonicalizeJsonValue(value));
+  return canonicalJsonEncode(value);
 }
 
 String updateManifestSha256Hex(String text) {

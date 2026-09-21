@@ -152,6 +152,85 @@ void main() {
     );
     expect(imported.single.imagePerceptualHash, '0123456789abcdef');
   });
+
+  test('单页瞬时网络失败时应重试该页，不得让整轮同步残缺', () async {
+    SharedPreferences.setMockInitialValues({});
+    final client = _FlakySyncClient({
+      '0': {
+        'cursor': 100,
+        'hasMore': true,
+        'changes': [_upsertChange('第1页题')],
+      },
+      '100': {
+        'cursor': 200,
+        'hasMore': true,
+        'changes': [_upsertChange('第2页题')],
+      },
+      '200': {
+        'cursor': 300,
+        'hasMore': false,
+        'changes': [_upsertChange('第3页题')],
+      },
+    }, failOnCall: 2);
+    final imported = <QuizBankItem>[];
+    final service = QuizCloudSyncService(
+      httpClient: client,
+      importItems: (items) async {
+        imported.addAll(items);
+        return items.length;
+      },
+    );
+
+    final result = await service.sync(serverUrl: 'https://box.example');
+    expect(
+      imported.map((e) => e.question),
+      containsAll(<String>['第1页题', '第2页题', '第3页题']),
+      reason: '单页瞬时失败不得截断整轮同步',
+    );
+    expect(result.reachedPageLimit, isFalse, reason: '不应因瞬时失败标记为未拉完');
+  });
+
+  test('重试仍失败时必须保留续传点，供下次补齐', () async {
+    SharedPreferences.setMockInitialValues({});
+    final client = _AlwaysFailFrom(2);
+    final service = QuizCloudSyncService(
+      httpClient: client,
+      importItems: (items) async => items.length,
+    );
+
+    // 彻底拉不动时抛出是允许的（界面会报「同步失败」），
+    // 但必须在抛出前记录续传点，否则库残缺却无人知晓。
+    await expectLater(
+      service.sync(serverUrl: 'https://box.example'),
+      throwsA(isA<http.ClientException>()),
+    );
+    expect(
+      await service.hasIncompleteSync(serverUrl: 'https://box.example'),
+      isTrue,
+      reason: '同步中断必须留下续传点，供下次自动补齐',
+    );
+  });
+}
+
+/// 第 [failFromCall] 次请求起全部抛错。
+class _AlwaysFailFrom extends http.BaseClient {
+  _AlwaysFailFrom(this.failFromCall);
+  final int failFromCall;
+  int calls = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    calls++;
+    if (calls >= failFromCall) {
+      throw http.ClientException('网络持续不可用', request.url);
+    }
+    final body = jsonEncode({
+      'cursor': 100,
+      'hasMore': true,
+      'changes': [_upsertChange('第1页题')],
+    });
+    return http.StreamedResponse(Stream.value(utf8.encode(body)), 200);
+  }
 }
 
 Map<String, Object?> _upsertChange(
@@ -190,6 +269,36 @@ class _Client extends http.BaseClient {
       200,
       headers: {'content-type': 'application/json'},
     );
+  }
+}
+
+/// 在第 [failOnCall] 次请求（1 起算）抛一次瞬时网络错误，其余正常返回，
+/// 用于验证「单页瞬时失败不得让整轮同步残缺」。
+/// 按请求里的 cursor 返回对应页，这样重试同一 cursor 会拿到同一页（与真实服务端一致）。
+class _FlakySyncClient extends http.BaseClient {
+  _FlakySyncClient(this.responsesByCursor, {required this.failOnCall});
+  final Map<String, Map<String, Object?>> responsesByCursor;
+  final int failOnCall;
+  final List<http.Request> requests = [];
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final copy = http.Request(request.method, request.url)
+      ..headers.addAll(request.headers);
+    requests.add(copy);
+    if (requests.length == failOnCall) {
+      throw http.ClientException('瞬时网络抖动', request.url);
+    }
+    final cursor = request.url.queryParameters['cursor'] ?? '0';
+    final body = jsonEncode(
+      responsesByCursor[cursor] ??
+          {
+            'cursor': cursor,
+            'hasMore': false,
+            'changes': const <Object>[],
+          },
+    );
+    return http.StreamedResponse(Stream.value(utf8.encode(body)), 200);
   }
 }
 

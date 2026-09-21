@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 标题栏按钮点击涟漪（B2）。
+     用 foreground 而非替换 background：按钮原有 selector（quiz_title_action_bg
+     的按压变色 / quiz_ai_button_bg 的紫色胶囊）必须保留，foreground 独立叠一层。
+     颜色硬编码 #40FFFFFF（不引用 ?attr/colorControlHighlight）：本布局历史上
+     因 ?attr 解析失败整页 inflate 崩过（见 QuizAccessibilityService.themedInflater
+     注释），涟漪色不值得再引入一个主题依赖；标题栏为深色底，白色 25% 涟漪通用。
+     mask 限定涟漪边界，不铺内容层 —— 涟漪只在按钮范围内扩散。 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#40FFFFFF">
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <corners android:radius="13dp" />
+            <solid android:color="#FFFFFF" />
+        </shape>
+    </item>
+</ripple>

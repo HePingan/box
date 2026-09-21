@@ -210,4 +210,127 @@ D. 停车等待
       expect(r.correctAnswer, isNot(contains('解析')));
     });
   });
+
+  // 回归：试捕时题库 App 顶部导航栏的「倒计时」被一起抓取，混进题干首行。
+  // 真实现象（用户 2026-09-12 18:19 截图 img_062d49e240f2.jpg）：
+  //   悬浮窗「题目」框首行 = 「倒计时40:10」，下一行才是真题干。
+  //   根因：_noiseExact / _noiseContains 都没有覆盖「倒计时 + 分:秒」这种格式
+  //   （对比：1/100 有 ^\d+/\d+$ 兜底、网速有 KB/s|5G|4G 兜底，唯独倒计时漏了）。
+  //   间歇性出现：只在题库 App 处于计时练习模式时才显示倒计时行。
+  group('OcrQuizParser 倒计时噪点（顶部导航栏混入题干）', () {
+    test('截图真实文本：倒计时 + 题干 + 选项', () {
+      const raw = '''
+倒计时40:10
+驾驶机动车不按规定使用灯光的，
+一次记3分。
+A. 正确
+B. 错误
+''';
+      final r = OcrQuizParser.parse(raw);
+      expect(r.question, isNot(contains('倒计时')));
+      expect(r.question, isNot(contains('40:10')));
+      expect(r.question, contains('驾驶机动车不按规定使用灯光的'));
+      expect(r.options, hasLength(2));
+      expect(r.questionType, 'true_false');
+    });
+
+    test('题干带空格/全角冒号的倒计时变体都应剔除', () {
+      for (final t in const [
+        '倒计时 40:10',
+        '倒计时：40:10',
+        '倒计时40:10',
+        '倒计时 1:23:45',
+      ]) {
+        final r = OcrQuizParser.parse('$t\n这种标线表示禁止长时停车。\nA. 正确\nB. 错误\n');
+        expect(
+          r.question,
+          isNot(contains('倒计时')),
+          reason: '「$t」应被当作噪点剔除，但混进了题干',
+        );
+        expect(r.question, contains('禁止长时停车'));
+      }
+    });
+
+    test('同类导航栏时间噪点：剩余时间 / 用时 / 答题时长', () {
+      for (final t in const ['剩余时间 01:23', '用时 12:05', '答题时长 00:59']) {
+        final r = OcrQuizParser.parse('$t\n驾驶机动车违反交通信号灯通行的记几分？\nA. 2分\nB. 3分\nC. 6分\nD. 12分\n');
+        expect(r.question, isNot(contains(r.question.contains('剩余') ? '剩余时间' : '用时')),
+            reason: '「$t」应被剔除');
+        expect(r.question, contains('驾驶机动车违反交通信号灯'));
+      }
+    });
+
+    test('反例保护：题干本身含时间不应被误删', () {
+      // 题干中出现的时间是题目正文的一部分，绝不能因为「像时间格式」就删掉。
+      const raw = '''
+驾驶机动车在高速公路行驶，车速超过100km/h时，与前车最小距离不小于100米。
+A. 正确
+B. 错误
+''';
+      final r = OcrQuizParser.parse(raw);
+      expect(r.question, contains('100km/h'));
+      expect(r.question, contains('100米'));
+    });
+
+    test('反例保护：题干以数字开头（如「12分」）不应被误删', () {
+      const raw = '''
+12分记分周期内未处理完的，罚款翻倍。
+A. 正确
+B. 错误
+''';
+      final r = OcrQuizParser.parse(raw);
+      expect(r.question, contains('12分'));
+      expect(r.question, contains('罚款翻倍'));
+    });
+
+    // 回归（2026-09-12 用户第二次报障截图 img_dd74c115923a.jpg）：
+    // 这次倒计时不是独占一行，而是和导航栏其它 chrome 挤在同一行：
+    //   「← 倒计时33:43 设置」
+    // 第一版正则要求「整行只有倒计时」，因此这一行仍会混进题干首行。
+    test('导航栏整行形态：「← 倒计时33:43 设置」应整行剔除', () {
+      const raw = '''
+← 倒计时33:43 设置
+驾驶机动车不按规定使用灯光的，一次记3分。
+A. 正确
+B. 错误
+''';
+      final r = OcrQuizParser.parse(raw);
+      expect(r.question, isNot(contains('倒计时')));
+      expect(r.question, isNot(contains('33:43')));
+      expect(r.question, isNot(contains('←')));
+      expect(r.question, startsWith('驾驶机动车'));
+      expect(r.options, hasLength(2));
+      expect(r.questionType, 'true_false');
+    });
+
+    test('导航栏整行形态的其他变体', () {
+      for (final t in const [
+        '← 倒计时33:43 设置',
+        '< 倒计时 00:59 答题',
+        '倒计时12:00 设置 >',
+        '→ 剩余时间 1:23:45 收藏',
+      ]) {
+        final r = OcrQuizParser.parse('$t\n这种标线表示禁止长时停车。\nA. 正确\nB. 错误\n');
+        expect(
+          r.question,
+          isNot(contains('倒计时')),
+          reason: '「$t」应被整行剔除，但混进了题干',
+        );
+        expect(r.question, contains('禁止长时停车'));
+      }
+    });
+
+    test('反例保护：正文含冒号时间（「记分周期12:00内」）不得被误删', () {
+      // 新增的整行正则必须同样要求「倒计时/剩余时间/用时/答题时长」前缀词，
+      // 否则会误伤题干正文里的冒号时间表述。
+      const raw = '''
+记分周期12:00内记满12分的，应当参加学习。
+A. 正确
+B. 错误
+''';
+      final r = OcrQuizParser.parse(raw);
+      expect(r.question, contains('12:00'));
+      expect(r.question, contains('应当参加学习'));
+    });
+  });
 }

@@ -25,6 +25,44 @@ Future<void> main(List<String> args) async {
   final store = StateStore(config.statePath, config.defaultQuota);
   await store.load();
   await store.bootstrapAdmin(config);
+
+  // 启动时清理一次过期会话，并每 6 小时清一次（长期运行的进程不会自然重启）。
+  final prunedAtBoot = store.pruneExpiredSessions();
+  if (prunedAtBoot > 0) {
+    stdout.writeln('Pruned $prunedAtBoot expired session(s) at startup.');
+    await store.save();
+  }
+  Timer.periodic(const Duration(hours: 6), (_) async {
+    final pruned = store.pruneExpiredSessions();
+    if (pruned > 0) {
+      stdout.writeln(
+        '${DateTime.now().toIso8601String()} pruned $pruned expired session(s).',
+      );
+      await store.save();
+    }
+  });
+  // A3：每 10 分钟清一次突发限流窗口的过期命中（内存防膨胀）。
+  Timer.periodic(const Duration(minutes: 10), (_) {
+    final cutoff = DateTime.now().subtract(const Duration(minutes: 2));
+    store.quizVisionBurstHits.updateAll(
+      (_, hits) => hits..removeWhere((t) => t.isBefore(cutoff)),
+    );
+    store.quizVisionBurstHits.removeWhere((_, hits) => hits.isEmpty);
+    // 顺带清用量/失败计数里两天前的旧日键（A2 落盘前先清，避免落盘垃圾）。
+    final keepFloor = DateTime.now().toUtc()
+        .toIso8601String()
+        .substring(0, 10);
+    void pruneDays(Map<String, Map<String, int>> map) {
+      map.updateAll(
+        (_, perDay) => perDay
+          ..removeWhere((day, _) => day.compareTo(keepFloor) < 0),
+      );
+      map.removeWhere((_, perDay) => perDay.isEmpty);
+    }
+
+    pruneDays(store.quizVisionUsage);
+    pruneDays(store.quizVisionUpstreamFailures);
+  });
   // 启动时确保插件包目录存在（以 root 运行可正常创建）
   try {
     final stateFile = File(store.path);
@@ -74,10 +112,13 @@ Future<void> main(List<String> args) async {
   stdout.writeln('  GET  /api/quiz/catalogs');
   stdout.writeln('  GET  /api/quiz/sync?cursor=<n>&category=<id>');
   stdout.writeln('  POST /api/quiz/submissions');
+  stdout.writeln('  POST /api/quiz/vision');
   stdout.writeln('  GET  /api/policy/plugins');
   stdout.writeln('  GET  /admin/policy/plugins');
   stdout.writeln('  PUT  /admin/policy/plugins');
   stdout.writeln('  PUT  /admin/accounts/<userId>/plugins');
+  stdout.writeln('  GET  /admin/quiz-vision/provider');
+  stdout.writeln('  POST /admin/quiz-vision/provider');
   stdout.writeln('Plugin market endpoints:');
   stdout.writeln('  GET  /api/plugin-market');
   stdout.writeln('  GET  /api/plugin-market/<id>');
@@ -147,14 +188,13 @@ class ServerConfig {
       return fallback;
     }
 
-    final allowed =
-        (env['IMAGE_ALLOWED_MODELS'] ?? '')
-            .split(',')
-            .map((item) => item.trim())
-            .where((item) => item.isNotEmpty)
-            .toSet()
-            .toList()
-          ..sort();
+    final allowed = (env['IMAGE_ALLOWED_MODELS'] ?? '')
+        .split(',')
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
 
     return ServerConfig(
       host: argValue('host', env['HOST'] ?? _defaultHost),
@@ -172,8 +212,7 @@ class ServerConfig {
         env['IMAGE_REGISTRATION_ENABLED'],
         fallback: true,
       ),
-      registerDefaultQuota:
-          int.tryParse(
+      registerDefaultQuota: int.tryParse(
             env['IMAGE_REGISTER_DEFAULT_QUOTA'] ?? '',
           )?.clamp(0, 100000).toInt() ??
           5,
@@ -200,6 +239,7 @@ class PlatformQuotaServer {
 
   final ServerConfig config;
   final StateStore store;
+  final LoginThrottle loginThrottle = LoginThrottle();
 
   Future<void> handle(HttpRequest request) async {
     cors(request.response);
@@ -265,6 +305,43 @@ class PlatformQuotaServer {
       await proxyImage(request, account);
       return;
     }
+    // ── Personal center endpoints (user self-view, read-only) ──
+    if (request.method == 'PATCH' && path == '/api/me/profile') {
+      final account = await requireUser(request);
+      if (account == null) return;
+      await updateMyProfile(request, account);
+      return;
+    }
+    if (request.method == 'GET' && path == '/api/me/overview') {
+      final account = await requireUser(request);
+      if (account == null) return;
+      await meOverview(request, account);
+      return;
+    }
+    if (request.method == 'GET' && path == '/api/me/quota/transactions') {
+      final account = await requireUser(request);
+      if (account == null) return;
+      await meQuotaTransactions(request, account);
+      return;
+    }
+    if (request.method == 'GET' && path == '/api/me/plugins') {
+      final account = await requireUser(request);
+      if (account == null) return;
+      await mePlugins(request, account);
+      return;
+    }
+    if (request.method == 'GET' && path == '/api/me/quiz/questions') {
+      final account = await requireUser(request);
+      if (account == null) return;
+      await meQuizQuestions(request, account);
+      return;
+    }
+    if (request.method == 'GET' && path == '/api/me/activity') {
+      final account = await requireUser(request);
+      if (account == null) return;
+      await meActivity(request, account);
+      return;
+    }
     if (request.method == 'GET' && path == '/api/quiz/catalogs') {
       await quizCatalogs(request);
       return;
@@ -277,6 +354,36 @@ class PlatformQuotaServer {
       final account = await requireUser(request);
       if (account == null) return;
       await submitQuizQuestion(request, account);
+      return;
+    }
+    if (request.method == 'POST' && path == '/api/quiz/vision') {
+      final account = await requireUser(request);
+      if (account == null) return;
+      await quizVisionProxy(request, account);
+      return;
+    }
+    // 别名路由：客户端引擎统一 POST {base}/chat/completions，base 指向
+    // /api/quiz/vision 时正好落这里 —— 引擎零改动接入代理。
+    if (request.method == 'POST' &&
+        path == '/api/quiz/vision/chat/completions') {
+      final account = await requireUser(request);
+      if (account == null) return;
+      await quizVisionProxy(request, account);
+      return;
+    }
+    if (request.method == 'GET' && path == '/admin/quiz-vision/provider') {
+      if (!await requireAdmin(request)) return;
+      await adminGetQuizVisionProvider(request);
+      return;
+    }
+    if (request.method == 'POST' && path == '/admin/quiz-vision/provider') {
+      if (!await requireAdmin(request)) return;
+      await adminUpdateQuizVisionProvider(request);
+      return;
+    }
+    if (request.method == 'GET' && path == '/admin/quiz-vision/stats') {
+      if (!await requireAdmin(request)) return;
+      await adminGetQuizVisionStats(request);
       return;
     }
     if (request.method == 'GET' && path == '/api/policy/plugins') {
@@ -300,6 +407,58 @@ class PlatformQuotaServer {
     if (request.method == 'PUT' && userPluginsMatch != null) {
       if (!await requireAdmin(request)) return;
       await adminPutUserPlugins(request, userPluginsMatch.group(1)!);
+      return;
+    }
+    // ── 云端书源 / 公告（新增） ──
+    if (request.method == 'GET' && path == '/api/book-sources') {
+      await publicBookSources(request);
+      return;
+    }
+    if (request.method == 'GET' && path == '/admin/book-sources') {
+      if (!await requireAdmin(request)) return;
+      await adminListBookSources(request);
+      return;
+    }
+    if (request.method == 'POST' && path == '/admin/book-sources/publish') {
+      if (!await requireAdmin(request)) return;
+      await adminPublishBookSources(request);
+      return;
+    }
+    final bookSourceDeleteMatch =
+        RegExp(r'^/admin/book-sources/([^/]+)$').firstMatch(path);
+    if (request.method == 'DELETE' && bookSourceDeleteMatch != null) {
+      if (!await requireAdmin(request)) return;
+      await adminDeleteBookSource(
+        request,
+        Uri.decodeComponent(bookSourceDeleteMatch.group(1)!),
+      );
+      return;
+    }
+    if (request.method == 'GET' && path == '/api/announcements') {
+      await publicAnnouncements(request);
+      return;
+    }
+    if (request.method == 'GET' && path == '/admin/announcements') {
+      if (!await requireAdmin(request)) return;
+      await adminListAnnouncements(request);
+      return;
+    }
+    if (request.method == 'POST' && path == '/admin/announcements') {
+      if (!await requireAdmin(request)) return;
+      await adminCreateAnnouncement(request);
+      return;
+    }
+    final announcementIdMatch =
+        RegExp(r'^/admin/announcements/([^/]+)$').firstMatch(path);
+    if (announcementIdMatch != null &&
+        (request.method == 'PATCH' || request.method == 'DELETE')) {
+      if (!await requireAdmin(request)) return;
+      final annId = Uri.decodeComponent(announcementIdMatch.group(1)!);
+      if (request.method == 'PATCH') {
+        await adminUpdateAnnouncement(request, annId);
+      } else {
+        await adminDeleteAnnouncement(request, annId);
+      }
       return;
     }
     // ── Plugin market ──
@@ -461,12 +620,12 @@ class PlatformQuotaServer {
       await importQuizQuestions(request);
       return;
     }
-        if (request.method == 'POST' && path == '/admin/quiz/questions/bulk') {
+    if (request.method == 'POST' && path == '/admin/quiz/questions/bulk') {
       if (!await requireAdmin(request)) return;
       await bulkUpdateQuizQuestions(request);
       return;
     }
-if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
+    if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       if (!await requireAdmin(request)) return;
       await bulkCategorizeQuizQuestions(request);
       return;
@@ -649,16 +808,15 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     final client = HttpClient();
     client.connectionTimeout = const Duration(seconds: 12);
     try {
-      final upstreamRequest = await client
-          .getUrl(uri)
-          .timeout(const Duration(seconds: 12));
+      final upstreamRequest =
+          await client.getUrl(uri).timeout(const Duration(seconds: 12));
       upstreamRequest.headers.set(
         HttpHeaders.acceptHeader,
         'image/*,*/*;q=0.8',
       );
       final upstreamResponse = await upstreamRequest.close().timeout(
-        const Duration(seconds: 30),
-      );
+            const Duration(seconds: 30),
+          );
       final contentType = upstreamResponse.headers.contentType;
       final contentLength = upstreamResponse.contentLength;
       const maxBytes = 8 * 1024 * 1024;
@@ -767,15 +925,38 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     if (body == null) return;
     final username = body['username']?.toString().trim() ?? '';
     final password = body['password']?.toString() ?? '';
+
+    // 登录节流：IP 与用户名双维度，锁定期内直接拒绝，不再做密码校验。
+    final ip = clientIp(request);
+    final throttleKeys = <String>['ip:$ip', 'user:${username.toLowerCase()}'];
+    final retryAfter = loginThrottle.retryAfterSeconds(throttleKeys);
+    if (retryAfter != null) {
+      request.response.headers.set('Retry-After', '$retryAfter');
+      await jsonResponse(request.response, HttpStatus.tooManyRequests, {
+        'error': {'message': '登录失败次数过多，请 $retryAfter 秒后再试。'},
+      });
+      return;
+    }
+
     final account = store.accountByUsername(username);
     if (account == null ||
         account.status != 'normal' ||
         !verifyPassword(password, account.passwordHash)) {
+      loginThrottle.registerFailure(throttleKeys);
       await jsonResponse(request.response, HttpStatus.unauthorized, {
         'error': {'message': '用户名或密码错误'},
       });
       return;
     }
+    loginThrottle.registerSuccess(throttleKeys);
+
+    // 惰性迁移：旧格式哈希在首次登录时自动升级为 PBKDF2
+    if (account.passwordHash.startsWith('sha256:')) {
+      account.passwordHash = hashPassword(password);
+      stderr.writeln(
+          '[INFO] Migrated password hash for ${account.username} from sha256 to pbkdf2');
+    }
+
     account.lastLoginAt = DateTime.now();
     final token = createSession(account);
     await store.save();
@@ -799,6 +980,23 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
   Future<void> me(HttpRequest request) async {
     final account = await requireUser(request);
     if (account == null) return;
+    await jsonResponse(request.response, HttpStatus.ok, account.toPublicJson());
+  }
+
+  /// PATCH /api/me/profile
+  /// 仅允许当前 JWT 对应用户修改自己的展示昵称；不接受 userId，且不修改登录用户名。
+  Future<void> updateMyProfile(HttpRequest request, Account account) async {
+    final decoded = await readJsonObject(request);
+    if (decoded == null) return;
+    final nickname = decoded['nickname']?.toString().trim() ?? '';
+    if (nickname.isEmpty || nickname.length > 32) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '昵称不能为空且长度不能超过 32 个字符'},
+      });
+      return;
+    }
+    account.nickname = nickname;
+    await store.save();
     await jsonResponse(request.response, HttpStatus.ok, account.toPublicJson());
   }
 
@@ -1009,10 +1207,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     return {
       'today': (days[today] ?? UsageDayAccumulator(today)).toJson(),
       'last7Days': dayKeys.map((key) => days[key]!.toJson()).toList(),
-      'topUsersToday': sortedTopUsers
-          .take(5)
-          .map((item) => item.toJson())
-          .toList(),
+      'topUsersToday':
+          sortedTopUsers.take(5).map((item) => item.toJson()).toList(),
     };
   }
 
@@ -1131,8 +1327,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     final nextApiKeyCipher = clearApiKey
         ? ''
         : apiKey.trim().isEmpty
-        ? previous?.apiKeyCipher ?? encodeProviderApiKey(config.adminApiKey)
-        : encodeProviderApiKey(apiKey.trim());
+            ? previous?.apiKeyCipher ?? encodeProviderApiKey(config.adminApiKey)
+            : encodeProviderApiKey(apiKey.trim());
     store.providerConfig = ProviderConfig(
       baseUrl: baseUrl.replaceAll(RegExp(r'/+$'), ''),
       apiKeyCipher: nextApiKeyCipher,
@@ -1145,6 +1341,192 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       HttpStatus.ok,
       store.providerPublicJson(config),
     );
+  }
+
+  // ── AI 读屏代理（新增） ──
+
+  QuizVisionProviderConfig? get effectiveQuizVision {
+    final provider = store.quizVisionProvider;
+    if (provider == null || !provider.enabled) return null;
+    if (provider.baseUrl.isEmpty || provider.apiKeyCipher.isEmpty) return null;
+    return provider;
+  }
+
+  Map<String, dynamic> quizVisionPublicJson() {
+    final provider = store.quizVisionProvider;
+    final apiKey = decodeProviderApiKey(provider?.apiKeyCipher ?? '');
+    return {
+      'baseUrl': provider?.baseUrl ?? '',
+      'apiKeyMask': maskApiKey(apiKey),
+      'hasApiKey': apiKey.trim().isNotEmpty,
+      'model': provider?.model ?? '',
+      'enabled': provider?.enabled ?? false,
+      'dailyCapPerAccount': quizVisionDailyCap,
+      'updatedAt': provider?.updatedAt?.toIso8601String(),
+    };
+  }
+
+  /// A1 用量统计：只记账号 ID/次数/失败数，不记任何请求内容。
+  Map<String, dynamic> quizVisionStatsJson() {
+    final dayKey = DateTime.now().toUtc().toIso8601String().substring(0, 10);
+    var total = 0;
+    var failed = 0;
+    final perAccount = <String, int>{};
+    store.quizVisionUsage.forEach((accountId, perDay) {
+      final today = perDay[dayKey] ?? 0;
+      if (today <= 0) return;
+      total += today;
+      perAccount[accountId] = today;
+    });
+    store.quizVisionUpstreamFailures.forEach((accountId, perDay) {
+      failed += perDay[dayKey] ?? 0;
+    });
+    return {
+      'day': dayKey,
+      'total': total,
+      'failed': failed,
+      'accounts': perAccount.length,
+      'perAccount': perAccount,
+      'dailyCapPerAccount': quizVisionDailyCap,
+    };
+  }
+
+  Future<void> adminGetQuizVisionStats(HttpRequest request) async {
+    await jsonResponse(request.response, HttpStatus.ok, quizVisionStatsJson());
+  }
+
+  Future<void> adminGetQuizVisionProvider(HttpRequest request) async {
+    await jsonResponse(
+      request.response,
+      HttpStatus.ok,
+      quizVisionPublicJson(),
+    );
+  }
+
+  Future<void> adminUpdateQuizVisionProvider(HttpRequest request) async {
+    final decoded = await readJsonObject(request);
+    if (decoded == null) return;
+    final previous = store.quizVisionProvider;
+    final baseUrl = (decoded['baseUrl']?.toString() ?? previous?.baseUrl ?? '')
+        .trim()
+        .replaceAll(RegExp(r'/+$'), '');
+    final parsedBaseUrl = Uri.tryParse(baseUrl);
+    if (baseUrl.isEmpty ||
+        parsedBaseUrl == null ||
+        (parsedBaseUrl.scheme != 'http' && parsedBaseUrl.scheme != 'https')) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': 'Base URL 必须是 http/https 地址'},
+      });
+      return;
+    }
+    final clearApiKey = decoded['clearApiKey'] == true;
+    final apiKey = decoded['apiKey']?.toString() ?? '';
+    final nextApiKeyCipher = clearApiKey
+        ? ''
+        : apiKey.trim().isEmpty
+            ? previous?.apiKeyCipher ?? ''
+            : encodeProviderApiKey(apiKey.trim());
+    final model = (decoded['model']?.toString() ??
+            (previous?.model.isNotEmpty == true ? previous!.model : ''))
+        .trim();
+    final enabled = decoded['enabled'] is bool
+        ? decoded['enabled'] as bool
+        : previous?.enabled ?? false;
+    store.quizVisionProvider = QuizVisionProviderConfig(
+      baseUrl: baseUrl,
+      apiKeyCipher: nextApiKeyCipher,
+      model: model,
+      enabled: enabled,
+      updatedAt: DateTime.now(),
+    );
+    await store.save();
+    store.markQuizVisionPersisted();
+    await jsonResponse(request.response, HttpStatus.ok, quizVisionPublicJson());
+  }
+
+  Future<void> quizVisionProxy(HttpRequest request, Account account) async {
+    final provider = effectiveQuizVision;
+    if (provider == null) {
+      await jsonResponse(request.response, HttpStatus.serviceUnavailable, {
+        'error': {'message': 'AI 读屏上游未配置或已停用。'},
+      });
+      return;
+    }
+    final decoded = await readJsonObject(request);
+    if (decoded == null) return;
+
+    final dayKey = DateTime.now().toUtc().toIso8601String().substring(0, 10);
+    // A3 突发限流：每账号每分钟最多 quizVisionBurstCap 次（内存滑动窗口），
+    // 防客户端死循环打爆上游渠道。
+    if (store.quizVisionBurstRejected(account.id, DateTime.now())) {
+      await jsonResponse(request.response, HttpStatus.tooManyRequests, {
+        'error': {'message': 'AI 读屏请求过于频繁，请稍等几秒再试。'},
+      });
+      return;
+    }
+    // 每账号每日限额（UTC 日键）。
+    final userCounts =
+        store.quizVisionUsage.putIfAbsent(account.id, () => <String, int>{});
+    final usedToday = userCounts[dayKey] ?? 0;
+    if (usedToday >= quizVisionDailyCap) {
+      await jsonResponse(request.response, HttpStatus.tooManyRequests, {
+        'error': {
+          'message': '今日 AI 读屏次数已用完（$quizVisionDailyCap 次/日），明天再试。',
+        },
+      });
+      return;
+    }
+
+    // 透传 chat/completions 请求体；后台配置了 model 则强制覆盖。
+    if (provider.model.isNotEmpty) {
+      decoded['model'] = provider.model;
+    }
+    final UpstreamResponse upstream;
+    try {
+      upstream = await postChatCompletionUpstream(provider, decoded);
+    } catch (error) {
+      store.quizVisionRecordUpstreamFailure(account.id, dayKey);
+      await jsonResponse(request.response, HttpStatus.serviceUnavailable, {
+        'error': {'message': 'AI 读屏上游请求失败：${compactPreview('$error')}'},
+      });
+      return;
+    }
+    if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
+      store.quizVisionRecordUpstreamFailure(account.id, dayKey);
+    }
+    userCounts[dayKey] = usedToday + 1;
+    store.quizVisionDirty = true;
+    store.scheduleQuizVisionFlush();
+    // 只记账号/状态/字节数，不记请求与响应内容，不记 key。
+    stdout.writeln(
+      '${DateTime.now().toIso8601String()} quiz-vision account=${account.id} '
+      'upstream=${upstream.statusCode} bytes=${upstream.text.length}',
+    );
+    await jsonText(request.response, upstream.statusCode, upstream.text);
+  }
+
+  Future<UpstreamResponse> postChatCompletionUpstream(
+    QuizVisionProviderConfig provider,
+    Map<String, dynamic> body,
+  ) async {
+    final client = HttpClient();
+    try {
+      final uri = Uri.parse('${provider.baseUrl}/chat/completions');
+      final req =
+          await client.postUrl(uri).timeout(const Duration(seconds: 20));
+      req.headers.set(
+        HttpHeaders.authorizationHeader,
+        'Bearer ${decodeProviderApiKey(provider.apiKeyCipher)}',
+      );
+      req.headers.contentType = ContentType.json;
+      req.write(jsonEncode(body));
+      // 读屏截图 base64 较大，上游整链放宽到 90s。
+      final resp = await req.close().timeout(const Duration(seconds: 90));
+      final text = await utf8.decoder.bind(resp).join();
+      return UpstreamResponse(resp.statusCode, text);
+    } finally {
+      client.close(force: true);
+    }
   }
 
   Future<void> createAccount(HttpRequest request) async {
@@ -1373,14 +1755,13 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       });
       return;
     }
-    final catalogs =
-        store.quizQuestions.values
-            .where((q) => q.status == 'published')
-            .map((q) => q.category)
-            .where((c) => c.isNotEmpty)
-            .toSet()
-            .toList()
-          ..sort();
+    final catalogs = store.quizQuestions.values
+        .where((q) => q.status == 'published')
+        .map((q) => q.category)
+        .where((c) => c.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
     await jsonResponse(request.response, HttpStatus.ok, {
       'catalogs': catalogs
           .map(
@@ -1419,11 +1800,10 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     final eligible = store.quizChanges
         .where((change) => change.sequence > cursor)
         .where((change) {
-          if (category.isEmpty) return true;
-          final question = store.quizQuestions[change.questionId];
-          return question?.category == category;
-        })
-        .toList();
+      if (category.isEmpty) return true;
+      final question = store.quizQuestions[change.questionId];
+      return question?.category == category;
+    }).toList();
     final page = eligible.take(limit).toList();
     final nextCursor = page.isEmpty ? cursor : page.last.sequence;
     final changes = page
@@ -1464,16 +1844,25 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       });
       return;
     }
-    final duplicate = store.quizQuestions.values.any(
-      (q) => q.identityKey == question.identityKey && q.status == 'published',
-    );
+    final sameContent = store.quizQuestions.values
+        .where(
+          (q) =>
+              q.identityKey == question.identityKey &&
+              q.status == 'published',
+        )
+        .toList();
+    final duplicate = sameContent.any((q) => quizImagesMatch(q, question));
+    final sameContentDifferentImage =
+        sameContent.isNotEmpty && !duplicate && quizHasKnownImage(question);
     final submission = QuizSubmission(
       id: question.id,
       question: question,
       submitterUserId: account.id,
       status: duplicate ? 'merged' : 'pending',
       submittedAt: DateTime.now(),
-      reviewNote: duplicate ? '正式题库已存在相同题目' : '',
+      reviewNote: duplicate
+          ? '正式题库已存在相同题目与图片'
+          : (sameContentDifferentImage ? '同文不同图，进入补图审核' : ''),
     );
     store.quizSubmissions[submission.id] = submission;
     await store.save();
@@ -1528,8 +1917,7 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
         }
         continue;
       }
-      final duplicate =
-          !seen.add(question.identityKey) ||
+      final duplicate = !seen.add(question.identityKey) ||
           store.quizQuestions.values.any(
             (q) =>
                 q.identityKey == question.identityKey && q.status != 'archived',
@@ -1606,9 +1994,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     final body = await readJsonObject(request);
     if (body == null) return;
     final category = body['category']?.toString().trim() ?? '';
-    final ids = (body['ids'] as List? ?? const [])
-        .map((id) => id.toString())
-        .toSet();
+    final ids =
+        (body['ids'] as List? ?? const []).map((id) => id.toString()).toSet();
     if (category.isEmpty || ids.isEmpty) {
       await jsonResponse(request.response, HttpStatus.badRequest, {
         'error': {'message': 'category 和 ids 不能为空'},
@@ -1646,7 +2033,40 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
   Future<void> adminIncompleteQuizQuestions(HttpRequest request) async {
     final filter = request.uri.queryParameters['filter']?.trim() ?? '';
     final q = request.uri.queryParameters['q']?.trim().toLowerCase() ?? '';
-    Iterable<QuizIncompleteRecord> items = store.quizIncomplete;
+    // 「人工标记为问题题」的题：题库里 status=incomplete 的记录。
+    //
+    // 背景：残缺队列 store.quizIncomplete 只收**导入时校验失败**的临时记录，
+    // 已发布题标不进去。用户要「把答案存疑的题标记出来、后端能看」，
+    // 故这里把题库里 status=incomplete 的题**合成**成残缺记录一并返回，
+    // 用 questionId 区分来源（空=导入残缺，非空=人工标记）。
+    // 管理端「残缺」格与队列因此天然覆盖两类，无需第二套 UI。
+    final flagged = store.quizQuestions.values
+        .where((question) => question.status == 'incomplete')
+        .map(
+          (question) => QuizIncompleteRecord(
+            id: 'flag_${question.id}',
+            importId: '',
+            sourceIndex: 0,
+            question: question.question,
+            type: question.type,
+            options: question.options,
+            correctAnswer: question.correctAnswer,
+            analysis: question.analysis,
+            source: question.source,
+            reason: question.issueReason.isNotEmpty
+                ? question.issueReason
+                : '需按图确认答案',
+            createdAt: question.updatedAt,
+            category: question.category,
+            questionId: question.id,
+          ),
+        )
+        .toList();
+    final imported = store.quizIncomplete.length;
+    Iterable<QuizIncompleteRecord> items = [
+      ...store.quizIncomplete,
+      ...flagged,
+    ];
     if (filter == 'missing_answer') {
       items = items.where((item) => item.correctAnswer.trim().isEmpty);
     } else if (filter == 'missing_options') {
@@ -1655,6 +2075,11 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       );
     } else if (filter == 'has_reason') {
       items = items.where((item) => item.reason.trim().isNotEmpty);
+    } else if (filter == 'flagged') {
+      // 只留「人工标记为问题题」的题（questionId 非空即来自题库 flagged 合成）。
+      // 注意不要用 has_reason 替代：导入残缺记录也都带 validationError 当 reason，
+      // has_reason 会把 122 条导入残缺一起捞出来，分不出人工标记的。
+      items = items.where((item) => item.questionId.trim().isNotEmpty);
     }
     if (q.isNotEmpty) {
       items = items.where(
@@ -1668,7 +2093,9 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     await jsonResponse(request.response, HttpStatus.ok, {
       'items': list,
       'total': list.length,
-      'queueTotal': store.quizIncomplete.length,
+      'queueTotal': list.length,
+      'importedTotal': imported,
+      'flaggedTotal': flagged.length,
       'filter': filter,
     });
   }
@@ -1689,6 +2116,18 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       return;
     }
     if (action == 'discard' || action == 'delete') {
+      // 人工标记的题（flag_<questionId>）不能真删 —— 它对应题库里一道存在的
+      // 题，「丢弃」的语义是**取消标记**（status 翻回 published）。
+      var unflagged = 0;
+      for (final id in ids) {
+        final match = RegExp(r'^flag_(.+)$').firstMatch(id);
+        if (match == null) continue;
+        final question = store.quizQuestions[match.group(1)!];
+        if (question == null || question.status != 'incomplete') continue;
+        store.quizQuestions[question.id] = question.copyWith(status: 'published');
+        store.recordQuizChange(question.id, 'upsert');
+        unflagged++;
+      }
       final before = store.quizIncomplete.length;
       store.quizIncomplete.removeWhere((item) => ids.contains(item.id));
       final removed = before - store.quizIncomplete.length;
@@ -1696,6 +2135,7 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       await jsonResponse(request.response, HttpStatus.ok, {
         'action': 'discard',
         'removed': removed,
+        'unflagged': unflagged,
         'remaining': store.quizIncomplete.length,
       });
       return;
@@ -1730,8 +2170,7 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       return;
     }
     if (action == 'publish' || action == 'complete') {
-      final defaultAnswer =
-          body['correctAnswer']?.toString().trim() ??
+      final defaultAnswer = body['correctAnswer']?.toString().trim() ??
           body['answer']?.toString().trim() ??
           '';
       final defaultCategory = body['category']?.toString().trim() ?? '';
@@ -1768,12 +2207,10 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
           remain.add(record);
           continue;
         }
-        final category = defaultCategory.isNotEmpty
-            ? defaultCategory
-            : record.category;
-        final analysis = defaultAnalysis.isNotEmpty
-            ? defaultAnalysis
-            : record.analysis;
+        final category =
+            defaultCategory.isNotEmpty ? defaultCategory : record.category;
+        final analysis =
+            defaultAnalysis.isNotEmpty ? defaultAnalysis : record.analysis;
         final question = QuizQuestion.fromRequest(
           {
             'question': record.question,
@@ -1823,7 +2260,9 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       return;
     }
     await jsonResponse(request.response, HttpStatus.badRequest, {
-      'error': {'message': '不支持的 action：$action（支持 discard/set_category/publish）'},
+      'error': {
+        'message': '不支持的 action：$action（支持 discard/set_category/publish）'
+      },
     });
   }
 
@@ -1831,6 +2270,18 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     HttpRequest request,
     String recordId,
   ) async {
+    // 「人工标记为问题题」的记录：id 形如 flag_<questionId>，它不在
+    // store.quizIncomplete 里，而是题库中一道真实 status=incomplete 的题。
+    // 处理语义与导入残缺不同 —— 导入残缺失配后是**新建**一道题；已发布过的题
+    // 必须**原地更新**（否则会留下脏的旧题 + 制造重复题干）。
+    final flaggedMatch = RegExp(r'^flag_(.+)$').firstMatch(recordId);
+    if (flaggedMatch != null) {
+      await completeFlaggedQuizQuestion(
+        request,
+        flaggedMatch.group(1)!,
+      );
+      return;
+    }
     QuizIncompleteRecord? record;
     for (final item in store.quizIncomplete) {
       if (item.id == recordId) {
@@ -1846,8 +2297,7 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     }
     final body = await readJsonObject(request);
     if (body == null) return;
-    final answer =
-        body['correctAnswer']?.toString().trim() ??
+    final answer = body['correctAnswer']?.toString().trim() ??
         body['answer']?.toString().trim() ??
         '';
     if (answer.isEmpty) {
@@ -1862,8 +2312,7 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       });
       return;
     }
-    final options =
-        (body['options'] as List?)
+    final options = (body['options'] as List?)
             ?.map((o) => o.toString().trim())
             .where((o) => o.isNotEmpty)
             .toList() ??
@@ -1886,6 +2335,9 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
         'category': category,
         'source': record.source,
         'image': body['image']?.toString() ?? '',
+        // 补图必须连指纹一起入库，否则引擎 _bestImageScore 直接 -1。
+        'imagePerceptualHash': body['imagePerceptualHash']?.toString() ?? '',
+        'imageRegionHash': body['imageRegionHash']?.toString() ?? '',
       },
       id: store.nextQuizQuestionId(),
       status: 'published',
@@ -1911,6 +2363,92 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     await store.save();
     await jsonResponse(request.response, HttpStatus.ok, {
       'question': question.toJson(),
+    });
+  }
+
+  /// 处理「人工标记为问题题」的题（id 形如 flag_<questionId>）。
+  ///
+  /// 与导入残缺的关键差异：这些题**已在题库中且可能早已发布**，所以是
+  /// **原地更新**（补正确答案 / 分析 / 图片 + 指纹），完成后把
+  /// status 从 incomplete 翻回 published；不新建题、不动 id/identityKey。
+  Future<void> completeFlaggedQuizQuestion(
+    HttpRequest request,
+    String questionId,
+  ) async {
+    final existing = store.quizQuestions[questionId];
+    if (existing == null) {
+      await jsonResponse(request.response, HttpStatus.notFound, {
+        'error': {'message': '题目不存在'},
+      });
+      return;
+    }
+    final body = await readJsonObject(request);
+    if (body == null) return;
+    final answer = body['correctAnswer']?.toString().trim() ??
+        body['answer']?.toString().trim() ??
+        '';
+    if (answer.isEmpty) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '正确答案不能为空'},
+      });
+      return;
+    }
+    if (answer.length > 200) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '正确答案过长'},
+      });
+      return;
+    }
+    final nextQuestion = body['question']?.toString() ?? existing.question;
+    final nextType = body['type']?.toString() ?? existing.type;
+    final nextOptions = (body['options'] as List?)
+            ?.map((o) => o.toString().trim())
+            .where((o) => o.isNotEmpty)
+            .toList() ??
+        existing.options;
+    final updated = QuizQuestion(
+      id: existing.id,
+      // 答案变了 identityKey 必须跟着重算，否则去重/匹配全乱。
+      identityKey: quizIdentityKey(nextQuestion, nextOptions, answer),
+      question: nextQuestion,
+      type: nextType,
+      options: nextOptions,
+      correctAnswer: answer,
+      analysis: body['analysis']?.toString() ?? existing.analysis,
+      category: (body['category']?.toString() ?? existing.category).trim(),
+      source: existing.source,
+      // 补图必须连指纹一起入库，否则引擎 _bestImageScore 直接 -1。
+      image: body['image']?.toString().isNotEmpty == true
+          ? body['image']!.toString()
+          : existing.image,
+      imagePerceptualHash: body['imagePerceptualHash']?.toString().isNotEmpty ==
+              true
+          ? body['imagePerceptualHash']!.toString()
+          : existing.imagePerceptualHash,
+      imageRegionHash: body['imageRegionHash']?.toString().isNotEmpty == true
+          ? body['imageRegionHash']!.toString()
+          : existing.imageRegionHash,
+      imageSha256: existing.imageSha256,
+      imageStatus: existing.imageStatus,
+      issueReason: '',          // 补全即问题已解，清掉标记说明
+      status: 'published',
+      revision: existing.revision + 1,
+      createdAt: existing.createdAt,
+      updatedAt: DateTime.now(),
+    );
+    final error = updated.validationError;
+    if (error != null) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': error},
+      });
+      return;
+    }
+    store.quizQuestions[questionId] = updated;
+    store.recordQuizChange(questionId, 'upsert');
+    await store.save();
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'question': updated.toJson(),
+      'unflagged': true,
     });
   }
 
@@ -1952,7 +2490,7 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     }
     final hash = sha256.convert(bytes).toString().substring(0, 16);
     final filename = 'quiz_${DateTime.now().millisecondsSinceEpoch}_$hash.$ext';
-    final dir = Directory('.var/quiz_images');
+    final dir = store.quizImagesDir;
     if (!await dir.exists()) await dir.create(recursive: true);
     final path = '${dir.path}/$filename';
     await File(path).writeAsBytes(bytes, flush: true);
@@ -1970,7 +2508,7 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       });
       return;
     }
-    final file = File('.var/quiz_images/$safeName');
+    final file = File('${store.quizImagesDir.path}/$safeName');
     if (!await file.exists()) {
       await jsonResponse(request.response, HttpStatus.notFound, {
         'error': {'message': '图片不存在'},
@@ -1978,9 +2516,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       return;
     }
     final bytes = await file.readAsBytes();
-    final ext = safeName.contains('.')
-        ? safeName.split('.').last.toLowerCase()
-        : 'bin';
+    final ext =
+        safeName.contains('.') ? safeName.split('.').last.toLowerCase() : 'bin';
     request.response.statusCode = HttpStatus.ok;
     request.response.headers.set(
       HttpHeaders.contentTypeHeader,
@@ -2020,26 +2557,24 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
   }
 
   Future<void> adminQuizQuestions(HttpRequest request) async {
-    final keyword =
-        request.uri.queryParameters['q']?.trim().toLowerCase() ??
+    final keyword = request.uri.queryParameters['q']?.trim().toLowerCase() ??
         request.uri.queryParameters['search']?.trim().toLowerCase() ??
         '';
     final status = request.uri.queryParameters['status']?.trim() ?? '';
-    final records =
-        store.quizQuestions.values
-            .where((q) {
-              if (status.isNotEmpty && q.status != status) return false;
-              return keyword.isEmpty ||
-                  q.question.toLowerCase().contains(keyword) ||
-                  q.options.any((o) => o.toLowerCase().contains(keyword));
-            })
-            .map((q) => q.toJson())
-            .toList()
-          ..sort(
-            (a, b) => (b['updatedAt']?.toString() ?? '').compareTo(
-              a['updatedAt']?.toString() ?? '',
-            ),
-          );
+    final records = store.quizQuestions.values
+        .where((q) {
+          if (status.isNotEmpty && q.status != status) return false;
+          return keyword.isEmpty ||
+              q.question.toLowerCase().contains(keyword) ||
+              q.options.any((o) => o.toLowerCase().contains(keyword));
+        })
+        .map((q) => q.toJson())
+        .toList()
+      ..sort(
+        (a, b) => (b['updatedAt']?.toString() ?? '').compareTo(
+          a['updatedAt']?.toString() ?? '',
+        ),
+      );
     await jsonResponse(request.response, HttpStatus.ok, {
       'questions': records,
       'total': records.length,
@@ -2100,11 +2635,25 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
         });
         return;
       }
+      // 客户端算好的题图指纹。服务端**从不**自行计算 dHash，只从请求体读；
+      // 不带 ⇒ 入库题「有图无指纹」⇒ 引擎 _bestImageScore 直接 -1
+      // ⇒ 同题干多候选仍然只靠文字二选一，用户继续看到「请人工确认」。
+      final perceptualHash =
+          body['imagePerceptualHash']?.toString().trim() ?? '';
+      final regionHash = body['imageRegionHash']?.toString().trim() ?? '';
+      final hasHash = RegExp(r'^[0-9a-f]{16}$').hasMatch(perceptualHash) &&
+          RegExp(r'^[0-9a-f]{16}$').hasMatch(regionHash);
       var updated = 0;
       for (final id in ids) {
         final old = store.quizQuestions[id];
         if (old == null || old.status == 'archived') continue;
-        final question = old.copyWith(image: image);
+        final question = hasHash
+            ? old.copyWith(
+                image: image,
+                imagePerceptualHash: perceptualHash,
+                imageRegionHash: regionHash,
+              )
+            : old.copyWith(image: image);
         question.revision = old.revision + 1;
         store.quizQuestions[id] = question;
         if (question.status == 'published') {
@@ -2170,10 +2719,18 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     }
     final body = await readJsonObject(request);
     if (body == null) return;
+    final status = body['status']?.toString() ?? old.status;
     final question = QuizQuestion.fromRequest(
-      {...old.toJson(), ...body},
+      {
+        ...old.toJson(),
+        ...body,
+        // 翻回 published 时顺手清掉标记原因；标记时写入传入的 reason。
+        'issueReason': status == 'incomplete'
+            ? (body['issueReason']?.toString() ?? old.issueReason)
+            : '',
+      },
       id: id,
-      status: body['status']?.toString() ?? old.status,
+      status: status,
       revision: old.revision + 1,
       createdAt: old.createdAt,
     );
@@ -2184,12 +2741,26 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       });
       return;
     }
-    if (store.quizQuestions.values.any(
-      (q) =>
-          q.id != id &&
-          q.identityKey == question.identityKey &&
-          q.status != 'archived',
-    )) {
+    // 查重只拦「本次更新新引入的冲突」，不拦已经存在的历史冲突。
+    //
+    // 背景：库里存量数据本就有 identityKey 相同的记录（早期算法没把答案纳入指纹，
+    // 看图题批量录入时产生了重复）。如果无条件查重，给这类题改图/改分类都会撞上
+    // 它的历史孪生记录而被 409 挡死，补图功能完全不可用。
+    //
+    // 判定方式：比较更新前后各自撞到的记录集合。集合没变大说明冲突是历史遗留的，
+    // 本次更新既没制造新重复也没加重问题，放行；一旦撞上了原先没撞的记录，
+    // 说明是真的想把两道不同的题合并成一道，拦下。
+    Set<String> conflictIds(String identityKey) => store.quizQuestions.values
+        .where((q) =>
+            q.id != id &&
+            q.identityKey == identityKey &&
+            q.status != 'archived')
+        .map((q) => q.id)
+        .toSet();
+
+    final newConflicts =
+        conflictIds(question.identityKey).difference(conflictIds(old.identityKey));
+    if (newConflicts.isNotEmpty) {
       await jsonResponse(request.response, HttpStatus.conflict, {
         'error': {'message': '题干与完整选项集已存在，不能合并覆盖。'},
       });
@@ -2226,16 +2797,15 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
   }) async {
     final status =
         forcedStatus ?? request.uri.queryParameters['status']?.trim() ?? '';
-    final records =
-        store.quizSubmissions.values
-            .where((s) => status.isEmpty || s.status == status)
-            .map((s) => s.toJson())
-            .toList()
-          ..sort(
-            (a, b) => (b['submittedAt']?.toString() ?? '').compareTo(
-              a['submittedAt']?.toString() ?? '',
-            ),
-          );
+    final records = store.quizSubmissions.values
+        .where((s) => status.isEmpty || s.status == status)
+        .map((s) => s.toJson())
+        .toList()
+      ..sort(
+        (a, b) => (b['submittedAt']?.toString() ?? '').compareTo(
+          a['submittedAt']?.toString() ?? '',
+        ),
+      );
     await jsonResponse(request.response, HttpStatus.ok, {
       'submissions': records,
       'total': records.length,
@@ -2264,7 +2834,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
           .where(
             (q) =>
                 q.status == 'published' &&
-                q.identityKey == submission.question.identityKey,
+                q.identityKey == submission.question.identityKey &&
+                quizImagesMatch(q, submission.question),
           )
           .toList();
       final duplicate = matches.isEmpty ? null : matches.first;
@@ -2288,6 +2859,380 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     await jsonResponse(request.response, HttpStatus.ok, submission.toJson());
   }
 
+  // ── 云端书源（新增） ──
+
+  /// 公开只读：客户端拉取全量/增量书源。
+  ///
+  /// `?since=<version>`：若客户端持有版本已是最新，返回 changed=false 且不带
+  /// sources，省流量；否则返回全量（含 removed 墓碑）。
+  Future<void> publicBookSources(HttpRequest request) async {
+    final since = asInt(request.uri.queryParameters['since'], -1);
+    final upToDate = since >= 0 && since >= store.bookSourceVersion;
+    final all = store.cloudBookSources.values.toList()
+      ..sort((a, b) {
+        final bySort = a.sort.compareTo(b.sort);
+        if (bySort != 0) return bySort;
+        return a.name.compareTo(b.name);
+      });
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'version': store.bookSourceVersion,
+      'changed': !upToDate,
+      'publishedAt': store.bookSourcePublishedAt?.toIso8601String(),
+      'count': all.where((s) => !s.removed).length,
+      if (!upToDate)
+        'sources': all.map((s) => s.toClientJson()).toList(growable: false),
+    });
+  }
+
+  /// 管理端：列出云端书源（含墓碑，便于管理员看到删除记录）。
+  Future<void> adminListBookSources(HttpRequest request) async {
+    final all = store.cloudBookSources.values.toList()
+      ..sort((a, b) {
+        final bySort = a.sort.compareTo(b.sort);
+        if (bySort != 0) return bySort;
+        return a.name.compareTo(b.name);
+      });
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'version': store.bookSourceVersion,
+      'publishedAt': store.bookSourcePublishedAt?.toIso8601String(),
+      'sources': all.map((s) => s.toJson()).toList(growable: false),
+    });
+  }
+
+  /// 管理端：发布（覆盖式或合并式）书源。管理员直接发布，无审核态。
+  ///
+  /// body: {
+  ///   "sources": [ {name,url,group,rawJson,enabled,weight,sort,id?}, ... ],
+  ///   "mode": "merge" | "replace",       // 默认 merge
+  ///   "announce": true,                   // 默认 true，自动生成一条公告
+  ///   "announcementTitle": "...",         // 可选，覆盖默认标题
+  ///   "announcementBody": "..."           // 可选
+  /// }
+  Future<void> adminPublishBookSources(HttpRequest request) async {
+    final body = await readJsonObject(request);
+    if (body == null) return;
+    final rawSources = body['sources'];
+    if (rawSources is! List) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': 'sources 必须是数组'},
+      });
+      return;
+    }
+    final mode = (body['mode']?.toString() ?? 'merge').toLowerCase();
+    if (mode != 'merge' && mode != 'replace') {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': 'mode 只能是 merge 或 replace'},
+      });
+      return;
+    }
+
+    final now = DateTime.now();
+    final incoming = <String, CloudBookSource>{};
+    var added = 0;
+    var updated = 0;
+    for (final item in rawSources) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      final name = (map['name']?.toString() ?? '').trim();
+      final url = (map['url']?.toString() ?? '').trim();
+      if (name.isEmpty || url.isEmpty) {
+        await jsonResponse(request.response, HttpStatus.badRequest, {
+          'error': {'message': '每条书源都必须有 name 和 url'},
+        });
+        return;
+      }
+      // 身份：显式 id 优先，否则按 url 归一化去重（同一站点视为同一书源）。
+      final explicitId = (map['id']?.toString() ?? '').trim();
+      final urlKey = bookSourceUrlKey(url);
+      CloudBookSource? existing;
+      if (explicitId.isNotEmpty) {
+        existing = store.cloudBookSources[explicitId];
+      } else {
+        for (final s in store.cloudBookSources.values) {
+          if (bookSourceUrlKey(s.url) == urlKey) {
+            existing = s;
+            break;
+          }
+        }
+      }
+      final id = existing?.id ??
+          (explicitId.isNotEmpty ? explicitId : store.nextBookSourceId());
+      var rawJson = (map['rawJson']?.toString() ?? '').trim();
+      if (rawJson.isEmpty) {
+        // 没给完整规则就用最小可用规则，客户端仍能识别名称与地址。
+        rawJson = jsonEncode({'bookSourceName': name, 'bookSourceUrl': url});
+      }
+      final source = CloudBookSource(
+        id: id,
+        name: name,
+        url: url,
+        group: (map['group']?.toString() ?? '').trim(),
+        rawJson: rawJson,
+        enabled: map['enabled'] != false,
+        weight: asInt(map['weight'], existing?.weight ?? 0),
+        sort: asInt(map['sort'], existing?.sort ?? 0),
+        updatedAt: now,
+      );
+      if (existing == null || existing.removed) {
+        added++;
+      } else {
+        updated++;
+      }
+      incoming[id] = source;
+    }
+
+    if (incoming.isEmpty) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '没有有效书源'},
+      });
+      return;
+    }
+
+    var removed = 0;
+    if (mode == 'replace') {
+      // 覆盖式：本次未出现的既有书源转为墓碑，客户端会同步删除。
+      for (final entry in store.cloudBookSources.entries.toList()) {
+        if (incoming.containsKey(entry.key) || entry.value.removed) continue;
+        store.cloudBookSources[entry.key] = CloudBookSource(
+          id: entry.value.id,
+          name: entry.value.name,
+          url: entry.value.url,
+          group: entry.value.group,
+          rawJson: entry.value.rawJson,
+          enabled: false,
+          weight: entry.value.weight,
+          sort: entry.value.sort,
+          updatedAt: now,
+          removed: true,
+        );
+        removed++;
+      }
+    }
+    store.cloudBookSources.addAll(incoming);
+    store.bookSourceVersion++;
+    store.bookSourcePublishedAt = now;
+
+    Announcement? announcement;
+    if (body['announce'] != false) {
+      final title = (body['announcementTitle']?.toString() ?? '').trim();
+      final text = (body['announcementBody']?.toString() ?? '').trim();
+      final parts = <String>[];
+      if (added > 0) parts.add('新增 $added 个');
+      if (updated > 0) parts.add('更新 $updated 个');
+      if (removed > 0) parts.add('下架 $removed 个');
+      final summary = parts.isEmpty ? '书源已更新' : '本次${parts.join('、')}书源';
+      announcement = Announcement(
+        id: store.nextAnnouncementId(),
+        title: title.isEmpty ? '书源已更新' : title,
+        body: text.isEmpty
+            ? '$summary。到「小说 - 书源管理」下拉刷新，或在「我的」页点「检查书源更新」即可同步。'
+            : text,
+        level: 'notice',
+        publishedAt: now,
+        updatedAt: now,
+      );
+      store.announcements[announcement.id] = announcement;
+      store.announcementVersion++;
+    }
+
+    await store.save();
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'version': store.bookSourceVersion,
+      'publishedAt': now.toIso8601String(),
+      'added': added,
+      'updated': updated,
+      'removed': removed,
+      'total': store.cloudBookSources.values.where((s) => !s.removed).length,
+      if (announcement != null) 'announcement': announcement.toJson(),
+    });
+  }
+
+  /// 管理端：删除单个云端书源（写墓碑，不物理删，保证客户端能同步删除）。
+  Future<void> adminDeleteBookSource(HttpRequest request, String id) async {
+    final existing = store.cloudBookSources[id];
+    if (existing == null) {
+      await jsonResponse(request.response, HttpStatus.notFound, {
+        'error': {'message': '书源不存在'},
+      });
+      return;
+    }
+    // 已是墓碑：幂等返回成功，不再推进版本号（避免重复删除刷版本、
+    // 触发所有客户端做一次无意义的全量同步）。
+    if (existing.removed) {
+      await jsonResponse(request.response, HttpStatus.ok, {
+        'id': id,
+        'removed': true,
+        'alreadyRemoved': true,
+        'version': store.bookSourceVersion,
+        'total': store.cloudBookSources.values.where((s) => !s.removed).length,
+      });
+      return;
+    }
+    final now = DateTime.now();
+    store.cloudBookSources[id] = CloudBookSource(
+      id: existing.id,
+      name: existing.name,
+      url: existing.url,
+      group: existing.group,
+      rawJson: existing.rawJson,
+      enabled: false,
+      weight: existing.weight,
+      sort: existing.sort,
+      updatedAt: now,
+      removed: true,
+    );
+    store.bookSourceVersion++;
+    store.bookSourcePublishedAt = now;
+    await store.save();
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'id': id,
+      'removed': true,
+      'version': store.bookSourceVersion,
+      'total': store.cloudBookSources.values.where((s) => !s.removed).length,
+    });
+  }
+
+  // ── 公告（新增） ──
+
+  /// 公开只读：客户端拉公告列表。默认只返回已发布的，置顶优先、其余按时间倒序。
+  Future<void> publicAnnouncements(HttpRequest request) async {
+    final limit = asInt(request.uri.queryParameters['limit'], 50).clamp(1, 200);
+    final items = store.announcements.values.where((a) => a.published).toList()
+      ..sort((a, b) {
+        if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+        return b.publishedAt.compareTo(a.publishedAt);
+      });
+    final page = items.take(limit).toList(growable: false);
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'version': store.announcementVersion,
+      'total': items.length,
+      // count 与书源接口保持同名语义：本次返回的条目数。
+      'count': page.length,
+      'announcements': page
+          .map((a) => a.toClientJson())
+          .toList(growable: false),
+    });
+  }
+
+  /// 管理端：列出全部公告（含未发布草稿）。
+  Future<void> adminListAnnouncements(HttpRequest request) async {
+    final items = store.announcements.values.toList()
+      ..sort((a, b) {
+        if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+        return b.publishedAt.compareTo(a.publishedAt);
+      });
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'version': store.announcementVersion,
+      'announcements': items.map((a) => a.toJson()).toList(growable: false),
+    });
+  }
+
+  /// 管理端：新建公告。管理员直接发布（published 默认 true）。
+  Future<void> adminCreateAnnouncement(HttpRequest request) async {
+    final body = await readJsonObject(request);
+    if (body == null) return;
+    final title = (body['title']?.toString() ?? '').trim();
+    final text = (body['body']?.toString() ?? '').trim();
+    if (title.isEmpty) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '标题不能为空'},
+      });
+      return;
+    }
+    if (title.length > 80) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '标题不能超过 80 字'},
+      });
+      return;
+    }
+    if (text.length > 4000) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '正文不能超过 4000 字'},
+      });
+      return;
+    }
+    final now = DateTime.now();
+    final announcement = Announcement(
+      id: store.nextAnnouncementId(),
+      title: title,
+      body: text,
+      level: normalizeAnnouncementLevel(body['level']?.toString()),
+      publishedAt: now,
+      updatedAt: now,
+      pinned: body['pinned'] == true,
+      linkUrl: (body['linkUrl']?.toString() ?? '').trim(),
+      published: body['published'] != false,
+    );
+    store.announcements[announcement.id] = announcement;
+    store.announcementVersion++;
+    // 公告条数设上限，避免状态文件无界膨胀（保留最近 300 条）。
+    if (store.announcements.length > 300) {
+      final ordered = store.announcements.values.toList()
+        ..sort((a, b) => a.publishedAt.compareTo(b.publishedAt));
+      for (final old in ordered.take(store.announcements.length - 300)) {
+        store.announcements.remove(old.id);
+      }
+    }
+    await store.save();
+    await jsonResponse(request.response, HttpStatus.ok, announcement.toJson());
+  }
+
+  /// 管理端：修改公告（标题/正文/级别/置顶/上下架）。
+  Future<void> adminUpdateAnnouncement(HttpRequest request, String id) async {
+    final existing = store.announcements[id];
+    if (existing == null) {
+      await jsonResponse(request.response, HttpStatus.notFound, {
+        'error': {'message': '公告不存在'},
+      });
+      return;
+    }
+    final body = await readJsonObject(request);
+    if (body == null) return;
+    final nextTitle = body.containsKey('title')
+        ? (body['title']?.toString() ?? '').trim()
+        : existing.title;
+    if (nextTitle.isEmpty) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '标题不能为空'},
+      });
+      return;
+    }
+    final updated = existing.copyWith(
+      title: nextTitle,
+      body: body.containsKey('body')
+          ? (body['body']?.toString() ?? '').trim()
+          : null,
+      level: body.containsKey('level') ? body['level']?.toString() : null,
+      pinned: body.containsKey('pinned') ? body['pinned'] == true : null,
+      linkUrl: body.containsKey('linkUrl')
+          ? (body['linkUrl']?.toString() ?? '').trim()
+          : null,
+      published:
+          body.containsKey('published') ? body['published'] != false : null,
+    );
+    store.announcements[id] = updated;
+    store.announcementVersion++;
+    await store.save();
+    await jsonResponse(request.response, HttpStatus.ok, updated.toJson());
+  }
+
+  /// 管理端：删除公告。
+  Future<void> adminDeleteAnnouncement(HttpRequest request, String id) async {
+    final removed = store.announcements.remove(id);
+    if (removed == null) {
+      await jsonResponse(request.response, HttpStatus.notFound, {
+        'error': {'message': '公告不存在'},
+      });
+      return;
+    }
+    store.announcementVersion++;
+    await store.save();
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'id': id,
+      'deleted': true,
+      'version': store.announcementVersion,
+    });
+  }
 
   Future<Account?> optionalUser(HttpRequest request) async {
     final auth = request.headers.value(HttpHeaders.authorizationHeader) ?? '';
@@ -2473,9 +3418,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     final client = HttpClient();
     try {
       final uri = Uri.parse('${provider.baseUrl}/images/generations');
-      final req = await client
-          .postUrl(uri)
-          .timeout(const Duration(seconds: 20));
+      final req =
+          await client.postUrl(uri).timeout(const Duration(seconds: 20));
       req.headers.set(
         HttpHeaders.authorizationHeader,
         'Bearer ${provider.apiKey}',
@@ -2632,9 +3576,16 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
 
     final title = (body['title']?.toString() ?? '').trim();
     final subtitle = (body['subtitle']?.toString() ?? '').trim();
-    final actionCode = (body['actionCode']?.toString() ?? body['action']?.toString() ?? 'toast').trim();
-    final areaCodeRaw = (body['areaCode']?.toString() ?? body['area']?.toString() ?? 'recommend').trim();
-    final areaCode = _allowedPluginAreas.contains(areaCodeRaw) ? areaCodeRaw : 'recommend';
+    final actionCode = (body['actionCode']?.toString() ??
+            body['action']?.toString() ??
+            'toast')
+        .trim();
+    final areaCodeRaw = (body['areaCode']?.toString() ??
+            body['area']?.toString() ??
+            'recommend')
+        .trim();
+    final areaCode =
+        _allowedPluginAreas.contains(areaCodeRaw) ? areaCodeRaw : 'recommend';
     final version = (body['version']?.toString() ?? '1.0.0').trim();
     final minAppVersion = (body['minAppVersion']?.toString() ?? '').trim();
     final changelog = (body['changelog']?.toString() ?? '').trim();
@@ -2683,7 +3634,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     }
 
     // plugin id: user supplied slug or auto
-    var slug = (body['slug']?.toString() ?? body['id']?.toString() ?? '').trim();
+    var slug =
+        (body['slug']?.toString() ?? body['id']?.toString() ?? '').trim();
     slug = slug
         .toLowerCase()
         .replaceAll(RegExp(r'[^a-z0-9_\-\.]'), '_')
@@ -2697,9 +3649,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     if (slug.isEmpty) {
       slug = 'p_${randomBase64(6).toLowerCase()}';
     }
-    final pluginId = slug.startsWith('user.')
-        ? slug
-        : 'user.${account.id}.$slug';
+    final pluginId =
+        slug.startsWith('user.') ? slug : 'user.${account.id}.$slug';
 
     // 作者禁投稿（拒绝过多）
     final rejects = store.pluginSubmissions.values
@@ -2728,7 +3679,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
 
     // rate limit: max 20 pending per user
     final minePending = store.pluginSubmissions.values
-        .where((s) => s.authorUserId == account.id && s.status == 'pending_review')
+        .where(
+            (s) => s.authorUserId == account.id && s.status == 'pending_review')
         .length;
     if (minePending >= 20) {
       await jsonResponse(request.response, HttpStatus.tooManyRequests, {
@@ -2760,7 +3712,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       createdAt: DateTime.now(),
       reviewedAt: null,
       colorValue: asInt(body['colorValue'], 0xFF4F46E5),
-      iconName: (body['iconName']?.toString() ?? body['icon']?.toString() ?? '').trim(),
+      iconName: (body['iconName']?.toString() ?? body['icon']?.toString() ?? '')
+          .trim(),
       sort: asInt(body['sort'], 5000),
       beta: body['beta'] == true,
     );
@@ -2788,7 +3741,6 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       },
     });
   }
-
 
   static const int _maxPluginZipBytes = 5 * 1024 * 1024;
   static const int _maxPluginIconBytes = 256 * 1024;
@@ -2889,7 +3841,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       return;
     }
     final minePending = store.pluginSubmissions.values
-        .where((s) => s.authorUserId == account.id && s.status == 'pending_review')
+        .where(
+            (s) => s.authorUserId == account.id && s.status == 'pending_review')
         .length;
     if (minePending >= 20) {
       store.bumpPluginCounter('submit_pending_limit');
@@ -2924,10 +3877,12 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       final body = await readJsonObject(request);
       if (body == null) return;
       fields = body.map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''));
-      final b64 = (body['packageBase64'] ?? body['zipBase64'] ?? '').toString().trim();
+      final b64 =
+          (body['packageBase64'] ?? body['zipBase64'] ?? '').toString().trim();
       if (b64.isNotEmpty) {
         try {
-          zipBytes = base64Decode(b64.contains(',') ? b64.split(',').last : b64);
+          zipBytes =
+              base64Decode(b64.contains(',') ? b64.split(',').last : b64);
         } catch (_) {
           await jsonResponse(request.response, HttpStatus.badRequest, {
             'error': {'message': 'packageBase64 解码失败'},
@@ -2962,10 +3917,9 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     final title = (fields['title'] ?? meta['title']?.toString() ?? '').trim();
     final subtitle =
         (fields['subtitle'] ?? meta['subtitle']?.toString() ?? '').trim();
-    final actionCode = (fields['actionCode'] ??
-            meta['actionCode']?.toString() ??
-            'toast')
-        .trim();
+    final actionCode =
+        (fields['actionCode'] ?? meta['actionCode']?.toString() ?? 'toast')
+            .trim();
     final areaCodeRaw =
         (fields['areaCode'] ?? meta['areaCode']?.toString() ?? 'recommend')
             .trim();
@@ -3162,8 +4116,10 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       reviewerId: '',
       createdAt: DateTime.now(),
       reviewedAt: null,
-      colorValue: asInt(fields['colorValue'], asInt(meta['colorValue'], 0xFF4F46E5)),
-      iconName: (fields['iconName'] ?? meta['iconName']?.toString() ?? '').trim(),
+      colorValue:
+          asInt(fields['colorValue'], asInt(meta['colorValue'], 0xFF4F46E5)),
+      iconName:
+          (fields['iconName'] ?? meta['iconName']?.toString() ?? '').trim(),
       sort: asInt(fields['sort'], asInt(meta['sort'], 5000)),
       beta: fields['beta'] == 'true' || meta['beta'] == true,
       packagePath: relPath,
@@ -3185,7 +4141,7 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
         actorName: account.username,
         pluginId: pluginId,
         submissionId: id,
-        note: '$title (${zipBytes.length}B)',
+        note: '${title} (${zipBytes.length}B)',
         createdAt: DateTime.now(),
       ),
     );
@@ -3244,7 +4200,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     final file = File('${_pluginPackagesDir.path}/${release.packagePath}');
     if (!file.existsSync()) {
       store.bumpPluginCounter('package_file_missing');
-      stderr.writeln('[plugin-market] package file missing id=$pluginId path=${release.packagePath}');
+      stderr.writeln(
+          '[plugin-market] package file missing id=$pluginId path=${release.packagePath}');
       await jsonResponse(request.response, HttpStatus.notFound, {
         'error': {
           'message': '包文件丢失，请联系管理员重新发布',
@@ -3261,7 +4218,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       'Content-Disposition',
       'attachment; filename="${pluginId.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_')}.zip"',
     );
-    request.response.headers.set('X-Package-Sha256', release.packageSha256.isEmpty ? actualSha : release.packageSha256);
+    request.response.headers.set('X-Package-Sha256',
+        release.packageSha256.isEmpty ? actualSha : release.packageSha256);
     request.response.headers.set('X-Package-Format', 'zip');
     request.response.headers.contentLength = bytes.length;
     request.response.add(bytes);
@@ -3316,7 +4274,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       }
       // allow nested one-level folder plugin.json
       final pluginJsonName = names.firstWhere(
-        (n) => n == 'plugin.json' || RegExp(r'^[^/]+/plugin\.json$').hasMatch(n),
+        (n) =>
+            n == 'plugin.json' || RegExp(r'^[^/]+/plugin\.json$').hasMatch(n),
         orElse: () => '',
       );
       if (pluginJsonName.isEmpty) {
@@ -3341,11 +4300,19 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       try {
         final decoded = jsonDecode(await pluginFile.readAsString());
         if (decoded is! Map) {
-          return (error: 'plugin.json 必须是对象', meta: null, payloadFromFile: null);
+          return (
+            error: 'plugin.json 必须是对象',
+            meta: null,
+            payloadFromFile: null
+          );
         }
         meta = Map<String, dynamic>.from(decoded);
       } catch (e) {
-        return (error: 'plugin.json 解析失败：$e', meta: null, payloadFromFile: null);
+        return (
+          error: 'plugin.json 解析失败：$e',
+          meta: null,
+          payloadFromFile: null
+        );
       }
       dynamic payloadFromFile;
       final baseDir = pluginFile.parent.path;
@@ -3415,11 +4382,16 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       final start = _indexOfBytes(body, separator, index);
       if (start < 0) break;
       index = start + separator.length;
-      if (index < body.length && body[index] == 45 && index + 1 < body.length && body[index + 1] == 45) {
+      if (index < body.length &&
+          body[index] == 45 &&
+          index + 1 < body.length &&
+          body[index + 1] == 45) {
         break; // --
       }
       // skip CRLF
-      if (index + 1 < body.length && body[index] == 13 && body[index + 1] == 10) {
+      if (index + 1 < body.length &&
+          body[index] == 13 &&
+          body[index + 1] == 10) {
         index += 2;
       } else if (index < body.length && body[index] == 10) {
         index += 1;
@@ -3435,7 +4407,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       }
       final part = body.sublist(index, partEnd);
       final headerSep = _indexOfBytes(part, [13, 10, 13, 10], 0);
-      final headerSep2 = headerSep < 0 ? _indexOfBytes(part, [10, 10], 0) : headerSep;
+      final headerSep2 =
+          headerSep < 0 ? _indexOfBytes(part, [10, 10], 0) : headerSep;
       if (headerSep2 < 0) {
         index = end;
         continue;
@@ -3472,7 +4445,6 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     }
     return -1;
   }
-
 
   Future<void> listMyPlugins(HttpRequest request, Account account) async {
     final list = store.pluginSubmissions.values
@@ -3512,7 +4484,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
           .length,
       'rejectsToday': rejectsToday,
       'audit': store.pluginAudit.take(30).map((e) => e.toJson()).toList(),
-      'openReports': store.pluginReports.where((r) => r.status == 'open').length,
+      'openReports':
+          store.pluginReports.where((r) => r.status == 'open').length,
       'bannedAuthors': store.pluginBannedAuthors,
       'storage': pluginStorageSnapshot(),
       'counters': store.pluginCounters,
@@ -3533,8 +4506,9 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     final pending = store.pluginSubmissions.values
         .where((s) => s.status == 'pending_review')
         .length;
-    final published =
-        store.pluginReleases.values.where((r) => r.status == 'published').length;
+    final published = store.pluginReleases.values
+        .where((r) => r.status == 'published')
+        .length;
     final yanked =
         store.pluginReleases.values.where((r) => r.status == 'yanked').length;
     await jsonResponse(request.response, HttpStatus.ok, {
@@ -3603,7 +4577,9 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       return;
     }
     final body = await readJsonObject(request) ?? <String, dynamic>{};
-    final note = (body['note']?.toString() ?? body['reviewNote']?.toString() ?? '').trim();
+    final note =
+        (body['note']?.toString() ?? body['reviewNote']?.toString() ?? '')
+            .trim();
     final admin = await optionalUser(request);
     final result = _applyReviewDecision(
       sub: sub,
@@ -3668,9 +4644,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       if (sub.packageFormat.isNotEmpty) 'packageFormat': sub.packageFormat,
       if (sub.packageSha256.isNotEmpty) 'packageSha256': sub.packageSha256,
     };
-    final packageJson = sub.packageJson.isNotEmpty
-        ? sub.packageJson
-        : jsonEncode(packageMap);
+    final packageJson =
+        sub.packageJson.isNotEmpty ? sub.packageJson : jsonEncode(packageMap);
     final packageSha256 = sub.packageSha256.isNotEmpty
         ? sub.packageSha256
         : sha256.convert(utf8.encode(packageJson)).toString();
@@ -3928,12 +4903,11 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
     bool ban,
   ) async {
     final body = await readJsonObject(request) ?? <String, dynamic>{};
-    final note = (body['note']?.toString() ?? body['reason']?.toString() ?? '')
-        .trim();
+    final note =
+        (body['note']?.toString() ?? body['reason']?.toString() ?? '').trim();
     final admin = await optionalUser(request);
     if (ban) {
-      store.pluginBannedAuthors[userId] =
-          note.isEmpty ? '管理员禁止投稿' : note;
+      store.pluginBannedAuthors[userId] = note.isEmpty ? '管理员禁止投稿' : note;
     } else {
       store.pluginBannedAuthors.remove(userId);
     }
@@ -3988,8 +4962,7 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
             // sizes via unzip -Z
             final detail = await Process.run('unzip', ['-Z', file.path]);
             final sizeMap = <String, int>{};
-            for (final line
-                in (detail.stdout?.toString() ?? '').split('\n')) {
+            for (final line in (detail.stdout?.toString() ?? '').split('\n')) {
               // typical:  "  123  Defl:N  ..." last field name
               final parts = line.trim().split(RegExp(r'\s+'));
               if (parts.length >= 8 && int.tryParse(parts[0]) != null) {
@@ -4052,38 +5025,37 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
         }
       } catch (_) {}
     }
-      final hasBanned = files.any((f) => f['banned'] == true);
-      final hasDisallowed = files.any((f) => f['allowed'] == false);
-      final hasIcon = files.any((f) => f['isIcon'] == true);
-      await jsonResponse(request.response, HttpStatus.ok, {
-        'submission': sub.toJson(),
-        'compatibility': {
-          'actionAllowed': actionOk,
-          'actionCode': sub.actionCode,
-          'areaCode': sub.areaCode,
-          'hasTitle': sub.title.trim().isNotEmpty,
-          'packageFormat': sub.packageFormat,
-          'packageSize': sub.packageSize,
-          'packageSha256': sub.packageSha256,
-        },
-        'pluginJson': pluginJson,
-        'files': files,
-        'iconBase64': ?iconBase64,
-        if (iconBase64 != null) 'iconBytes': iconBytes,
-        'packageError': ?packageError,
-        'checklist': {
-          'actionWhitelist': actionOk,
-          'noReservedId': !sub.pluginId.startsWith('builtin_') &&
-              !sub.pluginId.startsWith('market_'),
-          'hasPackageOrPayload':
-              sub.packagePath.isNotEmpty ||
-              sub.payload.isNotEmpty ||
-              sub.payloadData.isNotEmpty,
-          'resourceWhitelist': !hasBanned && !hasDisallowed,
-          'hasIconPng': hasIcon,
-          'iconMax256k': true,
-        },
-      });
+    final hasBanned = files.any((f) => f['banned'] == true);
+    final hasDisallowed = files.any((f) => f['allowed'] == false);
+    final hasIcon = files.any((f) => f['isIcon'] == true);
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'submission': sub.toJson(),
+      'compatibility': {
+        'actionAllowed': actionOk,
+        'actionCode': sub.actionCode,
+        'areaCode': sub.areaCode,
+        'hasTitle': sub.title.trim().isNotEmpty,
+        'packageFormat': sub.packageFormat,
+        'packageSize': sub.packageSize,
+        'packageSha256': sub.packageSha256,
+      },
+      'pluginJson': pluginJson,
+      'files': files,
+      if (iconBase64 != null) 'iconBase64': iconBase64,
+      if (iconBase64 != null) 'iconBytes': iconBytes,
+      if (packageError != null) 'packageError': packageError,
+      'checklist': {
+        'actionWhitelist': actionOk,
+        'noReservedId': !sub.pluginId.startsWith('builtin_') &&
+            !sub.pluginId.startsWith('market_'),
+        'hasPackageOrPayload': sub.packagePath.isNotEmpty ||
+            sub.payload.isNotEmpty ||
+            sub.payloadData.isNotEmpty,
+        'resourceWhitelist': !hasBanned && !hasDisallowed,
+        'hasIconPng': hasIcon,
+        'iconMax256k': true,
+      },
+    });
   }
 
   Future<void> pluginMarketInstall(HttpRequest request, String pluginId) async {
@@ -4116,7 +5088,8 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       ),
     );
     await store.save();
-    stderr.writeln('[plugin-market] install ok id=$pluginId v=${release.version}');
+    stderr.writeln(
+        '[plugin-market] install ok id=$pluginId v=${release.version}');
     await jsonResponse(request.response, HttpStatus.ok, {
       'id': pluginId,
       'downloadCount': store.pluginReleases[pluginId]!.downloadCount,
@@ -4196,6 +5169,183 @@ if (request.method == 'POST' && path == '/admin/quiz/categories/bulk') {
       'marketVersion': store.pluginMarketVersion,
     });
   }
+
+  // ── Personal Center: User Self-View Endpoints ──
+
+  /// GET /api/me/overview
+  /// 返回当前登录用户的个人中心总览：基础信息 + 额度 + 统计摘要。
+  Future<void> meOverview(HttpRequest request, Account account) async {
+    final user = store.quota(account.id);
+    // 今日生图次数（成功请求数，来自 usage 中当天且 userId 匹配的记录）
+    final today = dateKey(DateTime.now());
+    var todayRequests = 0;
+    var todayCost = 0;
+    var todaySuccess = 0;
+    for (final item in store.usage) {
+      if (item.userId != account.id) continue;
+      if (dateKey(item.createdAt) != today) continue;
+      todayRequests++;
+      todayCost += item.cost;
+      if (item.success) todaySuccess++;
+    }
+    // 历史提交题目总数
+    final mySubmissions = store.quizSubmissions.values
+        .where((s) => s.submitterUserId == account.id)
+        .toList();
+    final pendingSubmissions =
+        mySubmissions.where((s) => s.status == 'pending').length;
+    final mergedSubmissions =
+        mySubmissions.where((s) => s.status == 'merged').length;
+    final approvedSubmissions =
+        mySubmissions.where((s) => s.status == 'approved').length;
+    // 已发布题目总数（全局）
+    final publishedCount =
+        store.quizQuestions.values.where((q) => q.status == 'published').length;
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'user': account.toPublicJson(),
+      'quota': user.toQuotaJson(),
+      'stats': {
+        'todayRequests': todayRequests,
+        'todaySuccess': todaySuccess,
+        'todayCost': todayCost,
+        'mySubmissions': mySubmissions.length,
+        'myPendingSubmissions': pendingSubmissions,
+        'myMergedSubmissions': mergedSubmissions,
+        'myApprovedSubmissions': approvedSubmissions,
+        'publishedQuestions': publishedCount,
+      },
+    });
+  }
+
+  /// GET /api/me/quota/transactions
+  /// 返回当前用户的生图用量明细（只读，按时间倒序，默认最近 20 条，最多 200 条）。
+  Future<void> meQuotaTransactions(HttpRequest request, Account account) async {
+    final query = request.uri.queryParameters;
+    final limit = asInt(query['limit'] ?? '', 20).clamp(1, 200);
+    final successFilter = parseBool(query['success']);
+    final transactions = usageJson(
+      userId: account.id,
+      success: successFilter,
+      limit: limit,
+      maxLimit: 200,
+    );
+    // 汇总覆盖全部匹配记录，而不是被 limit 截断后的当页数据，
+    // 否则客户端展示的“共 N 条 / 消耗 N 点”会永远等于 limit。
+    var matchedTotal = 0;
+    var totalCost = 0;
+    var totalSuccess = 0;
+    for (final item in store.usage) {
+      if (item.userId != account.id) continue;
+      if (successFilter != null && item.success != successFilter) continue;
+      matchedTotal++;
+      totalCost += item.cost;
+      if (item.success) totalSuccess++;
+    }
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'transactions': transactions,
+      'summary': {
+        'total': matchedTotal,
+        'returned': transactions.length,
+        'totalCost': totalCost,
+        'totalSuccess': totalSuccess,
+        'totalFailed': matchedTotal - totalSuccess,
+      },
+    });
+  }
+
+  /// GET /api/me/plugins
+  /// 返回当前用户投稿的插件，支持 ?status=...、?offset=N、?limit=N。
+  Future<void> mePlugins(HttpRequest request, Account account) async {
+    final query = request.uri.queryParameters;
+    final status = (query['status'] ?? '').trim().toLowerCase();
+    final offset = asInt(query['offset'] ?? '', 0).clamp(0, 100000);
+    final limit = asInt(query['limit'] ?? '', 20).clamp(1, 100);
+    final list = store.pluginSubmissions.values
+        .where((item) => item.authorUserId == account.id)
+        .where((item) => status.isEmpty || item.status.toLowerCase() == status)
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final page = list.skip(offset).take(limit).toList();
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'items': page.map((item) => item.toJson()).toList(),
+      'total': list.length,
+      'offset': offset,
+      'limit': limit,
+      'hasMore': offset + page.length < list.length,
+    });
+  }
+
+  /// GET /api/me/quiz/questions
+  /// 返回当前用户提交/审核的题目列表（只读，不暴露其他用户的数据）。
+  /// 支持 ?status=pending|merged|approved|all 与 ?limit=N (默认 20, 最大 100)
+  Future<void> meQuizQuestions(HttpRequest request, Account account) async {
+    final query = request.uri.queryParameters;
+    final statusFilter = (query['status'] ?? 'all').trim().toLowerCase();
+    final offset = asInt(query['offset'] ?? '', 0).clamp(0, 100000);
+    final limit = asInt(query['limit'] ?? '', 20).clamp(1, 100);
+    final submissions = store.quizSubmissions.values
+        .where((s) => s.submitterUserId == account.id)
+        .toList()
+      ..sort((a, b) => b.submittedAt.compareTo(a.submittedAt));
+    final filtered = switch (statusFilter) {
+      'pending' => submissions.where((s) => s.status == 'pending').toList(),
+      'merged' => submissions.where((s) => s.status == 'merged').toList(),
+      'approved' => submissions.where((s) => s.status == 'approved').toList(),
+      _ => submissions,
+    };
+    final page = filtered.skip(offset).take(limit).toList();
+    final result = page
+        .map((s) => {
+              'id': s.id,
+              'question': s.question.toJson(),
+              'status': s.status,
+              'submittedAt': s.submittedAt.toIso8601String(),
+              'reviewNote': s.reviewNote,
+              if (s.linkedQuestionId != null)
+                'linkedQuestionId': s.linkedQuestionId,
+              if (s.reviewedAt != null)
+                'reviewedAt': s.reviewedAt!.toIso8601String(),
+            })
+        .toList();
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'questions': result,
+      'total': filtered.length,
+      'offset': offset,
+      'limit': limit,
+      'hasMore': offset + page.length < filtered.length,
+    });
+  }
+
+  /// GET /api/me/activity
+  /// 返回最近 30 天的每日活动摘要（请求数、成功数、消耗点数）。
+  Future<void> meActivity(HttpRequest request, Account account) async {
+    final days = List.generate(30, (index) {
+      final d = DateTime.now().subtract(Duration(days: 29 - index));
+      return dateKey(d);
+    });
+    final daily = <String, Map<String, dynamic>>{};
+    for (final key in days) {
+      daily[key] = {'date': key, 'requests': 0, 'success': 0, 'cost': 0};
+    }
+    for (final item in store.usage) {
+      if (item.userId != account.id) continue;
+      final key = dateKey(item.createdAt);
+      final day = daily[key];
+      if (day == null) continue;
+      day['requests'] = (day['requests'] as int) + 1;
+      day['cost'] = (day['cost'] as int) + item.cost;
+      if (item.success) day['success'] = (day['success'] as int) + 1;
+    }
+    // 按日期升序排列
+    final activity = days.map((key) => daily[key]!).toList();
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'activity': activity,
+      'totalRequests':
+          activity.fold(0, (sum, d) => sum + (d['requests'] as int)),
+      'totalSuccess': activity.fold(0, (sum, d) => sum + (d['success'] as int)),
+      'totalCost': activity.fold(0, (sum, d) => sum + (d['cost'] as int)),
+    });
+  }
 }
 
 class StateStore {
@@ -4223,6 +5373,27 @@ class StateStore {
   int pluginMarketVersion = 1;
   ProviderConfig? providerConfig;
 
+  // AI 读屏上游凭证（管理员配置，永不下发客户端）。
+  QuizVisionProviderConfig? quizVisionProvider;
+  // 每日限额计数（UTC 日键）。A2：延迟合并落盘——正常随既有 save() 持久化，
+  // 用量变化只置脏，由 _flushQuizVision 限频 60s 合并写（启发式：崩溃窗口内
+  // 最多丢 60s 计数，重启后按落盘值恢复，防滥用用途足够）。
+  final quizVisionUsage = <String, Map<String, int>>{};
+  // A1：每账号每日上游失败数（异常+非2xx），随 save 持久化，供 /admin 统计。
+  final quizVisionUpstreamFailures = <String, Map<String, int>>{};
+  // A3：突发限流窗口（仅内存，重启清零）。
+  final quizVisionBurstHits = <String, List<DateTime>>{};
+  bool quizVisionDirty = false;
+  DateTime? quizVisionLastPersistedAt;
+  Timer? quizVisionFlushTimer;
+
+  // ── 云端书源 / 公告（新增） ──
+  final cloudBookSources = <String, CloudBookSource>{};
+  int bookSourceVersion = 0;
+  DateTime? bookSourcePublishedAt;
+  final announcements = <String, Announcement>{};
+  int announcementVersion = 0;
+
   Future<void> load() async {
     final file = File(path);
     if (!await file.exists()) {
@@ -4238,6 +5409,33 @@ class StateStore {
       providerConfig = ProviderConfig.fromJson(
         Map<String, dynamic>.from(rawProvider),
       );
+    }
+
+    final rawQuizVision = decoded['quizVisionProvider'];
+    if (rawQuizVision is Map) {
+      quizVisionProvider = QuizVisionProviderConfig.fromJson(
+        Map<String, dynamic>.from(rawQuizVision),
+      );
+    }
+    final rawQuizVisionUsage = decoded['quizVisionUsage'];
+    if (rawQuizVisionUsage is Map) {
+      rawQuizVisionUsage.forEach((key, value) {
+        if (value is Map) {
+          quizVisionUsage[key.toString()] = value.map(
+            (k, v) => MapEntry(k.toString(), (v is num ? v.toInt() : 0)),
+          );
+        }
+      });
+    }
+    final rawQuizVisionFailures = decoded['quizVisionUpstreamFailures'];
+    if (rawQuizVisionFailures is Map) {
+      rawQuizVisionFailures.forEach((key, value) {
+        if (value is Map) {
+          quizVisionUpstreamFailures[key.toString()] = value.map(
+            (k, v) => MapEntry(k.toString(), (v is num ? v.toInt() : 0)),
+          );
+        }
+      });
     }
 
     final rawAccounts = decoded['accounts'];
@@ -4395,6 +5593,32 @@ class StateStore {
         pluginCounters[k.toString()] = asInt(v, 0);
       });
     }
+
+    final rawCloudSources = decoded['cloudBookSources'];
+    if (rawCloudSources is Map) {
+      rawCloudSources.forEach((key, value) {
+        if (value is Map) {
+          cloudBookSources[key.toString()] = CloudBookSource.fromJson(
+            Map<String, dynamic>.from(value),
+          );
+        }
+      });
+    }
+    bookSourceVersion = asInt(decoded['bookSourceVersion'], 0);
+    bookSourcePublishedAt = DateTime.tryParse(
+      decoded['bookSourcePublishedAt']?.toString() ?? '',
+    );
+    final rawAnnouncements = decoded['announcements'];
+    if (rawAnnouncements is Map) {
+      rawAnnouncements.forEach((key, value) {
+        if (value is Map) {
+          announcements[key.toString()] = Announcement.fromJson(
+            Map<String, dynamic>.from(value),
+          );
+        }
+      });
+    }
+    announcementVersion = asInt(decoded['announcementVersion'], 0);
   }
 
   void addPluginAudit(PluginAuditEvent event) {
@@ -4406,6 +5630,31 @@ class StateStore {
 
   void bumpPluginCounter(String key, [int by = 1]) {
     pluginCounters[key] = (pluginCounters[key] ?? 0) + by;
+  }
+
+  /// 题库图片目录，始终与状态文件同目录。
+  ///
+  /// 原先硬编码为相对路径 '.var/quiz_images'，而状态文件由 IMAGE_STATE_PATH
+  /// 指到别处（生产是 /opt/box-backend/data/），两者分家会导致图片落在
+  /// WorkingDirectory 下、被备份漏掉。这里统一从状态文件目录推导。
+  Directory get quizImagesDir =>
+      Directory('${File(path).parent.path}/quiz_images');
+
+  /// 清理已过期会话，返回清理条数。
+  ///
+  /// 会话有效期 30 天，但此前没有任何回收机制：过期条目会永久留在状态文件里，
+  /// 既让文件无谓膨胀，也意味着一份泄露的旧状态文件里全是长期有效的令牌。
+  /// 启动时清一次，之后按固定周期清。
+  int pruneExpiredSessions() {
+    final now = DateTime.now();
+    final expired = <String>[];
+    sessions.forEach((token, session) {
+      if (session.expiresAt.isBefore(now)) expired.add(token);
+    });
+    for (final token in expired) {
+      sessions.remove(token);
+    }
+    return expired.length;
   }
 
   Future<void> bootstrapAdmin(ServerConfig config) async {
@@ -4461,6 +5710,8 @@ class StateStore {
   String nextQuizQuestionId() => 'q_${randomBase64(9)}';
   String nextQuizSubmissionId() => 'qs_${randomBase64(9)}';
   String nextPluginSubmissionId() => 'ps_${randomBase64(9)}';
+  String nextBookSourceId() => 'bs_${randomBase64(9)}';
+  String nextAnnouncementId() => 'an_${randomBase64(9)}';
 
   void recordQuizChange(String questionId, String operation) {
     quizSequence++;
@@ -4491,48 +5742,63 @@ class StateStore {
   }
 
   Map<String, dynamic> toJson() => {
-    if (providerConfig != null) 'providerConfig': providerConfig!.toJson(),
-    'accounts': accounts.map((key, value) => MapEntry(key, value.toJson())),
-    'quotas': quotas.map((key, value) => MapEntry(key, value.toJson())),
-    'sessions': sessions.map((key, value) => MapEntry(key, value.toJson())),
-    'usage': usage.map((item) => item.toJson()).toList(),
-    'quizQuestions': quizQuestions.map(
-      (key, value) => MapEntry(key, value.toJson()),
-    ),
-    'quizSubmissions': quizSubmissions.map(
-      (key, value) => MapEntry(key, value.toJson()),
-    ),
-    'quizChanges': quizChanges.map((item) => item.toJson(null)).toList(),
-    'quizImports': quizImports.map((item) => item.toJson()).toList(),
-    'quizIncomplete': quizIncomplete.map((item) => item.toJson()).toList(),
-    'quizSequence': quizSequence,
-    'pluginPolicy': pluginPolicy.toJson(),
-    'pluginSubmissions': pluginSubmissions.map(
-      (key, value) => MapEntry(key, value.toJson()),
-    ),
-    'pluginReleases': pluginReleases.map(
-      (key, value) => MapEntry(key, value.toJson()),
-    ),
-    'pluginMarketVersion': pluginMarketVersion,
-    'pluginAudit': pluginAudit.map((e) => e.toJson()).toList(),
-    'pluginReports': pluginReports.map((e) => e.toJson()).toList(),
-    'pluginBannedAuthors': pluginBannedAuthors,
-    'pluginCounters': pluginCounters,
-  };
+        if (providerConfig != null) 'providerConfig': providerConfig!.toJson(),
+        if (quizVisionProvider != null)
+          'quizVisionProvider': quizVisionProvider!.toJson(),
+        if (quizVisionUsage.isNotEmpty)
+          'quizVisionUsage': quizVisionUsage,
+        if (quizVisionUpstreamFailures.isNotEmpty)
+          'quizVisionUpstreamFailures': quizVisionUpstreamFailures,
+        'accounts': accounts.map((key, value) => MapEntry(key, value.toJson())),
+        'quotas': quotas.map((key, value) => MapEntry(key, value.toJson())),
+        'sessions': sessions.map((key, value) => MapEntry(key, value.toJson())),
+        'usage': usage.map((item) => item.toJson()).toList(),
+        'quizQuestions': quizQuestions.map(
+          (key, value) => MapEntry(key, value.toJson()),
+        ),
+        'quizSubmissions': quizSubmissions.map(
+          (key, value) => MapEntry(key, value.toJson()),
+        ),
+        'quizChanges': quizChanges.map((item) => item.toJson(null)).toList(),
+        'quizImports': quizImports.map((item) => item.toJson()).toList(),
+        'quizIncomplete': quizIncomplete.map((item) => item.toJson()).toList(),
+        'quizSequence': quizSequence,
+        'pluginPolicy': pluginPolicy.toJson(),
+        'pluginSubmissions': pluginSubmissions.map(
+          (key, value) => MapEntry(key, value.toJson()),
+        ),
+        'pluginReleases': pluginReleases.map(
+          (key, value) => MapEntry(key, value.toJson()),
+        ),
+        'pluginMarketVersion': pluginMarketVersion,
+        'pluginAudit': pluginAudit.map((e) => e.toJson()).toList(),
+        'pluginReports': pluginReports.map((e) => e.toJson()).toList(),
+        'pluginBannedAuthors': pluginBannedAuthors,
+        'pluginCounters': pluginCounters,
+        'cloudBookSources': cloudBookSources.map(
+          (key, value) => MapEntry(key, value.toJson()),
+        ),
+        'bookSourceVersion': bookSourceVersion,
+        if (bookSourcePublishedAt != null)
+          'bookSourcePublishedAt': bookSourcePublishedAt!.toIso8601String(),
+        'announcements': announcements.map(
+          (key, value) => MapEntry(key, value.toJson()),
+        ),
+        'announcementVersion': announcementVersion,
+      };
 
   Map<String, dynamic> toAdminJson() => {
-    'accounts': accounts.map(
-      (key, value) => MapEntry(key, value.toPublicJson()),
-    ),
-    'quotas': quotas.map((key, value) => MapEntry(key, value.toJson())),
-    'usage': usage.map((item) => item.toJson()).toList(),
-  };
+        'accounts': accounts.map(
+          (key, value) => MapEntry(key, value.toPublicJson()),
+        ),
+        'quotas': quotas.map((key, value) => MapEntry(key, value.toJson())),
+        'usage': usage.map((item) => item.toJson()).toList(),
+      };
 
   EffectiveProvider effectiveProvider(ServerConfig config) {
     final provider = providerConfig;
-    final providerApiKey = provider == null
-        ? ''
-        : decodeProviderApiKey(provider.apiKeyCipher);
+    final providerApiKey =
+        provider == null ? '' : decodeProviderApiKey(provider.apiKeyCipher);
     return EffectiveProvider(
       baseUrl: (provider?.baseUrl.trim().isNotEmpty ?? false)
           ? provider!.baseUrl
@@ -4556,12 +5822,238 @@ class StateStore {
     };
   }
 
+  // ── A1/A2：读屏用量落盘辅助 ──
+  void markQuizVisionPersisted() {
+    quizVisionDirty = false;
+    quizVisionLastPersistedAt = DateTime.now();
+  }
+
+  /// 限频合并写：脏了就排一个 60s 后的 flush（期间再次置脏不重复排队）。
+  /// 并发保护：单 isolate 事件循环内 schedule/cancel 原子。
+  void scheduleQuizVisionFlush() {
+    if (quizVisionFlushTimer != null) return;
+    quizVisionFlushTimer = Timer(const Duration(seconds: 60), () async {
+      quizVisionFlushTimer = null;
+      if (!quizVisionDirty) return;
+      await save();
+      markQuizVisionPersisted();
+    });
+  }
+
+  void quizVisionRecordUpstreamFailure(String accountId, String dayKey) {
+    final perDay = quizVisionUpstreamFailures.putIfAbsent(
+      accountId,
+      () => <String, int>{},
+    );
+    perDay[dayKey] = (perDay[dayKey] ?? 0) + 1;
+    scheduleQuizVisionFlush();
+  }
+
+  /// A3：滑动窗口突发限流。窗口 60s、上限 quizVisionBurstCap，
+  /// 调大=更宽松；拒绝的请求不记窗口（不惩罚重试者）。
+  bool quizVisionBurstRejected(String accountId, DateTime now) {
+    final windowStart = now.subtract(const Duration(minutes: 1));
+    final hits = quizVisionBurstHits.putIfAbsent(
+      accountId,
+      () => <DateTime>[],
+    );
+    hits.removeWhere((t) => t.isBefore(windowStart));
+    if (hits.length >= quizVisionBurstCap) return true;
+    hits.add(now);
+    return false;
+  }
+
   Future<void> save() async {
     final file = File(path);
     await file.parent.create(recursive: true);
     const encoder = JsonEncoder.withIndent('  ');
-    await file.writeAsString(encoder.convert(toJson()));
+    // 原子写：先写临时文件并 flush，再 rename 覆盖正式文件。
+    // 避免进程在写入中途被 kill / 磁盘写满时，把状态文件截断成损坏的 JSON
+    // （该文件是全部账号、题库、用量的唯一存储）。
+    final tmp = File('$path.tmp');
+    await tmp.writeAsString(encoder.convert(toJson()), flush: true);
+    await tmp.rename(path);
   }
+}
+
+// ── 云端书源 / 公告 模型（新增） ──
+
+/// 云端下发的书源条目。全员同一份，云端为准。
+class CloudBookSource {
+  CloudBookSource({
+    required this.id,
+    required this.name,
+    required this.url,
+    required this.group,
+    required this.rawJson,
+    required this.enabled,
+    required this.weight,
+    required this.sort,
+    required this.updatedAt,
+    this.removed = false,
+  });
+
+  factory CloudBookSource.fromJson(Map<String, dynamic> json) {
+    return CloudBookSource(
+      id: json['id']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
+      url: json['url']?.toString() ?? '',
+      group: json['group']?.toString() ?? '',
+      rawJson: json['rawJson']?.toString() ?? '',
+      enabled: json['enabled'] != false,
+      weight: asInt(json['weight'], 0),
+      sort: asInt(json['sort'], 0),
+      updatedAt:
+          DateTime.tryParse(json['updatedAt']?.toString() ?? '') ??
+              DateTime.fromMillisecondsSinceEpoch(0),
+      removed: json['removed'] == true,
+    );
+  }
+
+  final String id;
+  final String name;
+  final String url;
+  final String group;
+
+  /// 完整书源规则 JSON 字符串（客户端 BookSourceModel.fromJson 直接吃）。
+  final String rawJson;
+  final bool enabled;
+  final int weight;
+  final int sort;
+  final DateTime updatedAt;
+
+  /// 软删除标记：客户端拉到 removed=true 时把本地对应书源删掉。
+  final bool removed;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'url': url,
+        'group': group,
+        'rawJson': rawJson,
+        'enabled': enabled,
+        'weight': weight,
+        'sort': sort,
+        'updatedAt': updatedAt.toIso8601String(),
+        'removed': removed,
+      };
+
+  /// 下发给客户端的形态。removed 条目只带 id + removed，省流量。
+  Map<String, dynamic> toClientJson() {
+    if (removed) {
+      return {'id': id, 'removed': true};
+    }
+    return {
+      'id': id,
+      'name': name,
+      'url': url,
+      'group': group,
+      'rawJson': rawJson,
+      'enabled': enabled,
+      'weight': weight,
+      'sort': sort,
+      'updatedAt': updatedAt.toIso8601String(),
+      'removed': false,
+    };
+  }
+}
+
+/// 站内公告。用户端在「我的」页以红点 + 可回看列表呈现。
+class Announcement {
+  Announcement({
+    required this.id,
+    required this.title,
+    required this.body,
+    required this.level,
+    required this.publishedAt,
+    required this.updatedAt,
+    this.pinned = false,
+    this.linkUrl = '',
+    this.published = true,
+  });
+
+  factory Announcement.fromJson(Map<String, dynamic> json) {
+    final published = DateTime.tryParse(
+          json['publishedAt']?.toString() ?? '',
+        ) ??
+        DateTime.fromMillisecondsSinceEpoch(0);
+    return Announcement(
+      id: json['id']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      body: json['body']?.toString() ?? '',
+      level: normalizeAnnouncementLevel(json['level']?.toString()),
+      publishedAt: published,
+      updatedAt:
+          DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? published,
+      pinned: json['pinned'] == true,
+      linkUrl: json['linkUrl']?.toString() ?? '',
+      published: json['published'] != false,
+    );
+  }
+
+  final String id;
+  final String title;
+  final String body;
+
+  /// info / notice / warning
+  final String level;
+  final DateTime publishedAt;
+  final DateTime updatedAt;
+  final bool pinned;
+  final String linkUrl;
+  final bool published;
+
+  Announcement copyWith({
+    String? title,
+    String? body,
+    String? level,
+    bool? pinned,
+    String? linkUrl,
+    bool? published,
+    DateTime? updatedAt,
+  }) {
+    return Announcement(
+      id: id,
+      title: title ?? this.title,
+      body: body ?? this.body,
+      level: level == null ? this.level : normalizeAnnouncementLevel(level),
+      publishedAt: publishedAt,
+      updatedAt: updatedAt ?? DateTime.now(),
+      pinned: pinned ?? this.pinned,
+      linkUrl: linkUrl ?? this.linkUrl,
+      published: published ?? this.published,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'body': body,
+        'level': level,
+        'publishedAt': publishedAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
+        'pinned': pinned,
+        'linkUrl': linkUrl,
+        'published': published,
+      };
+
+  Map<String, dynamic> toClientJson() => {
+        'id': id,
+        'title': title,
+        'body': body,
+        'level': level,
+        'publishedAt': publishedAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
+        'pinned': pinned,
+        'linkUrl': linkUrl,
+      };
+}
+
+const announcementLevels = <String>{'info', 'notice', 'warning'};
+
+String normalizeAnnouncementLevel(String? raw) {
+  final value = (raw ?? '').trim().toLowerCase();
+  return announcementLevels.contains(value) ? value : 'info';
 }
 
 class QuizQuestion {
@@ -4580,6 +6072,11 @@ class QuizQuestion {
     required this.createdAt,
     required this.updatedAt,
     this.image = '',
+    this.imageSha256 = '',
+    this.imagePerceptualHash = '',
+    this.imageRegionHash = '',
+    this.imageStatus = '',
+    this.issueReason = '',
   });
 
   factory QuizQuestion.fromRequest(
@@ -4592,23 +6089,23 @@ class QuizQuestion {
     final optionsRaw = json['options'];
     final options = optionsRaw is List
         ? optionsRaw
-              .map((e) => e.toString().trim())
-              .where((e) => e.isNotEmpty)
-              .toList()
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList()
         : <String>[];
     final question = json['question']?.toString().trim() ?? '';
+    final correctAnswer = json['correctAnswer']?.toString().trim() ??
+        json['answer']?.toString().trim() ??
+        '';
     return QuizQuestion(
       id: id,
-      identityKey: quizIdentityKey(question, options),
+      identityKey: quizIdentityKey(question, options, correctAnswer),
       question: question,
       type: json['type']?.toString() == 'true_false'
           ? 'true_false'
           : 'single_choice',
       options: options,
-      correctAnswer:
-          json['correctAnswer']?.toString().trim() ??
-          json['answer']?.toString().trim() ??
-          '',
+      correctAnswer: correctAnswer,
       analysis: json['analysis']?.toString().trim() ?? '',
       category: json['category']?.toString().trim() ?? '',
       source: json['source']?.toString().trim().isNotEmpty == true
@@ -4619,22 +6116,33 @@ class QuizQuestion {
       createdAt: createdAt ?? DateTime.now(),
       updatedAt: DateTime.now(),
       image: json['image']?.toString().trim() ?? '',
+      imageSha256: json['imageSha256']?.toString().trim() ?? '',
+      imagePerceptualHash:
+          json['imagePerceptualHash']?.toString().trim() ?? '',
+      imageRegionHash: json['imageRegionHash']?.toString().trim() ?? '',
+      imageStatus: json['imageStatus']?.toString().trim() ?? '',
+      issueReason: json['issueReason']?.toString().trim() ?? '',
     );
   }
 
   factory QuizQuestion.fromJson(Map<String, dynamic> json) {
-    final created =
-        DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+    final created = DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
         DateTime.now();
     final options =
         (json['options'] is List ? json['options'] as List : const [])
             .map((e) => e.toString())
             .toList();
+    // identityKey 一律按当前算法重算，不复用磁盘上的旧值。
+    // 算法变更（如把 correctAnswer 纳入指纹）必须对存量数据同样生效，否则旧格式
+    // 的 key 会被原样读回，查重仍按老规则走，改动等于没做。重算是纯函数，
+    // 幂等且无副作用。
     return QuizQuestion(
       id: json['id']?.toString() ?? '',
-      identityKey:
-          json['identityKey']?.toString() ??
-          quizIdentityKey(json['question']?.toString() ?? '', options),
+      identityKey: quizIdentityKey(
+        json['question']?.toString() ?? '',
+        options,
+        json['correctAnswer']?.toString() ?? '',
+      ),
       question: json['question']?.toString() ?? '',
       type: json['type']?.toString() ?? 'single_choice',
       options: options,
@@ -4648,6 +6156,11 @@ class QuizQuestion {
       updatedAt:
           DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? created,
       image: json['image']?.toString() ?? '',
+      imageSha256: json['imageSha256']?.toString() ?? '',
+      imagePerceptualHash: json['imagePerceptualHash']?.toString() ?? '',
+      imageRegionHash: json['imageRegionHash']?.toString() ?? '',
+      imageStatus: json['imageStatus']?.toString() ?? '',
+      issueReason: json['issueReason']?.toString() ?? '',
     );
   }
 
@@ -4665,6 +6178,12 @@ class QuizQuestion {
   final DateTime createdAt;
   DateTime updatedAt;
   String image;
+  final String imageSha256;
+  final String imagePerceptualHash;
+  final String imageRegionHash;
+  final String imageStatus;
+  /// 人工标记为问题题时填写的说明（仅 status=incomplete 时有意义）。
+  final String issueReason;
   String? get validationError {
     if (question.isEmpty) return '题干不能为空';
     if (type == 'single_choice' && options.length < 2) return '单选题至少需要两个选项';
@@ -4673,7 +6192,16 @@ class QuizQuestion {
     return null;
   }
 
-  QuizQuestion copyWith({String? id, String? status, String? image}) =>
+  QuizQuestion copyWith({
+    String? id,
+    String? status,
+    String? image,
+    String? imageSha256,
+    String? imagePerceptualHash,
+    String? imageRegionHash,
+    String? imageStatus,
+    String? issueReason,
+  }) =>
       QuizQuestion(
         id: id ?? this.id,
         identityKey: identityKey,
@@ -4689,23 +6217,35 @@ class QuizQuestion {
         createdAt: createdAt,
         updatedAt: DateTime.now(),
         image: image ?? this.image,
+        imageSha256: imageSha256 ?? this.imageSha256,
+        imagePerceptualHash:
+            imagePerceptualHash ?? this.imagePerceptualHash,
+        imageRegionHash: imageRegionHash ?? this.imageRegionHash,
+        imageStatus: imageStatus ?? this.imageStatus,
+        issueReason: issueReason ?? this.issueReason,
       );
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'identityKey': identityKey,
-    'question': question,
-    'type': type,
-    'options': options,
-    'correctAnswer': correctAnswer,
-    if (analysis.isNotEmpty) 'analysis': analysis,
-    if (category.isNotEmpty) 'category': category,
-    if (image.isNotEmpty) 'image': image,
-    'source': source,
-    'status': status,
-    'revision': revision,
-    'createdAt': createdAt.toIso8601String(),
-    'updatedAt': updatedAt.toIso8601String(),
-  };
+        'id': id,
+        'identityKey': identityKey,
+        'question': question,
+        'type': type,
+        'options': options,
+        'correctAnswer': correctAnswer,
+        if (analysis.isNotEmpty) 'analysis': analysis,
+        if (category.isNotEmpty) 'category': category,
+        if (image.isNotEmpty) 'image': image,
+        if (imageSha256.isNotEmpty) 'imageSha256': imageSha256,
+        if (imagePerceptualHash.isNotEmpty)
+          'imagePerceptualHash': imagePerceptualHash,
+        if (imageRegionHash.isNotEmpty) 'imageRegionHash': imageRegionHash,
+        if (imageStatus.isNotEmpty) 'imageStatus': imageStatus,
+        if (issueReason.isNotEmpty) 'issueReason': issueReason,
+        'source': source,
+        'status': status,
+        'revision': revision,
+        'createdAt': createdAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
+      };
 }
 
 class QuizSubmission {
@@ -4720,19 +6260,18 @@ class QuizSubmission {
     this.reviewedAt,
   });
   factory QuizSubmission.fromJson(Map<String, dynamic> json) => QuizSubmission(
-    id: json['id']?.toString() ?? '',
-    question: QuizQuestion.fromJson(
-      Map<String, dynamic>.from(json['question'] as Map? ?? const {}),
-    ),
-    submitterUserId: json['submitterUserId']?.toString() ?? '',
-    status: json['status']?.toString() ?? 'pending',
-    submittedAt:
-        DateTime.tryParse(json['submittedAt']?.toString() ?? '') ??
-        DateTime.now(),
-    reviewNote: json['reviewNote']?.toString() ?? '',
-    linkedQuestionId: json['linkedQuestionId']?.toString(),
-    reviewedAt: DateTime.tryParse(json['reviewedAt']?.toString() ?? ''),
-  );
+        id: json['id']?.toString() ?? '',
+        question: QuizQuestion.fromJson(
+          Map<String, dynamic>.from(json['question'] as Map? ?? const {}),
+        ),
+        submitterUserId: json['submitterUserId']?.toString() ?? '',
+        status: json['status']?.toString() ?? 'pending',
+        submittedAt: DateTime.tryParse(json['submittedAt']?.toString() ?? '') ??
+            DateTime.now(),
+        reviewNote: json['reviewNote']?.toString() ?? '',
+        linkedQuestionId: json['linkedQuestionId']?.toString(),
+        reviewedAt: DateTime.tryParse(json['reviewedAt']?.toString() ?? ''),
+      );
   final String id;
   final QuizQuestion question;
   final String submitterUserId;
@@ -4742,15 +6281,15 @@ class QuizSubmission {
   String? linkedQuestionId;
   DateTime? reviewedAt;
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'question': question.toJson(),
-    'submitterUserId': submitterUserId,
-    'status': status,
-    'submittedAt': submittedAt.toIso8601String(),
-    'reviewNote': reviewNote,
-    if (linkedQuestionId != null) 'linkedQuestionId': linkedQuestionId,
-    if (reviewedAt != null) 'reviewedAt': reviewedAt!.toIso8601String(),
-  };
+        'id': id,
+        'question': question.toJson(),
+        'submitterUserId': submitterUserId,
+        'status': status,
+        'submittedAt': submittedAt.toIso8601String(),
+        'reviewNote': reviewNote,
+        if (linkedQuestionId != null) 'linkedQuestionId': linkedQuestionId,
+        if (reviewedAt != null) 'reviewedAt': reviewedAt!.toIso8601String(),
+      };
 }
 
 class QuizImportRecord {
@@ -4766,8 +6305,7 @@ class QuizImportRecord {
   factory QuizImportRecord.fromJson(Map<String, dynamic> json) =>
       QuizImportRecord(
         id: json['id']?.toString() ?? '',
-        importedAt:
-            DateTime.tryParse(json['importedAt']?.toString() ?? '') ??
+        importedAt: DateTime.tryParse(json['importedAt']?.toString() ?? '') ??
             DateTime.now(),
         mode: json['mode']?.toString() ?? '',
         total: asInt(json['total'], 0),
@@ -4783,14 +6321,14 @@ class QuizImportRecord {
   final int duplicateSkipped;
   final int invalid;
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'importedAt': importedAt.toIso8601String(),
-    'mode': mode,
-    'total': total,
-    'inserted': inserted,
-    'duplicateSkipped': duplicateSkipped,
-    'invalid': invalid,
-  };
+        'id': id,
+        'importedAt': importedAt.toIso8601String(),
+        'mode': mode,
+        'total': total,
+        'inserted': inserted,
+        'duplicateSkipped': duplicateSkipped,
+        'invalid': invalid,
+      };
 }
 
 class QuizIncompleteRecord {
@@ -4807,6 +6345,7 @@ class QuizIncompleteRecord {
     required this.reason,
     required this.createdAt,
     this.category = '',
+    this.questionId = '',
   });
   factory QuizIncompleteRecord.fromJson(Map<String, dynamic> json) =>
       QuizIncompleteRecord(
@@ -4822,14 +6361,17 @@ class QuizIncompleteRecord {
         analysis: json['analysis']?.toString() ?? '',
         source: json['source']?.toString() ?? '',
         reason: json['reason']?.toString() ?? '',
-        createdAt:
-            DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+        createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
             DateTime.now(),
         category: json['category']?.toString() ?? '',
+        questionId: json['questionId']?.toString() ?? '',
       );
   final String id;
   final String importId;
   final int sourceIndex;
+  /// 非空表示这条残缺记录对应题库里一道真实题目（人工标记为问题题）。
+  /// 为空表示导入时校验失败的临时记录（还没进题库）。
+  final String questionId;
   final String question;
   final String type;
   final List<String> options;
@@ -4841,34 +6383,36 @@ class QuizIncompleteRecord {
   final String category;
 
   QuizIncompleteRecord copyWith({String? category}) => QuizIncompleteRecord(
-    id: id,
-    importId: importId,
-    sourceIndex: sourceIndex,
-    question: question,
-    type: type,
-    options: options,
-    correctAnswer: correctAnswer,
-    analysis: analysis,
-    source: source,
-    reason: reason,
-    createdAt: createdAt,
-    category: category ?? this.category,
-  );
+        id: id,
+        importId: importId,
+        sourceIndex: sourceIndex,
+        question: question,
+        type: type,
+        options: options,
+        correctAnswer: correctAnswer,
+        analysis: analysis,
+        source: source,
+        reason: reason,
+        createdAt: createdAt,
+        category: category ?? this.category,
+        questionId: questionId,
+      );
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'importId': importId,
-    'sourceIndex': sourceIndex,
-    'question': question,
-    'type': type,
-    'options': options,
-    'correctAnswer': correctAnswer,
-    'analysis': analysis,
-    'source': source,
-    'reason': reason,
-    'createdAt': createdAt.toIso8601String(),
-    if (category.isNotEmpty) 'category': category,
-  };
+        'id': id,
+        'importId': importId,
+        'sourceIndex': sourceIndex,
+        'question': question,
+        'type': type,
+        'options': options,
+        'correctAnswer': correctAnswer,
+        'analysis': analysis,
+        'source': source,
+        'reason': reason,
+        'createdAt': createdAt.toIso8601String(),
+        if (category.isNotEmpty) 'category': category,
+        if (questionId.isNotEmpty) 'questionId': questionId,
+      };
 }
 
 class QuizChange {
@@ -4879,35 +6423,64 @@ class QuizChange {
     required this.changedAt,
   });
   factory QuizChange.fromJson(Map<String, dynamic> json) => QuizChange(
-    sequence: asInt(json['sequence'], 0),
-    questionId: json['questionId']?.toString() ?? '',
-    operation: json['operation']?.toString() ?? 'upsert',
-    changedAt:
-        DateTime.tryParse(json['changedAt']?.toString() ?? '') ??
-        DateTime.now(),
-  );
+        sequence: asInt(json['sequence'], 0),
+        questionId: json['questionId']?.toString() ?? '',
+        operation: json['operation']?.toString() ?? 'upsert',
+        changedAt: DateTime.tryParse(json['changedAt']?.toString() ?? '') ??
+            DateTime.now(),
+      );
   final int sequence;
   final String questionId;
   final String operation;
   final DateTime changedAt;
   Map<String, dynamic> toJson(QuizQuestion? question) => {
-    'sequence': sequence,
-    'questionId': questionId,
-    'operation': operation,
-    'changedAt': changedAt.toIso8601String(),
-    if (question != null && operation == 'upsert')
-      'question': question.toJson(),
-  };
+        'sequence': sequence,
+        'questionId': questionId,
+        'operation': operation,
+        'changedAt': changedAt.toIso8601String(),
+        if (question != null && operation == 'upsert')
+          'question': question.toJson(),
+      };
 }
 
-String quizIdentityKey(String question, List<String> options) {
+bool quizHasKnownImage(QuizQuestion question) =>
+    question.image.trim().isNotEmpty ||
+    question.imageSha256.trim().isNotEmpty ||
+    question.imagePerceptualHash.trim().isNotEmpty ||
+    question.imageRegionHash.trim().isNotEmpty;
+
+bool quizImagesMatch(QuizQuestion a, QuizQuestion b) {
+  final aSha = a.imageSha256.trim().toLowerCase();
+  final bSha = b.imageSha256.trim().toLowerCase();
+  if (aSha.isNotEmpty && bSha.isNotEmpty) return aSha == bSha;
+  final aPhash = a.imagePerceptualHash.trim().toLowerCase();
+  final bPhash = b.imagePerceptualHash.trim().toLowerCase();
+  if (aPhash.isNotEmpty && bPhash.isNotEmpty) return aPhash == bPhash;
+  final aRegion = a.imageRegionHash.trim().toLowerCase();
+  final bRegion = b.imageRegionHash.trim().toLowerCase();
+  if (aRegion.isNotEmpty && bRegion.isNotEmpty) return aRegion == bRegion;
+  // Legacy image-only rows cannot prove exact equality; keep old merge behavior.
+  return !quizHasKnownImage(a) && !quizHasKnownImage(b);
+}
+
+/// 题目内容指纹，用于查重。
+///
+/// 必须带上正确答案：看图题（「这个标志是何含义？」「这是什么交通标志？」）题干
+/// 不含任何区分信息，同一批题的选项集又往往完全一致，只有答案不同。若只用
+/// 题干+选项，这些本来不同的题会被误判成重复，导致给其中一道补图时撞上另一道。
+/// 加入答案后它们各自独立，而真正的重复题（内容答案全同）依然能被识别。
+String quizIdentityKey(
+  String question,
+  List<String> options, [
+  String correctAnswer = '',
+]) {
   String clean(String text) => text
       .toLowerCase()
-      .replaceAll(RegExp(r'\\s+'), '')
+      .replaceAll(RegExp(r'\s+'), '')
       .replaceAll(RegExp(r'^[a-dＡ-Ｄ][.．、:：]'), '');
   final normalized = options.map(clean).where((e) => e.isNotEmpty).toList()
     ..sort();
-  return '${clean(question)}|${normalized.join('|')}';
+  return '${clean(question)}|${normalized.join('|')}|${clean(correctAnswer)}';
 }
 
 enum AccountRole {
@@ -4919,9 +6492,6 @@ enum AccountRole {
 
   String get wireName => name;
 }
-
-
-
 
 class PluginAuditEvent {
   PluginAuditEvent({
@@ -5583,7 +7153,8 @@ class PluginPolicyState {
       pluginsAllowed = body['pluginsAllowed'] == true;
     }
     if (body.containsKey('globalMessage') || body.containsKey('message')) {
-      globalMessage = (body['globalMessage'] ?? body['message'])?.toString() ?? '';
+      globalMessage =
+          (body['globalMessage'] ?? body['message'])?.toString() ?? '';
     }
     if (body.containsKey('ttlSec')) {
       ttlSec = asInt(body['ttlSec'], ttlSec).clamp(30, 86400);
@@ -5639,9 +7210,7 @@ class PluginPolicyState {
           return u.message.isNotEmpty ? u.message : '账号未授权使用插件';
         }
         if (u.deniedPluginIds.contains(pluginId)) {
-          return u.message.isNotEmpty
-              ? u.message
-              : '账号未授权使用该插件';
+          return u.message.isNotEmpty ? u.message : '账号未授权使用该插件';
         }
       }
     }
@@ -5654,9 +7223,7 @@ class PluginPolicyState {
           feature.isNotEmpty &&
           item.features.containsKey(feature) &&
           item.features[feature] == false) {
-        return item.message.isNotEmpty
-            ? item.message
-            : '该功能已被管理员停用';
+        return item.message.isNotEmpty ? item.message : '该功能已被管理员停用';
       }
     }
     return null;
@@ -5670,14 +7237,11 @@ class PluginPolicyState {
         'minAppVersion': minAppVersion,
         'forceLogout': forceLogout,
         'plugins': plugins.map((k, v) => MapEntry(k, v.toJson())),
-        'userOverrides':
-            userOverrides.map((k, v) => MapEntry(k, v.toJson())),
+        'userOverrides': userOverrides.map((k, v) => MapEntry(k, v.toJson())),
       };
 
   Map<String, dynamic> toClientJson(String? userId) {
-    final u = (userId == null || userId.isEmpty)
-        ? null
-        : userOverrides[userId];
+    final u = (userId == null || userId.isEmpty) ? null : userOverrides[userId];
     return {
       'version': version,
       'ttlSec': ttlSec,
@@ -5848,22 +7412,24 @@ class Account {
     required this.status,
     required this.createdAt,
     required this.lastLoginAt,
+    this.nickname,
   });
 
   factory Account.fromJson(Map<String, dynamic> json) => Account(
-    id: json['id']?.toString() ?? '',
-    username: json['username']?.toString() ?? '',
-    passwordHash: json['passwordHash']?.toString() ?? '',
-    role: AccountRole.fromWire(json['role']?.toString() ?? 'user'),
-    status: json['status']?.toString() ?? 'normal',
-    createdAt:
-        DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
-        DateTime.now(),
-    lastLoginAt: DateTime.tryParse(json['lastLoginAt']?.toString() ?? ''),
-  );
+        id: json['id']?.toString() ?? '',
+        username: json['username']?.toString() ?? '',
+        passwordHash: json['passwordHash']?.toString() ?? '',
+        role: AccountRole.fromWire(json['role']?.toString() ?? 'user'),
+        status: json['status']?.toString() ?? 'normal',
+        createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+            DateTime.now(),
+        lastLoginAt: DateTime.tryParse(json['lastLoginAt']?.toString() ?? ''),
+        nickname: json['nickname']?.toString(),
+      );
 
   final String id;
   final String username;
+  String? nickname;
   String passwordHash;
   AccountRole role;
   String status;
@@ -5871,23 +7437,25 @@ class Account {
   DateTime? lastLoginAt;
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'username': username,
-    'passwordHash': passwordHash,
-    'role': role.wireName,
-    'status': status,
-    'createdAt': createdAt.toIso8601String(),
-    'lastLoginAt': lastLoginAt?.toIso8601String(),
-  };
+        'id': id,
+        'username': username,
+        if (nickname != null) 'nickname': nickname,
+        'passwordHash': passwordHash,
+        'role': role.wireName,
+        'status': status,
+        'createdAt': createdAt.toIso8601String(),
+        'lastLoginAt': lastLoginAt?.toIso8601String(),
+      };
 
   Map<String, dynamic> toPublicJson() => {
-    'id': id,
-    'username': username,
-    'role': role.wireName,
-    'status': status,
-    'createdAt': createdAt.toIso8601String(),
-    'lastLoginAt': lastLoginAt?.toIso8601String(),
-  };
+        'id': id,
+        'username': username,
+        'nickname': nickname ?? username,
+        'role': role.wireName,
+        'status': status,
+        'createdAt': createdAt.toIso8601String(),
+        'lastLoginAt': lastLoginAt?.toIso8601String(),
+      };
 }
 
 class AuthSession {
@@ -5899,15 +7467,13 @@ class AuthSession {
   });
 
   factory AuthSession.fromJson(Map<String, dynamic> json) => AuthSession(
-    token: json['token']?.toString() ?? '',
-    userId: json['userId']?.toString() ?? '',
-    createdAt:
-        DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
-        DateTime.now(),
-    expiresAt:
-        DateTime.tryParse(json['expiresAt']?.toString() ?? '') ??
-        DateTime.now(),
-  );
+        token: json['token']?.toString() ?? '',
+        userId: json['userId']?.toString() ?? '',
+        createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+            DateTime.now(),
+        expiresAt: DateTime.tryParse(json['expiresAt']?.toString() ?? '') ??
+            DateTime.now(),
+      );
 
   final String token;
   final String userId;
@@ -5915,11 +7481,11 @@ class AuthSession {
   final DateTime expiresAt;
 
   Map<String, dynamic> toJson() => {
-    'token': token,
-    'userId': userId,
-    'createdAt': createdAt.toIso8601String(),
-    'expiresAt': expiresAt.toIso8601String(),
-  };
+        'token': token,
+        'userId': userId,
+        'createdAt': createdAt.toIso8601String(),
+        'expiresAt': expiresAt.toIso8601String(),
+      };
 }
 
 class UserQuota {
@@ -5933,22 +7499,22 @@ class UserQuota {
   });
 
   factory UserQuota.defaultFor(int quota) => UserQuota(
-    remaining: quota,
-    dailyLimit: quota,
-    usedToday: 0,
-    totalLimit: quota,
-    status: 'normal',
-    message: '平台额度可用',
-  );
+        remaining: quota,
+        dailyLimit: quota,
+        usedToday: 0,
+        totalLimit: quota,
+        status: 'normal',
+        message: '平台额度可用',
+      );
 
   factory UserQuota.fromJson(Map<String, dynamic> json) => UserQuota(
-    remaining: asInt(json['remaining'], 0),
-    dailyLimit: asInt(json['dailyLimit'], 0),
-    usedToday: asInt(json['usedToday'], 0),
-    totalLimit: asNullableInt(json['totalLimit']),
-    status: json['status']?.toString() ?? 'normal',
-    message: json['message']?.toString() ?? '',
-  );
+        remaining: asInt(json['remaining'], 0),
+        dailyLimit: asInt(json['dailyLimit'], 0),
+        usedToday: asInt(json['usedToday'], 0),
+        totalLimit: asNullableInt(json['totalLimit']),
+        status: json['status']?.toString() ?? 'normal',
+        message: json['message']?.toString() ?? '',
+      );
 
   int remaining;
   int dailyLimit;
@@ -5958,13 +7524,13 @@ class UserQuota {
   String message;
 
   Map<String, dynamic> toQuotaJson() => {
-    'remaining': remaining,
-    'dailyLimit': dailyLimit,
-    'usedToday': usedToday,
-    'totalLimit': totalLimit,
-    'status': status,
-    'message': message,
-  };
+        'remaining': remaining,
+        'dailyLimit': dailyLimit,
+        'usedToday': usedToday,
+        'totalLimit': totalLimit,
+        'status': status,
+        'message': message,
+      };
 
   Map<String, dynamic> toJson() => toQuotaJson();
 }
@@ -5985,14 +7551,15 @@ class UsageRecord {
     String model,
     int cost,
     int statusCode,
-  ) => UsageRecord(
-    createdAt: DateTime.now(),
-    userId: userId,
-    model: model,
-    cost: cost,
-    success: true,
-    statusCode: statusCode,
-  );
+  ) =>
+      UsageRecord(
+        createdAt: DateTime.now(),
+        userId: userId,
+        model: model,
+        cost: cost,
+        success: true,
+        statusCode: statusCode,
+      );
 
   factory UsageRecord.failed(
     String userId,
@@ -6000,27 +7567,27 @@ class UsageRecord {
     int cost,
     int statusCode,
     String preview,
-  ) => UsageRecord(
-    createdAt: DateTime.now(),
-    userId: userId,
-    model: model,
-    cost: cost,
-    success: false,
-    statusCode: statusCode,
-    errorPreview: preview,
-  );
+  ) =>
+      UsageRecord(
+        createdAt: DateTime.now(),
+        userId: userId,
+        model: model,
+        cost: cost,
+        success: false,
+        statusCode: statusCode,
+        errorPreview: preview,
+      );
 
   factory UsageRecord.fromJson(Map<String, dynamic> json) => UsageRecord(
-    createdAt:
-        DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
-        DateTime.now(),
-    userId: json['userId']?.toString() ?? 'demo',
-    model: json['model']?.toString() ?? '',
-    cost: asInt(json['cost'], 0),
-    success: json['success'] == true,
-    statusCode: asNullableInt(json['statusCode']),
-    errorPreview: json['errorPreview']?.toString() ?? '',
-  );
+        createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+            DateTime.now(),
+        userId: json['userId']?.toString() ?? 'demo',
+        model: json['model']?.toString() ?? '',
+        cost: asInt(json['cost'], 0),
+        success: json['success'] == true,
+        statusCode: asNullableInt(json['statusCode']),
+        errorPreview: json['errorPreview']?.toString() ?? '',
+      );
 
   final DateTime createdAt;
   final String userId;
@@ -6031,14 +7598,14 @@ class UsageRecord {
   final String errorPreview;
 
   Map<String, dynamic> toJson() => {
-    'createdAt': createdAt.toIso8601String(),
-    'userId': userId,
-    'model': model,
-    'cost': cost,
-    'success': success,
-    'statusCode': statusCode,
-    'errorPreview': errorPreview,
-  };
+        'createdAt': createdAt.toIso8601String(),
+        'userId': userId,
+        'model': model,
+        'cost': cost,
+        'success': success,
+        'statusCode': statusCode,
+        'errorPreview': errorPreview,
+      };
 }
 
 class ProviderConfig {
@@ -6050,11 +7617,12 @@ class ProviderConfig {
   });
 
   factory ProviderConfig.fromJson(Map<String, dynamic> json) => ProviderConfig(
-    baseUrl: (json['baseUrl']?.toString() ?? '').replaceAll(RegExp(r'/+$'), ''),
-    apiKeyCipher: json['apiKeyCipher']?.toString() ?? '',
-    allowedModels: parseAllowedModels(json['allowedModels']),
-    updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? ''),
-  );
+        baseUrl:
+            (json['baseUrl']?.toString() ?? '').replaceAll(RegExp(r'/+$'), ''),
+        apiKeyCipher: json['apiKeyCipher']?.toString() ?? '',
+        allowedModels: parseAllowedModels(json['allowedModels']),
+        updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? ''),
+      );
 
   final String baseUrl;
   final String apiKeyCipher;
@@ -6062,11 +7630,55 @@ class ProviderConfig {
   final DateTime? updatedAt;
 
   Map<String, dynamic> toJson() => {
-    'baseUrl': baseUrl,
-    'apiKeyCipher': apiKeyCipher,
-    'allowedModels': allowedModels,
-    'updatedAt': updatedAt?.toIso8601String(),
-  };
+        'baseUrl': baseUrl,
+        'apiKeyCipher': apiKeyCipher,
+        'allowedModels': allowedModels,
+        'updatedAt': updatedAt?.toIso8601String(),
+      };
+}
+
+// ── AI 读屏代理（新增） ──
+
+/// 每账号每日读屏代理请求上限（防滥用；内存计数重启清零，作启发式足够）。
+/// 调小=更防白嫖但易误伤；调大=更宽松。
+const int quizVisionDailyCap = 100;
+
+/// A3 突发限流：每账号每分钟允许的读屏请求数（滑动窗口）。
+/// 读屏单次 3–16s，正常使用远低于此；调大=更宽松。
+const int quizVisionBurstCap = 20;
+
+class QuizVisionProviderConfig {
+  const QuizVisionProviderConfig({
+    required this.baseUrl,
+    required this.apiKeyCipher,
+    required this.model,
+    required this.enabled,
+    required this.updatedAt,
+  });
+
+  factory QuizVisionProviderConfig.fromJson(Map<String, dynamic> json) =>
+      QuizVisionProviderConfig(
+        baseUrl:
+            (json['baseUrl']?.toString() ?? '').replaceAll(RegExp(r'/+$'), ''),
+        apiKeyCipher: json['apiKeyCipher']?.toString() ?? '',
+        model: json['model']?.toString() ?? '',
+        enabled: json['enabled'] == true,
+        updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? ''),
+      );
+
+  final String baseUrl;
+  final String apiKeyCipher;
+  final String model;
+  final bool enabled;
+  final DateTime? updatedAt;
+
+  Map<String, dynamic> toJson() => {
+        'baseUrl': baseUrl,
+        'apiKeyCipher': apiKeyCipher,
+        'model': model,
+        'enabled': enabled,
+        'updatedAt': updatedAt?.toIso8601String(),
+      };
 }
 
 class EffectiveProvider {
@@ -6105,13 +7717,13 @@ class UsageDayAccumulator {
   }
 
   Map<String, dynamic> toJson() => {
-    'date': date,
-    'requests': requests,
-    'success': success,
-    'failed': failed,
-    'cost': cost,
-    'activeUsers': activeUserIds.length,
-  };
+        'date': date,
+        'requests': requests,
+        'success': success,
+        'failed': failed,
+        'cost': cost,
+        'activeUsers': activeUserIds.length,
+      };
 }
 
 class UsageUserAccumulator {
@@ -6135,13 +7747,13 @@ class UsageUserAccumulator {
   }
 
   Map<String, dynamic> toJson() => {
-    'userId': userId,
-    'username': username,
-    'requests': requests,
-    'success': success,
-    'failed': failed,
-    'cost': cost,
-  };
+        'userId': userId,
+        'username': username,
+        'requests': requests,
+        'success': success,
+        'failed': failed,
+        'cost': cost,
+      };
 }
 
 class UpstreamResponse {
@@ -6192,19 +7804,161 @@ String? bearerToken(HttpRequest request) {
   return match?.group(1)?.trim();
 }
 
+/// 取请求的真实客户端 IP。
+///
+/// 安全要点：仅当 TCP 对端是回环地址（即请求来自本机 Nginx 反代）时才读取
+/// X-Forwarded-For，且必须取**最右边**的值。因为 Nginx 的
+/// `$proxy_add_x_forwarded_for` 展开为 "$http_x_forwarded_for, $remote_addr"，
+/// 最左边的值是客户端自己塞进来的、可任意伪造，只有最右边那个是 Nginx
+/// 亲自追加的真实 remote_addr。取最左边会导致限速被伪造头绕过。
+String clientIp(HttpRequest request) {
+  final peer = request.connectionInfo?.remoteAddress;
+  final peerHost = peer?.address ?? 'unknown';
+  final isLoopback = peer?.isLoopback ?? false;
+  if (isLoopback) {
+    final xff = request.headers.value('x-forwarded-for');
+    if (xff != null && xff.trim().isNotEmpty) {
+      final parts = xff
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (parts.isNotEmpty) return parts.last;
+    }
+  }
+  return peerHost;
+}
+
+/// 登录失败节流：按「用户名」和「来源 IP」两个维度分别计数并临时锁定。
+///
+/// 之所以两个维度都要：只按 IP 挡不住分布式撞库，只按用户名会被人拿来
+/// 恶意锁死他人账号。任一维度触发即拒绝，锁定期用 429 + Retry-After 返回。
+class LoginThrottle {
+  LoginThrottle({
+    this.maxFailures = 8,
+    this.windowSeconds = 600,
+    this.lockoutSeconds = 900,
+  });
+
+  final int maxFailures;
+  final int windowSeconds;
+  final int lockoutSeconds;
+
+  final Map<String, List<DateTime>> _failures = {};
+  final Map<String, DateTime> _lockedUntil = {};
+
+  void _prune(String key, DateTime now) {
+    final list = _failures[key];
+    if (list == null) return;
+    list.removeWhere(
+      (t) => now.difference(t).inSeconds > windowSeconds,
+    );
+    if (list.isEmpty) _failures.remove(key);
+  }
+
+  /// 返回剩余锁定秒数；未锁定返回 null。
+  int? retryAfterSeconds(List<String> keys) {
+    final now = DateTime.now();
+    var worst = 0;
+    for (final key in keys) {
+      final until = _lockedUntil[key];
+      if (until == null) continue;
+      if (until.isAfter(now)) {
+        final remain = until.difference(now).inSeconds + 1;
+        if (remain > worst) worst = remain;
+      } else {
+        _lockedUntil.remove(key);
+      }
+    }
+    return worst > 0 ? worst : null;
+  }
+
+  void registerFailure(List<String> keys) {
+    final now = DateTime.now();
+    for (final key in keys) {
+      _prune(key, now);
+      final list = _failures.putIfAbsent(key, () => <DateTime>[]);
+      list.add(now);
+      if (list.length >= maxFailures) {
+        _lockedUntil[key] = now.add(Duration(seconds: lockoutSeconds));
+        _failures.remove(key);
+      }
+    }
+  }
+
+  void registerSuccess(List<String> keys) {
+    for (final key in keys) {
+      _failures.remove(key);
+      _lockedUntil.remove(key);
+    }
+  }
+}
+
+/// PBKDF2-HMAC-SHA256 实现（纯 Dart，不加外部依赖）。
+///
+/// 参数：100_000 轮、32 字节输出，与 OWASP 2023 推荐最低值对齐。
+/// 格式：`pbkdf2:<hex-salt-16B>:<hex-dk-32B>`，与旧 `sha256:` 格式共存，
+/// 由 verifyPassword 自动识别。
+List<int> _pbkdf2(List<int> password, List<int> salt,
+    {int iterations = 100000, int dkLen = 32}) {
+  final hmac = Hmac(sha256, password);
+  // PRF(P, S || INT(i))，i=1（dkLen≤32 只需一个 block）
+  final u = hmac.convert([...salt, 0, 0, 0, 1]).bytes;
+  final t = List<int>.from(u);
+  var prev = u;
+  for (var c = 1; c < iterations; c++) {
+    final next = hmac.convert(prev).bytes;
+    for (var j = 0; j < dkLen; j++) {
+      t[j] ^= next[j];
+    }
+    prev = next;
+  }
+  return t.sublist(0, dkLen);
+}
+
 String hashPassword(String password) {
-  final salt = randomBase64(16);
-  final digest = sha256.convert(utf8.encode('$salt:$password')).toString();
-  return 'sha256:$salt:$digest';
+  final saltBytes = List<int>.generate(16, (_) => Random.secure().nextInt(256));
+  final dk = _pbkdf2(utf8.encode(password), saltBytes);
+  final saltHex =
+      saltBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  final dkHex = dk.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  return 'pbkdf2:$saltHex:$dkHex';
 }
 
 bool verifyPassword(String password, String stored) {
   final parts = stored.split(':');
-  if (parts.length != 3 || parts[0] != 'sha256') return false;
-  final digest = sha256
-      .convert(utf8.encode('${parts[1]}:$password'))
-      .toString();
-  return digest == parts[2];
+  if (parts.length != 3) return false;
+
+  if (parts[0] == 'pbkdf2') {
+    // 新格式
+    final saltBytes = List<int>.generate(
+      parts[1].length ~/ 2,
+      (i) => int.parse(parts[1].substring(i * 2, i * 2 + 2), radix: 16),
+    );
+    final dk = _pbkdf2(utf8.encode(password), saltBytes);
+    final dkHex = dk.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    // constant-time 比较，防止时序攻击
+    return _constantTimeEquals(dkHex, parts[2]);
+  }
+
+  if (parts[0] == 'sha256') {
+    // 旧格式：验证通过后调用方负责迁移（见 login() 中的 migrateHash）
+    final digest =
+        sha256.convert(utf8.encode('${parts[1]}:$password')).toString();
+    return digest == parts[2];
+  }
+
+  return false;
+}
+
+/// constant-time 字符串比较，防止时序侧信道泄露哈希前缀。
+bool _constantTimeEquals(String a, String b) {
+  if (a.length != b.length) return false;
+  var diff = 0;
+  for (var i = 0; i < a.length; i++) {
+    diff |= a.codeUnitAt(i) ^ b.codeUnitAt(i);
+  }
+  return diff == 0;
 }
 
 String newToken(String prefix) => '${prefix}_${randomBase64(32)}';
@@ -6230,15 +7984,16 @@ int calculateCost(Map<String, dynamic> body) {
 Map<String, dynamic> providerTestError(
   EffectiveProvider provider,
   String message,
-) => {
-  'ok': false,
-  'statusCode': null,
-  'baseUrl': provider.baseUrl,
-  'hasApiKey': provider.apiKey.trim().isNotEmpty,
-  'modelCount': 0,
-  'modelsPreview': <String>[],
-  'message': compactPreview(message),
-};
+) =>
+    {
+      'ok': false,
+      'statusCode': null,
+      'baseUrl': provider.baseUrl,
+      'hasApiKey': provider.apiKey.trim().isNotEmpty,
+      'modelCount': 0,
+      'modelsPreview': <String>[],
+      'message': compactPreview(message),
+    };
 
 Future<void> csvResponse(
   HttpResponse response,
@@ -6257,13 +8012,22 @@ Future<void> csvResponse(
 
 String csvCell(Object? value) {
   final text = value?.toString() ?? '';
-  final needsQuotes =
-      text.contains(',') ||
+  final needsQuotes = text.contains(',') ||
       text.contains('"') ||
       text.contains('\n') ||
       text.contains('\r');
   final escaped = text.replaceAll('"', '""');
   return needsQuotes ? '"$escaped"' : escaped;
+}
+
+/// 书源身份键：忽略协议、大小写与末尾斜杠，同一站点视为同一书源。
+String bookSourceUrlKey(String url) {
+  var value = url.trim().toLowerCase();
+  value = value.replaceFirst(RegExp(r'^https?://'), '');
+  while (value.endsWith('/')) {
+    value = value.substring(0, value.length - 1);
+  }
+  return value;
 }
 
 String dateKey(DateTime value) {
@@ -6285,13 +8049,12 @@ List<String> parseAllowedModels(dynamic value) {
   } else {
     raw = (value?.toString() ?? '').split(',');
   }
-  final result =
-      raw
-          .map((item) => item.toString().trim())
-          .where((item) => item.isNotEmpty)
-          .toSet()
-          .toList()
-        ..sort();
+  final result = raw
+      .map((item) => item.toString().trim())
+      .where((item) => item.isNotEmpty)
+      .toSet()
+      .toList()
+    ..sort();
   return result;
 }
 
@@ -6322,18 +8085,17 @@ List<String> parseModels(dynamic decoded) {
   if (decoded is! Map) return const [];
   final data = decoded['models'] ?? decoded['data'];
   if (data is! List) return const [];
-  final models =
-      data
-          .map((item) {
-            if (item is String) return item;
-            if (item is Map && item['id'] != null) return item['id'].toString();
-            return '';
-          })
-          .map((item) => item.trim())
-          .where((item) => item.isNotEmpty)
-          .toSet()
-          .toList()
-        ..sort();
+  final models = data
+      .map((item) {
+        if (item is String) return item;
+        if (item is Map && item['id'] != null) return item['id'].toString();
+        return '';
+      })
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty)
+      .toSet()
+      .toList()
+    ..sort();
   return models;
 }
 
@@ -6370,14 +8132,15 @@ int? asNullableInt(dynamic value) {
 }
 
 void cors(HttpResponse response) {
-  response.headers.set('Access-Control-Allow-Origin', '*');
-  response.headers.set(
-    'Access-Control-Allow-Methods',
-    'GET, POST, PATCH, DELETE, OPTIONS',
-  );
+  response.headers
+      .set('Access-Control-Allow-Origin', 'https://background.hpa888.top');
   response.headers.set(
     'Access-Control-Allow-Headers',
     'Content-Type, Authorization, X-User-Id, X-Admin-Token',
+  );
+  response.headers.set(
+    'Access-Control-Allow-Methods',
+    'GET, POST, PUT, DELETE, OPTIONS',
   );
 }
 

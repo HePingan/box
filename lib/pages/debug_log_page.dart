@@ -16,6 +16,13 @@ import '../utils/log_channels.dart';
 /// 报「视频卡」筛「播放」，报「继续阅读跳错位置」筛「阅读」，
 /// 只想看出错的就点「仅错误」。
 ///
+/// 再加一层**关键字搜索**：频道筛选解决「知道是哪个模块」的场景，
+/// 但真实报障常常只知道一个字符串——题目 ID（`q_7gZgweMXMRQd`）、
+/// 一个数字（`cursor=4900`）、一段接口名（`/api/quiz/sync`）。
+/// 1000 行里靠肉眼翻这些是找不到的，这也正是用户说的「我找不到那个」。
+/// 搜索按**整行原文**匹配（大小写不敏感），所以行内任意片段都能搜到，
+/// 且能与频道、级别筛选叠加，三者取交集。
+///
 /// 复制行为跟随当前筛选——用户看到的就是复制走的，避免他以为只发了播放日志
 /// 结果糊了 1000 行过来，也避免他筛了错误却复制到全量。
 class DebugLogPage extends StatefulWidget {
@@ -32,8 +39,25 @@ class _DebugLogPageState extends State<DebugLogPage> {
   /// 只看 warn/error。
   bool _errorsOnly = false;
 
+  /// 关键字搜索。空串表示不筛。
+  ///
+  /// 用 controller 而不是裸 String，是为了让「清空」按钮与输入框同步，
+  /// 也让系统键盘的清除键能正常回写状态。
+  final TextEditingController _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  /// 当前搜索词（已 trim）。空串 = 不按关键字筛。
+  String get _query => _search.text.trim();
+
   List<LogEntry> _visible(List<String> raw) {
     final entries = raw.map((e) => LogEntry.parse(e));
+    // 搜索大小写不敏感：用户敲的是 `hasmore`，日志里是 `hasMore`。
+    final needle = _query.toLowerCase();
     return entries
         .where((e) {
           if (_channel != null && e.channel != _channel) return false;
@@ -45,6 +69,11 @@ class _DebugLogPageState extends State<DebugLogPage> {
               e.channel != LogChannel.error) {
             return false;
           }
+          // 匹配整行原文而不是 message：时间戳、tag、级别段也都能搜，
+          // 报障的人可能只想找某个时间点或某个频道标签。
+          if (needle.isNotEmpty && !e.raw.toLowerCase().contains(needle)) {
+            return false;
+          }
           return true;
         })
         .toList(growable: false);
@@ -52,7 +81,8 @@ class _DebugLogPageState extends State<DebugLogPage> {
 
   String get _scopeLabel {
     final channel = _channel?.label ?? '全部';
-    return _errorsOnly ? '$channel · 仅警告与错误' : channel;
+    final base = _errorsOnly ? '$channel · 仅警告与错误' : channel;
+    return _query.isEmpty ? base : '$base · 搜索「$_query」';
   }
 
   /// 组装带设备上下文的诊断报告。
@@ -152,20 +182,27 @@ class _DebugLogPageState extends State<DebugLogPage> {
           body: SafeArea(
             child: Column(
               children: [
+                _SearchField(
+                  controller: _search,
+                  onChanged: (_) => setState(() {}),
+                ),
                 _ChannelBar(
                   raw: raw,
                   selected: _channel,
                   onSelect: (c) => setState(() => _channel = c),
                 ),
                 const Divider(height: 1),
+                if (visible.isNotEmpty)
+                  _ResultCountBar(shown: visible.length, total: raw.length),
                 Expanded(
                   child: visible.isEmpty
                       ? Center(
-                          child: Text(
-                            raw.isEmpty
-                                ? '暂无日志'
-                                : '当前筛选没有匹配的日志\n共 ${raw.length} 行，换个分类看看',
-                            textAlign: TextAlign.center,
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              _emptyHint(raw),
+                              textAlign: TextAlign.center,
+                            ),
                           ),
                         )
                       // 倒序展示：最新的在最上面。
@@ -191,6 +228,100 @@ class _DebugLogPageState extends State<DebugLogPage> {
           ),
         );
       },
+    );
+  }
+
+  /// 空状态文案。要说清楚**是哪一层**把日志筛没了，否则用户只会觉得
+  /// 「日志丢了」——这正是搜索功能要解决的困惑来源。
+  String _emptyHint(List<String> raw) {
+    if (raw.isEmpty) return '暂无日志';
+    if (_query.isNotEmpty) {
+      return '没有包含「$_query」的日志\n共 ${raw.length} 行，换个关键字或清空搜索看看';
+    }
+    return '当前筛选没有匹配的日志\n共 ${raw.length} 行，换个分类看看';
+  }
+}
+
+/// 关键字搜索框。
+///
+/// 放在频道条**上方**：真实报障往往是先知道一个字符串（题目 ID、接口名、
+/// 报错片段）才反推模块，而不是先知道模块再找字符串。把搜索放第一位
+/// 对应这个顺序。
+class _SearchField extends StatelessWidget {
+  const _SearchField({required this.controller, required this.onChanged});
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasText = controller.text.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: TextField(
+        key: const ValueKey('log_search_field'),
+        controller: controller,
+        onChanged: onChanged,
+        textInputAction: TextInputAction.search,
+        style: const TextStyle(fontSize: 14),
+        decoration: InputDecoration(
+          isDense: true,
+          hintText: '搜索日志（题干ID、接口名、报错片段…）',
+          hintStyle: TextStyle(
+            fontSize: 13,
+            color: Theme.of(context).hintColor,
+          ),
+          prefixIcon: const Icon(Icons.search_rounded, size: 20),
+          suffixIcon: hasText
+              ? IconButton(
+                  key: const ValueKey('log_search_clear'),
+                  tooltip: '清空搜索',
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  onPressed: () {
+                    controller.clear();
+                    onChanged('');
+                  },
+                )
+              : null,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 10,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 「显示 N / 共 M 行」。
+///
+/// 用户筛完看不到东西时，最怕的是「日志没了」。这一行始终说明
+/// 全量还在，只是被条件挡了一部分。
+class _ResultCountBar extends StatelessWidget {
+  const _ResultCountBar({required this.shown, required this.total});
+
+  final int shown;
+  final int total;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final filtered = shown != total;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+      child: Row(
+        children: [
+          Text(
+            filtered ? '显示 $shown / 共 $total 行' : '共 $total 行',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.hintColor,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

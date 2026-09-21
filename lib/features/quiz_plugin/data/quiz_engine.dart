@@ -1,14 +1,20 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../../../utils/app_logger.dart';
 import '../domain/quiz_config.dart';
 import '../domain/quiz_bank.dart';
 import '../domain/ocr_quiz_parser.dart';
 import '../domain/quiz_answer_aligner.dart';
+import '../domain/quiz_diag.dart';
+import '../domain/quiz_vision_endpoint.dart';
 import '../domain/quiz_match_scoring.dart';
+import '../utils/ai_process_bridge.dart';
 
 class QuizResult {
   const QuizResult({
@@ -18,6 +24,8 @@ class QuizResult {
     this.elapsedMs = 0,
     this.source = '',
     this.imageUrl,
+    this.stemExplosion = false,
+    this.stemExplosionCount = 0,
   });
 
   final String question;
@@ -27,6 +35,15 @@ class QuizResult {
   final String source;
   final String? imageUrl;
 
+  /// 同题干候选爆炸（题干无区分度、疑似标志图题）。
+  ///
+  /// 真机证据：题库中「这个标志是何含义？」独占 243 条、220 种互斥答案，
+  /// 题干 qScore 全员满分导致题干维度失效，选项又对不上（标志题答案只在图里），
+  /// 此时返回任意候选都是在误导用户。上层据此显示「请对照题图作答」，
+  /// 而不是端出「陡坡路段」这类随机候选。
+  final bool stemExplosion;
+  final int stemExplosionCount;
+
   QuizResult copyWith({
     String? question,
     List<QuizAnswer>? answers,
@@ -34,6 +51,8 @@ class QuizResult {
     int? elapsedMs,
     String? source,
     String? imageUrl,
+    bool? stemExplosion,
+    int? stemExplosionCount,
   }) {
     return QuizResult(
       question: question ?? this.question,
@@ -42,10 +61,48 @@ class QuizResult {
       elapsedMs: elapsedMs ?? this.elapsedMs,
       source: source ?? this.source,
       imageUrl: imageUrl ?? this.imageUrl,
+      stemExplosion: stemExplosion ?? this.stemExplosion,
+      stemExplosionCount: stemExplosionCount ?? this.stemExplosionCount,
     );
   }
 
   bool get isSuccess => error == null && answers.isNotEmpty;
+}
+
+/// 从模型读屏输出的散文/JSON 混合文本中提取结构化答案。
+///
+/// 实测（2026-09-13，NewAPI 渠道 `deepseek`；2026-09-19 切换 `gemini-3-8-flash`
+/// 后输出形态同样不稳定）模型输出有三种形态，解析器对全兼容：
+///   1. 纯 JSON：`{"stem":...}`
+///   2. ```json 围栏包裹
+///   3. Markdown 散文（`## 分析` 之类标题）后跟 JSON
+/// 故按「围栏 → 首个 JSON 对象」顺序宽松提取；**提取不到一律返回 null**，
+/// 由调用方转为明确错误，绝不猜测答案。
+Map<String, dynamic>? parseVisionJson(String content) {
+  final trimmed = content.trim();
+  if (trimmed.isEmpty) return null;
+  // 1) ```json ... ``` 围栏
+  final fenced = RegExp(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```');
+  final m1 = fenced.firstMatch(trimmed);
+  if (m1 != null) {
+    final parsed = _tryDecodeJsonMap(m1.group(1)!);
+    if (parsed != null) return parsed;
+  }
+  // 2) 首个完整 JSON 对象（贪婪失败则退回最长匹配）
+  for (final m in RegExp(r'\{[\s\S]*\}').allMatches(trimmed)) {
+    final parsed = _tryDecodeJsonMap(m.group(0)!);
+    if (parsed != null) return parsed;
+  }
+  return null;
+}
+
+Map<String, dynamic>? _tryDecodeJsonMap(String raw) {
+  try {
+    final decoded = jsonDecode(raw);
+    return decoded is Map<String, dynamic> ? decoded : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 class QuizAnswer {
@@ -85,6 +142,10 @@ class QuizEngine {
 
   QuizConfig config;
 
+  /// `_searchBank` 的 out 参数：>0 表示触发了「同题干候选爆炸」护栏。
+  /// `search()` 在调用后立即读取并转化为对用户可见的提示。
+  int _lastStemExplosionCount = 0;
+
   Future<QuizResult> search(
     String question, {
     bool forceExternalSearch = false,
@@ -103,11 +164,24 @@ class QuizEngine {
 
     if (config.bankEnabled) {
       try {
+        _lastStemExplosionCount = 0;
         final bankResult = await _searchBank(
           trimmed,
           probeOptions: probeOptions,
           imagePerceptualHash: imagePerceptualHash,
         );
+        if (_lastStemExplosionCount > 0) {
+          // 同题干候选爆炸：题干无区分度（如题库中「这个标志是何含义？」独占 243 条、
+          // 220 种互斥答案），此时任何候选都是随机误导，必须显式告诉用户看图作答。
+          return QuizResult(
+            question: question,
+            error: '该题为图标题，请对照题图作答（同题干 $_lastStemExplosionCount 条，无法区分）',
+            elapsedMs: stopwatch.elapsedMilliseconds,
+            source: '本地题库',
+            stemExplosion: true,
+            stemExplosionCount: _lastStemExplosionCount,
+          );
+        }
         if (bankResult != null && bankResult.isNotEmpty) {
           return QuizResult(
             question: question,
@@ -188,7 +262,23 @@ class QuizEngine {
         _stemLooksLikeImageQuestion(question);
 
     final candidates = QuizBankCache.instance.candidatesFor(hay);
-    if (candidates.isEmpty) return null;
+    if (candidates.isEmpty) {
+      // 诊断：区分「本地库为空/未同步完」与「库里有但召回为空」。
+      // 前者是同步问题（题库页看覆盖率），后者是分词/归一化问题。
+      //
+      // 必须同时进 AppLogger——报障人看到的悬浮窗提示就是这句
+      // 「本地题库未找到」，他在调试日志页搜「未找到」「bankSize」
+      // 时要能搜到这一条，否则又是一轮「我找不到那个」。
+      final bankSize = QuizBankCache.instance.items.length;
+      final stem = hay.length > 40 ? '${hay.substring(0, 40)}…' : hay;
+      AppLogger.instance.logTo(
+        LogChannel.quiz,
+        'no candidate: bankSize=$bankSize hay="$stem"',
+        level: LogLevel.warn,
+      );
+      debugPrint('[QuizEngine] no candidate: bankSize=$bankSize hay="$stem"');
+      return null;
+    }
 
     final probeOptNorm = effectiveOptions
         .map(QuizBankTextNormalizer.normalizeOption)
@@ -229,6 +319,15 @@ class QuizEngine {
       }
     }
     if (byQuestion.isEmpty) return null;
+    QuizDiag.log(
+      QuizDiagStage.match,
+      'candidates scored',
+      fields: {
+        'cand': candidates.length,
+        'passed': byQuestion.length,
+        'bestQ': byQuestion.map((e) => e.qScore).reduce(max),
+      },
+    );
 
     byQuestion.sort((a, b) => b.qScore.compareTo(a.qScore));
     final bestQ = byQuestion.first.qScore;
@@ -296,18 +395,22 @@ class QuizEngine {
       // 仍要求 qScore >= 45，导致「唯一命中却提示请人工确认」。
       //
       // 只在两侧选项数都为 2 且选项高度匹配时生效，选择题完全不受影响。
-      final judgmentOptionFirst = QuizMatchScoring.judgmentOptionFirst(
+      // 权重是**连续**的（80→90 线性过渡），因为此前 89→90 的硬开关
+      // 会让最终分跳 14~22 分，跨过 0.70 阈值造成真机误报。
+      final judgmentOptionFirstWeight =
+          QuizMatchScoring.judgmentOptionFirstWeightGated(
         useOptions: useOptions,
         probeOptionCount: probeOptNorm.length,
         bankOptionCount: bankOptionCount,
         optionScore: oScore,
+        questionScore: e.qScore,
       );
-      final baseScore = QuizMatchScoring.baseScore(
+      final baseScore = QuizMatchScoring.baseScoreWeighted(
         useOptions: useOptions,
         questionScore: e.qScore,
         optionScore: oScore,
         shapeBonus: shapeBonus,
-        optionFirst: judgmentOptionFirst,
+        optionFirstWeight: judgmentOptionFirstWeight,
       );
       final score = QuizMatchScoring.finalScore(
         base: baseScore,
@@ -324,6 +427,25 @@ class QuizEngine {
         shapeBonus: shapeBonus,
         imageScore: imageScore,
       ));
+      // 逐候选真实打分。真机报「请人工确认」时，日志页可搜 `score=` 看到
+      // 每个候选的真实 qScore/oScore/final 与选项优先权重，
+      // 用于判断是「题干分低」还是「选项分掉下 90」还是「阈值本身」。
+      QuizDiag.log(
+        QuizDiagStage.match,
+        'score=${score.clamp(0, 100)}',
+        fields: {
+          'q': e.qScore,
+          'o': oScore,
+          'w': judgmentOptionFirstWeight.toStringAsFixed(2),
+          'base': baseScore,
+          'shape': shapeBonus,
+          'img': imageScore,
+          'qid': e.item.id,
+        },
+        level: QuizMatchScoring.isLowConfidence(score.clamp(0, 100))
+            ? LogLevel.warn
+            : LogLevel.info,
+      );
     }
 
     scored.sort((a, b) {
@@ -425,6 +547,83 @@ class QuizEngine {
       imageMatchHint = '';
     }
 
+    // ④ 同题干爆炸护栏：题干无区分度时，禁止把互斥答案当候选端出去。
+    //
+    // 真机证据（2026-09-13 12:43，App 1.18.16 (239)）：
+    //   PARSE qLen=9 opts=4 q="这个标志是何含义？"
+    //   MATCH candidates scored cand=243 passed=243 bestQ=100
+    //   → 悬浮窗端出「候选 1：提醒车辆驾驶人前方有向上的陡坡路段」等无关答案
+    //
+    // 真实题库 3616 条中「这个标志是何含义？」独占 243 条（220 种互斥答案，仅 4 条有图）。
+    // 题干逐字相同 → 全员 qScore=100 → 题干维度完全失效；而标志题的答案**只在图里**，
+    // 选项是「T形交叉路口 / 下陡坡 / 右侧通行」这种按图而异的文字，卷面 OCR 通常只抓到
+    // 1~2 个（真机即 probeOptNorm.length < 3），选项消歧快捷路径全部跳过。
+    // 此时若仍返回 top 候选，用户看到的必然是**分数靠前的随机答案**，且极易被误当作
+    // 系统已确认的答案 —— 这是比「未命中」严重得多的误导。
+    //
+    // 判据（两个条件同时成立才生效，避免误伤正常题）：
+    //   ① 同题干候选数量 >= stemExplosionThreshold（题干几乎无区分度）；
+    //   ② 最优候选不足以唯一决胜：要么选项分过低（< stemExplosionMinOptionScore），
+    //      要么存在**多个并列最高分且答案互斥**（分不出赢家）。
+    // 满足则视为标志图题：不返回候选，由上层提示对照题图作答。
+    //
+    // 【为什么②要加「并列最高分」这一支】
+    // 真机证据（2026-09-13 13:32，App 1.18.17）：
+    //   题「驾驶电动汽车，图中指示灯亮起表示（ ）。」答案=充电系统故障
+    //   卷面 A正在充电 B动力蓄电池故障 C低荷电状态警告 D充电系统故障
+    //   → 题库该题干共 9 条 / 9 种互斥答案，其中 4 条选项集与卷面**完全相同**
+    //   → 4 条并列 100 分，bestO=100 不满足旧条件①的 <60 → 旧护栏漏过
+    //   → 端出「候选1：减速慢行信号 / 候选2：变道信号」这类毫不相关的答案。
+    // 同理还有「这个标志是什么含义？」17 条、「图中交通标志是指（ ）」16 条、
+    // 「机动车仪表板上如图所示指示灯亮表示什么？」14 条等一大票图题，
+    // 条数在 9~17 档，全部被「>=60 条」的旧阈值漏掉。
+    // 因此把判据从「条数极大」修正为「**分不出唯一赢家**」——这才是真正的失配信号。
+    //
+    // 不误伤的保证：正常题（含「限速」超过/高于/低于这类多变体）卷面选项能对齐时，
+    // 最高分候选唯一且明显高于次席（gap 大）→ ②不成立 → 不受影响。
+    // 调参方向：stemExplosionMinWinGap 调大→更激进（并列更宽也拒绝）；调小→更保守。
+    const stemExplosionThreshold = 8;
+    const stemExplosionMinOptionScore = 60;
+    const stemExplosionMinWinGap = 8;
+
+    // 并列最高分检测：取最高分，统计与它相差 < gap 的候选里有多少种互斥答案。
+    final topScore = scored.first.score;
+    final topAnswers = <String>{};
+    for (final c in scored) {
+      if (topScore - c.score >= stemExplosionMinWinGap) break;
+      final a = c.item.correctAnswer.trim();
+      if (a.isNotEmpty) topAnswers.add(a);
+    }
+    final noUniqueWinner = topAnswers.length > 1;
+    final weakOptions = scored.first.oScore < stemExplosionMinOptionScore;
+
+    if (scored.length >= stemExplosionThreshold &&
+        (weakOptions || noUniqueWinner) &&
+        !hasProbeImageHash) {
+      QuizDiag.warn(
+        QuizDiagStage.match,
+        '拒绝：同题干候选爆炸（疑似标志图题），不端候选答案',
+        fields: {
+          'cand': scored.length,
+          'bestQ': scored.first.qScore,
+          'bestO': scored.first.oScore,
+          'tieAnswers': topAnswers.length,
+          'probeOpts': probeOptNorm.length,
+        },
+      );
+      AppLogger.instance.logTo(
+        LogChannel.quiz,
+        'MATCH REJECT stemExplosion cand=${scored.length} '
+            'bestQ=${scored.first.qScore} bestO=${scored.first.oScore} '
+            'probeOpts=${probeOptNorm.length} —— 题干无区分度，需对照题图',
+        level: LogLevel.warn,
+      );
+      // 返回空列表 + out 参数标记 stemExplosion：上层据此显示
+      // 「该题为图标题，请对照题图作答」，而不是把 220 种互斥答案中的某一条端给用户。
+      _lastStemExplosionCount = scored.length;
+      return const [];
+    }
+
     // 新增：选项完全匹配且所有候选答案相同时，清除"题图匹配不足"提示
     // 适用场景：同一题的多个录入（答案相同，仅题图区域框选不同），用户实际框选了正确区域，
     // 但由于录入时的框选差异导致 dHash 分数不高。这时答案已确定，不应再要求用户检查框选。
@@ -447,6 +646,8 @@ class QuizEngine {
         filtered = good;
       } else {
         // 全部对不上选项：不返回高置信错答，直接视为未命中
+        QuizDiag.warn(QuizDiagStage.match, '拒绝：卷面选项全部对不上题库',
+            fields: {'probeOpts': probeOptNorm.length, 'cand': scored.length});
         return null;
       }
     }
@@ -523,6 +724,12 @@ class QuizEngine {
         : config.bankMaxMatches;
     final top = selected.take(effectiveLimit).toList();
     if (top.isEmpty || (top.first.qScore < 60 && top.first.oScore < 90)) {
+      QuizDiag.warn(QuizDiagStage.match, '拒绝：低于最终闸门',
+          fields: {
+            'top': top.length,
+            'q': top.isEmpty ? '-' : top.first.qScore,
+            'o': top.isEmpty ? '-' : top.first.oScore,
+          });
       return null;
     }
     // 最终闸门：非看图题不得返回「图N」答案（无论有无试捕选项）
@@ -537,6 +744,7 @@ class QuizEngine {
                 probeOptions: effectiveOptions,
               ).displayAnswer,
             ))) {
+      QuizDiag.warn(QuizDiagStage.match, '拒绝：非看图题却命中「图N」答案');
       return null;
     }
     // 卷面文字题却只命中图选题答案（图1/图2）：当作未命中，避免误导
@@ -545,7 +753,12 @@ class QuizEngine {
             (!_isImageLikeOptionSet(top.first.item.options) && useOptions))) {
       // keep if bank options themselves are image and probe also image
       if (!(probeImageLike && _isImageLikeOptionSet(top.first.item.options))) {
-        if (useOptions && top.first.oScore < 80) return null;
+        if (useOptions && top.first.oScore < 80) {
+          QuizDiag.warn(QuizDiagStage.match,
+              '拒绝：文字题命中图选答案且选项分偏低',
+              fields: {'o': top.first.oScore});
+          return null;
+        }
       }
     }
 
@@ -615,6 +828,16 @@ class QuizEngine {
         .whereType<QuizAnswer>()
         .toList();
     if (mapped.isEmpty) return null;
+    // 命中现场：这条日志和上面的「拒绝」日志成对出现，一眼能看出
+    // 这一题是「根本没进到打分」还是「打分后被某个闸门拒了」。
+    QuizDiag.log(
+      QuizDiagStage.match,
+      'HIT',
+      fields: {
+        'n': mapped.length,
+        'score': mapped.first.confidence,
+      },
+    );
     return mapped;
   }
 
@@ -881,6 +1104,486 @@ class QuizEngine {
       }
     }
     return previous[b.length];
+  }
+
+  /// 外部「AI 读屏」搜题的模型名。
+  ///
+  /// 固定 `deepseek`：NewAPI 渠道（https://newapi.hpa888.top/v1）的 /models
+  /// 只暴露这一个 ID，真实上游模型被渠道名掩盖（实测返回 model 字段为
+  /// "Deepseek"，能力等价 deepseek-v4-vision）。
+  /// 2026-09-19 用户拍板：box 项目识图维持原 deepseek；gemini-3.8 仅用于
+  /// Hermes 辅助视觉（vision_analyze），不混入 box 客户端。
+  static const String visionModel = 'deepseek';
+  /// 实测（2026-09-13，NewAPI 渠道 `deepseek`）模型输出形态不稳定，
+  /// 三种都出现：纯 JSON / ```json 围栏 / Markdown 散文后跟 JSON，
+  /// 解析器对全兼容；**提取不到一律返回 null**（不编造答案）。
+
+  /// 方案丙提示词：要求模型**独立作答**，明确禁止参考界面上已选的答案。
+  ///
+  /// 为什么必须写死这段约束：截图里往往带着用户已选的选项（对勾/高亮），
+  /// 模型天然倾向「复述界面」。实测（2026-09-13）两题上模型确实给出了
+  /// 独立判断（confidence 0.98/0.9），但**尚无「用户选错」的反例证伪**，
+  /// 因此这里用最强约束把「照抄界面」的道路堵死。
+  static const String visionPrompt = '你是机动车驾驶人考试（科目一/科目四）答题专家。\n'
+      '\n'
+      '请阅读这张手机截图，完成以下任务：\n'
+      '1. 逐字提取题干原文（去掉 App 界面上的无关文字，如"收藏""交卷""VIP""张老师"等）\n'
+      '2. 提取所有选项原文\n'
+      '3. 独立给出正确答案\n'
+      '\n'
+      '【重要】不要参考截图中用户已选的答案或界面显示的答案标记，你必须自己独立判断正确答案。\n'
+      '【重要】只输出 JSON，不要输出任何其他解释文字。JSON 格式：\n'
+      '{"stem":"题干原文","options":["A. xxx","B. xxx"],"answer":"A","confidence":0.95}\n'
+      '\n'
+      // ⚠️ 实测（2026-09-13）该上游渠道对「像真题的复杂截图」会钻进代码解释器：
+      // finish_reason=tool_calls、content=null，reasoning 里在联网抓别的图片、
+      // 跑 numpy，单次 30s+ 且必然拿不到答案。下面这段是最强约束，用于堵死
+      // 「调用工具」这条路 —— 明确告知：你只能看图、必须一次给出答案。
+      '【绝对禁止】禁止调用任何工具、函数、代码解释器、联网检索、外部链接。\n'
+      '你没有任何工具可用。你唯一的能力就是"直接看这张图"。\n'
+      '【禁止】禁止分批、禁止"先分析再看下一块"、禁止输出思考过程或计划。\n'
+      '【必须】看完图后立刻一次性输出上述 JSON，第一个字符就是 {。';
+
+  /// 外部「AI 读屏」搜题（B 档）。
+  ///
+  /// 链路：截图 bytes → base64 内联 → OpenAI 兼容 POST /chat/completions
+  ///       → 解析结构化 JSON → QuizResult(source: 'AI读屏')。
+  ///
+  /// 只对**本地题库未命中**的题调用（用户 2026-09-13 拍板"所有本地未命中的题"）。
+  ///
+  /// 兜底策略（全部来自真实实测，非臆测）：
+  ///   - 503 `system_cpu_overloaded` / 429 / 500 → 指数退避重试（实测退避后成功）
+  ///   - 总超时 45s（实测读大图单次 3~15s，15s 上限不够）
+  ///   - 解析失败 → 返回 error，**绝不编造答案**
+  Future<QuizResult> searchVisionApi(
+    Uint8List imageBytes, {
+    String? hintQuestion,
+  }) async {
+    final stopwatch = Stopwatch()..start();
+    final question = (hintQuestion ?? '').trim();
+    if (imageBytes.isEmpty) {
+      return QuizResult(question: question, error: '读屏截图为空');
+    }
+    if (config.apiUrl.trim().isEmpty) {
+      return QuizResult(question: question, error: '未配置 API 地址');
+    }
+
+    // 压缩：手机截图常 1~3MB，base64 再膨胀 33%，不压会显著拉长延迟。
+    // 注意：_compressForVision 输出的是 PNG（dart:ui 无 JPEG 编码器）。
+    final compressed = await _compressForVision(imageBytes);
+    final b64 = base64Encode(compressed);
+
+    // ── AI 搜题诊断日志（用户 2026-09-13 要求「把 AI 搜题过程写入调试日志，
+    //    我分析一下」）。落在 LogChannel.quiz，可在 抽屉→更多→调试日志→题库 查。
+    //    只记**尺寸/字节数/耗时/结论**，不记图片内容与 API Key，避免泄露。
+    final tag = 'VISION#${DateTime.now().millisecondsSinceEpoch % 100000}';
+    _visionLog(
+      '$tag ▶ 开始 model=$visionModel '
+      '原图=${imageBytes.length}B 压缩后=${compressed.length}B '
+      'b64=${b64.length}B prompt=${visionPrompt.length}字',
+    );
+    // AI 作答过程（用户要求「ai回答时在答题悬浮窗下面显示作答过程」）。
+    // 只推送可核对的阶段事实（压缩比/尝试次数/耗时/结论），不推模型思维链原文：
+    // 上游 reasoning 是英文且常夹带无关检索，直接展示会误导用户。
+    final proc = <String>[];
+    void pushProc() {
+      AiProcessBridge.push(proc.join('\n'));
+    }
+
+    proc.add('① 读屏截图 ${imageBytes.length ~/ 1024}KB → 压缩至 '
+        '${compressed.length ~/ 1024}KB');
+    proc.add('② 提交模型 $visionModel（禁工具直答）');
+    pushProc();
+
+    final base = config.apiUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    final uri = Uri.parse('$base/chat/completions');
+    // 代理模式判定：base 指向平台 /api/quiz/vision 时 401/403/429 语义不同
+    // （session 过期 / 代理未开 / 日限额），文案走 visionHttpErrorText 代理分支。
+    final viaProxy = base.contains(QuizVisionEndpoint.proxyPathSegment);
+    final body = jsonEncode({
+      'model': visionModel,
+      'messages': [
+        {
+          'role': 'user',
+          'content': [
+            {'type': 'text', 'text': visionPrompt},
+            {
+              'type': 'image_url',
+              'image_url': {'url': 'data:image/png;base64,$b64'},
+            },
+          ],
+        },
+      ],
+      'max_tokens': 1200,
+      'temperature': 0,
+      // ⚠️ 实测（2026-09-13）：关思考的参数被该渠道忽略，真正有效的是
+      // tool_choice=none —— 从 API 层直接禁止工具调用，比提示词约束更硬。
+      // 未注册工具的渠道会忽略该字段，不影响既有行为。
+      'tool_choice': 'none',
+      'parallel_tool_calls': false,
+      'enable_thinking': false,
+      'chat_template_kwargs': {'thinking': false},
+    });
+
+    // 指数退避：实测 503 会连续命中数次，退避窗口取 2s/5s/10s/15s。
+    const backoffsMs = [2000, 5000, 10000, 15000];
+    const hardTimeout = Duration(seconds: 45);
+    Object? lastError;
+    var lastAuthFlaky = false; // 401/403「渠道鉴权不稳」标志（循环内赋值，循环后用）
+    final stopwatchStart = stopwatch.elapsed;
+    for (var attempt = 0; attempt <= backoffsMs.length; attempt++) {
+      // ⚠️ 历史坑（用户 2026-09-13 报障「AI 搜题几分钟没反应」的根因）：
+      // 旧代码只在这里检查 elapsed，而下面 `.timeout(hardTimeout)` 是**每次**
+      // 都重新起算 45 秒 —— 最坏情况 5 次尝试 = 45×5 + 退避(2+5+10+15) ≈ 257 秒
+      // （4 分钟以上），用户看到的就是「一直转没反应」。
+      // 现改为按**剩余预算**签发单次超时：总时长硬封顶 45 秒。
+      final remaining = hardTimeout - (stopwatch.elapsed - stopwatchStart);
+      if (remaining <= Duration.zero) {
+        lastError = '读屏超时（已耗时 ${stopwatch.elapsed.inSeconds}s）';
+        _visionLog('$tag ✖ 预算耗尽，放弃重试（已 ${stopwatch.elapsed.inSeconds}s）', warn: true);
+        break;
+      }
+      final attemptStart = stopwatch.elapsedMilliseconds;
+      _visionLog('$tag → 第${attempt + 1}次请求 剩余预算=${remaining.inSeconds}s');
+      proc.add('③ 第${attempt + 1}次请求（预算 ${remaining.inSeconds}s）');
+      pushProc();
+      try {
+        final response = await http
+            .post(
+              uri,
+              headers: {
+                'Content-Type': 'application/json; charset=utf-8',
+                if (config.apiKey.trim().isNotEmpty)
+                  'Authorization': 'Bearer ${config.apiKey.trim()}',
+              },
+              body: body,
+            )
+            // 单次超时 = 剩余预算，保证「多次重试」不会把总耗时拖成几分钟。
+            .timeout(remaining);
+
+        if (response.statusCode == 200) {
+          // 显式按 UTF-8 解码：中文题干若走 latin-1 会变乱码。
+          final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+          final attemptMs = stopwatch.elapsedMilliseconds - attemptStart;
+          _visionLog(
+            '$tag ← HTTP200 ${attemptMs}ms finish=${_visionFinishReason(decoded)} '
+            '${_visionBriefReply(decoded)}',
+          );
+          final parsed = _parseVisionPayload(decoded);
+          if (parsed == null) {
+            // ⚠️ 实测（2026-09-13）：该上游渠道对「像真题的复杂截图」会进入
+            // 代码解释器循环 —— finish_reason=tool_calls、content=null，
+            // reasoning 里在尝试联网取别的图片/跑 numpy，单次耗时 30s 且
+            // **必然拿不到 content**。这时给「无法解析」会误导用户反复重试。
+            lastError = _isDegenerateVisionResponse(decoded)
+                ? 'AI 读图失败（模型未给出答案），可重试或改用手动录入'
+                : '读屏返回无法解析';
+            AppLogger.instance.logTo(
+              LogChannel.quiz,
+              'vision parse failed: finish=${_visionFinishReason(decoded)} '
+                  '${response.body.length} chars '
+                  '${stopwatch.elapsedMilliseconds}ms',
+              level: LogLevel.warn,
+            );
+            break;
+          }
+          final result = _visionResultToQuizResult(parsed, question);
+          if (result == null) {
+            // 模型给了 JSON 但里面没有可用 answer → 明确报错，不编造。
+            lastError = '读屏未返回答案';
+            AppLogger.instance.logTo(
+              LogChannel.quiz,
+              'vision missing answer field',
+              level: LogLevel.warn,
+            );
+            break;
+          }
+          AppLogger.instance.logTo(
+            LogChannel.quiz,
+            'vision ok: answer="${result.answers.first.correctAnswer}" '
+                'conf=${result.answers.first.confidence} '
+                '${stopwatch.elapsedMilliseconds}ms',
+          );
+          proc.add('④ 识别成功，用时 ${stopwatch.elapsedMilliseconds}ms');
+          pushProc();
+          _visionLog(
+            '$tag ✔ 成功 stem="${_truncate(result.question, 40)}" '
+            'answer=${result.answers.first.correctAnswer} '
+            'conf=${result.answers.first.confidence} '
+            '总耗时=${stopwatch.elapsedMilliseconds}ms',
+          );
+          return result.copyWith(elapsedMs: stopwatch.elapsedMilliseconds);
+        }
+
+        // 4xx 鉴权/参数错：只有 401/403（渠道鉴权瞬态抽风）值得重试，
+        // 纯参数/内容错（400 等）直接失败。
+        // ⚠️ 代理模式例外（2026-09-19 方案 A）：代理的 401/403/429 是确定性
+        // 结论（session 过期 / 代理未开 / 日限额），重试 4 次只会白烧 32s
+        // 退避预算，让用户多等半分钟才看到同一句话 —— 立即失败。
+        if (viaProxy &&
+            const {401, 403, 429}.contains(response.statusCode)) {
+          lastError = visionHttpErrorText(response.statusCode, viaProxy: true);
+          _visionLog('$tag ✖ 代理 HTTP${response.statusCode} 确定性失败，不重试',
+              warn: true);
+          break;
+        }
+        final retryable =
+            const {500, 502, 503, 504, 429, 401, 403}.contains(
+              response.statusCode,
+            );
+        _visionLog(
+          '$tag ← HTTP${response.statusCode} '
+          '${stopwatch.elapsedMilliseconds - attemptStart}ms body前200=${_truncate(response.body, 200)}',
+          warn: true,
+        );
+        if (!retryable) {
+          lastError = visionHttpErrorText(response.statusCode, viaProxy: viaProxy);
+          _visionLog('$tag ✖ HTTP${response.statusCode} 不可重试，直接失败', warn: true);
+          break;
+        }
+        // 401/403 是「渠道鉴权不稳」而非「key 真无效」（同一 key 间歇 200/401）。
+        // 全失败后给用户明确提示，避免误以为是题不会。
+        lastAuthFlaky = response.statusCode == 401 || response.statusCode == 403;
+        lastError = visionHttpErrorText(response.statusCode, viaProxy: viaProxy);
+        AppLogger.instance.logTo(
+          LogChannel.quiz,
+          'vision retry: status=${response.statusCode} attempt=$attempt',
+          level: LogLevel.warn,
+        );
+      } catch (e) {
+        lastError = '读屏请求异常：$e';
+        _visionLog('$tag ✖ 异常 ${stopwatch.elapsedMilliseconds - attemptStart}ms: $e', warn: true);
+      }
+      if (attempt < backoffsMs.length) {
+        await Future<void>.delayed(Duration(milliseconds: backoffsMs[attempt]));
+      }
+    }
+
+    _visionLog(
+      '$tag ■ 失败：${lastError?.toString() ?? '读屏失败'} '
+      'authFlaky=${lastAuthFlaky ? 'y' : 'n'} '
+      '总耗时=${stopwatch.elapsedMilliseconds}ms',
+      warn: true,
+    );
+    proc.add('✖ 失败：${lastError?.toString() ?? '读屏失败'}'
+        '（用时 ${stopwatch.elapsedMilliseconds}ms）');
+    pushProc();
+    return QuizResult(
+      question: question,
+      error: lastError?.toString() ?? '读屏失败',
+      elapsedMs: stopwatch.elapsedMilliseconds,
+    );
+  }
+
+  /// AI 搜题过程日志。统一走 LogChannel.quiz，用户可在
+  /// 「抽屉 → 更多 → 调试日志」筛「题库」看到完整链路。
+  void _visionLog(String message, {bool warn = false}) {
+    AppLogger.instance.logTo(
+      LogChannel.quiz,
+      message,
+      level: warn ? LogLevel.warn : LogLevel.info,
+    );
+  }
+
+  /// 摘要模型回复，便于日志分析时一眼看出「答空 / 走了工具 / 输出形态」。
+  ///
+  /// 实测关注三个信号：finish_reason、content 是否为空、是否只有 reasoning。
+  /// 只截取前 160 字，避免日志被长文本淹没。
+  String _visionBriefReply(Object? decoded) {
+    if (decoded is! Map) return 'reply=?';
+    final choices = decoded['choices'];
+    if (choices is! List || choices.isEmpty) return 'choices=空';
+    final first = choices.first;
+    if (first is! Map) return 'choice0=?';
+    final message = first['message'];
+    if (message is! Map) return 'message=?';
+    final content = message['content'];
+    final reasoning = message['reasoning_content'];
+    final toolCalls = message['tool_calls'];
+    final parts = <String>[];
+    parts.add(
+      content is String && content.trim().isNotEmpty
+          ? 'content="${_truncate(content, 160)}"'
+          : 'content=空',
+    );
+    if (reasoning is String && reasoning.isNotEmpty) {
+      parts.add('reasoning=${reasoning.length}字');
+    }
+    if (toolCalls is List && toolCalls.isNotEmpty) {
+      parts.add('tool_calls=${toolCalls.length}个');
+    }
+    final usage = decoded['usage'];
+    if (usage is Map) {
+      parts.add(
+        'tokens(p=${usage['prompt_tokens']},c=${usage['completion_tokens']})',
+      );
+    }
+    return parts.join(' ');
+  }
+
+  String _truncate(String s, int max) {
+    final oneLine = s.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return oneLine.length <= max ? oneLine : '${oneLine.substring(0, max)}…';
+  }
+
+  /// 取 choices[0].finish_reason（诊断用，拿不到返回空串）。
+  String _visionFinishReason(Object? decoded) {
+    if (decoded is! Map) return '';
+    final choices = decoded['choices'];
+    if (choices is! List || choices.isEmpty) return '';
+    final first = choices.first;
+    if (first is! Map) return '';
+    return (first['finish_reason'] ?? '').toString();
+  }
+
+  /// 判定「退化响应」：模型没给 content，而是走了工具/代码解释器调用。
+  ///
+  /// 实测该形态 = `finish_reason: "tool_calls"` 且 `content: null`，
+  /// reasoning 里在尝试联网取图/跑 numpy。此形态下重试必然复现，
+  /// 只应让上层快速失败，而不是继续耗时间。
+  bool _isDegenerateVisionResponse(Object? decoded) {
+    if (decoded is! Map) return false;
+    final choices = decoded['choices'];
+    if (choices is! List || choices.isEmpty) return false;
+    final first = choices.first;
+    if (first is! Map) return false;
+    final message = first['message'];
+    if (message is! Map) return false;
+    final content = message['content'];
+    final hasContent = content is String && content.trim().isNotEmpty;
+    final toolCalls = message['tool_calls'];
+    final hasToolCalls = toolCalls is List && toolCalls.isNotEmpty;
+    return !hasContent && hasToolCalls;
+  }
+
+  /// 从模型返回体中提取结构化读屏结果。
+  ///
+  /// 实测模型输出形态不稳定：纯 JSON / ```json 围栏 / Markdown 散文夹 JSON
+  /// 三种都出现过，故按「围栏 → 首个 JSON 对象」顺序宽松提取。
+  Map<String, dynamic>? _parseVisionPayload(Object? decoded) {
+    if (decoded is! Map) return null;
+    final choices = decoded['choices'];
+    if (choices is! List || choices.isEmpty) return null;
+    final first = choices.first;
+    if (first is! Map) return null;
+    final message = first['message'];
+    if (message is! Map) return null;
+    final content = message['content'];
+    // ⚠️ 历史坑（用户 2026-09-13 报障「以前10秒不到可以出，现在半天出不了」的
+    // 根因之一）：该上游渠道返回 DeepSeek 推理模型，实测经常
+    //   finish_reason=tool_calls 且 content=null，把 JSON 塞在 reasoning_content 里，
+    //   reasoning 还带大量思考过程。
+    // 旧代码只读 content，一旦为 null 就判定失败 → 触发退避重试 → 每次 30s+，
+    // 预算瞬间耗尽，用户看到的就是「转半天出不来」。
+    // 现在：content 为空时回落到 reasoning_content，并从中提取 JSON。
+    final rawContent = content is String ? content : '';
+    final reasoning = (message['reasoning_content'] ?? '').toString();
+    final merged = rawContent.trim().isNotEmpty ? rawContent : reasoning;
+    if (merged.trim().isEmpty) return null;
+    final parsed = parseVisionJson(merged);
+    if (parsed != null) return parsed;
+    // content 有值但没解析出 JSON 时，再试一次 reasoning（模型嘴里答对了、
+    // 正式 content 却给空/散文的情况确实出现过）。
+    if (rawContent.trim().isNotEmpty && reasoning.trim().isNotEmpty) {
+      return parseVisionJson(reasoning);
+    }
+    return null;
+  }
+
+  /// 把模型 JSON 转成 QuizResult。
+  ///
+  /// 关键：`stem` 用于回显题干（已验证模型读得准），`answer` 作为正确答案，
+  /// `confidence` 透传给 UI 做可信度提示。解析不到 answer 一律返回 null
+  /// （上层转成 error），**不得猜测**。
+  QuizResult? _visionResultToQuizResult(
+    Map<String, dynamic> parsed,
+    String fallbackQuestion,
+  ) {
+    final answer = (parsed['answer'] ?? '').toString().trim();
+    if (answer.isEmpty) return null;
+    final stem = (parsed['stem'] ?? '').toString().trim();
+    final options = <String>[];
+    final rawOptions = parsed['options'];
+    if (rawOptions is List) {
+      for (final o in rawOptions) {
+        final t = o.toString().trim();
+        if (t.isNotEmpty) options.add(t);
+      }
+    }
+    final conf = (parsed['confidence'] as num?)?.toDouble() ?? 0.0;
+    final question = stem.isNotEmpty ? stem : fallbackQuestion;
+    return QuizResult(
+      question: question,
+      source: 'AI读屏',
+      answers: [
+        QuizAnswer(
+          text: answer,
+          correctAnswer: answer,
+          confidence: conf,
+          source: 'AI读屏',
+          options: options,
+        ),
+      ],
+    );
+  }
+
+  /// 读屏前压缩：长边压到 [visionMaxEdge]，重编码为 PNG。
+  ///
+  /// 为什么必须压：实测原图 209KB → base64 279KB，而手机截图常 1~3MB，
+  /// 不压会明显拉长请求与模型处理时间。压缩参数是启发式，若真机发现
+  /// 小字读不准，**调大 visionMaxEdge**；若嫌请求体积大则调小。
+  ///
+  /// 编码格式说明：`dart:ui` 的 [ui.ImageByteFormat] 只提供 rawRgba / png
+  /// 两种输出，**没有 JPEG 编码器**，所以这里输出 PNG（无损、体积比 JPEG
+  /// 略大但清晰度更好，利于读小字）。[visionJpegQuality] 因此**当前未被使用**，
+  /// 保留常量是为了将来接入 JPEG 编码器（如 image 包）时无需改调用点。
+  ///
+  /// 只用 dart:ui（项目既有约定，见 quiz_question_image_store.computeDHash），
+  /// 不引入额外图像包。
+  ///
+  /// ⚠️ 实测（2026-09-13，curl 直连 newapi.hpa888.top）：
+  ///   小图（8KB base64）→ **2.8s** 返回；真实截图（长边1280）→ **36.0s** 返回。
+  /// 延迟随像素量飙升，且该渠道模型会「长篇思考」把 max_tokens 烧在思维链上，
+  /// 导致 content 为空。因此这里把长边从 1280 下调到 960：
+  ///   - 像素数降到 56%，实测读题小字仍可辨认（科目一题干字号较大）。
+  ///   - 若真机发现小字读不准，**调大 visionMaxEdge**；嫌慢则**调小**。
+  static const int visionMaxEdge = 960;
+
+  /// 预留：接入 JPEG 编码器后才生效。当前压缩走 PNG（见上）。
+  static const int visionJpegQuality = 75;
+
+  Future<Uint8List> _compressForVision(Uint8List bytes) async {
+    try {
+      // 先读原图尺寸，判断是否需要降采样。
+      final probe = await ui.instantiateImageCodec(bytes);
+      final probeFrame = await probe.getNextFrame();
+      final srcW = probeFrame.image.width;
+      final srcH = probeFrame.image.height;
+      probeFrame.image.dispose();
+      probe.dispose();
+      if (srcW <= 0 || srcH <= 0) return bytes;
+
+      final longEdge = srcW > srcH ? srcW : srcH;
+      final codec = longEdge > visionMaxEdge
+          ? await ui.instantiateImageCodec(
+              bytes,
+              targetWidth: srcW >= srcH ? visionMaxEdge : null,
+              targetHeight: srcH > srcW ? visionMaxEdge : null,
+            )
+          : await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final image = frame.image;
+      try {
+        final data = await image.toByteData(format: ui.ImageByteFormat.png);
+        codec.dispose();
+        if (data == null) return bytes;
+        return data.buffer.asUint8List();
+      } finally {
+        image.dispose();
+      }
+    } catch (_) {
+      return bytes;
+    }
   }
 
   Future<QuizResult> _searchCustomApi(String question) async {

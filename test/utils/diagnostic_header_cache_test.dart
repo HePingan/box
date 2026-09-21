@@ -54,7 +54,7 @@ void main() {
       expect(header.packageName, 'top.hpa888.box');
     });
 
-    test('连续读缓存返回同一份，不重复打 channel', () {
+    test('连续读缓存返回同一份版本信息，不重复打 channel', () {
       DiagnosticHeader.resetCacheForTest(
         DiagnosticHeader(
           appVersion: '1.10.0',
@@ -68,7 +68,16 @@ void main() {
       final a = DiagnosticHeader.cachedOrPlaceholder;
       final b = DiagnosticHeader.cachedOrPlaceholder;
 
-      expect(a.generatedAt, b.generatedAt);
+      // 版本三项必须来自同一份缓存——这才是「不重复打 channel」的证据。
+      //
+      // 原来这里断言的是 `a.generatedAt == b.generatedAt`，把一个真实缺陷
+      // 锁成了「正确行为」：generatedAt 沿用缓存意味着报告头写的是 App
+      // 启动时间而非复制时间。时间必须随调用推进，见
+      // diagnostic_report_time_test.dart。
+      expect(a.appVersion, b.appVersion);
+      expect(a.buildNumber, b.buildNumber);
+      expect(a.packageName, b.packageName);
+      expect(a.osVersion, b.osVersion);
     });
   });
 

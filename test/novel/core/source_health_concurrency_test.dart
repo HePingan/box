@@ -1,4 +1,3 @@
-import 'dart:async';
 
 import 'package:box/novel/core/source_health_service.dart';
 import 'package:box/novel/pages/source_manager/book_source_model.dart';
@@ -120,7 +119,7 @@ class _RecordingService extends SourceHealthService {
     if (_active > peakConcurrency) peakConcurrency = _active;
     try {
       if (delay > Duration.zero) await Future<void>.delayed(delay);
-      if (failIndexes.any((i) => source.bookSourceUrl.endsWith('/${i}'))) {
+      if (failIndexes.any((i) => source.bookSourceUrl.endsWith('/$i'))) {
         // 真实 ping 内部已把失败收敛成 down 快照，这里模拟同样契约
         return SourceHealthSnapshot(
           sourceId: source.id,

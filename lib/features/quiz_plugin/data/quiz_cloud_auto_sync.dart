@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../utils/app_logger.dart';
+import '../../../utils/log_channels.dart';
+
 import './quiz_cloud_pull.dart';
 
 /// 静默自动增量同步：启动/回前台触发，默认间隔 ≥ 6 小时。
@@ -48,31 +51,51 @@ class QuizCloudAutoSync {
 
     final status = await _pull.loadStatus();
     if (!force) {
-      final last = status.lastSyncAt;
-      if (last != null && DateTime.now().difference(last) < _minInterval) {
-        return null;
-      }
-      // 冷却：避免 resume 抖动
-      final attempted = _lastAttemptAt;
-      if (attempted != null &&
-          DateTime.now().difference(attempted) < const Duration(minutes: 10)) {
-        return null;
+      // 上一轮被中断（切后台/杀进程/断网）会在本地留下不完整的题库，
+      // 此时必须续拉，否则用户会看到「同步过却一道题都搜不到」。
+      final pending = await _pull.hasIncompleteSync();
+      if (pending) {
+        _log('incomplete sync detected, resuming');
+      } else {
+        final last = status.lastSyncAt;
+        if (last != null && DateTime.now().difference(last) < _minInterval) {
+          return null;
+        }
+        // 冷却：避免 resume 抖动
+        final attempted = _lastAttemptAt;
+        if (attempted != null &&
+            DateTime.now().difference(attempted) < const Duration(minutes: 10)) {
+          return null;
+        }
       }
     }
 
     _running = true;
     _lastAttemptAt = DateTime.now();
     try {
-      debugPrint('[QuizCloudAutoSync] start ($reason)');
+      _log('start ($reason)');
       final result = await _pull.pullAll();
-      debugPrint('[QuizCloudAutoSync] done: ${result.summaryText}');
+      _log('done: ${result.summaryText}');
       return result;
     } catch (e, st) {
+      // 走 AppLogger 而不是只 debugPrint：报障的人在 App 内「调试日志」页
+      // 找同步证据，而 release 包的 debugPrint 不落盘，日志页永远搜不到。
+      AppLogger.instance.logChannelError(LogChannel.quiz, e, st);
       debugPrint('[QuizCloudAutoSync] failed: $e\n$st');
       return null;
     } finally {
       _running = false;
     }
+  }
+
+  /// 题库同步日志双写：logcat + AppLogger。
+  ///
+  /// 只写 debugPrint 是历史遗留缺陷——66 处调用点里绝大多数如此，
+  /// 结果用户按提示去「调试日志」页却什么都搜不到（"我找不到那个"）。
+  /// AppLogger 那条才进 SharedPreferences、才出现在日志页、才可搜索。
+  void _log(String message) {
+    AppLogger.instance.logTo(LogChannel.quiz, message);
+    debugPrint('[QuizCloudAutoSync] $message');
   }
 
   void dispose() => _pull.dispose();

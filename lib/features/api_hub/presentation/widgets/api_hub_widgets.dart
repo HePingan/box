@@ -213,22 +213,36 @@ class ApiHubPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
+    // 外壳用 Material 而不是 Container+BoxDecoration。
+    //
+    // 视觉完全一致（白底 + 26 圆角 + 描边 + 同一组阴影），但多了一件要紧的事：
+    // 给面板内容提供 Material 语境。ListTile / ExpansionTile / InkWell 都把
+    // 背景和水波纹画到最近的 Material 祖先上，之前那层白底 Container 会把它们
+    // 盖掉 —— 「可用 API 清单」每行都可点却没有按压反馈，framework 还会抛
+    // 「ListTile background color or ink splashes may be invisible」断言。
+    // 修在外壳上，所有面板一次受益，不用每个面板各自包一层。
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Material(
         color: Colors.white,
         borderRadius: BorderRadius.circular(26),
-        border: Border.all(color: const Color(0xFFE9EEF7)),
-        boxShadow: AppTokens.shadowSm(color: AppTokens.primaryBlue),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          AppSectionHeader(title: title, subtitle: subtitle, icon: icon),
-          const SizedBox(height: 12),
-          child,
-        ],
+        shadowColor: AppTokens.primaryBlue.withValues(alpha: 0.06),
+        elevation: 1.5,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(26),
+            border: Border.all(color: const Color(0xFFE9EEF7)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AppSectionHeader(title: title, subtitle: subtitle, icon: icon),
+              const SizedBox(height: 12),
+              child,
+            ],
+          ),
+        ),
       ),
     );
   }

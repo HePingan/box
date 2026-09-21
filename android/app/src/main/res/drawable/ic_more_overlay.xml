@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 溢出菜单图标：三点（区域选择 / 一键录入等低频动作入口）。
+     规格与标题栏其它图标一致（24dp 视口、白色、由 tint 统一着色）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,8.5m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,15.5m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M5,12m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M19,12m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
+</vector>

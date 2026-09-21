@@ -6,20 +6,20 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   setUp(() {
     QuizBankCache.instance.assign([
-      QuizBankItem(
+      const QuizBankItem(
         id: 'image-a',
         question: '如图所示标志的含义是什么？',
         type: QuizQuestionType.singleChoice,
-        options: const ['注意行人', '注意儿童', '注意信号灯', '注意非机动车'],
+        options: ['注意行人', '注意儿童', '注意信号灯', '注意非机动车'],
         correctAnswer: '注意行人',
         imageRegionHash: '0000000000000000',
         source: 'test',
       ),
-      QuizBankItem(
+      const QuizBankItem(
         id: 'image-b',
         question: '如图所示标志的含义是什么？',
         type: QuizQuestionType.singleChoice,
-        options: const ['注意行人', '注意儿童', '注意信号灯', '注意非机动车'],
+        options: ['注意行人', '注意儿童', '注意信号灯', '注意非机动车'],
         correctAnswer: '注意儿童',
         imageRegionHash: 'ffffffffffffffff',
         source: 'test',

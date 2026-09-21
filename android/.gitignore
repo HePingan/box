@@ -10,5 +10,8 @@ GeneratedPluginRegistrant.java
 # Remember to never publicly share your keystore.
 # See https://flutter.dev/to/reference-keystore
 key.properties
+# 构建入口标记（tool/build_release_with_update_sign.sh 写入 / trap 清理）。
+# 正常情况下不会残留；万一脚本被 kill -9，残留文件也不该进 git。
+.update-sign-injected
 **/*.keystore
 **/*.jks

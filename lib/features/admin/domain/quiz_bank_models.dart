@@ -17,6 +17,7 @@ class QuizBankQuestion extends ResourceData {
     this.updatedAt,
     this.submitter,
     this.image = '',
+    this.issueReason = '',
   });
 
   final String id;
@@ -34,14 +35,18 @@ class QuizBankQuestion extends ResourceData {
   final DateTime? updatedAt;
   final String? submitter;
   final String image;
+  final String issueReason;
 
   bool get isPublished => status == 'published' || status == 'active';
+
+  bool get isIssue => status == 'incomplete';
 
   String get statusLabel => switch (status) {
     'published' || 'active' => '已发布',
     'pending' || 'pending_review' => '待审核',
     'rejected' => '已拒绝',
     'draft' => '草稿',
+    'incomplete' => '问题题',
     _ => status.isEmpty ? '未知' : status,
   };
 
@@ -79,6 +84,7 @@ class QuizBankQuestion extends ResourceData {
                       : null) ??
                   '')
               .toString(),
+      issueReason: (json['issueReason'] ?? json['reason'] ?? '').toString(),
     );
   }
 
@@ -98,6 +104,7 @@ class QuizBankQuestion extends ResourceData {
     updatedAt: updatedAt,
     submitter: submitter,
     image: image ?? this.image,
+    issueReason: issueReason,
   );
 
   @override

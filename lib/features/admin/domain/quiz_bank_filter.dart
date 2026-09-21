@@ -46,7 +46,8 @@ enum QuizStatusFilter {
   any('全部状态', {}),
   approved('已通过', {'approved', 'active', 'published', 'ok'}),
   pending('待审核', {'pending', 'pending_review', 'review'}),
-  rejected('已拒绝', {'rejected', 'denied'});
+  rejected('已拒绝', {'rejected', 'denied'}),
+  issue('问题题', {'incomplete', 'issue'});
 
   const QuizStatusFilter(this.label, this.aliases);
 

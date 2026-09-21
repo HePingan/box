@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:box/app_drawer.dart';
+import 'package:box/app/app_routes.dart';
+import 'package:box/features/about/presentation/about_page.dart';
 import 'package:box/features/cloud_sync/domain/announcement_center.dart';
 import 'package:box/features/settings/presentation/settings_page.dart';
 
@@ -40,7 +42,11 @@ void main() {
       ChangeNotifierProvider<AnnouncementCenter>.value(
         value: AnnouncementCenter(),
         child: MaterialApp(
-          routes: {'/settings': (_) => const SettingsPage()},
+          routes: {
+            '/settings': (_) => const SettingsPage(),
+            // 关于改成整页后必须注册，否则点「关于」抛路由异常。
+            AppRoutes.about: (_) => const AboutPage(versionOverride: '1.9.8+198'),
+          },
           home: const Scaffold(
             drawer: AppDrawer(),
             body: SizedBox.shrink(),
@@ -90,53 +96,51 @@ void main() {
     );
   });
 
-  testWidgets('关闭「关于」弹窗后，侧边栏同样还在', (tester) async {
+  testWidgets('从「关于」页返回后，侧边栏同样还在', (tester) async {
+    // 原先「关于」是抽屉里的 AlertDialog，这条测的是关掉弹窗后抽屉还在。
+    // 现在「关于」改成了整页（AppRoutes.about），断言随之改为"从页面返回后
+    // 抽屉还在" —— 要防的毛病没变（先 pop 抽屉再打开目标，返回时抽屉已消失）。
     await pumpDrawer(tester);
     final scaffold = tester.state<ScaffoldState>(find.byType(Scaffold).first);
 
     await tester.ensureVisible(find.text('关于'));
     await tester.tap(find.text('关于'));
     await tester.pumpAndSettle();
-    // 抽屉头部本来就写着「Geek工具箱 Pro」，不 pop 抽屉之后它与弹窗标题
-    // 同时在树里，所以要限定在 AlertDialog 范围内找。
-    expect(
-      find.descendant(
-        of: find.byType(AlertDialog),
-        matching: find.text('Geek工具箱 Pro'),
-      ),
-      findsOneWidget,
-      reason: '关于框已弹出',
-    );
 
-    await tester.tap(find.text('关闭'));
+    expect(find.byType(AboutPage), findsOneWidget, reason: '关于页已打开');
+
+    final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
+    nav.pop();
     await tester.pumpAndSettle();
 
     expect(
       scaffold.isDrawerOpen,
       isTrue,
-      reason: '「关于」也是先 pop 抽屉再弹框，同一个毛病',
+      reason: '「关于」也走 _openRoute，同一个先 pop 抽屉的毛病不能复发',
     );
   });
 
-  testWidgets('关于框里的「检查更新」按钮仍然存在（不能退回哑掉的老 bug）', (tester) async {
+  testWidgets('「检查更新」入口没丢：抽屉里有，关于页里也有', (tester) async {
+    // 这条按钮曾因为传了已 pop 的抽屉 context 而静默无反应
+    // （见 test/update/manual_check_snackbar_test.dart）。关于从弹窗改整页时
+    // 动了同一段时序，必须确认入口没被弄丢。
     await pumpDrawer(tester);
+
+    // 抽屉「帮助」组那条（忽略某版本后唯一的找回入口）
+    expect(find.text('检查更新'), findsOneWidget);
 
     await tester.ensureVisible(find.text('关于'));
     await tester.tap(find.text('关于'));
     await tester.pumpAndSettle();
 
-    // 这条按钮曾因为传了已 pop 的抽屉 context 而静默无反应
-    // （见 test/update/manual_check_snackbar_test.dart）。本轮改动动了
-    // 同一段 pop 时序，必须确认入口没被弄丢。
-    //
-    // 限定在 AlertDialog 内查找：抽屉「帮助」组现在也有一条「检查更新」，
-    // 不限定范围会同时命中两个。
+    // 关于页里的镜像入口
     expect(
       find.descendant(
-        of: find.byType(AlertDialog),
+        of: find.byType(AboutPage),
         matching: find.text('检查更新'),
       ),
       findsOneWidget,
+      reason: '关于页必须保留检查更新入口，用户习惯在这里找',
     );
   });
 }

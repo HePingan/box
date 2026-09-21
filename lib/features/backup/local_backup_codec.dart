@@ -12,15 +12,21 @@ class LocalBackupCodec {
   /// v2 增加了 `prefs` 段（小说书架/书源/阅读进度等 SharedPreferences 资产）。
   /// v1 的备份文件里没有这一段，但仍然必须能恢复 —— 用户手上可能已经存了
   /// v1 备份，拒绝读会把「还能救回一部分」变成「完全救不回」。
-  static const version = 2;
+  ///
+  /// v3 增加了 `sections` 段，给「既不在 Hive、也不在 prefs」的数据留位置。
+  /// 第一个住户是漫画收藏：它落在 CacheStore 的文件里，前两版备份完全没带上
+  /// 它 —— 用户导出、重装、恢复，提示成功，漫画书架却是空的。
+  static const version = 3;
 
   /// 仍然接受的历史版本。
-  static const supportedVersions = <int>{1, 2};
+  static const supportedVersions = <int>{1, 2, 3};
 
   static String encode({
     required Map<String, List<Map<String, dynamic>>> hiveBoxes,
     required String quizJson,
     Map<String, dynamic> prefs = const <String, dynamic>{},
+    Map<String, List<Map<String, dynamic>>> extraSections =
+        const <String, List<Map<String, dynamic>>>{},
   }) {
     return const JsonEncoder.withIndent('  ').convert({
       'format': format,
@@ -29,6 +35,7 @@ class LocalBackupCodec {
       'quiz': jsonDecode(quizJson),
       'hive': hiveBoxes,
       'prefs': prefs,
+      'sections': extraSections,
     });
   }
 
@@ -71,10 +78,28 @@ class LocalBackupCodec {
         prefs[entry.key as String] = entry.value;
       }
     }
+    // v1/v2 备份没有 sections 段，按空处理而不是报错。
+    final sectionsRaw = value['sections'];
+    final sections = <String, List<Map<String, dynamic>>>{};
+    if (sectionsRaw is Map) {
+      for (final entry in sectionsRaw.entries) {
+        if (entry.key is! String || entry.value is! List) {
+          throw const FormatException('备份中的扩展分区格式错误');
+        }
+        final records = <Map<String, dynamic>>[];
+        for (final record in entry.value as List) {
+          if (record is Map) {
+            records.add(Map<String, dynamic>.from(record));
+          }
+        }
+        sections[entry.key as String] = records;
+      }
+    }
     return LocalBackupData(
       quizJson: jsonEncode(quiz),
       hiveBoxes: hive,
       prefs: prefs,
+      extraSections: sections,
     );
   }
 }
@@ -84,10 +109,14 @@ class LocalBackupData {
     required this.quizJson,
     required this.hiveBoxes,
     this.prefs = const <String, dynamic>{},
+    this.extraSections = const <String, List<Map<String, dynamic>>>{},
   });
   final String quizJson;
   final Map<String, List<Map<String, dynamic>>> hiveBoxes;
 
   /// SharedPreferences 资产（小说书架/书源/阅读进度等）。v1 备份为空。
   final Map<String, dynamic> prefs;
+
+  /// 既不在 Hive 也不在 prefs 的数据分区（如漫画收藏）。v1/v2 备份为空。
+  final Map<String, List<Map<String, dynamic>>> extraSections;
 }

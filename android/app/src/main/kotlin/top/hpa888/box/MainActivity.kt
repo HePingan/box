@@ -136,6 +136,9 @@ class MainActivity : FlutterActivity() {
         // 阅读器按键 MethodChannel — 音量键翻页
         const val READER_KEYS_CHANNEL = "top.hpa888.box/reader_keys"
 
+        // 屏幕物理尺寸 MethodChannel — 刻度尺读真实 xdpi/ydpi
+        const val SCREEN_METRICS_CHANNEL = "top.hpa888.box/screen_metrics"
+
         private const val REQUEST_OVERLAY_PERMISSION = 1001
         private const val REQUEST_NOTIFICATION_PERMISSION = 1002
 
@@ -318,6 +321,11 @@ class MainActivity : FlutterActivity() {
 
                     result.success(true)
                 }
+                "updateAiProcess" -> {
+                    val text = call.argument<String>("text")
+                    val ok = QuizAccessibilityService.updateAiProcessIfRunning(text)
+                    result.success(ok)
+                }
                 "openRegionSelector" -> {
                     val opened = QuizAccessibilityService.enterRegionModeIfRunning()
                     result.success(opened)
@@ -451,6 +459,30 @@ class MainActivity : FlutterActivity() {
                 "cancel" -> handleControlCancel(call.argument("id"), result)
                 "remove" -> handleRemove(call.argument("id"), result)
                 "snapshots" -> handleSnapshots(result)
+                else -> result.notImplemented()
+            }
+        }
+
+        // ── 屏幕物理尺寸 MethodChannel（刻度尺用真实 xdpi/ydpi）──
+        // 为什么不用 Dart 侧 devicePixelRatio*160 估算：那是 Android 基准密度，
+        // 不同机型系统性偏几毫米。DisplayMetrics.xdpi/ydpi 才是本机真实值。
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            SCREEN_METRICS_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getScreenMetrics" -> {
+                    val dm = resources.displayMetrics
+                    result.success(
+                        mapOf(
+                            "widthPx" to dm.widthPixels,
+                            "heightPx" to dm.heightPixels,
+                            "xdpi" to dm.xdpi.toDouble(),
+                            "ydpi" to dm.ydpi.toDouble(),
+                            "densityDpi" to dm.densityDpi,
+                        )
+                    )
+                }
                 else -> result.notImplemented()
             }
         }

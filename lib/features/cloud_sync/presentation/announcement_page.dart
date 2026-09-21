@@ -160,7 +160,7 @@ class _AnnouncementCard extends StatelessWidget {
                 Container(
                   width: 8,
                   height: 8,
-                  decoration: BoxDecoration(
+                  decoration: const BoxDecoration(
                     color: AppTokens.danger,
                     shape: BoxShape.circle,
                   ),

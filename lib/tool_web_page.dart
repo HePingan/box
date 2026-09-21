@@ -93,9 +93,10 @@ class _ToolWebPageState extends State<ToolWebPage> {
         backgroundColor: Colors.white,
         elevation: 0,
         scrolledUnderElevation: 0,
+        // label 留空：`widget.title` 已经交给上面的 title 了。
+        // 同一个串进两个槽位会挤爆固定宽的 leading 并与 title 重叠。
         leading: AppBackButton(
           onPressed: () => Navigator.pop(context),
-          label: widget.title,
         ),
         actions: [
           // 添加一个刷新按钮，如果工具卡住了可以点击重载

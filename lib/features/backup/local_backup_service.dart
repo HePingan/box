@@ -9,6 +9,9 @@ import '../../novel/core/bookshelf_group.dart';
 import '../../novel/core/bookshelf_manager.dart';
 import '../../novel/pages/reader/reader_paginator.dart';
 import '../quiz_plugin/domain/quiz_bank.dart';
+import 'package:box/features/comic/domain/comic_library_backup.dart';
+import 'package:box/features/comic/domain/comic_library_store.dart';
+
 import 'backup_pref_keys.dart';
 import 'local_backup_codec.dart';
 
@@ -86,6 +89,15 @@ class LocalBackupService {
   static Future<String> Function() exportQuizJson = defaultQuizExport;
   static Future<int> Function(String raw) importQuizJson = defaultQuizImport;
 
+  /// 漫画收藏的采集/恢复通道。
+  ///
+  /// 漫画库落在 CacheStore 的文件里，既不是 Hive 也不是 prefs，所以必须单独
+  /// 接一条线；做成可替换的函数是为了测试不必碰真实文件系统。
+  static Future<List<Map<String, dynamic>>> Function() exportComicLibrary =
+      () => ComicLibraryBackup.export(ComicLibraryStore());
+  static Future<int> Function(List<dynamic> records) importComicLibrary =
+      (records) => ComicLibraryBackup.import(ComicLibraryStore(), records);
+
   /// 默认实现暴露成公开名字，测试才能在 tearDown 里还原钩子。
   /// 否则替换过的钩子会泄漏到后续用例，制造跨文件的诡异失败。
   static Future<String> defaultQuizExport() =>
@@ -108,10 +120,21 @@ class LocalBackupService {
           {'key': key.toString(), 'value': _jsonSafe(box.get(key))},
       ];
     }
+    // 漫画收藏单独采集：它不在 Hive / prefs 里，漏掉就是静默丢失。
+    // 采集失败不该让整个备份失败——宁可少一个分区，也不要用户拿不到备份。
+    var comics = const <Map<String, dynamic>>[];
+    try {
+      comics = await exportComicLibrary();
+    } catch (_) {
+      // 保持空分区
+    }
     return LocalBackupCodec.encode(
       quizJson: await exportQuizJson(),
       hiveBoxes: hive,
       prefs: await _readPrefsOrEmpty(),
+      extraSections: {
+        if (comics.isNotEmpty) ComicLibraryBackup.sectionKey: comics,
+      },
     );
   }
 
@@ -256,6 +279,16 @@ class LocalBackupService {
     // 不失效的后果不是「显示不刷新」这么轻——BookshelfManager 之类
     // 是「读缓存 → 改 → 全量写回」的模式，用户恢复后随手加一本书就会
     // 把刚恢复的书架整个覆盖掉，而提示语说的是恢复成功。
+    // 漫画收藏：合并恢复，坏条目跳过。
+    final comicRecords = data.extraSections[ComicLibraryBackup.sectionKey];
+    if (comicRecords != null && comicRecords.isNotEmpty) {
+      try {
+        restored += await importComicLibrary(comicRecords);
+      } catch (_) {
+        // 同理：漫画恢复失败不该让已恢复的其他数据白费。
+      }
+    }
+
     await _invalidateInMemoryCaches();
 
     return restored + await importQuizJson(data.quizJson);

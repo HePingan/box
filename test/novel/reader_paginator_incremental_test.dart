@@ -5,7 +5,7 @@ import 'package:box/novel/pages/reader/reader_paginator.dart';
 
 final _content = List.generate(
   60,
-  (i) => '第${i + 1}段：' + '这是一段用于验证增量分页不会丢失尾部内容的中文正文。' * 3,
+  (i) => '第${i + 1}段：${'这是一段用于验证增量分页不会丢失尾部内容的中文正文。' * 3}',
 ).join('\n\n');
 
 ReaderPaginationRequest _request() => ReaderPaginationRequest(

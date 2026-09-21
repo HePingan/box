@@ -99,6 +99,112 @@ class ApiHubCurrencyPanel extends StatelessWidget {
   }
 }
 
+/// OpenLibrary 图书搜索面板。
+///
+/// `PublicApiClient.searchOpenLibrary` 和 `PublicBookResult` 早就写好了，
+/// 但一直没有任何面板消费它们 —— 工具页的「图书搜索」把 `initialTool: 'books'`
+/// 传进 API Hub，而 registry 里当时没有 `books`，于是被 `byId` 的 orElse
+/// 静默换成天气。这个面板就是那条链路缺掉的最后一环。
+class ApiHubBooksPanel extends StatelessWidget {
+  const ApiHubBooksPanel({
+    super.key,
+    required this.controller,
+    required this.books,
+    required this.onSubmit,
+  });
+
+  final TextEditingController controller;
+  final List<PublicBookResult> books;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    return ApiHubPanel(
+      title: 'OpenLibrary 图书搜索',
+      subtitle: '按书名或作者查在线书目，返回封面与首版年份',
+      icon: Icons.menu_book_rounded,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ApiHubSearchRow(
+            controller: controller,
+            label: '书名 / 作者',
+            buttonLabel: '搜索',
+            onSubmit: onSubmit,
+          ),
+          const SizedBox(height: 12),
+          if (books.isEmpty)
+            const AppEmptyState(
+              title: '暂无图书结果',
+              message: '输入书名或作者后搜索，例如 clean code',
+              icon: Icons.menu_book_rounded,
+            )
+          else
+            ...books.take(12).map((book) => _ApiHubBookTile(book)),
+        ],
+      ),
+    );
+  }
+}
+
+class _ApiHubBookTile extends StatelessWidget {
+  const _ApiHubBookTile(this.book);
+
+  final PublicBookResult book;
+
+  @override
+  Widget build(BuildContext context) {
+    final cover = book.coverUrl;
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: SizedBox(
+        width: 40,
+        height: 56,
+        child: cover == null
+            ? _coverFallback()
+            : ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: Image.network(
+                  cover,
+                  fit: BoxFit.cover,
+                  // 封面来自 covers.openlibrary.org，国内网络经常拉不动，
+                  // 拉不到就退回占位图标，不能让整行崩掉或留白。
+                  errorBuilder: (_, _, _) => _coverFallback(),
+                ),
+              ),
+      ),
+      title: Text(
+        book.title,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: AppTokens.textPrimary,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      subtitle: Text(
+        book.year == null ? book.author : '${book.author} · ${book.year}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+  Widget _coverFallback() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF9333EA).withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: const Icon(
+        Icons.menu_book_rounded,
+        size: 18,
+        color: Color(0xFF9333EA),
+      ),
+    );
+  }
+}
+
 class ApiHubHolidayPanel extends StatelessWidget {
   const ApiHubHolidayPanel({super.key, required this.holidays});
 

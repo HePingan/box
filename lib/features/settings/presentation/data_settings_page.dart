@@ -159,11 +159,10 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
 
   Future<void> _restoreLocalData(BuildContext context) async {
     try {
-      final picked = await FilePicker.pickFiles(
+      final file = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: const ['json'],
       );
-      final file = picked?.files.single;
       final bytes = await file?.readAsBytes();
       if (bytes == null || bytes.isEmpty || !context.mounted) return;
       final count = await LocalBackupService.restoreBackupBytes(bytes);

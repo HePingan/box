@@ -113,10 +113,10 @@ class ReferenceSectionState extends State<ReferenceSection> {
         );
         imagePath = picked?.path;
       } else {
-        final result = await FilePicker.pickFiles(
+        final result = await FilePicker.pickFile(
           type: FileType.image,
         );
-        filePath = result?.files.single.path;
+        filePath = result?.path;
       }
       final localPath = imagePath ?? filePath;
       if (localPath == null || localPath.isEmpty) return;

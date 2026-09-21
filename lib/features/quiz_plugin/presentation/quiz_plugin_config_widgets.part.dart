@@ -301,35 +301,73 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('允许外部网络搜题'),
-                  subtitle: const Text('默认关闭：关闭时只查本地题库，避免把题目发送到第三方 API'),
+                  subtitle: const Text(
+                    '开启后，本地题库未命中的题会截图交给 AI 读屏作答（含读图题）。'
+                    '地址与密钥留空即用内置通道，无需填写。',
+                  ),
                   value: _cfg.allowExternalApi,
                   onChanged: (v) =>
                       setState(() => _cfg = _cfg.copyWith(allowExternalApi: v)),
                 ),
-                const SizedBox(height: AppTokens.spaceSm),
-                TextField(
-                  enabled: _cfg.allowExternalApi,
-                  decoration: const InputDecoration(
-                    labelText: 'API 地址',
-                    hintText: 'https://example.com/search',
-                    helperText: '需先开启“允许外部网络搜题”',
-                    border: OutlineInputBorder(),
-                    isDense: true,
+                if (_cfg.allowExternalApi)
+                  Padding(
+                    padding: const EdgeInsets.only(top: AppTokens.spaceXs),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.check_circle_outline_rounded,
+                          size: 16,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            '当前使用内置通道（deepseek），填下方自定义地址可覆盖',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  controller: _apiUrlController,
-                  onChanged: (v) => _cfg = _cfg.copyWith(apiUrl: v),
-                ),
-                const SizedBox(height: AppTokens.spaceMd),
-                TextField(
-                  enabled: _cfg.allowExternalApi,
-                  decoration: const InputDecoration(
-                    labelText: 'API Key',
-                    border: OutlineInputBorder(),
-                    isDense: true,
+                // 高级项折叠：默认端点可用时，绝大多数用户不需要碰这两项。
+                ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: const EdgeInsets.only(bottom: AppTokens.spaceSm),
+                  initiallyExpanded:
+                      _cfg.apiUrl.trim().isNotEmpty || _cfg.apiKey.trim().isNotEmpty,
+                  title: Text(
+                    '自定义 API 通道（高级）',
+                    style: Theme.of(context).textTheme.bodyMedium,
                   ),
-                  obscureText: true,
-                  controller: _apiKeyController,
-                  onChanged: (v) => _cfg = _cfg.copyWith(apiKey: v),
+                  subtitle: const Text('留空使用内置通道；自建代理时填写'),
+                  children: [
+                    TextField(
+                      enabled: _cfg.allowExternalApi,
+                      decoration: const InputDecoration(
+                        labelText: 'API 地址（可选）',
+                        hintText: 'https://newapi.hpa888.top/v1',
+                        helperText: 'OpenAI 兼容地址（不含 /chat/completions），留空用内置',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      controller: _apiUrlController,
+                      onChanged: (v) => _cfg = _cfg.copyWith(apiUrl: v),
+                    ),
+                    const SizedBox(height: AppTokens.spaceMd),
+                    TextField(
+                      enabled: _cfg.allowExternalApi,
+                      decoration: const InputDecoration(
+                        labelText: 'API Key（可选）',
+                        hintText: 'sk-...',
+                        helperText: '留空用内置密钥；模型固定 deepseek',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      obscureText: true,
+                      controller: _apiKeyController,
+                      onChanged: (v) => _cfg = _cfg.copyWith(apiKey: v),
+                    ),
+                  ],
                 ),
               ],
             ),

@@ -4,8 +4,8 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
-import '../../../account/data/account_store.dart';
-import '../../../account/domain/account_models.dart';
+import 'package:box/features/account/data/account_store.dart';
+import 'package:box/features/account/domain/account_models.dart';
 
 /// 远端插件市场 API（投稿 / 我的 / 商店清单 / 管理审核）。
 class PluginMarketApi {
@@ -197,12 +197,7 @@ class PluginMarketApi {
     throw lastErr ?? const PluginMarketApiException('下载失败');
   }
 
-  static String _err(Object e) {
-    if (e is TimeoutException) return '下载超时，请检查网络后重试';
-    if (e is SocketException) return '网络连接失败，请重试';
-    if (e is PluginMarketApiException) return e.friendlyMessage;
-    return '下载失败：${e.toString()}';
-  }
+  static String _err(Object e) => pluginMarketFriendlyError(e);
 
   Future<List<PluginSubmissionDto>> listMine() async {
     final uri = await _uri('/api/plugins/mine');
@@ -427,6 +422,18 @@ class PluginPackageDownload {
   final List<int> bytes;
   final String sha256;
   final String format;
+}
+
+/// 把任意异常转成面向用户的中文说明（插件市场域**唯一事实源**）。
+///
+/// 此前 UI 层各自抄了一份弱化版（只认 PluginMarketApiException，其余直接
+/// `toString()`），导致超时/断网时用户看到裸 `SocketException: ...` 而非可读提示。
+/// 所有 UI 一律委托本函数。
+String pluginMarketFriendlyError(Object e) {
+  if (e is TimeoutException) return '请求超时，请检查网络后重试';
+  if (e is SocketException) return '网络连接失败，请检查网络后重试';
+  if (e is PluginMarketApiException) return e.friendlyMessage;
+  return '操作失败：${e.toString()}';
 }
 
 class PluginMarketApiException implements Exception {

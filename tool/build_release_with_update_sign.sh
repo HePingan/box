@@ -16,7 +16,8 @@
 #   3. 报错退出（绝不静默构建出一个验签必失败的包）
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
 
 SECRET_FILE="${SECRET_FILE:-/root/.secrets/box-update-manifest-sign-secret}"
 CHECK_URL="${UPDATE_CHECK_URL:-https://box.hpa888.top/api/v1/app-updates/check}"
@@ -60,6 +61,33 @@ fi
 # 只打印指纹，绝不打印密钥本身（构建日志可能被贴到别处）
 FP="$(printf '%s' "$SECRET" | sha256sum | cut -c1-12)"
 
+# ---- 导出给 Gradle（A 档守卫的判据）----------------------------------------
+# android/app/build.gradle.kts 的 verifyUpdateSignInjected 任务靠
+# UPDATE_SIGNATURE_SECRET 这个**环境变量**判断密钥是否注入。下面 flutter build
+# 里的 --dart-define 只传给了 Dart 侧，Gradle 进程看不到 —— 必须在这里 export，
+# 否则守卫会把正式构建也当成 plain build 拦下来（已实测踩到）。
+export UPDATE_SIGNATURE_SECRET="$SECRET"
+
+# ---- 入口标记（B 档守卫的另一半）-------------------------------------------
+# 没有这个标记，tool/preflight_release_guard.sh 会阻断构建；plain build 拿不到标记。
+# 标记里只放指纹，不放密钥。trap 保证任何退出路径（成功/失败/Ctrl-C）都清理，
+# 否则残留标记会骗过守卫下一次 plain build。
+MARKER="$REPO_ROOT/android/.update-sign-injected"
+if [[ ! -d "$REPO_ROOT/android" ]]; then
+  echo "[错误] 找不到 $REPO_ROOT/android，无法写入入口标记。" >&2
+  exit 1
+fi
+{
+  echo "versionCode=$VERSION_CODE"
+  echo "secretFingerprint=$FP"
+  echo "channel=$CHANNEL"
+  echo "targetPlatform=$TARGET_PLATFORM"
+  echo "writtenAt=$(date -Is)"
+  echo "pid=$$"
+} > "$MARKER"
+cleanup_marker() { rm -f "$MARKER"; }
+trap cleanup_marker EXIT INT TERM
+
 echo "==> 更新验签配置"
 echo "    check URL   : $CHECK_URL"
 echo "    算法        : $SIG_ALGO"
@@ -77,6 +105,11 @@ else
   echo "    混淆        : 关闭（OBFUSCATE=0）"
 fi
 echo
+
+# ---- 入口守卫自检（B 档）---------------------------------------------------
+# 标记刚写完，立刻回跑一次守卫：如果守卫脚本本身被改坏（例如标记路径写错），
+# 这里就会暴露，而不是等到「某天 plain build 又漏过去」才发现。
+bash "$REPO_ROOT/tool/preflight_release_guard.sh"
 
 flutter build apk --release \
   --target-platform "$TARGET_PLATFORM" \
@@ -105,7 +138,10 @@ echo "    SHA-256: $(sha256sum "$APK" | cut -d" " -f1)"
 # 所以在这里直接搜 libapp.so，产物里没有密钥就不让发。
 if [[ "$SIG_ALGO" == "hmac_sha256" ]]; then
   SECRET_PROBE_DIR="$(mktemp -d)"
-  trap 'rm -rf "$SECRET_PROBE_DIR"' EXIT
+  # 注意：这里**不能**直接 trap 'rm -rf ...' EXIT —— 那会覆盖上面清理入口标记的
+  # trap，标记就残留下来骗过守卫（已实测踩到）。合并成一个 trap。
+  cleanup_probe() { rm -rf "$SECRET_PROBE_DIR"; }
+  trap 'cleanup_marker; cleanup_probe' EXIT INT TERM
   unzip -q -o "$APK" 'lib/*/libapp.so' -d "$SECRET_PROBE_DIR" 2>/dev/null || true
   PROBE_SO="$(find "$SECRET_PROBE_DIR" -name libapp.so | head -1)"
   if [[ -z "$PROBE_SO" ]]; then

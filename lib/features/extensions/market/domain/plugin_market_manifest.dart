@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../core/home_plugin_core.dart';
-import '../../../../plugin_market/models/plugin_market_security.dart';
+import 'package:box/features/extensions/core/home_plugin_core.dart';
+import 'package:box/plugin_market/models/plugin_market_security.dart';
 
 String safeMarketString(dynamic value, [String fallback = '']) {
   if (value == null) return fallback;
@@ -618,6 +618,17 @@ class MarketPluginTemplate {
       sort: 13,
     ),
     const MarketPluginTemplate(
+      id: 'market_remote_storage',
+      title: '远程存储',
+      subtitle: 'WebDAV：坚果云 / 群晖 NAS / Nextcloud / 自建',
+      areaCode: 'recommend',
+      actionCode: 'openRemoteStorage',
+      payload: '',
+      icon: Icons.folder_shared_outlined,
+      color: Color(0xFF0E7490),
+      sort: 14,
+    ),
+    const MarketPluginTemplate(
       id: 'market_quick_note',
       title: '快速便签',
       subtitle: '首页快捷记录灵感',
@@ -717,28 +728,6 @@ class MarketPluginTemplate {
       sort: 20,
     ),
   ];
-}
-
-class PluginPermissionChecker {
-  const PluginPermissionChecker._();
-
-  static Future<bool> check(
-    MarketPluginTemplate template,
-    PluginPermission permission,
-  ) async {
-    if (permission == PluginPermission.none) return true;
-    return template.requiresPermission(permission);
-  }
-
-  static Future<bool> checkAll(
-    MarketPluginTemplate template,
-    Iterable<PluginPermission> permissions,
-  ) async {
-    for (final permission in permissions) {
-      if (!await check(template, permission)) return false;
-    }
-    return true;
-  }
 }
 
 class PluginMarketManifest {

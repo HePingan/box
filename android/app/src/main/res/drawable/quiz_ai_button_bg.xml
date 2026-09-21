@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AI 联网搜题按钮底：实心高对比胶囊，区别于其他纯图标按钮，
+     让用户一眼看到「这里能联网搜」。
+     2026-09-13 第二轮：紫色降饱和（#6D28D9 -> #5B21B6），避免与靛蓝标题栏
+     抢视觉中心；改为浅色描边 + 微光，保持可辨识但更克制。 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="13dp" />
+            <solid android:color="#7C3AED" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="13dp" />
+            <solid android:color="#5B21B6" />
+            <stroke android:width="1dp" android:color="#A5B4FC" />
+        </shape>
+    </item>
+</selector>

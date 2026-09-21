@@ -28,6 +28,9 @@ class BackupPrefKeys {
     // 哪些书曾离线过（正文没了会重新下）。
     'offline_books_meta_v3', // OfflineCacheService._metaKey
     'offline_cached_books_v2', // 旧版书 ID 集合，兼容老数据
+    // —— 工具页：用户自己添加的网站收藏 ——
+    // 纯手工攒出来的数据，没有任何办法重新抓回来，漏了就是不可逆丢失。
+    'tools_custom_sites_v1', // CustomSiteStore.prefsKey
   ];
 
   /// 前缀键：键名是动态生成的，只能按前缀捞。

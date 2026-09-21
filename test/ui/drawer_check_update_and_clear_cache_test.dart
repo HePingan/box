@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:box/app_drawer.dart';
+import 'package:box/app/app_routes.dart';
+import 'package:box/features/about/presentation/about_page.dart';
 import 'package:box/features/cloud_sync/domain/announcement_center.dart';
 import 'package:box/features/settings/presentation/data_settings_page.dart';
 
@@ -39,8 +41,13 @@ void main() {
     await tester.pumpWidget(
       ChangeNotifierProvider<AnnouncementCenter>.value(
         value: AnnouncementCenter(),
-        child: const MaterialApp(
-          home: Scaffold(drawer: AppDrawer(), body: SizedBox.shrink()),
+        child: MaterialApp(
+          // 关于改整页后必须注册路由，否则点「关于」抛路由异常。
+          routes: {
+            AppRoutes.about: (_) =>
+                const AboutPage(versionOverride: '1.9.8+198'),
+          },
+          home: const Scaffold(drawer: AppDrawer(), body: SizedBox.shrink()),
         ),
       ),
     );
@@ -79,7 +86,9 @@ void main() {
       );
     });
 
-    testWidgets('「关于」框里仍保留检查更新，不搬走只是多一个入口', (tester) async {
+    testWidgets('关于页里仍保留检查更新，不搬走只是多一个入口', (tester) async {
+      // 「关于」原先是 AlertDialog，现已改为整页 AboutPage。要守的点没变：
+      // 老用户习惯从关于里点检查更新，不能悄悄搬走。
       await pumpDrawer(tester);
 
       await tester.ensureVisible(find.text('关于'));
@@ -88,11 +97,11 @@ void main() {
 
       expect(
         find.descendant(
-          of: find.byType(AlertDialog),
+          of: find.byType(AboutPage),
           matching: find.text('检查更新'),
         ),
         findsOneWidget,
-        reason: '老用户已经习惯在关于框里点它，不能悄悄搬走',
+        reason: '老用户已经习惯在关于里点它，不能悄悄搬走',
       );
     });
   });

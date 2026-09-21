@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -18,6 +20,8 @@ import '../video_module.dart';
 import '../features/quiz_plugin/data/quiz_cloud_auto_sync.dart';
 import '../features/policy/plugin_policy.dart';
 import '../features/extensions/market/data/plugin_market_local_sync.dart';
+import '../utils/app_logger.dart';
+import '../utils/log_channels.dart';
 import '../features/cloud_sync/data/book_source_cloud_sync.dart';
 import '../features/cloud_sync/domain/announcement_center.dart';
 import '../features/cloud_sync/presentation/announcement_popup.dart';
@@ -151,7 +155,17 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
       // 回前台刷新插件远程策略（节流在 Store 内）
       PluginPolicyStore.instance.refresh();
       // 回前台同步市场插件下架状态并强制禁用
-      PluginMarketLocalSync().syncInstalledStatuses();
+      // 回前台同步市场插件下架状态并强制禁用。
+      // 不 await：不阻塞 resumed 回调；但必须捕获，否则内部异常会变成
+      // unhandled async error（对齐 plugin_tab 的同名调用）。
+      unawaited(
+        PluginMarketLocalSync().syncInstalledStatuses().catchError((e, st) {
+          // P1-6：以前只吞异常。回前台的同步失败（表现为「切后台再回来
+          // 插件莫名被禁用/没刷新」）在此留痕，走统一调试日志。
+          AppLogger.instance.logChannelError(LogChannel.system, e, st);
+          return const PluginMarketSyncResult(failed: true);
+        }),
+      );
     }
   }
 

@@ -576,9 +576,14 @@ class QuizOverlayManager(private val context: Context) {
         }
         // 普通兜底窗隐藏依赖无障碍服务的能力
         view.findViewById<View>(R.id.btn_area)?.visibility = View.GONE
+        view.findViewById<View>(R.id.btn_quiz_entry)?.visibility = View.GONE
         view.findViewById<View>(R.id.region_selector)?.visibility = View.GONE
         view.findViewById<View>(R.id.region_toolbar)?.visibility = View.GONE
         view.findViewById<View>(R.id.btn_close)?.setOnClickListener { hide() }
+        // 眼睛：普通兜底窗复用折叠逻辑隐藏为小圆点（2026-09-13 排版调整后仍在标题栏）
+        view.findViewById<View>(R.id.btn_hide_overlay)?.setOnClickListener {
+            toggleNormalCollapse(view)
+        }
         view.findViewById<View>(R.id.btn_search)?.setOnClickListener {
             // 普通窗无无障碍捕获，仅刷新展示
             updateNormalOverlay()
@@ -877,7 +882,8 @@ class QuizOverlayManager(private val context: Context) {
             else -> "答案"
         }
         view.findViewById<TextView>(R.id.tv_pill_label)?.text = titleText
-        view.findViewById<TextView>(R.id.tv_title)?.text = titleText
+        // 相似度徽章已迁到状态行（2026-09-13），与 AccessibilityService 侧保持一致。
+        view.findViewById<TextView>(R.id.tv_similarity_badge)?.text = titleText
     }
 
     private fun hideNormalOverlay() {

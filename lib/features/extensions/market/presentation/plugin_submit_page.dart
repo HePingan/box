@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/extensions/market/data/plugin_market_api.dart';
 
 /// 用户投稿配置型插件（表单 / zip）。
@@ -33,21 +34,14 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
   String? _zipName;
   List<int>? _zipBytes;
 
-  static const _actions = <String, String>{
-    'toast': '弹出提示',
-    'openDailyNews': '打开今日热闻',
-    'openNovelList': '打开小说列表',
-    'openVideoList': '打开视频列表',
-    'openImageGenerator': '打开 AI 生图',
-    'navigate': '路由跳转(payload=route)',
+  // 动作/分区下拉项统一由插件域枚举（单一事实源）派生，不再硬编码副本。
+  // 此前副本已真实漂移：video 在投稿页显示「视频」而其余页显示「影视」。
+  static final Map<String, String> _actions = {
+    for (final a in HomePluginActionType.displayOrder) a.name: a.label,
   };
 
-  static const _areas = <String, String>{
-    'recommend': '推荐',
-    'novel': '小说',
-    'video': '视频',
-    'music': '音乐',
-    'comic': '漫画',
+  static final Map<String, String> _areas = {
+    for (final a in HomePluginArea.displayOrder) a.name: a.label,
   };
 
   @override
@@ -90,12 +84,11 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
   }
 
   Future<void> _pickZip() async {
-    final pick = await FilePicker.pickFiles(
+    final f = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const ['zip'],
     );
-    if (pick == null || pick.files.isEmpty) return;
-    final f = pick.files.first;
+    if (f == null) return;
     Uint8List bytes;
     try {
       bytes = await f.readAsBytes();
@@ -206,10 +199,8 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
     }
   }
 
-  String _err(Object e) {
-    if (e is PluginMarketApiException) return e.friendlyMessage;
-    return e.toString();
-  }
+  /// 委托单一事实源（含超时/断网的可读提示），不再自建弱化副本。
+  String _err(Object e) => pluginMarketFriendlyError(e);
 
   @override
   Widget build(BuildContext context) {

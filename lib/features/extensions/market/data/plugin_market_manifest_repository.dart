@@ -1,12 +1,13 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'package:box/core/storage/cache_store.dart';
-import '../../../../../plugin_market/models/plugin_market_security.dart';
-import '../../../../../plugin_market/models/plugin_market_signature_verifier.dart';
-import '../domain/plugin_market_manifest.dart';
-import 'plugin_market_api.dart';
+import 'package:box/plugin_market/models/plugin_market_security.dart';
+import 'package:box/plugin_market/models/plugin_market_signature_verifier.dart';
+import 'package:box/features/extensions/market/domain/plugin_market_manifest.dart';
+import 'package:box/features/extensions/market/data/plugin_market_api.dart';
 
 class PluginMarketManifestRepository {
   PluginMarketManifestRepository({
@@ -130,7 +131,10 @@ class PluginMarketManifestRepository {
         signatureMessage: '平台审核商店',
         signatureValue: '',
       );
-    } catch (_) {
+    } catch (e) {
+      // P2-5：此前 401/500/超时/解析失败一律静默降级为「平台不可达」，
+      // 用户只看到回退后的内置清单，不知道商店其实挂了。留日志便于定位。
+      debugPrint('[plugin_market] 平台清单不可用，回退内置/缓存：$e');
       return null;
     }
   }
@@ -254,7 +258,9 @@ class PluginMarketManifestRepository {
             : '${verify.message}${security.allowUnsigned ? '（已放行）' : ''}',
         signatureValue: signature,
       );
-    } catch (_) {
+    } catch (e) {
+      // P2-5：远程清单拉取/验签/解析失败不再静默，留日志。
+      debugPrint('[plugin_market] 远程清单不可用，回退平台/缓存：$e');
       return null;
     }
   }
@@ -327,7 +333,9 @@ class PluginMarketManifestRepository {
       }
 
       return null;
-    } catch (_) {
+    } catch (e) {
+      // P2-5：缓存解析失败不再静默，留日志（回退内置清单）。
+      debugPrint('[plugin_market] 本地缓存解析失败，回退内置清单：$e');
       return null;
     }
   }

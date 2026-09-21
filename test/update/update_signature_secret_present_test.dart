@@ -20,7 +20,7 @@ void main() {
       final mode = updateSignatureModeFromName(
         AppConfig.updateSignatureAlgorithm,
       );
-      final secret = AppConfig.updateSignatureSecret;
+      const secret = AppConfig.updateSignatureSecret;
 
       if (mode == UpdateManifestSignatureMode.hmacSha256 && secret.isEmpty) {
         // 单测环境默认不注入 secret，这里不能直接 fail，否则本地跑测试永远红。

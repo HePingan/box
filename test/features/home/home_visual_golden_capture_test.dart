@@ -58,7 +58,7 @@ void main() {
       // 「继续使用」现在展示真实进度，截图里也用带进度的样本数据，
       // 这样人眼核对到的就是用户真会看到的形态。
       final continueItems = [
-        ContinueItem(
+        const ContinueItem(
           kind: ContinueKind.novel,
           id: 'n1',
           title: '诡秘之主',
@@ -66,7 +66,7 @@ void main() {
           updatedAt: 3000,
           progress: 0.42,
         ),
-        ContinueItem(
+        const ContinueItem(
           kind: ContinueKind.video,
           id: 'v1',
           title: '狂飙',
@@ -101,7 +101,7 @@ void main() {
                   ),
                 ),
               ),
-              if (action != null) action,
+              ?action,
             ],
           ),
         );
