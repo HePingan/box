@@ -108,7 +108,12 @@ void main() {
       // 项目全部 9 处调用点都是单选（历史写法一律取 .first / .single），
       // 因此 lib/ 内不应再出现 pickFiles。若将来真有多选需求，
       // 在这里显式登记白名单，而不是直接删掉这条断言。
-      const multiSelectAllowlist = <String>{};
+      const multiSelectAllowlist = <String>{
+        // 远程存储插件：选文件后逐个入传输队列（本身就是批量上传），
+        // 不是历史写法遗留，因此显式登记为多选。
+        'lib/features/extensions/plugins/remote_storage/presentation/'
+            'remote_storage_browser_page.dart',
+      };
 
       final offenders = <String>[];
       _libSources().forEach((path, code) {

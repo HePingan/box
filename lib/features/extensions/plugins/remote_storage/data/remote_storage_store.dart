@@ -1,52 +1,24 @@
-// 远程存储账户的本地持久化：沿用账号同款 AES-CBC（随机 IV）加密，
-// 独立 salt；密码/用户名仅以密文形态落 SharedPreferences。
+// 远程存储账户的本地持久化：用户名/密码仅以密文形态落 SharedPreferences。
 //
-// 与 account_store.dart 的差异仅在 salt 常量；算法保持一致，便于统一审计。
+// C1（279）：算法由"固定盐 AES-CBC"升级为"每安装随机密钥 + AES-GCM"，
+// 见 lib/utils/local_secret_codec.dart 顶部的说明。旧密文（固定盐 CBC）
+// **仍可读**：读到时用旧密钥解出来，随即按新格式重写（懒迁移），
+// 用户升级后不需要重新输入应用密码。
 
 import 'dart:convert';
 
 import 'package:box/utils/app_logger.dart';
+import 'package:box/utils/local_secret_codec.dart';
 import 'package:box/utils/log_channels.dart';
-import 'package:crypto/crypto.dart';
-import 'package:encrypt/encrypt.dart' as enc;
-import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../domain/remote_storage_models.dart';
 
-// 独立于账号存储的盐，避免跨模块密钥复用。
-const _encryptionSalt = 'box-remote-storage-v1';
+/// 旧格式（固定盐 AES-CBC）的盐，仅用于迁移读取。
+const String kRemoteStorageLegacySalt = 'box-remote-storage-v1';
 
-enc.Key _deriveKey() {
-  final digest = sha256.convert(utf8.encode(_encryptionSalt)).bytes;
-  return enc.Key(Uint8List.fromList(digest));
-}
-
-/// AES-CBC 加密（随机 IV 前缀 + 密文，整体 base64），与账号存储同构。
-String _encrypt(String plainText) {
-  final key = _deriveKey();
-  final iv = enc.IV.fromSecureRandom(16);
-  final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.cbc));
-  final encrypted = encrypter.encrypt(plainText, iv: iv);
-  final combined = Uint8List(iv.bytes.length + encrypted.bytes.length);
-  combined.setRange(0, iv.bytes.length, iv.bytes);
-  combined.setRange(iv.bytes.length, combined.length, encrypted.bytes);
-  return base64.encode(combined);
-}
-
-String? _decrypt(String encoded) {
-  try {
-    final raw = base64.decode(encoded);
-    if (raw.length < 17) return null;
-    final iv = enc.IV(Uint8List.fromList(raw.sublist(0, 16)));
-    final ciphertext = enc.Encrypted(Uint8List.fromList(raw.sublist(16)));
-    final key = _deriveKey();
-    final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.cbc));
-    return encrypter.decrypt(ciphertext, iv: iv);
-  } catch (_) {
-    return null;
-  }
-}
+/// 模块 context：决定本插件用的密钥（与账号存储不共用）。
+const String kRemoteStorageCodecContext = 'remote-storage';
 
 /// 账户仓库（SharedPreferences 单键密文）。
 class RemoteStorageStore {
@@ -57,14 +29,34 @@ class RemoteStorageStore {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(accountsKey);
       if (raw == null || raw.isEmpty) return <RemoteStorageAccount>[];
-      final plain = _decrypt(raw);
+
+      final codec = await LocalSecretCodec.openWithPrefs(
+        prefs,
+        kRemoteStorageCodecContext,
+      );
+      var plain = codec.decrypt(raw);
+      var needsMigration = false;
+      if (plain == null && LocalSecretCodec.looksLegacy(raw)) {
+        // 旧格式：解出来就按新格式重写一次，避免每次启动都走兼容分支。
+        plain = LocalSecretCodec.decryptLegacy(raw, kRemoteStorageLegacySalt);
+        needsMigration = plain != null;
+      }
       if (plain == null || plain.isEmpty) return <RemoteStorageAccount>[];
+
       final decoded = jsonDecode(plain);
       if (decoded is! List) return <RemoteStorageAccount>[];
-      return decoded
+      final accounts = decoded
           .map(RemoteStorageAccount.fromJson)
           .whereType<RemoteStorageAccount>()
           .toList();
+      if (needsMigration) {
+        await saveAccounts(accounts);
+        AppLogger.instance.logTo(
+          LogChannel.storage,
+          '远程存储凭据已迁移到新格式（每安装密钥 + AES-GCM）',
+        );
+      }
+      return accounts;
     } catch (e) {
       AppLogger.instance.logTo(
         LogChannel.storage,
@@ -77,7 +69,11 @@ class RemoteStorageStore {
 
   Future<void> saveAccounts(List<RemoteStorageAccount> accounts) async {
     final prefs = await SharedPreferences.getInstance();
+    final codec = await LocalSecretCodec.openWithPrefs(
+      prefs,
+      kRemoteStorageCodecContext,
+    );
     final plain = jsonEncode(accounts.map((a) => a.toJson()).toList());
-    await prefs.setString(accountsKey, _encrypt(plain));
+    await prefs.setString(accountsKey, codec.encrypt(plain));
   }
 }

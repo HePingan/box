@@ -1,5 +1,6 @@
-// 远程存储凭据持久化单测：AES-CBC 加密落 SharedPreferences，
-// 明文不得落盘；随机 IV 保证同一账户两次保存密文不同。
+// 远程存储凭据持久化单测：密文落 SharedPreferences（每安装密钥 + AES-GCM），
+// 明文不得落盘；随机 nonce 保证同一账户两次保存密文不同；
+// 旧格式（固定盐 AES-CBC）密文仍可读并自动迁移。
 
 import 'dart:convert';
 
@@ -8,6 +9,7 @@ import 'package:box/features/extensions/plugins/remote_storage/domain/remote_sto
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../utils/legacy_cipher.dart';
 import 'fakes.dart';
 
 void main() {
@@ -52,9 +54,10 @@ void main() {
     expect(raw, isNot(contains('super-secret')));
     expect(raw, isNot(contains('"baseUrl"')));
 
-    // 合法 base64 且长度超过 16 字节 IV 前缀。
-    final decoded = base64.decode(raw!);
-    expect(decoded.length, greaterThan(16));
+    // 新格式：`B2` 前缀 + base64(nonce ‖ 密文+认证标签)。
+    expect(raw!.startsWith('B2'), isTrue);
+    final decoded = base64.decode(raw.substring(2));
+    expect(decoded.length, greaterThan(12), reason: '12 字节 nonce + 密文');
   });
 
   test('随机 IV：两次保存密文不同，解密结果一致', () async {
@@ -103,5 +106,43 @@ void main() {
     ]);
     final loaded = await store.loadAccounts();
     expect(loaded.map((a) => a.id).toList(), ['rs_a', 'rs_b']);
+  });
+
+  test('旧格式（固定盐 CBC）密文：能读出账户并自动迁移为新格式', () async {
+    final account = testAccount(id: 'rs_old', label: '旧版', password: 'old-pass');
+    final legacy = legacyEncrypt(
+      jsonEncode([account.toJson()]),
+      kRemoteStorageLegacySalt,
+    );
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      RemoteStorageStore.accountsKey: legacy,
+    });
+
+    final store = RemoteStorageStore();
+    final loaded = await store.loadAccounts();
+
+    expect(loaded, hasLength(1), reason: '升级后不能丢掉已保存的账户');
+    expect(loaded.single.id, 'rs_old');
+    expect(loaded.single.password, 'old-pass');
+
+    // 懒迁移：盘上已换成新格式，再次读取不用再走兼容分支。
+    final raw = (await SharedPreferences.getInstance())
+        .getString(RemoteStorageStore.accountsKey)!;
+    expect(raw, isNot(legacy));
+    expect(raw, startsWith('B2'));
+    expect((await store.loadAccounts()).single.password, 'old-pass');
+  });
+
+  test('旧格式密文但缺密钥材料：旧格式仍可读（与每安装密钥无关）', () async {
+    final legacy = legacyEncrypt(
+      jsonEncode([testAccount(id: 'rs_only_legacy').toJson()]),
+      kRemoteStorageLegacySalt,
+    );
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      RemoteStorageStore.accountsKey: legacy,
+    });
+
+    final loaded = await RemoteStorageStore().loadAccounts();
+    expect(loaded.single.id, 'rs_only_legacy');
   });
 }

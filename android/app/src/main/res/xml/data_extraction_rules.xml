@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 12+ 的备份/迁移规则（C1 凭据加固的一部分）。
+
+    与 AndroidManifest 里的 android:allowBackup="false" 配套：
+    allowBackup=false 是总开关，本文件在 12+ 上把云备份与换机迁移（D2D）
+    两个通道都显式排除，避免"总开关被某个 ROM 忽略"时数据仍被带走。
+
+    为什么全排除：本地 SharedPreferences 里存的是登录 token 与远程存储的
+    应用密码（密文 + 每安装密钥材料在同一台设备上），备份出去等于把两者一起
+    交给第三方；本应用没有"必须靠备份恢复"的服务端状态。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </device-transfer>
+</data-extraction-rules>

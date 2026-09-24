@@ -1,51 +1,26 @@
+// 账号凭据（token / 用户信息）的本地持久化。
+//
+// C1：算法由"固定盐 AES-CBC"升级为"每安装随机密钥 + AES-GCM"，
+// 见 lib/utils/local_secret_codec.dart 顶部的说明。旧密文**仍可读**：
+// 读到旧格式时用旧密钥解出来，随即按新格式重写（懒迁移），
+// 用户升级后不会被登出。
+
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:crypto/crypto.dart';
-import 'package:encrypt/encrypt.dart' as enc;
+import 'package:box/utils/app_logger.dart';
+import 'package:box/utils/local_secret_codec.dart';
+import 'package:box/utils/log_channels.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../domain/account_models.dart';
 
-// A stable, non-secret derivation key so encrypted values differ per install
-// but remain consistent within the same app installation.
-const _encryptionSalt = 'box-account-store-v1';
+/// 旧格式（固定盐 AES-CBC）的盐，仅用于迁移读取。
+const _legacySalt = 'box-account-store-v1';
 
-/// Derive a deterministic 32-byte AES key from the installation salt.
-enc.Key _deriveKey() {
-  final digest = sha256.convert(utf8.encode(_encryptionSalt)).bytes;
-  return enc.Key(Uint8List.fromList(digest));
-}
-
-/// Encrypt [plainText] using AES-256-CBC with a random IV.
-/// Returns base64-encoded prefix + suffix.
-String _encrypt(String plainText) {
-  final key = _deriveKey();
-  final iv = enc.IV.fromSecureRandom(16);
-  final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.cbc));
-  final encrypted = encrypter.encrypt(plainText, iv: iv);
-  // Combine IV and ciphertext, encode as base64
-  final combined = Uint8List(iv.bytes.length + encrypted.bytes.length);
-  combined.setRange(0, iv.bytes.length, iv.bytes);
-  combined.setRange(iv.bytes.length, combined.length, encrypted.bytes);
-  return base64.encode(combined);
-}
-
-/// Decrypt a base64-encoded prefix + suffix string produced by [_encrypt].
-String? _decrypt(String encoded) {
-  try {
-    final raw = base64.decode(encoded);
-    if (raw.length < 17) return null;
-    final iv = enc.IV(Uint8List.fromList(raw.sublist(0, 16)));
-    final ciphertext = enc.Encrypted(Uint8List.fromList(raw.sublist(16)));
-    final key = _deriveKey();
-    final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.cbc));
-    return encrypter.decrypt(ciphertext, iv: iv);
-  } catch (_) {
-    return null;
-  }
-}
+/// 模块 context：决定本模块用的密钥（与远程存储插件不共用）。
+const _codecContext = 'account';
 
 /// 全局登录状态广播 — AppDrawer 等远端组件可自动响应
 final ValueNotifier<BoxAccountSession?> globalSessionNotifier =
@@ -70,8 +45,11 @@ class BoxAccountStore {
       return null;
     }
 
-    final token = _decrypt(tokenEnc);
-    final userText = _decrypt(userJsonEnc);
+    final codec = await LocalSecretCodec.openWithPrefs(prefs, _codecContext);
+    final tokenResult = _decodeValue(codec, tokenEnc);
+    final userResult = _decodeValue(codec, userJsonEnc);
+    final token = tokenResult.plain;
+    final userText = userResult.plain;
     if (token == null ||
         token.isEmpty ||
         userText == null ||
@@ -82,11 +60,29 @@ class BoxAccountStore {
     try {
       final decoded = jsonDecode(userText);
       if (decoded is! Map<String, dynamic>) return null;
-      return BoxAccountSession(
+      final session = BoxAccountSession(
         serverUrl: serverUrl,
         token: token,
         user: BoxAccountUser.fromJson(decoded),
       );
+      if (tokenResult.wasLegacy || userResult.wasLegacy) {
+        // 懒迁移：本次已经解出来了，顺手按新格式重写一次。
+        // 写回失败不影响本次登录（下次读还会再走一遍迁移）。
+        try {
+          await saveSession(session);
+          AppLogger.instance.logTo(
+            LogChannel.account,
+            '账号凭据已迁移到新格式（每安装密钥 + AES-GCM）',
+          );
+        } catch (e) {
+          AppLogger.instance.logTo(
+            LogChannel.account,
+            '账号凭据迁移失败: $e',
+            level: LogLevel.warn,
+          );
+        }
+      }
+      return session;
     } catch (_) {
       return null;
     }
@@ -119,14 +115,15 @@ class BoxAccountStore {
 
   Future<void> saveSession(BoxAccountSession session) async {
     final prefs = await SharedPreferences.getInstance();
+    final codec = await LocalSecretCodec.openWithPrefs(prefs, _codecContext);
     await prefs.setString(
       _serverUrlKey,
       BoxAccountDefaults.normalizeServerUrl(session.serverUrl),
     );
-    await prefs.setString(_tokenKey, _encrypt(session.token));
+    await prefs.setString(_tokenKey, codec.encrypt(session.token));
     await prefs.setString(
       _userJsonKey,
-      _encrypt(jsonEncode(session.user.toJson())),
+      codec.encrypt(jsonEncode(session.user.toJson())),
     );
     globalSessionNotifier.value = session;
   }
@@ -137,5 +134,19 @@ class BoxAccountStore {
     await prefs.remove(_tokenKey);
     await prefs.remove(_userJsonKey);
     globalSessionNotifier.value = null;
+  }
+
+  /// 解密一个值：先按新格式，再退回旧格式（并标记需要迁移）。
+  ({String? plain, bool wasLegacy}) _decodeValue(
+    LocalSecretCodec codec,
+    String encoded,
+  ) {
+    final plain = codec.decrypt(encoded);
+    if (plain != null) return (plain: plain, wasLegacy: false);
+    if (!LocalSecretCodec.looksLegacy(encoded)) {
+      return (plain: null, wasLegacy: false);
+    }
+    final legacy = LocalSecretCodec.decryptLegacy(encoded, _legacySalt);
+    return (plain: legacy, wasLegacy: legacy != null);
   }
 }
