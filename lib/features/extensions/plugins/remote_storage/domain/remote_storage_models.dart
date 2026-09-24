@@ -871,6 +871,8 @@ RemoteStorageException remoteStorageExceptionForStatus(
 bool isRetryableTransferError(Object error) {
   if (error is TransferCanceledException) return false;
   if (error is! RemoteStorageException) return true; // 未知异常：按网络类保守重试
+  final override = error.retryable;
+  if (override != null) return override; // 显式指定优先（见字段注释）
   switch (error.kind) {
     case RemoteStorageError.timeout:
     case RemoteStorageError.network:
@@ -916,6 +918,7 @@ class RemoteStorageException implements Exception {
     this.statusCode,
     this.detail,
     this.retryAfter,
+    this.retryable,
   });
 
   final RemoteStorageError kind;
@@ -925,6 +928,11 @@ class RemoteStorageException implements Exception {
 
   /// 服务端要求的等待时长（`Retry-After`）；无则 null。
   final Duration? retryAfter;
+
+  /// 显式指定"这个错误重试一次就有意义"，覆盖 [isRetryableTransferError] 按
+  /// [kind] 的默认判断（C5：服务器要 Digest 时首次请求必被 401 拒绝，但挑战已
+  /// 记住，重试就能成功——按 kind=credentials 判"不重试"反而让用户白点一次）。
+  final bool? retryable;
 
   @override
   String toString() => message;

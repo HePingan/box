@@ -15,6 +15,7 @@ import 'package:box/utils/app_logger.dart';
 import 'package:box/utils/log_channels.dart';
 import 'package:xml/xml.dart';
 
+import 'digest_auth.dart';
 import 'remote_storage_models.dart';
 
 /// 超过这个字符数才把 PROPFIND 解析丢到后台 isolate（见
@@ -123,9 +124,46 @@ class WebdavClient {
     return uri;
   }
 
-  Map<String, String> _authHeaders() {
+  /// Digest 挑战缓存（C5）：服务器要 Digest 时记住它，后续请求直接带，不再
+  /// 每次都先吃一个 401。换账户/密码时客户端实例会被重建（见 service 的
+  /// `_clientKeys`），所以这里不需要额外的失效逻辑。
+  DigestChallenge? _digestChallenge;
+
+  /// 同一 nonce 下的请求序号（Digest 的 `nc`，服务端用它防重放）。
+  int _digestNc = 0;
+
+  Map<String, String> _authHeaders(String method, Uri uri) {
+    // 服务器要 Digest 且我们已经拿到挑战 → 直接带 Digest（省掉每请求一次 401）。
+    final challenge = _digestChallenge;
+    if (challenge != null) {
+      final header = _digestAuthorization(challenge, method, uri);
+      if (header != null) return {'authorization': header};
+    }
     final token = base64.encode(utf8.encode('$username:$password'));
     return {'authorization': 'Basic $token'};
+  }
+
+  /// 构造 Digest 响应头；不支持的算法/qop 返回 null（退回 Basic，让上层给出
+  /// 明确提示而不是发一个服务器看不懂的头）。
+  String? _digestAuthorization(
+    DigestChallenge challenge,
+    String method,
+    Uri uri,
+  ) {
+    _digestNc += 1;
+    try {
+      return buildDigestAuthorization(
+        challenge: challenge,
+        username: username,
+        password: password,
+        method: method,
+        uri: uri.hasQuery ? '${uri.path}?${uri.query}' : uri.path,
+        cnonce: newDigestCnonce(),
+        nc: _digestNc,
+      );
+    } on DigestUnsupported {
+      return null;
+    }
   }
 
   /// 把账户内的相对路径转成完整 URL（逐段百分号编码）。
@@ -360,19 +398,25 @@ class WebdavClient {
     TransferCancelToken? cancel,
   }) async {
     final length = await srcFile.length();
-    var sent = 0;
-    final body = srcFile.openRead().map((chunk) {
-      cancel?.throwIfCanceled();
-      sent += chunk.length;
-      onProgress?.call(sent, length);
-      return chunk;
-    });
+
+    Stream<List<int>> body() {
+      var sent = 0;
+      return srcFile.openRead().map((chunk) {
+        cancel?.throwIfCanceled();
+        sent += chunk.length;
+        onProgress?.call(sent, length);
+        return chunk;
+      });
+    }
 
     final resp = await _send(
       'PUT',
       relativePath,
       headers: {'content-type': 'application/octet-stream'},
-      bodyStream: body,
+      bodyStream: body(),
+      // 文件还在本地，被 401（Digest 挑战）打断时能重开一次流再传，
+      // 否则只能传个空文件或者白失败一次。
+      reopenBody: body,
       contentLength: length,
     );
     // 201 新建 / 200、204 覆盖成功 / 507 空间不足等由 _expect 统一处理。
@@ -604,10 +648,76 @@ class WebdavClient {
     Map<String, String> headers = const {},
     String? bodyText,
     Stream<List<int>>? bodyStream,
+    /// 可重放的请求体（Digest 401 重试用）：与 [bodyStream] 同源、能再开一次。
+    Stream<List<int>> Function()? reopenBody,
+    int? contentLength,
+    bool readTextReply = false,
+  }) async {
+    final resp = await _dispatch(
+      method,
+      path,
+      headers: headers,
+      bodyText: bodyText,
+      bodyStream: bodyStream,
+      contentLength: contentLength,
+      readTextReply: readTextReply,
+    );
+    if (resp.statusCode != 401) return resp;
+
+    // Digest 挑战（C5）：自建 nginx/apache 常只开 Digest，我们发的 Basic 会一直
+    // 被拒（401）。拿到挑战就重试一次，并把挑战记住供后续请求直接用。
+    final challenge =
+        DigestChallenge.tryParse(resp.headers['www-authenticate']);
+    if (challenge == null) return resp; // 真·密码错，或服务器只认 Basic
+    _digestChallenge = challenge;
+
+    final unsupported = challenge.unsupportedReason;
+    if (unsupported != null) {
+      throw RemoteStorageException(
+        RemoteStorageError.unauthorized,
+        '服务器要求 Digest 认证的$unsupported 形式，当前版本不支持；'
+        '可在服务器上改用 Basic 认证',
+        statusCode: 401,
+      );
+    }
+
+    if (bodyStream != null && reopenBody == null) {
+      // 流式请求体已经发出去、读不回来：盲目重发会传一个空文件。
+      // 当前所有流式调用方（uploadFrom）都给了 [reopenBody]，所以这条分支是给
+      // 将来新增流式调用方留的安全网——宁可报一次"重试即可"，也不要静默传空文件。
+      // 挑战已记住，下一次请求（队列重试或用户再点一次）第一个请求就带 Digest，
+      // 所以这里显式标记为"值得重试"。
+      throw const RemoteStorageException(
+        RemoteStorageError.unauthorized,
+        '服务器要求 Digest 认证（已记住认证方式，重试即可）',
+        statusCode: 401,
+        retryable: true,
+      );
+    }
+
+    return _dispatch(
+      method,
+      path,
+      headers: headers,
+      bodyText: bodyText,
+      bodyStream: reopenBody?.call() ?? bodyStream,
+      contentLength: contentLength,
+      readTextReply: readTextReply,
+    );
+  }
+
+  /// 真正发一次请求（认证头按当前状态选 Basic/Digest）。
+  Future<WebdavResponse> _dispatch(
+    String method,
+    String path, {
+    Map<String, String> headers = const {},
+    String? bodyText,
+    Stream<List<int>>? bodyStream,
     int? contentLength,
     bool readTextReply = false,
   }) {
-    final allHeaders = <String, String>{..._authHeaders(), ...headers};
+    final uri = uriFor(path);
+    final allHeaders = <String, String>{..._authHeaders(method, uri), ...headers};
     if (contentLength != null) {
       allHeaders['content-length'] = '$contentLength';
     }
@@ -618,7 +728,7 @@ class WebdavClient {
     }
     final request = WebdavRequest(
       method: method,
-      uri: uriFor(path),
+      uri: uri,
       headers: allHeaders,
       bodyStream: body,
       contentLength: contentLength ??
