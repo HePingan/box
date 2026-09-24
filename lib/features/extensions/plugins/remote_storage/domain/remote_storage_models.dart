@@ -22,7 +22,15 @@ const int kPreviewTextMaxBytes = 512 * 1024;
 const Duration kRelayIdleTimeout = Duration(minutes: 30);
 
 /// 传输队列并发数（调大→更快但弱 NAS 失败率升高）。
-const int kMaxConcurrentTransfers = 1;
+///
+/// 279 C7：原来这里是 1 且**没人读**（死常量），队列实际上写死串行——一次只跑一个
+/// 任务，选 10 个文件就是 10 次串行往返。批量下载/上传因此慢得没有必要。
+///
+/// 取 3 的理由：多文件场景的收益主要来自"把网络往返叠起来"，3 个已经能把带宽吃满；
+/// 再往上对弱 NAS（群晖低端型号、老机械盘）是纯粹的失败率来源——同一时刻 8 个
+/// 连接会把它的 IO 队列打散，每个都变慢且更容易超时。要更快应该调这个常量，
+/// 而不是在别处偷偷并发。
+const int kMaxConcurrentTransfers = 3;
 
 /// 失败自动重试次数（不含首次；调大→更稳但失败等待变长）。
 ///

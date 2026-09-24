@@ -262,6 +262,9 @@ class RemoteStorageService {
   /// 目录列表缓存：`accountId|path` → 条目 + 写入时间（FIFO 淘汰，命中即移到队尾）。
   final Map<String, _CachedListing> _dirCache = {};
 
+  /// 在途上传的远端路径（C7 并发防竞态）：同名文件视为"已存在"，见 [uploadFile]。
+  final Set<String> _inFlightUploads = {};
+
   // ---------------------------------------------------------------- 账户
 
   Future<List<RemoteStorageAccount>> loadAccounts() async {
@@ -602,22 +605,33 @@ class RemoteStorageService {
       );
     }
     final remotePath = joinRemotePath(targetDir, safe);
+    // 并发上传的竞态（C7）：队列现在会同时跑多个任务，而 `exists()` 在另一个上传
+    // 写完之前返回 false——两个同名文件（不同源目录里各有一个同名文件）会双双通过
+    // 检查，后写的静默覆盖先写的。用"在途占位"把这条路堵掉：同名者视为已存在。
     if (!overwrite) {
-      if (await client.exists(remotePath)) return false; // 拍板3：默认跳过
+      if (_inFlightUploads.contains(remotePath) ||
+          await client.exists(remotePath)) {
+        return false; // 拍板3：默认跳过
+      }
     }
-    final src = File(file.path);
-    if (!await src.exists()) {
-      throw RemoteStorageException(
-        RemoteStorageError.unknown,
-        '本地文件不存在：${file.name}',
+    _inFlightUploads.add(remotePath);
+    try {
+      final src = File(file.path);
+      if (!await src.exists()) {
+        throw RemoteStorageException(
+          RemoteStorageError.unknown,
+          '本地文件不存在：${file.name}',
+        );
+      }
+      await client.uploadFrom(
+        src,
+        remotePath,
+        onProgress: onProgress,
+        cancel: cancel,
       );
+    } finally {
+      _inFlightUploads.remove(remotePath);
     }
-    await client.uploadFrom(
-      src,
-      remotePath,
-      onProgress: onProgress,
-      cancel: cancel,
-    );
     // 上传改变了目录内容：作废该目录缓存，避免"传完了列表里还没有"。
     invalidateListing(account, targetDir);
     return true;

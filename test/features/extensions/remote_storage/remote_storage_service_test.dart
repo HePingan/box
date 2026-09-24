@@ -5,6 +5,7 @@
 //
 // 全程离线：FakeTransport 注入 + 临时目录承载下载落盘。
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -478,6 +479,47 @@ void main() {
       );
       expect(ok, isFalse);
       expect(transport.requests.where((r) => r.method == 'PUT'), isEmpty);
+    });
+
+    test('并发同名上传：第二个视为已存在，不静默覆盖（C7）', () async {
+      // 队列现在会同时跑多个任务。`exists()` 在另一个同名上传写完之前返回 404，
+      // 两个文件都会通过检查 → 后写的静默覆盖先写的。在途占位必须堵住这条路。
+      final gate = Completer<void>();
+      var puts = 0;
+      transport.handler = (request) async {
+        if (request.method == 'HEAD') {
+          return const WebdavResponse(statusCode: 404, headers: {});
+        }
+        if (request.method == 'PUT') {
+          puts += 1;
+          await gate.future;
+          return const WebdavResponse(statusCode: 201, headers: {});
+        }
+        return const WebdavResponse(statusCode: 500, headers: {});
+      };
+      final one = await writeLocal('one.txt', 'one');
+      final two = await writeLocal('two.txt', 'two');
+
+      final first = service.uploadFile(
+        testAccount(),
+        file: LocalUploadFile(path: one.path, name: 'u.txt', size: 3),
+        targetDir: '',
+        overwrite: false,
+      );
+      await pumpEventQueue(); // 让第一个走到 PUT 并占住在途名额
+
+      final second = await service.uploadFile(
+        testAccount(),
+        file: LocalUploadFile(path: two.path, name: 'u.txt', size: 3),
+        targetDir: '',
+        overwrite: false,
+      );
+
+      expect(second, isFalse, reason: '同名在途 → 视为已存在，直接跳过');
+      expect(puts, 1, reason: '只允许一个 PUT 落在同一个远端路径上');
+
+      gate.complete();
+      expect(await first, isTrue);
     });
 
     test('覆盖：PUT 到目标目录，请求体与本地一致', () async {

@@ -72,9 +72,12 @@ typedef TransferRunner = Future<Object?> Function(
   void Function(int received, int total) onProgress,
 );
 
-/// 串行传输队列。
+/// 有界并发的传输队列（默认 [kMaxConcurrentTransfers] 个任务同时在跑）。
 class TransferQueue extends ChangeNotifier {
-  TransferQueue({this.retryDelay});
+  TransferQueue({this.retryDelay, int? maxConcurrent})
+      : maxConcurrent = maxConcurrent ?? kMaxConcurrentTransfers,
+        assert((maxConcurrent ?? kMaxConcurrentTransfers) >= 1,
+            '并发数至少为 1');
 
   /// 固定重试等待（测试传 Duration.zero 让退避不占用测试时间）。
   ///
@@ -82,8 +85,11 @@ class TransferQueue extends ChangeNotifier {
   /// `Retry-After`；给了值则一律用该值（但 `Retry-After` 更长时仍取更长）。
   final Duration? retryDelay;
 
+  /// 同时最多在跑的任务数（见 [kMaxConcurrentTransfers]）。
+  final int maxConcurrent;
+
   final List<TransferTask> _tasks = [];
-  bool _pumping = false;
+  int _running = 0;
   int _seq = 0;
   DateTime _lastProgressNotify = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -92,7 +98,7 @@ class TransferQueue extends ChangeNotifier {
 
   int get activeCount => _tasks.where((t) => t.isActive).length;
 
-  /// 入队并立即尝试执行（串行）。返回任务对象用于展示。
+  /// 入队并立即尝试执行（受并发上限约束）。返回任务对象用于展示。
   TransferTask enqueue({
     required TransferKind kind,
     required String title,
@@ -113,7 +119,7 @@ class TransferQueue extends ChangeNotifier {
     task.onFinished = onFinished;
     _tasks.insert(0, task);
     notifyListeners();
-    unawaited(_pump());
+    _pump();
     return task;
   }
 
@@ -135,89 +141,97 @@ class TransferQueue extends ChangeNotifier {
     return retryDelayFor(attempt, retryAfter: serverWait);
   }
 
-  Future<void> _pump() async {
-    if (_pumping) return;
-    _pumping = true;
-    try {
-      while (true) {
-        TransferTask? next;
-        for (final t in _tasks.reversed) {
-          if (t.status == TransferStatus.queued) {
-            next = t;
-            break;
-          }
-        }
-        if (next == null) break;
+  /// 拉起能跑的任务，直到达到并发上限。
+  ///
+  /// 本方法**不含 await**（[TransferTask.runner] 的等待在 [_run] 里），所以不存在
+  /// 重入；任务结束时由完成回调再调一次，把腾出来的位置补上——不需要"是否正在
+  /// pump"的开关（原来那个开关只能表达"串行"）。
+  void _pump() {
+    while (_running < maxConcurrent) {
+      final next = _nextQueued();
+      if (next == null) return;
 
-        if (next.cancelToken.isCanceled) {
-          next.status = TransferStatus.canceled;
-          notifyListeners();
-          next.onFinished?.call(next);
-          continue;
-        }
-
-        // final 局部别名：闭包内不可用提升后的可空局部变量。
-        final current = next;
-        current.status = TransferStatus.running;
+      if (next.cancelToken.isCanceled) {
+        next.status = TransferStatus.canceled;
         notifyListeners();
-
-        var attempt = 0;
-        while (true) {
-          try {
-            final result = await current.runner!(
-              current.cancelToken,
-              (received, total) {
-                current.receivedBytes = received;
-                if (total > 0) current.totalBytes = total;
-                final now = DateTime.now();
-                if (now.difference(_lastProgressNotify).inMilliseconds >=
-                    150) {
-                  _lastProgressNotify = now;
-                  notifyListeners();
-                }
-              },
-            );
-            current.result = result;
-            current.status = TransferStatus.done;
-            break;
-          } on TransferCanceledException {
-            current.status = TransferStatus.canceled;
-            break;
-          } catch (e) {
-            if (current.cancelToken.isCanceled) {
-              current.status = TransferStatus.canceled;
-              break;
-            }
-            current.errorMessage =
-                e is RemoteStorageException ? e.message : '$e';
-            // 分类：凭证/权限/路径/空间/协议不支持类错误重试多少次都一样，
-            // 直接失败——否则用户会因为密码错白等两个退避周期。
-            final retryable = isRetryableTransferError(e);
-            attempt += 1;
-            if (!retryable || attempt > kTransferRetries) {
-              current.status = TransferStatus.failed;
-              current.retryAttempt = 0;
-              AppLogger.instance.logTo(
-                LogChannel.storage,
-                retryable
-                    ? '传输失败（已重试 $kTransferRetries 次）: $e'
-                    : '传输失败（该错误不重试）: $e',
-                level: LogLevel.error,
-              );
-              break;
-            }
-            current.retryAttempt = attempt;
-            notifyListeners();
-            await Future<void>.delayed(_delayFor(attempt, e));
-            current.retryAttempt = 0;
-            notifyListeners();
-          }
-        }
-        notifyListeners();
-        current.onFinished?.call(current);
+        next.onFinished?.call(next);
+        continue;
       }
-    } finally {
-      _pumping = false;
+
+      next.status = TransferStatus.running;
+      _running += 1;
+      notifyListeners();
+      unawaited(
+        _run(next).whenComplete(() {
+          _running -= 1;
+          _pump();
+        }),
+      );
     }
+  }
+
+  TransferTask? _nextQueued() {
+    for (final t in _tasks.reversed) {
+      if (t.status == TransferStatus.queued) return t;
+    }
+    return null;
+  }
+
+  /// 跑一个任务（含重试与状态落定）；并发度由 [_pump] 控制。
+  Future<void> _run(TransferTask current) async {
+    var attempt = 0;
+    while (true) {
+      try {
+        final result = await current.runner!(
+          current.cancelToken,
+          (received, total) {
+            current.receivedBytes = received;
+            if (total > 0) current.totalBytes = total;
+            final now = DateTime.now();
+            if (now.difference(_lastProgressNotify).inMilliseconds >=
+                150) {
+              _lastProgressNotify = now;
+              notifyListeners();
+            }
+          },
+        );
+        current.result = result;
+        current.status = TransferStatus.done;
+        break;
+      } on TransferCanceledException {
+        current.status = TransferStatus.canceled;
+        break;
+      } catch (e) {
+        if (current.cancelToken.isCanceled) {
+          current.status = TransferStatus.canceled;
+          break;
+        }
+        current.errorMessage =
+            e is RemoteStorageException ? e.message : '$e';
+        // 分类：凭证/权限/路径/空间/协议不支持类错误重试多少次都一样，
+        // 直接失败——否则用户会因为密码错白等两个退避周期。
+        final retryable = isRetryableTransferError(e);
+        attempt += 1;
+        if (!retryable || attempt > kTransferRetries) {
+          current.status = TransferStatus.failed;
+          current.retryAttempt = 0;
+          AppLogger.instance.logTo(
+            LogChannel.storage,
+            retryable
+                ? '传输失败（已重试 $kTransferRetries 次）: $e'
+                : '传输失败（该错误不重试）: $e',
+            level: LogLevel.error,
+          );
+          break;
+        }
+        current.retryAttempt = attempt;
+        notifyListeners();
+        await Future<void>.delayed(_delayFor(attempt, e));
+        current.retryAttempt = 0;
+        notifyListeners();
+      }
+    }
+    notifyListeners();
+    current.onFinished?.call(current);
   }
 }

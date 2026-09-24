@@ -1,4 +1,4 @@
-// TransferQueue 单测：串行、重试、取消（排队中/运行中）、进度、清理。
+// TransferQueue 单测：并发度、重试、取消（排队中/运行中）、进度、清理。
 
 import 'dart:async';
 
@@ -7,59 +7,79 @@ import 'package:box/features/extensions/plugins/remote_storage/domain/remote_sto
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  TransferQueue newQueue() =>
-      TransferQueue(retryDelay: Duration.zero);
+  TransferQueue newQueue({int? maxConcurrent}) =>
+      TransferQueue(retryDelay: Duration.zero, maxConcurrent: maxConcurrent);
 
-  test('串行执行：前一个完成前不启动下一个，顺序与并发数正确', () async {
-    final queue = newQueue();
+  test('并发执行：最多 maxConcurrent 个同时在跑，先入先出', () async {
+    final queue = newQueue(maxConcurrent: 2);
     final gate = Completer<void>();
     final log = <String>[];
     var concurrent = 0;
     var maxConcurrent = 0;
 
+    // 1、2 号都卡在同一个门上：真正占住两个名额（谁先返回谁先让位）
+    Future<void> blocker(String tag) async {
+      concurrent += 1;
+      maxConcurrent = concurrent > maxConcurrent ? concurrent : maxConcurrent;
+      log.add('start-$tag');
+      await gate.future;
+      log.add('end-$tag');
+      concurrent -= 1;
+    }
+
     final first = queue.enqueue(
       kind: TransferKind.download,
       title: 'a.bin',
       subtitle: 'acct',
-      runner: (cancel, onProgress) async {
-        concurrent += 1;
-        maxConcurrent = concurrent > maxConcurrent ? concurrent : maxConcurrent;
-        log.add('start-1');
-        await gate.future;
-        log.add('end-1');
-        concurrent -= 1;
-        return 'r1';
-      },
+      runner: (cancel, onProgress) => blocker('1'),
     );
     final second = queue.enqueue(
       kind: TransferKind.upload,
       title: 'b.bin',
       subtitle: 'acct',
+      runner: (cancel, onProgress) => blocker('2'),
+    );
+
+    // 第三个：名额满了，必须等有人结束
+    var thirdStarted = false;
+    final third = queue.enqueue(
+      kind: TransferKind.download,
+      title: 'c.bin',
+      subtitle: 'acct',
       runner: (cancel, onProgress) async {
-        concurrent += 1;
-        maxConcurrent = concurrent > maxConcurrent ? concurrent : maxConcurrent;
-        log.add('start-2');
-        concurrent -= 1;
-        return 'r2';
+        thirdStarted = true;
+        log.add('start-3');
+        return 'r3';
       },
     );
 
     await pumpEventQueue();
-    expect(log, ['start-1']);
+    expect(log, ['start-1', 'start-2']);
+    expect(thirdStarted, isFalse, reason: '名额没空出来，第三个不能启动');
     expect(first.status, TransferStatus.running);
-    expect(second.status, TransferStatus.queued);
-    expect(queue.activeCount, 2);
+    expect(second.status, TransferStatus.running);
+    expect(third.status, TransferStatus.queued);
+    expect(maxConcurrent, 2);
+    expect(queue.activeCount, 3); // 2 在跑 + 1 排队
 
     gate.complete();
     await pumpEventQueue();
 
-    expect(log, ['start-1', 'end-1', 'start-2']);
-    expect(maxConcurrent, 1);
+    // 顺序：两个先起 → 1 号结束腾位 → 3 号才起（end-2 与 start-3 的先后取决于
+    // 事件循环里谁先跑完收尾，都算对）
+    expect(log, containsAllInOrder(['start-1', 'start-2', 'end-1', 'start-3']));
+    expect(log, contains('end-2'));
+    expect(maxConcurrent, 2, reason: '同时最多 2 个，不能因为空位就无限并发');
     expect(first.status, TransferStatus.done);
     expect(second.status, TransferStatus.done);
-    expect(first.result, 'r1');
-    expect(second.result, 'r2');
+    expect(third.result, 'r3');
     expect(queue.activeCount, 0);
+  });
+
+  test('默认并发度来自 kMaxConcurrentTransfers（防止常量与队列脱钩）', () {
+    expect(TransferQueue().maxConcurrent, kMaxConcurrentTransfers);
+    expect(kMaxConcurrentTransfers, greaterThan(1),
+        reason: 'C7：常量若被改回 1，批量传输会退回串行');
   });
 
   test('失败自动重试：2 次失败后成功（共 3 次尝试）', () async {
@@ -121,7 +141,8 @@ void main() {
   });
 
   test('排队中取消：不执行 runner，状态 canceled，onFinished 被调用', () async {
-    final queue = newQueue();
+    // "排队中"只有在名额被占满时才存在：并发度设 1 造出这个状态
+    final queue = newQueue(maxConcurrent: 1);
     final gate = Completer<void>();
     var secondCalls = 0;
     TransferTask? finished;
