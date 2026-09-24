@@ -452,4 +452,100 @@ void main() {
       );
     });
   });
+
+  group('目录缓存（O3：返回上一级不再重列）', () {
+    RemoteStorageService cachingService(Duration ttl) => RemoteStorageService(
+          transportFactory: (_) => transport,
+          docsDirProvider: () async => docsDir,
+          dirCacheTtl: ttl,
+        );
+
+    FakeTransport listingTransport() => FakeTransport(
+          (request) async => switch (request.method) {
+            'PROPFIND' => xmlResponse(
+                propfindXml(const [DavItem('/dav/a.txt', etag: '"e1"')]),
+              ),
+            'PUT' => const WebdavResponse(statusCode: 201, headers: {}),
+            _ => headResponse(status: 404),
+          },
+        );
+
+    test('TTL 内重复 list 命中缓存：只发 1 次 PROPFIND', () async {
+      transport = listingTransport();
+      final svc = cachingService(const Duration(seconds: 30));
+
+      final first = await svc.list(testAccount(), '');
+      final second = await svc.list(testAccount(), '');
+
+      expect(transport.requestCount, 1);
+      expect(first.single.name, 'a.txt');
+      expect(second.single.etag, '"e1"', reason: 'etag 要跟着缓存一起复用');
+    });
+
+    test('forceRefresh 绕过缓存（下拉刷新/刷新按钮的语义）', () async {
+      transport = listingTransport();
+      final svc = cachingService(const Duration(seconds: 30));
+
+      await svc.list(testAccount(), '');
+      await svc.list(testAccount(), '', forceRefresh: true);
+
+      expect(transport.requestCount, 2);
+    });
+
+    test('TTL 为 0 等于不缓存', () async {
+      transport = listingTransport();
+      final svc = cachingService(Duration.zero);
+
+      await svc.list(testAccount(), '');
+      await svc.list(testAccount(), '');
+
+      expect(transport.requestCount, 2);
+    });
+
+    test('不同账户、不同路径互不串缓存', () async {
+      transport = listingTransport();
+      final svc = cachingService(const Duration(seconds: 30));
+
+      await svc.list(testAccount(id: 'a'), '');
+      await svc.list(testAccount(id: 'b'), '');
+      await svc.list(testAccount(id: 'a'), 'sub');
+
+      expect(transport.requestCount, 3);
+    });
+
+    test('上传成功后该目录缓存失效（传完立刻能看到）', () async {
+      transport = listingTransport();
+      final svc = cachingService(const Duration(seconds: 30));
+      final account = testAccount();
+
+      await svc.list(account, '');
+      final src = File('${docsDir.path}/up.txt')..writeAsStringSync('x');
+      await svc.uploadFile(
+        account,
+        file: LocalUploadFile(path: src.path, name: 'up.txt', size: 1),
+        targetDir: '',
+        overwrite: true,
+      );
+      await svc.list(account, '');
+
+      expect(
+        transport.requests.where((r) => r.method == 'PROPFIND'),
+        hasLength(2),
+        reason: '上传后必须重新列目录，否则用户看不到刚传的文件',
+      );
+    });
+
+    test('配额透传（服务器未实现时为空对象，不报错）', () async {
+      transport.handler = (_) async =>
+          xmlResponse(quotaXml(availableBytes: 42, usedBytes: 8));
+
+      final q = await service.quota(testAccount());
+      expect(q.availableBytes, 42);
+      expect(q.usedBytes, 8);
+
+      transport.handler = (_) async => xmlResponse(quotaXml());
+      final empty = await service.quota(testAccount());
+      expect(empty.hasAny, isFalse);
+    });
+  });
 }

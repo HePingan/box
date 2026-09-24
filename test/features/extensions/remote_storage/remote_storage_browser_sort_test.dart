@@ -22,8 +22,9 @@ class _FakeService extends RemoteStorageService {
   @override
   Future<List<RemoteStorageEntry>> list(
     RemoteStorageAccount account,
-    String path,
-  ) async {
+    String path, {
+    bool forceRefresh = false,
+  }) async {
     return entriesByPath[path] ?? const <RemoteStorageEntry>[];
   }
 }

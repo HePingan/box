@@ -172,14 +172,19 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     });
   }
 
-  Future<void> _load() async {
+  /// [force] 为 true 时绕过目录缓存（下拉刷新、刷新按钮、重试按钮）。
+  ///
+  /// 为什么默认用缓存：进目录 / 返回上一级 / 面包屑跳转都会打同一个请求，
+  /// 15 秒内的重复列表在弱 NAS 上是实打实的等待；而"我要看最新的"由 force
+  /// 与所有写操作的自动失效保证，用户不会失去控制权。
+  Future<void> _load({bool force = false}) async {
     setState(() {
       _loading = true;
       _error = '';
     });
     try {
-      final entries =
-          await remoteStorageService().list(widget.account, _path);
+      final entries = await remoteStorageService()
+          .list(widget.account, _path, forceRefresh: force);
       if (!mounted) return;
       setState(() {
         _entries = sortedRemoteStorageEntries(entries, _sessionSortField);
@@ -529,7 +534,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
           ),
           IconButton(
             tooltip: '刷新',
-            onPressed: _load,
+            onPressed: () => _load(force: true),
             icon: const Icon(Icons.refresh_rounded),
           ),
         ],
@@ -617,7 +622,10 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
               const SizedBox(height: 12),
               Text(_error, textAlign: TextAlign.center),
               const SizedBox(height: 16),
-              OutlinedButton(onPressed: _load, child: const Text('重试')),
+              OutlinedButton(
+                onPressed: () => _load(force: true),
+                child: const Text('重试'),
+              ),
             ],
           ),
         ),
@@ -625,7 +633,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     }
     if (_entries.isEmpty) {
       return RefreshIndicator(
-        onRefresh: _load,
+        onRefresh: () => _load(force: true),
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           children: const [
@@ -638,7 +646,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
       );
     }
     return RefreshIndicator(
-      onRefresh: _load,
+      onRefresh: () => _load(force: true),
       child: ListView.separated(
         controller: _scrollController,
         physics: const AlwaysScrollableScrollPhysics(),

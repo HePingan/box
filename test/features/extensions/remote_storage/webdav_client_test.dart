@@ -456,6 +456,76 @@ void main() {
     });
   });
 
+  group('etag 与配额（O3/O5）', () {
+    test('list 解析 getetag；服务器不返回该属性时为 null', () async {
+      final transport = FakeTransport(
+        (_) async => xmlResponse(
+          propfindXml(const [
+            DavItem('/dav/a.txt', etag: '"abc123"'),
+            DavItem('/dav/b.txt'),
+          ]),
+        ),
+      );
+
+      final entries = await clientWith(transport).list('');
+
+      expect(
+        entries.firstWhere((e) => e.name == 'a.txt').etag,
+        '"abc123"',
+      );
+      expect(entries.firstWhere((e) => e.name == 'b.txt').etag, isNull);
+    });
+
+    test('PROPFIND 请求体必须带 getetag，否则服务器不会返回', () async {
+      final transport = FakeTransport(
+        (_) async => xmlResponse(propfindXml(const [])),
+      );
+
+      await clientWith(transport).list('');
+
+      expect(await bodyTextOf(transport.lastRequest), contains('getetag'));
+    });
+
+    test('配额解析：正常值 / 只返回一项 / 负数 / 非法 XML', () {
+      final ok = WebdavClient.parseQuotaMultistatus(
+        quotaXml(availableBytes: 12345, usedBytes: 500),
+      );
+      expect(ok.availableBytes, 12345);
+      expect(ok.usedBytes, 500);
+      expect(ok.hasAny, isTrue);
+
+      final partial =
+          WebdavClient.parseQuotaMultistatus(quotaXml(usedBytes: 7));
+      expect(partial.availableBytes, isNull);
+      expect(partial.usedBytes, 7);
+
+      final negative =
+          WebdavClient.parseQuotaMultistatus(quotaXml(availableBytes: -3));
+      expect(negative.availableBytes, isNull, reason: 'RFC 4331 用负数表示未知');
+      expect(negative.hasAny, isFalse);
+
+      expect(WebdavClient.parseQuotaMultistatus('').hasAny, isFalse);
+      expect(WebdavClient.parseQuotaMultistatus('<not-xml').hasAny, isFalse);
+      expect(WebdavClient.parseQuotaMultistatus(quotaXml()).hasAny, isFalse);
+    });
+
+    test('quota() 用 Depth:0 单查目录自己', () async {
+      final transport = FakeTransport(
+        (_) async => xmlResponse(quotaXml(availableBytes: 999)),
+      );
+
+      final q = await clientWith(transport).quota('');
+
+      expect(q.availableBytes, 999);
+      expect(transport.lastRequest.method, 'PROPFIND');
+      expect(transport.lastRequest.headers['depth'], '0');
+      expect(
+        await bodyTextOf(transport.lastRequest),
+        contains('quota-available-bytes'),
+      );
+    });
+  });
+
   group('Retry-After 与请求留痕（O2/O9）', () {
     test('秒数与 HTTP-date 两种形式都能解析；非法值返回 null', () {
       expect(parseRetryAfterHeader('120'), const Duration(seconds: 120));

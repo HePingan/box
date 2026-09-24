@@ -244,9 +244,13 @@ class RemoteStorageService {
     RemoteStorageStore? store,
     WebdavTransport Function(RemoteStorageAccount account)? transportFactory,
     Future<Directory> Function()? docsDirProvider,
+    this.dirCacheTtl = kDirCacheTtl,
   })  : _store = store ?? RemoteStorageStore(),
         _transportFactory = transportFactory,
         _docsDirProvider = docsDirProvider ?? getApplicationDocumentsDirectory;
+
+  /// 目录列表缓存有效期（测试注入 Duration.zero 可强制每次都联网）。
+  final Duration dirCacheTtl;
 
   final RemoteStorageStore _store;
   final WebdavTransport Function(RemoteStorageAccount account)? _transportFactory;
@@ -254,6 +258,9 @@ class RemoteStorageService {
 
   final Map<String, String> _clientKeys = {};
   final Map<String, WebdavClient> _clients = {};
+
+  /// 目录列表缓存：`accountId|path` → 条目 + 写入时间（FIFO 淘汰，命中即移到队尾）。
+  final Map<String, _CachedListing> _dirCache = {};
 
   // ---------------------------------------------------------------- 账户
 
@@ -273,6 +280,8 @@ class RemoteStorageService {
     }
     await _store.saveAccounts(all);
     _invalidateClient(account.id);
+    // 账户配置变了：目录缓存的 key 前缀是该账户，整体作废比逐条猜更可靠。
+    _dirCache.removeWhere((key, _) => key.startsWith('${account.id}|'));
   }
 
   Future<void> deleteAccount(String id) async {
@@ -280,6 +289,7 @@ class RemoteStorageService {
     all.removeWhere((a) => a.id == id);
     await _store.saveAccounts(all);
     _invalidateClient(id);
+    _dirCache.removeWhere((key, _) => key.startsWith('$id|'));
   }
 
   // ------------------------------------------------------------ 客户端
@@ -345,12 +355,49 @@ class RemoteStorageService {
 
   Future<List<RemoteStorageEntry>> list(
     RemoteStorageAccount account,
-    String path,
-  ) {
-    return clientFor(account).list(
+    String path, {
+    bool forceRefresh = false,
+  }) async {
+    final key = '${account.id}|$path';
+    if (!forceRefresh) {
+      final cached = _dirCache.remove(key);
+      if (cached != null &&
+          DateTime.now().difference(cached.storedAt) < dirCacheTtl) {
+        // 命中即移到队尾：淘汰时先掉的是"最久没被看过"的目录，而不是最早的。
+        _dirCache[key] = cached;
+        return cached.entries;
+      }
+    }
+    final entries = await clientFor(account).list(
       path,
       filterSystemNames: !account.showSystemFolders,
     );
+    _storeListing(key, entries);
+    return entries;
+  }
+
+  /// 目录配额（RFC 4331）。服务器未实现该扩展时返回空对象，UI 自然不显示。
+  Future<RemoteStorageQuota> quota(
+    RemoteStorageAccount account, {
+    String path = '',
+  }) {
+    return clientFor(account).quota(path);
+  }
+
+  /// 写操作后让某目录的缓存失效（上传成功、将来的删除/移动/新建）。
+  void invalidateListing(RemoteStorageAccount account, String path) {
+    _dirCache.remove('${account.id}|$path');
+  }
+
+  void _storeListing(String key, List<RemoteStorageEntry> entries) {
+    _dirCache.remove(key);
+    _dirCache[key] = _CachedListing(
+      List<RemoteStorageEntry>.unmodifiable(entries),
+      DateTime.now(),
+    );
+    while (_dirCache.length > kDirCacheMaxEntries) {
+      _dirCache.remove(_dirCache.keys.first);
+    }
   }
 
   /// 扫描同名冲突（仅上传流程用）：返回与远端同名的本地文件名列表。
@@ -383,6 +430,8 @@ class RemoteStorageService {
 
     final client = clientFor(account);
     try {
+      // 这里刻意走 `client.list` 而不是第 354 行的带缓存 `list()`：
+      // 冲突判定是写路径的安全检查，"15 秒前的列表"可能漏判并导致静默覆盖。
       final entries = await client.list(
         targetDir,
         filterSystemNames: !account.showSystemFolders,
@@ -491,6 +540,8 @@ class RemoteStorageService {
       onProgress: onProgress,
       cancel: cancel,
     );
+    // 上传改变了目录内容：作废该目录缓存，避免"传完了列表里还没有"。
+    invalidateListing(account, targetDir);
     return true;
   }
 
@@ -620,6 +671,24 @@ class RemoteStorageService {
 }
 
 // -------------------------------------------------------------- 运行时单例
+
+/// 目录列表缓存有效期（见 [RemoteStorageService.dirCacheTtl]）。
+///
+/// 取值理由：15s 足够覆盖"返回上一级再进来""来回切目录"这类最常见的重复请求，
+/// 又短到不会让用户在两个设备间看到明显过期的内容；下拉刷新与所有写操作都会
+/// 强制失效，用户永远有确定的"拿最新"手段。
+const Duration kDirCacheTtl = Duration(seconds: 15);
+
+/// 目录列表缓存条目上限（超出后淘汰最久未访问的目录）。
+const int kDirCacheMaxEntries = 64;
+
+/// 一个目录的缓存条目。
+class _CachedListing {
+  const _CachedListing(this.entries, this.storedAt);
+
+  final List<RemoteStorageEntry> entries;
+  final DateTime storedAt;
+}
 
 RemoteStorageService? _runtimeService;
 TransferQueue? _runtimeQueue;

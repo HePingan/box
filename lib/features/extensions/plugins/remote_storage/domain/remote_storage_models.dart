@@ -261,6 +261,7 @@ class RemoteStorageEntry {
     required this.isDirectory,
     this.size,
     this.modifiedAt,
+    this.etag,
   });
 
   final String name;
@@ -270,6 +271,26 @@ class RemoteStorageEntry {
   final bool isDirectory;
   final int? size;
   final DateTime? modifiedAt;
+
+  /// 服务端的 `getetag`（含引号，原样保留）。
+  ///
+  /// 用途：[RemoteStorageService] 的目录缓存失效判定、以及后续「上传前
+  /// 条件写（If-Match）」「跳过未变化文件」的基础。服务器不返回该属性时为 null
+  /// —— 不要用它做唯一判据，缺失是常态（Apache mod_dav 默认不发）。
+  final String? etag;
+}
+
+/// 配额信息（WebDAV `quota-available-bytes` / `quota-used-bytes`）。
+///
+/// 两者都可能缺失（不是所有服务器实现 RFC4331，Nextcloud/MinIO 支持较好）。
+class RemoteStorageQuota {
+  const RemoteStorageQuota({this.availableBytes, this.usedBytes});
+
+  final int? availableBytes;
+  final int? usedBytes;
+
+  /// 是否拿到了可用信息（用于决定 UI 显不显示这一行）。
+  bool get hasAny => availableBytes != null || usedBytes != null;
 }
 
 /// 条目大类（决定预览/播放/下载后打开）。

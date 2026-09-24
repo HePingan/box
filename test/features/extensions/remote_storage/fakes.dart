@@ -112,6 +112,7 @@ class DavItem {
     this.isCollection = false,
     this.size,
     this.lastModified,
+    this.etag,
   });
 
   final String href;
@@ -119,6 +120,7 @@ class DavItem {
   final bool isCollection;
   final int? size;
   final String? lastModified;
+  final String? etag;
 }
 
 /// 生成标准 multistatus XML（含 propstat/status 结构）。
@@ -148,10 +150,38 @@ String propfindXml(List<DavItem> items) {
         '<d:getlastmodified>${item.lastModified}</d:getlastmodified>',
       );
     }
+    if (item.etag != null) {
+      buffer.write('<d:getetag>${item.etag}</d:getetag>');
+    }
     buffer.write('</d:prop><d:status>HTTP/1.1 200 OK</d:status>'
         '</d:propstat></d:response>');
   }
   buffer.write('</d:multistatus>');
+  return buffer.toString();
+}
+
+/// 生成配额 multistatus（RFC 4331）；传 null 表示该属性不返回。
+String quotaXml({
+  int? availableBytes,
+  int? usedBytes,
+  String href = '/dav/',
+}) {
+  final buffer = StringBuffer(
+    '<?xml version="1.0" encoding="utf-8"?>'
+    '<d:multistatus xmlns:d="DAV:">'
+    '<d:response><d:href>$href</d:href>'
+    '<d:propstat><d:prop>',
+  );
+  if (availableBytes != null) {
+    buffer.write(
+      '<d:quota-available-bytes>$availableBytes</d:quota-available-bytes>',
+    );
+  }
+  if (usedBytes != null) {
+    buffer.write('<d:quota-used-bytes>$usedBytes</d:quota-used-bytes>');
+  }
+  buffer.write('</d:prop><d:status>HTTP/1.1 200 OK</d:status>'
+      '</d:propstat></d:response></d:multistatus>');
   return buffer.toString();
 }
 

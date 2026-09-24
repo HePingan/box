@@ -358,6 +358,67 @@ class WebdavClient {
     }
   }
 
+  /// 目录配额（RFC 4331：`quota-available-bytes` / `quota-used-bytes`）。
+  ///
+  /// 缺失是常态（不是所有服务器实现该扩展），所以：属性没返回就返回空对象，
+  /// 由 UI 决定不显示——配额是锦上添花，绝不能因为它把页面搞成报错态。
+  Future<RemoteStorageQuota> quota(String path) async {
+    final resp = await _send(
+      'PROPFIND',
+      path,
+      headers: {
+        'depth': '0',
+        'content-type': 'application/xml; charset=utf-8',
+      },
+      bodyText: _quotaPropfindBody,
+      readTextReply: true,
+    );
+    _expect(resp, const {200, 207}, path);
+    return parseQuotaMultistatus(resp.bodyText ?? '');
+  }
+
+  /// 配额 XML 解析（纯函数，便于用真样例做 fixture 测试）。
+  static RemoteStorageQuota parseQuotaMultistatus(String xmlText) {
+    if (xmlText.trim().isEmpty) return const RemoteStorageQuota();
+    XmlDocument doc;
+    try {
+      doc = XmlDocument.parse(xmlText);
+    } on XmlException {
+      return const RemoteStorageQuota();
+    }
+    for (final response in _elementsByLocal(doc.rootElement, 'response')) {
+      final prop = _propElementStatic(response);
+      if (prop == null) continue;
+      return RemoteStorageQuota(
+        availableBytes: _intProp(prop, 'quota-available-bytes'),
+        usedBytes: _intProp(prop, 'quota-used-bytes'),
+      );
+    }
+    return const RemoteStorageQuota();
+  }
+
+  /// 取 prop 下的整数值；缺失、非法、负数（RFC 中 -3 等表示"未知"）一律 null。
+  static int? _intProp(XmlElement prop, String local) {
+    final raw = _firstTextByLocal(prop, local);
+    if (raw == null) return null;
+    final value = int.tryParse(raw.trim());
+    if (value == null || value < 0) return null;
+    return value;
+  }
+
+  static XmlElement? _propElementStatic(XmlElement response) {
+    XmlElement? fallback;
+    for (final propstat in _elementsByLocal(response, 'propstat')) {
+      final status = _firstTextByLocal(propstat, 'status') ?? '';
+      final props = _elementsByLocal(propstat, 'prop');
+      final prop = props.isEmpty ? null : props.first;
+      if (prop == null) continue;
+      if (status.contains(' 200 ')) return prop;
+      fallback ??= prop;
+    }
+    return fallback;
+  }
+
   // ---------------------------------------------------------------------------
   // 内部实现
   // ---------------------------------------------------------------------------
@@ -366,7 +427,14 @@ class WebdavClient {
       '<?xml version="1.0" encoding="utf-8"?>'
       '<d:propfind xmlns:d="DAV:"><d:prop>'
       '<d:displayname/><d:getcontentlength/><d:getlastmodified/>'
-      '<d:resourcetype/><d:getcontenttype/>'
+      '<d:resourcetype/><d:getcontenttype/><d:getetag/>'
+      '</d:prop></d:propfind>';
+
+  /// 配额探测（RFC 4331）：只问目录自己，Depth: 0。
+  static const String _quotaPropfindBody =
+      '<?xml version="1.0" encoding="utf-8"?>'
+      '<d:propfind xmlns:d="DAV:"><d:prop>'
+      '<d:quota-available-bytes/><d:quota-used-bytes/>'
       '</d:prop></d:propfind>';
 
   Future<WebdavResponse> _send(
@@ -463,6 +531,9 @@ class WebdavClient {
       final size = sizeText == null ? null : int.tryParse(sizeText.trim());
       final modified =
           prop == null ? null : _parseHttpDate(_firstTextByLocal(prop, 'getlastmodified'));
+      final etagText =
+          prop == null ? null : _firstTextByLocal(prop, 'getetag')?.trim();
+      final etag = (etagText == null || etagText.isEmpty) ? null : etagText;
 
       entries.add(RemoteStorageEntry(
         name: name,
@@ -470,24 +541,15 @@ class WebdavClient {
         isDirectory: isCollection,
         size: isCollection ? null : size,
         modifiedAt: modified,
+        etag: etag,
       ));
     }
     return entries;
   }
 
   /// 取 DAV:prop（优先取 propstat 状态为 200 的那个）。
-  XmlElement? _propElement(XmlElement response) {
-    XmlElement? fallback;
-    for (final propstat in _elementsByLocal(response, 'propstat')) {
-      final status = _firstTextByLocal(propstat, 'status') ?? '';
-      final props = _elementsByLocal(propstat, 'prop');
-      final prop = props.isEmpty ? null : props.first;
-      if (prop == null) continue;
-      if (status.contains(' 200 ')) return prop;
-      fallback ??= prop;
-    }
-    return fallback;
-  }
+  XmlElement? _propElement(XmlElement response) =>
+      _propElementStatic(response);
 
   bool _hasCollectionChild(XmlElement prop) {
     final rts = _elementsByLocal(prop, 'resourcetype');
