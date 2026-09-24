@@ -10,6 +10,12 @@ import 'dart:typed_data';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/webdav_client.dart';
 
+/// 1×1 透明 PNG（C4 图片预览测试用）：真实的合法 PNG 字节，
+/// 因为 `Image.memory` 会真的去解码——喂假字节会让测试报解码异常而不是断言失败。
+final Uint8List kTinyPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=',
+);
+
 /// 记录请求、按 [handler] 应答的假传输层；未设置 handler 时返回 200 空响应。
 class FakeTransport implements WebdavTransport {
   FakeTransport([this.handler]);

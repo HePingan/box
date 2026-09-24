@@ -2,6 +2,8 @@
 // - 账户编辑面板：空地址 / 地址无法解析 / 缺用户名 / 合法保存 四条校验路径。
 // - 浏览页：空目录空态、加载失败错误态（含重试）、条目列表渲染。
 
+import 'dart:typed_data';
+
 import 'package:box/features/extensions/plugins/remote_storage/application/remote_storage_service.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_browser_page.dart';
@@ -46,6 +48,18 @@ class _FakeService extends RemoteStorageService {
     String path = '',
   }) async {
     return quotaResult;
+  }
+
+  /// 图片预览返回的字节（C4 测试用）：一张 1×1 PNG 就够，测的是解码参数不是图。
+  Uint8List imageBytes = kTinyPng;
+
+  @override
+  Future<PreviewPayload> readImagePreview(
+    RemoteStorageAccount account,
+    String path, {
+    TransferCancelToken? cancel,
+  }) async {
+    return PreviewPayload(bytes: imageBytes, truncated: false, oversize: false);
   }
 
   /// 记录批量删除调用（B1 的删除确认测试用），不触网。
@@ -315,6 +329,38 @@ void main() {
     testWidgets('常态顶栏有「新建文件夹」入口', (tester) async {
       await pumpBrowser(tester, entries: const [fileA]);
       expect(find.byIcon(Icons.create_new_folder_outlined), findsOneWidget);
+    });
+  });
+
+  group('图片预览（C4：降采样解码）', () {
+    testWidgets('预览图按屏幕宽度 ×2 解码，不是全尺寸', (tester) async {
+      await pumpBrowser(
+        tester,
+        entries: const [
+          RemoteStorageEntry(
+            name: 'pic.png',
+            path: 'pic.png',
+            isDirectory: false,
+            size: 1024,
+          ),
+        ],
+      );
+
+      await tester.tap(find.text('pic.png'));
+      await tester.pumpAndSettle();
+
+      final image = tester.widget<Image>(find.byType(Image));
+      final media = tester.view;
+      final expected = previewImageDecodeWidth(
+        logicalWidth: media.physicalSize.width / media.devicePixelRatio,
+        devicePixelRatio: media.devicePixelRatio,
+      );
+      expect(
+        image.image,
+        isA<ResizeImage>(),
+        reason: '不给 cacheWidth 就会按原图尺寸解码：20MB 的图能解成近 200MB 位图',
+      );
+      expect((image.image as ResizeImage).width, expected);
     });
   });
 }

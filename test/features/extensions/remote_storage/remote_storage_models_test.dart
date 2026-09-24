@@ -457,6 +457,29 @@ void main() {
     });
   });
 
+  group('图片预览降采样宽度（C4）', () {
+    test('按屏幕宽度 × 像素比 × 2 计算', () {
+      expect(
+        previewImageDecodeWidth(logicalWidth: 400, devicePixelRatio: 3),
+        2400, // 400 × 3 × 2
+      );
+      expect(
+        previewImageDecodeWidth(logicalWidth: 411.4, devicePixelRatio: 2.625),
+        2160, // 411.4 × 2.625 × 2 = 2159.85 → 四舍五入
+      );
+    });
+
+    test('设备信息不可用 → 不限制（不猜一个错的宽度把图糊掉）', () {
+      expect(previewImageDecodeWidth(logicalWidth: 0, devicePixelRatio: 3), isNull);
+      expect(previewImageDecodeWidth(logicalWidth: 400, devicePixelRatio: 0), isNull);
+      expect(previewImageDecodeWidth(logicalWidth: -1, devicePixelRatio: -1), isNull);
+    });
+
+    test('倍数为 2：再大对肉眼无意义，只是白吃内存', () {
+      expect(kPreviewImageDecodeWidthFactor, 2);
+    });
+  });
+
   group('重试判定与退避（O2：别让凭证错白等退避）', () {
     test('可重试：网络抖动 / 超时 / 429 / 5xx / 无状态码的 http / 非归一异常', () {
       final retryable = <Object>[

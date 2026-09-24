@@ -1550,6 +1550,15 @@ class _ImagePreviewDialogState extends State<_ImagePreviewDialog> {
               '已跳过预览。\n可下载后查看。',
             );
           }
+          // 降采样解码（C4）：20MB 的图可能解码成近 200MB 的位图，全尺寸解码在
+          // 小内存设备上直接 OOM。按屏幕宽度 ×2 解，视网膜屏上看不出差别。
+          final media = MediaQuery.maybeOf(context);
+          final decodeWidth = media == null
+              ? null
+              : previewImageDecodeWidth(
+                  logicalWidth: media.size.width,
+                  devicePixelRatio: media.devicePixelRatio,
+                );
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1560,6 +1569,7 @@ class _ImagePreviewDialogState extends State<_ImagePreviewDialog> {
                     Uint8List.fromList(payload.bytes),
                     fit: BoxFit.contain,
                     gaplessPlayback: true,
+                    cacheWidth: decodeWidth,
                   ),
                 ),
               ),

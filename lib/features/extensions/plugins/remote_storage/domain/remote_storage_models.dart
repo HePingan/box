@@ -15,6 +15,28 @@ const Duration kReadTimeout = Duration(seconds: 30);
 /// 图片预览上限：超过则不下载预览（调大→更大图可预览但内存风险上升）。
 const int kPreviewImageMaxBytes = 20 * 1024 * 1024;
 
+/// 图片预览的解码宽度倍数（279 C4）。
+///
+/// [kPreviewImageMaxBytes] 只挡"文件有多大"，挡不住"解码后有多大"：一张 20MB 的
+/// JPEG 可以是 8000×6000，解码成 RGBA 就是 8000×6000×4 ≈ 192MB——比原文件大十几倍，
+/// 小内存设备直接 OOM。按 2 倍屏幕宽度解码：视网膜屏上肉眼已看不出差别，
+/// 内存却降到几 MB 量级。
+const double kPreviewImageDecodeWidthFactor = 2;
+
+/// 计算图片预览的目标解码宽度（像素）；null 表示不限制。
+///
+/// 设备信息拿不到时返回 null（不猜）：宁可按原尺寸解码，也不要用一个错误的宽度
+/// 把用户想看清的图糊掉。
+int? previewImageDecodeWidth({
+  required double logicalWidth,
+  required double devicePixelRatio,
+}) {
+  if (logicalWidth <= 0 || devicePixelRatio <= 0) return null;
+  final pixels =
+      (logicalWidth * devicePixelRatio * kPreviewImageDecodeWidthFactor).round();
+  return pixels > 0 ? pixels : null;
+}
+
 /// 文本预览前缀上限（调大→更完整但载入变慢）。
 const int kPreviewTextMaxBytes = 512 * 1024;
 
