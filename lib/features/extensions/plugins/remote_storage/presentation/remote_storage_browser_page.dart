@@ -22,6 +22,14 @@ import 'image_preview_dialog.dart';
 import 'remote_storage_player_page.dart';
 import 'remote_thumbnail.dart';
 
+/// 递归下载里的一个文件：条目 + 它的本地落点（284 D6）。
+class _RecursiveFilePlan {
+  const _RecursiveFilePlan({required this.entry, required this.target});
+
+  final RemoteStorageEntry entry;
+  final RecursiveDownloadTarget target;
+}
+
 /// 顶栏「更多」里的动作（目前只有缩略图开关；后续视图选项都放这里）。
 enum _BrowserMenuAction { toggleThumbnails, thumbnailCache }
 
@@ -129,6 +137,12 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   late String _path = widget.initialPath;
   bool _loading = true;
   String _error = '';
+
+  /// 非 null = 当前列表来自上次的快照（284 D7），还没拿到最新的。
+  DateTime? _snapshotAt;
+
+  /// 正在后台取最新列表（与 [_loading] 区分：有快照时列表已可见，但仍在下拉刷新）。
+  bool _refreshing = false;
   List<RemoteStorageEntry> _entries = const [];
   bool _uploading = false;
 
@@ -402,7 +416,13 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     setState(() {
       _loading = true;
       _error = '';
+      _refreshing = true;
     });
+    // 284 D7：先把上次的内容摆出来，别让用户对着空白转圈等网络。
+    // force（下拉刷新/重试）时不给快照——那是"我知道我现在要最新的"。
+    if (!force) {
+      await _showSnapshotIfAny();
+    }
     try {
       final entries = await remoteStorageService()
           .list(widget.account, _path, forceRefresh: force);
@@ -411,6 +431,8 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
         _allEntries = sortedRemoteStorageEntries(entries, _sessionSortField);
         _applyFilter();
         _loading = false;
+        _refreshing = false;
+        _snapshotAt = null;
       });
       _restoreScrollOffset();
     } on RemoteStorageException catch (e) {
@@ -418,14 +440,64 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
       setState(() {
         _error = e.message;
         _loading = false;
+        _refreshing = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _error = '目录读取失败：$e';
         _loading = false;
+        _refreshing = false;
       });
     }
+  }
+
+  /// 把上次列出的内容先显示出来（带"上次的内容"横幅）。
+  ///
+  /// 只在"这个目录还没显示过内容"时铺——正在看的数据不该被旧快照盖回去。
+  Future<void> _showSnapshotIfAny() async {
+    if (_allEntries.isNotEmpty) return;
+    final snapshot =
+        await remoteStorageService().cachedListing(widget.account, _path);
+    if (!mounted || snapshot == null || snapshot.entries.isEmpty) return;
+    setState(() {
+      _allEntries =
+          sortedRemoteStorageEntries(snapshot.entries, _sessionSortField);
+      _applyFilter();
+      _snapshotAt = snapshot.at;
+      _loading = false;
+    });
+    _restoreScrollOffset();
+  }
+
+  /// "上次的内容 · N 分钟前"横幅（284 D7）：快照必须看得见是旧的。
+  Widget _buildSnapshotBanner() {
+    final at = _snapshotAt;
+    if (at == null) return const SizedBox.shrink();
+    final minutes = DateTime.now().difference(at).inMinutes;
+    final age = minutes < 1 ? '刚刚' : (minutes < 60 ? '$minutes 分钟前' : '${minutes ~/ 60} 小时前');
+    final tail = _error.isNotEmpty
+        ? '刷新失败：$_error'
+        : (_refreshing ? '正在刷新…' : '下拉可刷新');
+    return Container(
+      width: double.infinity,
+      color: Theme.of(context).colorScheme.tertiaryContainer.withValues(
+            alpha: 0.6,
+          ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
+        children: [
+          const Icon(Icons.history_rounded, size: 16),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '显示的是上次的内容（$age）· $tail',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ------------------------------------------------------------------ 多选
@@ -460,17 +532,146 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
       _allEntries.where((e) => _selectedPaths.contains(e.path)).toList();
 
   /// 批量下载：复用传输队列（逐个入队），不阻塞 UI。
-  void _downloadSelected() {
-    final files = _selectedEntries().where((e) => !e.isDirectory).toList();
-    if (files.isEmpty) {
-      _snack('选中的都是文件夹：文件夹请先进入后逐项下载');
+  ///
+  /// 选中项里有文件夹 → 递归收集（284 D6）：先走一遍目录树拿到文件清单，
+  /// 让用户看见"共多少个文件"再决定，然后按原目录结构入队。
+  /// 不做的后果就是原来那句提示——"文件夹请先进入后逐项下载"，在相册里等于不可用。
+  Future<void> _downloadSelected() async {
+    final selected = _selectedEntries();
+    final files = selected.where((e) => !e.isDirectory).toList();
+    final dirs = selected.where((e) => e.isDirectory).toList();
+
+    if (dirs.isEmpty) {
+      if (files.isEmpty) return;
+      for (final entry in files) {
+        _enqueueDownload(entry, silent: true);
+      }
+      _snack('已加入下载队列：${files.length} 个文件');
+      _clearSelection();
       return;
     }
+
+    final service = remoteStorageService();
+    final plans = <String, List<_RecursiveFilePlan>>{};
+    var truncated = false;
+    var unreadable = 0;
+    _snack('正在统计文件夹里的文件…');
+    for (final dir in dirs) {
+      final listing = await service.listRecursive(widget.account, dir.path);
+      if (!mounted) return;
+      truncated = truncated || listing.truncated;
+      unreadable += listing.unreadableDirs;
+      final plan = <_RecursiveFilePlan>[];
+      for (final entry in listing.files) {
+        final target = recursiveDownloadTarget(
+          rootPath: dir.path,
+          rootName: dir.name,
+          filePath: entry.path,
+        );
+        if (target == null) continue;
+        plan.add(_RecursiveFilePlan(entry: entry, target: target));
+      }
+      plans[dir.path] = plan;
+    }
+    if (!mounted) return;
+
+    var total = files.length;
+    for (final plan in plans.values) {
+      total += plan.length;
+    }
+    if (total == 0) {
+      _snack('选中的文件夹里没有文件');
+      return;
+    }
+
+    // 续跑友好：已经在本地且字节数一致的文件直接跳过，不重下也不生成副本。
+    var alreadyLocal = 0;
+    for (final plan in plans.values) {
+      for (final item in plan) {
+        if (await service.isAlreadyDownloaded(
+          widget.account,
+          item.target,
+          size: item.entry.size,
+        )) {
+          alreadyLocal += 1;
+        }
+      }
+    }
+    if (!mounted) return;
+
+    final confirmed = await _confirmRecursiveDownload(
+      dirCount: dirs.length,
+      fileCount: total,
+      truncated: truncated,
+      unreadable: unreadable,
+      alreadyLocal: alreadyLocal,
+    );
+    if (!confirmed || !mounted) return;
+
     for (final entry in files) {
       _enqueueDownload(entry, silent: true);
     }
-    _snack('已加入下载队列：${files.length} 个文件');
+    for (final plan in plans.values) {
+      for (final item in plan) {
+        if (await service.isAlreadyDownloaded(
+          widget.account,
+          item.target,
+          size: item.entry.size,
+        )) {
+          continue;
+        }
+        _enqueueDownload(
+          item.entry,
+          silent: true,
+          subDir: item.target.subDir,
+        );
+      }
+    }
+    if (!mounted) return;
+    _snack(
+      '已加入下载队列：$total 个文件'
+      '${alreadyLocal > 0 ? '（已在本地的 $alreadyLocal 个已跳过）' : ''}',
+    );
     _clearSelection();
+  }
+
+  /// 递归下载前的确认（284 D6）：数量、上限、跳过的原因都要摆出来。
+  ///
+  /// 为什么必须确认：一次点选可能意味着几百个文件、几百 MB 流量，
+  /// 用户有权在开始前看到规模；命中上限时也要明说"只下前 N 个"。
+  Future<bool> _confirmRecursiveDownload({
+    required int dirCount,
+    required int fileCount,
+    required bool truncated,
+    required int unreadable,
+    required int alreadyLocal,
+  }) async {
+    final lines = <String>[
+      '选中 $dirCount 个文件夹，共 $fileCount 个文件。',
+      '将按原目录结构下载到本应用的存储空间。',
+      if (alreadyLocal > 0) '其中 $alreadyLocal 个已经在本地（字节数一致，将跳过）。',
+      if (truncated)
+        '文件夹过大，本次只下载前 $kRecursiveDownloadMaxFiles 个文件。',
+      if (unreadable > 0) '有 $unreadable 个子目录无权限读取，已跳过。',
+    ];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('下载文件夹'),
+        content: Text(lines.join('\n')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('开始下载'),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
   }
 
   /// 删除确认：目录必须写清"内容一并删除、不可恢复"（服务器多为递归删除）。
@@ -985,22 +1186,30 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   // ------------------------------------------------------------- 下载
 
   /// [silent] 用于批量下载：逐个入队时不要每项弹一次 SnackBar，由调用方汇总。
+  ///
+  /// [subDir] 只在递归下载文件夹时给（284 D6）：保留远端目录结构，
+  /// 落点 `<下载目录>/<选中目录名>/<相对路径>`。给了它就不再逐项弹"下载完成"对话框
+  /// （一次几百个文件弹几百次对话框，那不是功能是灾）。
   void _enqueueDownload(
     RemoteStorageEntry entry, {
     bool openAfter = false,
     bool silent = false,
+    String? subDir,
   }) {
     final service = remoteStorageService();
     final dirLabel = _path.isEmpty ? '根目录' : _path;
     transferQueue().enqueue(
       kind: TransferKind.download,
       title: entry.name,
-      subtitle: '$_accountTitle · $dirLabel',
+      subtitle: subDir == null
+          ? '$_accountTitle · $dirLabel'
+          : '$_accountTitle · $subDir',
       totalBytes: entry.size ?? -1,
       runner: (cancel, onProgress) => service.download(
         widget.account,
         remotePath: entry.path,
         fileName: entry.name,
+        subDir: subDir,
         onProgress: onProgress,
         cancel: cancel,
       ),
@@ -1010,7 +1219,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
           final path = task.result! as String;
           if (openAfter) {
             OpenFilex.open(path);
-          } else {
+          } else if (subDir == null && !silent) {
             _showDownloadedDialog(path, entry.name);
           }
         } else if (task.status == TransferStatus.failed) {
@@ -1462,14 +1671,15 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   /// 多选态下的批量动作条（横向可滚动，窄屏不挤爆）。
   Widget _buildSelectionActions() {
     final entries = _selectedEntries();
-    final hasFile = entries.any((e) => !e.isDirectory);
+    // 284 D6 起"只选了文件夹"也能下载（递归），按钮就不该再禁用。
+    final canDownload = entries.isNotEmpty;
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
           TextButton.icon(
-            onPressed: _busy || !hasFile ? null : _downloadSelected,
+            onPressed: _busy || !canDownload ? null : _downloadSelected,
             icon: const Icon(Icons.download_rounded, size: 20),
             label: const Text('下载'),
           ),
@@ -1576,7 +1786,10 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (_error.isNotEmpty) {
+    // 284 D7：有快照就先把内容给出去，错误放进横幅里——
+    // "整页报错、连上次能看到的东西也一起藏起来"是更差的体验。
+    final showingSnapshot = _snapshotAt != null && _allEntries.isNotEmpty;
+    if (_error.isNotEmpty && !showingSnapshot) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -1631,6 +1844,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
       onRefresh: () => _load(force: true),
       child: Column(
         children: [
+          _buildSnapshotBanner(),
           if (_query.trim().isNotEmpty)
             Container(
               width: double.infinity,

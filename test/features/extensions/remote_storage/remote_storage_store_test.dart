@@ -355,4 +355,96 @@ void main() {
       expect(await store.loadPlaybackSpeed(), 1.25);
     });
   });
+
+  group('目录快照（284 D7）', () {
+    late RemoteStorageStore store;
+
+    setUp(() {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      store = RemoteStorageStore();
+    });
+
+    test('存了读回来一致（按账户+目录分开）', () async {
+      await store.saveDirSnapshot('accA', '相册', const [
+        RemoteStorageEntry(name: 'a.jpg', path: '相册/a.jpg', isDirectory: false, size: 10),
+      ]);
+
+      final snapshot = await store.loadDirSnapshot('accA', '相册');
+      expect(snapshot, isNotNull);
+      expect(snapshot!.entries.single.name, 'a.jpg');
+
+      expect(await store.loadDirSnapshot('accA', '视频'), isNull);
+      expect(await store.loadDirSnapshot('accB', '相册'), isNull);
+    });
+
+    test('根目录用 / 作键，不会和别的目录混', () async {
+      await store.saveDirSnapshot('accA', '', const [
+        RemoteStorageEntry(name: 'root.txt', path: 'root.txt', isDirectory: false),
+      ]);
+
+      expect((await store.loadDirSnapshot('accA', ''))!.entries.single.name, 'root.txt');
+      expect(await store.loadDirSnapshot('accA', '/'), isNotNull);
+    });
+
+    test('条目数超上限：不存快照（截断后的列表更容易骗人）', () async {
+      final many = <RemoteStorageEntry>[
+        for (var i = 0; i <= kDirSnapshotMaxEntries; i++)
+          RemoteStorageEntry(name: 'f$i', path: 'f$i', isDirectory: false),
+      ];
+
+      await store.saveDirSnapshot('accA', '大批', many);
+
+      expect(await store.loadDirSnapshot('accA', '大批'), isNull);
+    });
+
+    test('快照数超上限：丢最早的，保留刚存的', () async {
+      for (var i = 0; i < kDirSnapshotMaxDirs + 3; i++) {
+        await store.saveDirSnapshot('accA', '目录$i', const [
+          RemoteStorageEntry(name: 'x', path: 'x', isDirectory: false),
+        ]);
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+      final keys = prefs
+          .getKeys()
+          .where((k) => k.startsWith(RemoteStorageStore.dirSnapshotKeyPrefix))
+          .toList();
+
+      expect(keys.length, lessThanOrEqualTo(kDirSnapshotMaxDirs));
+      expect(
+        keys.any((k) => k.endsWith('目录${kDirSnapshotMaxDirs + 2}')),
+        isTrue,
+        reason: '刚存的不能被自己淘汰掉',
+      );
+      expect(keys.any((k) => k.endsWith('目录0')), isFalse);
+    });
+
+    test('删账户清掉该账户全部快照，别的账户保留', () async {
+      await store.saveDirSnapshot('accA', '相册', const [
+        RemoteStorageEntry(name: 'a.jpg', path: '相册/a.jpg', isDirectory: false),
+      ]);
+      await store.saveDirSnapshot('accA2', '相册', const [
+        RemoteStorageEntry(name: 'a.jpg', path: '相册/a.jpg', isDirectory: false),
+      ]);
+      await store.saveDirSnapshot('accB', '相册', const [
+        RemoteStorageEntry(name: 'b.jpg', path: '相册/b.jpg', isDirectory: false),
+      ]);
+
+      final removed = await store.clearAccountSnapshots('accA');
+
+      expect(removed, 1, reason: '前缀按账户 id + | 收边，accA 不会清到 accA2');
+      expect(await store.loadDirSnapshot('accA', '相册'), isNull);
+      expect(await store.loadDirSnapshot('accA2', '相册'), isNotNull);
+      expect(await store.loadDirSnapshot('accB', '相册'), isNotNull);
+    });
+
+    test('坏数据当没有：不抛异常', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        '${RemoteStorageStore.dirSnapshotKeyPrefix}accA|相册': '这不是 JSON',
+      });
+
+      expect(await store.loadDirSnapshot('accA', '相册'), isNull);
+    });
+  });
 }

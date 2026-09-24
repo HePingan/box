@@ -713,4 +713,126 @@ void main() {
       expect(formatPlaybackSpeed(0.5), '0.5×');
     });
   });
+
+  group('递归下载落点（284 D6）', () {
+    RecursiveDownloadTarget? target(String root, String rootName, String file) =>
+        recursiveDownloadTarget(
+          rootPath: root,
+          rootName: rootName,
+          filePath: file,
+        );
+
+    test('根目录下的文件：落在以目录名命名的子目录里', () {
+      final t = target('相册', '相册', '相册/a.jpg')!;
+      expect(t.subDir, '相册');
+      expect(t.fileName, 'a.jpg');
+    });
+
+    test('保留嵌套结构（一层与两层）', () {
+      final one = target('相册', '相册', '相册/2021/b.jpg')!;
+      expect(one.subDir, '相册/2021');
+      expect(one.fileName, 'b.jpg');
+
+      final two = target('相册', '相册', '相册/2021/01/c.jpg')!;
+      expect(two.subDir, '相册/2021/01');
+      expect(two.fileName, 'c.jpg');
+    });
+
+    test('远端路径带斜杠前缀/后缀都能算对', () {
+      expect(target('/相册', '相册', '/相册/x.jpg')!.subDir, '相册');
+      expect(target('相册/', '相册', '相册/x.jpg')!.subDir, '相册');
+      expect(target('相册/', '相册', '相册/2021/x.jpg')!.subDir, '相册/2021');
+    });
+
+    test('根目录（空 rootPath）时相对路径按整条算', () {
+      final t = target('', '远端', '相册/a.jpg')!;
+      expect(t.subDir, '远端/相册');
+      expect(t.fileName, 'a.jpg');
+    });
+
+    test('不在该目录下的文件 → null（不能被算进来）', () {
+      expect(target('相册', '相册', '视频/x.mp4'), isNull);
+      // 前缀相同但不是一个目录段：相册2 不在 相册 之下
+      expect(target('相册', '相册', '相册2/x.jpg'), isNull);
+      expect(target('相册', '相册', '相册'), isNull, reason: '目录自身不是文件');
+    });
+
+    test('本地子路径清洗：`..` 与空段不会把文件写到下载目录之外', () {
+      expect(sanitizeLocalSubPath('a/../b'), 'a/b');
+      expect(sanitizeLocalSubPath('..'), '');
+      expect(sanitizeLocalSubPath('a//b'), 'a/b');
+      expect(sanitizeLocalSubPath('/a/b/'), 'a/b');
+      expect(
+        sanitizeLocalSubPath('CON/a'),
+        '_/a',
+        reason: 'Windows 保留名清洗不掉就用 _ 顶替（本地宁可名字丑，不能越界）',
+      );
+    });
+  });
+
+  group('目录快照（284 D7）', () {
+    const entry = RemoteStorageEntry(
+      name: '笔记.txt',
+      path: 'Box/笔记.txt',
+      isDirectory: false,
+      size: 1234,
+      etag: '"abc"',
+    );
+    final at = DateTime(2026, 9, 25, 10, 30);
+
+    test('编解码往返一致（含目录、可选字段缺失）', () {
+      final snapshot = DirSnapshot(
+        entries: const [
+          entry,
+          RemoteStorageEntry(name: '相册', path: 'Box/相册', isDirectory: true),
+        ],
+        at: at,
+      );
+
+      final back = decodeDirSnapshot(encodeDirSnapshot(snapshot))!;
+
+      expect(back.at, at);
+      expect(back.entries.length, 2);
+      expect(back.entries[0].name, '笔记.txt');
+      expect(back.entries[0].path, 'Box/笔记.txt');
+      expect(back.entries[0].size, 1234);
+      expect(back.entries[0].etag, '"abc"');
+      expect(back.entries[1].isDirectory, isTrue);
+      expect(back.entries[1].size, isNull, reason: '目录没有大小');
+    });
+
+    test('坏数据一律当没有快照：不抛异常', () {
+      expect(decodeDirSnapshot('这不是 JSON'), isNull);
+      expect(decodeDirSnapshot('{}'), isNull, reason: '缺 at/entries');
+      expect(decodeDirSnapshot('{"at":"2026-09-25T10:30:00","entries":"x"}'), isNull);
+      expect(
+        decodeDirSnapshot('{"at":"坏时间","entries":[]}'),
+        isNull,
+      );
+      expect(
+        decodeDirSnapshot('{"at":"2026-09-25T10:30:00","entries":[{"n":"a"}]}'),
+        isNull,
+        reason: '缺 path 的条目会让列表点不动，宁可整份丢掉',
+      );
+    });
+
+    test('新旧判定：5 分钟是界线', () {
+      final fresh = DirSnapshot(entries: const [], at: DateTime.now());
+      final old = DirSnapshot(
+        entries: const [],
+        at: DateTime.now().subtract(const Duration(minutes: 6)),
+      );
+
+      expect(fresh.isStale(DateTime.now()), isFalse);
+      expect(old.isStale(DateTime.now()), isTrue);
+      expect(
+        DirSnapshot(
+          entries: const [],
+          at: DateTime.now().subtract(const Duration(minutes: 4)),
+        ).isStale(DateTime.now()),
+        isFalse,
+        reason: '刚刷过的目录不该顶着"上次的内容"横幅',
+      );
+    });
+  });
 }

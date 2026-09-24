@@ -1272,4 +1272,205 @@ void main() {
       expect(await service.loadPlaybackSpeed(), 1.25);
     });
   });
+
+  group('递归收集文件夹（284 D6）', () {
+    /// 按目录名分支应答的假服务器。
+    ///
+    /// 用 `uri.pathSegments`（**已解码**）而不是 `uri.path`：中文目录名在 URL 里是
+    /// 百分号编码的，拿原始 path 去比对永远匹配不上（这个坑先在测试里踩了一次）。
+    void serve(Map<String, List<DavItem>> tree) {
+      transport.handler = (request) async {
+        final segments = request.uri.pathSegments;
+        if (segments.isNotEmpty) {
+          final last = segments.last;
+          final items = tree[last];
+          if (items != null) return xmlResponse(propfindXml(items));
+        }
+        return xmlResponse(propfindXml(const <DavItem>[]));
+      };
+    }
+
+    test('多层目录：收齐文件，跳过系统目录', () async {
+      serve(<String, List<DavItem>>{
+        '相册': const [
+          DavItem('/dav/相册/', isCollection: true),
+          DavItem('/dav/相册/a.jpg', displayName: 'a.jpg', size: 10),
+          DavItem('/dav/相册/2021/', isCollection: true),
+          DavItem('/dav/相册/@eaDir/', isCollection: true),
+        ],
+        '2021': const [
+          DavItem('/dav/相册/2021/', isCollection: true),
+          DavItem('/dav/相册/2021/b.jpg', displayName: 'b.jpg', size: 20),
+          DavItem('/dav/相册/2021/01/', isCollection: true),
+        ],
+        '01': const [
+          DavItem('/dav/相册/2021/01/', isCollection: true),
+          DavItem('/dav/相册/2021/01/c.jpg', displayName: 'c.jpg', size: 30),
+        ],
+      });
+
+      final listing = await service.listRecursive(testAccount(), '相册');
+
+      expect(listing.files.map((e) => e.name).toList()..sort(),
+          <String>['a.jpg', 'b.jpg', 'c.jpg']);
+      expect(listing.dirsScanned, 3);
+      expect(listing.truncated, isFalse);
+      expect(listing.unreadableDirs, 0);
+    });
+
+    test('某个子目录读不出来（403）：跳过并计数，不整体失败', () async {
+      transport.handler = (request) async {
+        if (request.uri.pathSegments.last == '拒绝') {
+          return const WebdavResponse(statusCode: 403, headers: <String, String>{});
+        }
+        return xmlResponse(propfindXml(const [
+          DavItem('/dav/相册/', isCollection: true),
+          DavItem('/dav/相册/ok.jpg', displayName: 'ok.jpg', size: 5),
+          DavItem('/dav/相册/拒绝/', isCollection: true),
+        ]));
+      };
+
+      final listing = await service.listRecursive(testAccount(), '相册');
+
+      expect(listing.files.map((e) => e.name).toList(), <String>['ok.jpg']);
+      expect(
+        listing.unreadableDirs,
+        1,
+        reason: '选了 20 个相册，不该因为其中一个共享目录没权限就全下不了',
+      );
+    });
+
+    test('文件数命中上限：停在上限并置 truncated（界面要告知）', () async {
+      final many = <DavItem>[
+        const DavItem('/dav/大批/', isCollection: true),
+        for (var i = 0; i < kRecursiveDownloadMaxFiles + 5; i++)
+          DavItem('/dav/大批/f$i.jpg', displayName: 'f$i.jpg', size: 1),
+      ];
+      serve(<String, List<DavItem>>{'大批': many});
+
+      final listing = await service.listRecursive(testAccount(), '大批');
+
+      expect(listing.files.length, kRecursiveDownloadMaxFiles);
+      expect(listing.truncated, isTrue);
+    });
+
+    test('取消后立即停下', () async {
+      serve(<String, List<DavItem>>{
+        '相册': const [
+          DavItem('/dav/相册/', isCollection: true),
+          DavItem('/dav/相册/a.jpg', displayName: 'a.jpg', size: 10),
+          DavItem('/dav/相册/2021/', isCollection: true),
+        ],
+      });
+      final cancel = TransferCancelToken()..cancel();
+
+      final listing = await service.listRecursive(
+        testAccount(),
+        '相册',
+        cancel: cancel,
+      );
+
+      expect(listing.files, isEmpty);
+      expect(listing.dirsScanned, 0);
+    });
+
+    test('download(subDir:) 落到子目录，保留结构', () async {
+      transport.handler = (request) async {
+        if (request.method == 'GET') {
+          return streamResponse(const <int>[1, 2, 3, 4]);
+        }
+        return const WebdavResponse(statusCode: 404, headers: <String, String>{});
+      };
+
+      final path = await service.download(
+        testAccount(),
+        remotePath: '相册/2021/b.jpg',
+        fileName: 'b.jpg',
+        subDir: '相册/2021',
+      );
+
+      final expected = '${docsDir.path}/remote_storage/${testAccount().id}/相册/2021/b.jpg';
+      expect(path, expected);
+      expect(await File(expected).readAsBytes(), <int>[1, 2, 3, 4]);
+    });
+
+    test('isAlreadyDownloaded：同名同大小算已下载；大小不同/不存在算没下过', () async {
+      transport.handler = (request) async =>
+          streamResponse(const <int>[1, 2, 3]);
+      const target = RecursiveDownloadTarget(subDir: '相册', fileName: 'a.jpg');
+      final account = testAccount();
+
+      expect(
+        await service.isAlreadyDownloaded(account, target, size: 3),
+        isFalse,
+        reason: '还没下过',
+      );
+
+      await service.download(
+        account,
+        remotePath: '相册/a.jpg',
+        fileName: 'a.jpg',
+        subDir: '相册',
+      );
+
+      expect(await service.isAlreadyDownloaded(account, target, size: 3), isTrue);
+      expect(
+        await service.isAlreadyDownloaded(account, target, size: 999),
+        isFalse,
+        reason: '远端换过文件（大小不同）→ 不能当已下载，否则会跳过真该重下的',
+      );
+      expect(
+        await service.isAlreadyDownloaded(account, target, size: null),
+        isFalse,
+        reason: '大小未知时不敢跳过',
+      );
+    });
+  });
+
+  group('目录快照接线（284 D7）', () {
+    test('列出成功后能取到快照；强制刷新也写快照', () async {
+      transport.handler = (request) async => xmlResponse(propfindXml(const [
+            DavItem('/dav/a.txt', displayName: 'a.txt', size: 5),
+          ]));
+
+      expect(await service.cachedListing(testAccount(), '相册'), isNull);
+
+      await service.list(testAccount(), '相册');
+
+      final snapshot = await service.cachedListing(testAccount(), '相册');
+      expect(snapshot, isNotNull);
+      expect(snapshot!.entries.single.name, 'a.txt');
+      expect(
+        DateTime.now().difference(snapshot.at).inSeconds,
+        lessThan(10),
+        reason: '快照时间是写入时刻，不是啥远古时间',
+      );
+    });
+
+    test('列出失败：不会留下半截快照', () async {
+      transport.handler = (request) async =>
+          const WebdavResponse(statusCode: 500, headers: <String, String>{});
+
+      await expectLater(
+        service.list(testAccount(), '相册'),
+        throwsA(isA<RemoteStorageException>()),
+      );
+
+      expect(await service.cachedListing(testAccount(), '相册'), isNull);
+    });
+
+    test('删账户一并清掉该账户的目录快照', () async {
+      transport.handler = (request) async => xmlResponse(propfindXml(const [
+            DavItem('/dav/a.txt', displayName: 'a.txt', size: 5),
+          ]));
+      final account = testAccount();
+      await service.saveAccount(account);
+      await service.list(account, '相册');
+      expect(await service.cachedListing(account, '相册'), isNotNull);
+
+      await service.deleteAccount(account.id);
+
+      expect(await service.cachedListing(account, '相册'), isNull);
+    });
+  });
 }

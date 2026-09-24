@@ -36,6 +36,8 @@ class _FakeService extends RemoteStorageService {
     String path, {
     bool forceRefresh = false,
   }) async {
+    final gate = listGate;
+    if (gate != null && !gate.isCompleted) await gate.future;
     final err = listError;
     if (err != null) throw err;
     return entries;
@@ -137,6 +139,67 @@ class _FakeService extends RemoteStorageService {
   final List<List<RemoteStorageEntry>> deletedBatches = [];
 
   RemoteBatchResult batchResult = const RemoteBatchResult.empty();
+
+  /// 上次列出的内容（284 D7）：默认没有快照。
+  DirSnapshot? snapshot;
+
+  @override
+  Future<DirSnapshot?> cachedListing(
+    RemoteStorageAccount account,
+    String path,
+  ) async =>
+      snapshot;
+
+  /// 让 `list` 卡在这里，便于观察"先显示快照、后换最新"的中间态。
+  Completer<void>? listGate;
+
+  /// 递归收集结果（284 D6）：默认空清单，用例按需设置。
+  RecursiveListing recursiveListing = const RecursiveListing(
+    files: <RemoteStorageEntry>[],
+    dirsScanned: 1,
+    truncated: false,
+    unreadableDirs: 0,
+  );
+  final List<String> recursiveCalls = [];
+
+  @override
+  Future<RecursiveListing> listRecursive(
+    RemoteStorageAccount account,
+    String path, {
+    bool forceRefresh = false,
+    TransferCancelToken? cancel,
+  }) async {
+    recursiveCalls.add(path);
+    return recursiveListing;
+  }
+
+  /// 已在本地的文件键（284 D6 续跑跳过）：默认都没有。
+  Set<String> alreadyLocal = <String>{};
+
+  @override
+  Future<bool> isAlreadyDownloaded(
+    RemoteStorageAccount account,
+    RecursiveDownloadTarget target, {
+    required int? size,
+  }) async =>
+      alreadyLocal.contains('${target.subDir}/${target.fileName}');
+
+  /// 下载落点（284 D6）：记录远端路径与本地子目录，不落盘。
+  final List<(String, String?)> downloads = <(String, String?)>[];
+
+  @override
+  Future<String> download(
+    RemoteStorageAccount account, {
+    required String remotePath,
+    required String fileName,
+    String? subDir,
+    void Function(int received, int total)? onProgress,
+    TransferCancelToken? cancel,
+  }) async {
+    downloads.add((remotePath, subDir));
+    onProgress?.call(1, 1);
+    return '/tmp/fake-download/$fileName';
+  }
 
   @override
   Future<RemoteBatchResult> deleteEntries(
@@ -532,6 +595,290 @@ void main() {
       );
       expect(find.textContaining('a.txt'), findsAtLeastNWidgets(1));
       expect(find.textContaining('docs'), findsAtLeastNWidgets(1));
+    });
+  });
+
+  group('目录快照先显示（284 D7）', () {
+    const fresh = RemoteStorageEntry(
+      name: '新的.txt',
+      path: '新的.txt',
+      isDirectory: false,
+      size: 1,
+    );
+    const cached = RemoteStorageEntry(
+      name: '上次的.txt',
+      path: '上次的.txt',
+      isDirectory: false,
+      size: 2,
+    );
+
+    testWidgets('有快照：先显示上次的内容并挂横幅，拿到最新后横幅消失', (tester) async {
+      final service = _FakeService(entries: const [fresh]);
+      service.snapshot = DirSnapshot(
+        entries: const [cached],
+        at: DateTime.now().subtract(const Duration(minutes: 12)),
+      );
+      final gate = Completer<void>();
+      service.listGate = gate;
+      debugSetRemoteStorageRuntime(service: service, queue: TransferQueue());
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      // 网络还没回来：看到的是上次的内容 + 明确的横幅（不是空白转圈）
+      expect(find.text('上次的.txt'), findsOneWidget);
+      expect(find.text('新的.txt'), findsNothing);
+      expect(find.textContaining('显示的是上次的内容'), findsOneWidget);
+      expect(find.textContaining('12 分钟前'), findsOneWidget);
+      expect(find.textContaining('正在刷新'), findsOneWidget);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+
+      // 最新数据到位：换掉旧内容、撤掉横幅
+      expect(find.text('新的.txt'), findsOneWidget);
+      expect(find.text('上次的.txt'), findsNothing);
+      expect(find.textContaining('显示的是上次的内容'), findsNothing);
+    });
+
+    testWidgets('刷新失败但有快照：仍显示上次的内容，横幅说明失败原因（不整页报错）', (tester) async {
+      final service = _FakeService(
+        entries: const [],
+        listError: const RemoteStorageException(
+          RemoteStorageError.http,
+          '服务器返回 HTTP 500',
+        ),
+      );
+      service.snapshot = DirSnapshot(
+        entries: const [cached],
+        at: DateTime.now().subtract(const Duration(minutes: 3)),
+      );
+      debugSetRemoteStorageRuntime(service: service, queue: TransferQueue());
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('上次的.txt'), findsOneWidget);
+      expect(find.textContaining('刷新失败'), findsOneWidget);
+      expect(find.textContaining('HTTP 500'), findsOneWidget);
+      expect(
+        find.widgetWithText(OutlinedButton, '重试'),
+        findsNothing,
+        reason: '能看到内容时不该整页报错',
+      );
+    });
+
+    testWidgets('没有快照：照旧是转圈，不显示横幅', (tester) async {
+      final service = _FakeService(entries: const [fresh]);
+      debugSetRemoteStorageRuntime(service: service, queue: TransferQueue());
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('显示的是上次的内容'), findsNothing);
+      expect(find.text('新的.txt'), findsOneWidget);
+    });
+  });
+
+  group('递归下载文件夹（284 D6）', () {
+    const folder = RemoteStorageEntry(
+      name: '相册',
+      path: '相册',
+      isDirectory: true,
+    );
+    const looseFile = RemoteStorageEntry(
+      name: 'a.txt',
+      path: 'a.txt',
+      isDirectory: false,
+      size: 5,
+    );
+
+    Future<(TransferQueue, _FakeService)> pumpWithQueue(
+      WidgetTester tester, {
+      List<RemoteStorageEntry> entries = const [folder, looseFile],
+    }) async {
+      final service = _FakeService(entries: entries);
+      final queue = TransferQueue();
+      debugSetRemoteStorageRuntime(service: service, queue: queue);
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+      return (queue, service);
+    }
+
+    RecursiveListing listingOf(List<RemoteStorageEntry> files) =>
+        RecursiveListing(
+          files: files,
+          dirsScanned: 2,
+          truncated: false,
+          unreadableDirs: 0,
+        );
+
+    testWidgets('只选文件夹时下载按钮可用（旧版是禁用的）', (tester) async {
+      await pumpWithQueue(tester);
+
+      await tester.longPress(find.text('相册'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('已选 1 项'), findsOneWidget);
+      final button = tester.widget<TextButton>(
+        find.widgetWithText(TextButton, '下载'),
+      );
+      expect(button.onPressed, isNotNull);
+    });
+
+    testWidgets('选中文件夹：先统计规模并确认，再按原目录结构入队', (tester) async {
+      final (queue, service) = await pumpWithQueue(tester);
+      service.recursiveListing = listingOf(const [
+        RemoteStorageEntry(
+          name: 'x.jpg',
+          path: '相册/2021/x.jpg',
+          isDirectory: false,
+          size: 10,
+        ),
+        RemoteStorageEntry(
+          name: 'y.jpg',
+          path: '相册/y.jpg',
+          isDirectory: false,
+          size: 20,
+        ),
+      ]);
+
+      await tester.longPress(find.text('相册'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, '下载'));
+      await tester.pumpAndSettle();
+
+      expect(service.recursiveCalls, const ['相册']);
+      expect(find.text('下载文件夹'), findsOneWidget);
+      expect(find.textContaining('选中 1 个文件夹，共 2 个文件'), findsOneWidget);
+
+      await tester.tap(find.text('开始下载'));
+      await tester.pumpAndSettle();
+
+      expect(service.downloads, const <(String, String?)>[
+        ('相册/2021/x.jpg', '相册/2021'),
+        ('相册/y.jpg', '相册'),
+      ]);
+      expect(queue.tasks.length, 2);
+      expect(queue.tasks.every((t) => t.status == TransferStatus.done), isTrue);
+    });
+
+    testWidgets('取消确认框：一个任务都不入队', (tester) async {
+      final (queue, service) = await pumpWithQueue(tester);
+      service.recursiveListing = listingOf(const [
+        RemoteStorageEntry(
+          name: 'x.jpg',
+          path: '相册/x.jpg',
+          isDirectory: false,
+          size: 10,
+        ),
+      ]);
+
+      await tester.longPress(find.text('相册'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, '下载'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+
+      expect(queue.tasks, isEmpty);
+      expect(service.downloads, isEmpty);
+    });
+
+    testWidgets('已在本地的文件跳过（续跑不重下、不生成副本）', (tester) async {
+      final (queue, service) = await pumpWithQueue(tester);
+      service.recursiveListing = listingOf(const [
+        RemoteStorageEntry(
+          name: 'x.jpg',
+          path: '相册/x.jpg',
+          isDirectory: false,
+          size: 10,
+        ),
+        RemoteStorageEntry(
+          name: 'y.jpg',
+          path: '相册/y.jpg',
+          isDirectory: false,
+          size: 20,
+        ),
+      ]);
+      service.alreadyLocal = <String>{'相册/x.jpg'};
+
+      await tester.longPress(find.text('相册'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, '下载'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('其中 1 个已经在本地'), findsOneWidget);
+
+      await tester.tap(find.text('开始下载'));
+      await tester.pumpAndSettle();
+
+      expect(service.downloads, const <(String, String?)>[
+        ('相册/y.jpg', '相册'),
+      ]);
+      expect(queue.tasks.length, 1);
+    });
+
+    testWidgets('命中文件上限：确认框明说"只下载前 N 个"', (tester) async {
+      final (_, service) = await pumpWithQueue(tester);
+      service.recursiveListing = const RecursiveListing(
+        files: [
+          RemoteStorageEntry(
+            name: 'x.jpg',
+            path: '相册/x.jpg',
+            isDirectory: false,
+            size: 10,
+          ),
+        ],
+        dirsScanned: 50,
+        truncated: true,
+        unreadableDirs: 2,
+      );
+
+      await tester.longPress(find.text('相册'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, '下载'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('只下载前 $kRecursiveDownloadMaxFiles 个文件'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('有 2 个子目录无权限读取'), findsOneWidget);
+    });
+
+    testWidgets('文件夹和散文件一起选：散文件照旧入队，文件夹递归入队', (tester) async {
+      final (queue, service) = await pumpWithQueue(tester);
+      service.recursiveListing = listingOf(const [
+        RemoteStorageEntry(
+          name: 'x.jpg',
+          path: '相册/x.jpg',
+          isDirectory: false,
+          size: 10,
+        ),
+      ]);
+
+      await tester.longPress(find.text('相册'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('a.txt'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, '下载'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('开始下载'));
+      await tester.pumpAndSettle();
+
+      expect(service.downloads, const <(String, String?)>[
+        ('a.txt', null),
+        ('相册/x.jpg', '相册'),
+      ]);
+      expect(queue.tasks.length, 2);
     });
   });
 

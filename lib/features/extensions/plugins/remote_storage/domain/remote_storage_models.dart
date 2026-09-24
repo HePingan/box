@@ -74,6 +74,101 @@ const int kExifProbeBytes = 256 * 1024;
 /// 也不要让这个集合无限增长）。
 const int kExifProbeMissLimit = 500;
 
+/// 递归下载的上限（284 D6）。
+///
+/// 为什么要上限：用户可能选中一个几千文件的目录（相册根目录就是这样）。没有上限
+/// 的后果是——先把手机和服务器一起拖住，再在队列里堆几千个任务，取消都取消不过来。
+/// 命中上限时**明确告知**"只下载了前 N 个"，而不是静默截断。
+const int kRecursiveDownloadMaxFiles = 300;
+
+/// 递归扫描的目录数上限（防止深/宽的目录树把一次列表变成几十次请求）。
+const int kRecursiveDownloadMaxDirs = 200;
+
+/// 递归收集的结果（284 D6）。
+class RecursiveListing {
+  const RecursiveListing({
+    required this.files,
+    required this.dirsScanned,
+    required this.truncated,
+    required this.unreadableDirs,
+  });
+
+  final List<RemoteStorageEntry> files;
+
+  /// 走过的目录数（含起点）。
+  final int dirsScanned;
+
+  /// 命中上限被截断——界面**必须**把这件事告诉用户，不能静默少下。
+  final bool truncated;
+
+  /// 读取失败被跳过的子目录数（权限不足/被服务端拒绝等）。
+  final int unreadableDirs;
+
+  bool get isEmpty => files.isEmpty;
+}
+
+/// 递归下载时单个文件在本地要落的位置（284 D6）。
+class RecursiveDownloadTarget {
+  const RecursiveDownloadTarget({
+    required this.subDir,
+    required this.fileName,
+  });
+
+  /// 相对下载根目录的子目录（含选中目录名，保持结构），如 `相册/2021`。
+  final String subDir;
+
+  /// 文件名（最后一段）。
+  final String fileName;
+}
+
+/// 算出递归下载的落点；[filePath] 不在 [rootPath] 之下时返回 null（调用方跳过）。
+///
+/// 纯函数：路径拼接是最容易错、又最难在真机上发现的地方（错一层就写进别的目录），
+/// 所以放在 domain 层单测，而不是散在页面里。
+///
+/// 例子（选中 `相册`，rootPath=`相册`）：
+///   `相册/a.jpg`        → subDir=`相册`、file=`a.jpg`
+///   `相册/2021/b.jpg`   → subDir=`相册/2021`、file=`b.jpg`
+///   `相册/2021/01/c.jpg`→ subDir=`相册/2021/01`、file=`c.jpg`
+RecursiveDownloadTarget? recursiveDownloadTarget({
+  required String rootPath,
+  required String rootName,
+  required String filePath,
+}) {
+  final root = rootPath.endsWith('/')
+      ? rootPath.substring(0, rootPath.length - 1)
+      : rootPath;
+  final prefix = root.isEmpty ? '' : '$root/';
+  final relative = prefix.isEmpty
+      ? (filePath.startsWith('/') ? filePath.substring(1) : filePath)
+      : (filePath.startsWith(prefix) ? filePath.substring(prefix.length) : null);
+  if (relative == null || relative.isEmpty) return null;
+  final cut = relative.lastIndexOf('/');
+  final dirPart = cut < 0 ? '' : relative.substring(0, cut);
+  final name = cut < 0 ? relative : relative.substring(cut + 1);
+  if (name.isEmpty) return null;
+  final safeName = sanitizeRemoteSegment(name) ?? name;
+  final parent = sanitizeLocalSubPath(dirPart);
+  return RecursiveDownloadTarget(
+    subDir: parent.isEmpty ? rootName : '$rootName/$parent',
+    fileName: safeName,
+  );
+}
+
+/// 把远端相对目录拼成**本地**子目录：逐段清洗，清洗不掉的段用 `_` 顶替。
+///
+/// 为什么不用 `sanitizeRemoteSegment` 直接把整串过一遍：它面向的是单个路径段。
+/// 这里宁可名字丑一点，也不能让 `..` 或空段把文件写到下载目录之外——本地落盘的
+/// 越界比远端命名不规范严重得多。
+String sanitizeLocalSubPath(String relative) {
+  final parts = <String>[];
+  for (final raw in relative.split('/')) {
+    if (raw.isEmpty || raw == '.' || raw == '..') continue;
+    parts.add(sanitizeRemoteSegment(raw) ?? '_');
+  }
+  return parts.join('/');
+}
+
 /// 播放倍速档位（284 P4）。
 ///
 /// 0.5–2.0 五档足够覆盖"听课调慢"和"跳过废话"；再细的档位只增加选择成本。
@@ -426,6 +521,89 @@ class RemoteStorageEntry {
   /// 条件写（If-Match）」「跳过未变化文件」的基础。服务器不返回该属性时为 null
   /// —— 不要用它做唯一判据，缺失是常态（Apache mod_dav 默认不发）。
   final String? etag;
+}
+
+/// 目录快照：上次列出的结果 + 时间（284 D7）。
+///
+/// 用途：冷启动/切目录时**先显示上次的内容**，同时后台刷新——直接把用户丢进
+/// 一个转圈的空页面，是那种"每一处都让你多等一秒"的手感问题。
+///
+/// 关键约束：快照必须**看得见是旧的**（[isStale] + 界面横幅）。
+/// 静默拿旧数据当最新，比转圈更糟：用户会以为远端删掉的东西还在。
+class DirSnapshot {
+  const DirSnapshot({required this.entries, required this.at});
+
+  final List<RemoteStorageEntry> entries;
+  final DateTime at;
+
+  Duration age(DateTime now) => now.difference(at);
+
+  /// 超过 [kDirSnapshotStaleAfter] 就算旧——界面据此显示"上次的内容"横幅。
+  bool isStale(
+    DateTime now, {
+    Duration threshold = kDirSnapshotStaleAfter,
+  }) =>
+      age(now) >= threshold;
+}
+
+/// 快照超过这个时长就明说是旧的（哪怕正在刷新）。
+const Duration kDirSnapshotStaleAfter = Duration(minutes: 5);
+
+/// 单个目录快照最多存多少条：超了**不存快照**。
+///
+/// 为什么不截断到 200 条存下去：截断后的列表比"没有快照"更容易骗人
+/// （用户会以为目录里只有这 200 个文件）。
+const int kDirSnapshotMaxEntries = 200;
+
+/// 最多记住多少个目录的快照，超了按时间丢最早的。
+const int kDirSnapshotMaxDirs = 30;
+
+/// 快照序列化（纯函数：坏数据一律当没有，不抛异常）。
+String encodeDirSnapshot(DirSnapshot snapshot) => jsonEncode(<String, Object?>{
+      'at': snapshot.at.toIso8601String(),
+      'entries': snapshot.entries
+          .map((e) => <String, Object?>{
+                'n': e.name,
+                'p': e.path,
+                'd': e.isDirectory ? 1 : 0,
+                if (e.size != null) 's': e.size,
+                if (e.modifiedAt != null) 'm': e.modifiedAt!.toIso8601String(),
+                if (e.etag != null) 'e': e.etag,
+              })
+          .toList(),
+    });
+
+/// 反序列化：[raw] 是坏数据/缺字段时返回 null（宁可没有快照，也不能让页面崩）。
+DirSnapshot? decodeDirSnapshot(String raw) {
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return null;
+    final at = DateTime.tryParse('${decoded['at'] ?? ''}');
+    final list = decoded['entries'];
+    if (at == null || list is! List) return null;
+    final entries = <RemoteStorageEntry>[];
+    for (final item in list) {
+      if (item is! Map) return null;
+      final name = item['n'];
+      final path = item['p'];
+      if (name is! String || path is! String || name.isEmpty) return null;
+      entries.add(
+        RemoteStorageEntry(
+          name: name,
+          path: path,
+          isDirectory: item['d'] == 1,
+          size: item['s'] is int ? item['s'] as int : null,
+          modifiedAt: item['m'] is String
+              ? DateTime.tryParse(item['m'] as String)
+              : null,
+          etag: item['e'] is String ? item['e'] as String : null,
+        ),
+      );
+    }
+    return DirSnapshot(entries: entries, at: at);
+  } catch (_) {
+    return null;
+  }
 }
 
 /// 配额信息（WebDAV `quota-available-bytes` / `quota-used-bytes`）。

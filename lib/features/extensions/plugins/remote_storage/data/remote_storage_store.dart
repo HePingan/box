@@ -111,6 +111,100 @@ class RemoteStorageStore {
     }
   }
 
+  // ------------------------------------------------- 目录快照（284 D7）
+
+  static const String dirSnapshotKeyPrefix = 'remoteStorage.dirSnapshot.';
+
+  String _dirSnapshotKey(String accountId, String path) =>
+      '$dirSnapshotKeyPrefix$accountId|${path.isEmpty ? '/' : path}';
+
+  /// 存一个目录的快照。条目数超上限、或发生任何异常 → 静默不存（快照是优化，
+  /// 不该因为它失败而影响正常列表）。
+  Future<void> saveDirSnapshot(
+    String accountId,
+    String path,
+    List<RemoteStorageEntry> entries,
+  ) async {
+    if (entries.length > kDirSnapshotMaxEntries) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = _dirSnapshotKey(accountId, path);
+      await prefs.setString(
+        key,
+        encodeDirSnapshot(
+          DirSnapshot(entries: entries, at: DateTime.now()),
+        ),
+      );
+      await _pruneDirSnapshots(prefs, keepKey: key);
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '保存目录快照失败: $e',
+        level: LogLevel.debug,
+      );
+    }
+  }
+
+  /// 只保留最新的 [kDirSnapshotMaxDirs] 个快照（按存的时间戳解析，坏的当最旧）。
+  Future<void> _pruneDirSnapshots(
+    SharedPreferences prefs, {
+    required String keepKey,
+  }) async {
+    final keys = prefs
+        .getKeys()
+        .where((k) => k.startsWith(dirSnapshotKeyPrefix))
+        .toList();
+    if (keys.length <= kDirSnapshotMaxDirs) return;
+    DateTime stampOf(String key) {
+      final raw = prefs.getString(key);
+      final snap = raw == null ? null : decodeDirSnapshot(raw);
+      return snap?.at ?? DateTime.fromMillisecondsSinceEpoch(0);
+    }
+
+    keys.sort((a, b) => stampOf(a).compareTo(stampOf(b)));
+    final drop = keys.length - kDirSnapshotMaxDirs;
+    for (var i = 0; i < drop; i++) {
+      if (keys[i] == keepKey) continue;
+      await prefs.remove(keys[i]);
+    }
+  }
+
+  Future<DirSnapshot?> loadDirSnapshot(String accountId, String path) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_dirSnapshotKey(accountId, path));
+      return raw == null ? null : decodeDirSnapshot(raw);
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '读取目录快照失败: $e',
+        level: LogLevel.debug,
+      );
+      return null;
+    }
+  }
+
+  /// 删账户时清掉该账户的全部快照（284 P1 的同一条原则：账户没了，
+  /// 它的目录名/文件名不该留在本机）。
+  Future<int> clearAccountSnapshots(String accountId) async {
+    var removed = 0;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final prefix = '$dirSnapshotKeyPrefix$accountId|';
+      for (final key in prefs.getKeys().where((k) => k.startsWith(prefix))) {
+        await prefs.remove(key);
+        removed += 1;
+      }
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '清理目录快照失败: $e',
+        level: LogLevel.debug,
+      );
+    }
+    return removed;
+  }
+
   // ------------------------------------------------- 浏览页偏好（283 D2）
 
   static const String playbackSpeedKey = 'remoteStorage.playbackSpeed';

@@ -327,6 +327,7 @@ class RemoteStorageService {
     // 磁盘缩略图都带账户 id，不清就是永久残留（也近似隐私）。
     final progress = await _progressStore.clearAccount(id);
     final offsets = await _store.clearBrowserScrollOffsetsForAccount(id);
+    await _store.clearAccountSnapshots(id);
     final thumbs = await _thumbnails.cache.clearScope(id);
     _exifProbeMisses.removeWhere((key) => key.startsWith('$id|'));
     _exifProbeHits.removeWhere((key) => key.startsWith('$id|'));
@@ -390,6 +391,85 @@ class RemoteStorageService {
 
   // ------------------------------------------------------------ 操作
 
+  /// 递归收集某目录下的全部文件（284 D6，多选下载含文件夹时用）。
+  ///
+  /// - 逐目录走 [list]（复用目录缓存，不会为同一目录重复请求）；
+  /// - 跳过系统目录（[kWebdavSystemDirNames]：那是服务端的回收站/元数据，不是用户内容）；
+  /// - 单个子目录读不出来（403/404）→ **跳过并计数**，不因为一个子目录失败就让整次
+  ///   递归下载报错——用户选了 20 个相册，不该因为其中一个是共享目录而全下不了；
+  /// - 命中 [kRecursiveDownloadMaxFiles] / [kRecursiveDownloadMaxDirs] 即停下并置
+  ///   [RecursiveListing.truncated]，由界面告知用户。
+  Future<RecursiveListing> listRecursive(
+    RemoteStorageAccount account,
+    String path, {
+    bool forceRefresh = false,
+    TransferCancelToken? cancel,
+  }) async {
+    final files = <RemoteStorageEntry>[];
+    final pending = <String>[path];
+    var dirs = 0;
+    var unreadable = 0;
+    var truncated = false;
+
+    while (pending.isNotEmpty) {
+      if (cancel?.isCanceled ?? false) break;
+      if (dirs >= kRecursiveDownloadMaxDirs) {
+        truncated = true;
+        break;
+      }
+      final current = pending.removeAt(0);
+      dirs += 1;
+      final List<RemoteStorageEntry> entries;
+      try {
+        entries = await list(account, current, forceRefresh: forceRefresh);
+      } catch (_) {
+        unreadable += 1;
+        continue;
+      }
+      for (final entry in entries) {
+        if (cancel?.isCanceled ?? false) break;
+        if (entry.isDirectory) {
+          if (kWebdavSystemDirNames.contains(entry.name)) continue;
+          pending.add(entry.path);
+          continue;
+        }
+        files.add(entry);
+        if (files.length >= kRecursiveDownloadMaxFiles) {
+          truncated = true;
+          break;
+        }
+      }
+      if (truncated) break;
+    }
+
+    return RecursiveListing(
+      files: files,
+      dirsScanned: dirs,
+      truncated: truncated,
+      unreadableDirs: unreadable,
+    );
+  }
+
+  /// 递归下载续跑用：本地是否已有这个文件（同名且字节数一致）。
+  ///
+  /// 为什么需要：一次递归下载中途失败后重跑，若不做这个判断，已下好的文件会被
+  /// 另存成 `xx (1).jpg`——"续跑"变成"又下一遍还多出一堆副本"。
+  Future<bool> isAlreadyDownloaded(
+    RemoteStorageAccount account,
+    RecursiveDownloadTarget target, {
+    required int? size,
+  }) async {
+    if (size == null || size <= 0) return false;
+    try {
+      final dir = await _downloadDirFor(account, subDir: target.subDir);
+      final file = File('${dir.path}/${target.fileName}');
+      if (!await file.exists()) return false;
+      return await file.length() == size;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// 测试连接。
   Future<WebdavProbeResult> testConnection(RemoteStorageAccount account) async {
     try {
@@ -419,7 +499,18 @@ class RemoteStorageService {
       filterSystemNames: !account.showSystemFolders,
     );
     _storeListing(key, entries);
+    // 顺手存一份快照（284 D7）：下次冷启动/切回这个目录时可以先把上次的内容
+    // 显示出来。存失败不影响本次列表（saveDirSnapshot 内部吞异常）。
+    await _store.saveDirSnapshot(account.id, path, entries);
     return entries;
+  }
+
+  /// 上次列出的内容（284 D7）。没有/坏数据/太旧由调用方判定，这里只管取。
+  Future<DirSnapshot?> cachedListing(
+    RemoteStorageAccount account,
+    String path,
+  ) {
+    return _store.loadDirSnapshot(account.id, path);
   }
 
   /// 目录配额（RFC 4331）。服务器未实现该扩展时返回空对象，UI 自然不显示。
@@ -544,12 +635,13 @@ class RemoteStorageService {
     RemoteStorageAccount account, {
     required String remotePath,
     required String fileName,
+    String? subDir,
     void Function(int received, int total)? onProgress,
     TransferCancelToken? cancel,
   }) async {
     final client = clientFor(account);
     final safe = sanitizeRemoteSegment(fileName) ?? 'download.bin';
-    final dir = await _downloadDirFor(account);
+    final dir = await _downloadDirFor(account, subDir: subDir);
     final target = await _resolveDownloadTarget(dir, safe);
     final temp = File('${target.path}.part');
     final metaFile = File('${temp.path}.meta');
@@ -1087,9 +1179,17 @@ class RemoteStorageService {
 
   // ------------------------------------------------------------ 本地目录
 
-  Future<Directory> _downloadDirFor(RemoteStorageAccount account) async {
+  Future<Directory> _downloadDirFor(
+    RemoteStorageAccount account, {
+    String? subDir,
+  }) async {
     final base = await _docsDirProvider();
-    final dir = Directory('${base.path}/remote_storage/${account.id}');
+    // 子目录逐段清洗（284 D6）：远端目录名可能含非法字符/`..`，本地越界比名字丑严重得多。
+    final safeSub = subDir == null || subDir.isEmpty
+        ? ''
+        : sanitizeLocalSubPath(subDir);
+    final suffix = safeSub.isEmpty ? '' : '/$safeSub';
+    final dir = Directory('${base.path}/remote_storage/${account.id}$suffix');
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
