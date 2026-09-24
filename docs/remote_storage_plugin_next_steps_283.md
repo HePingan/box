@@ -156,7 +156,30 @@
 | 第 2 组 | D5 相册滑动 / D6 递归下载 / D7 目录快照 | 约 3 天 |
 | 第 3 组 | D8 视频缩略图 / D9 文件夹上传 / D10 跨目录搜索 | 1.5 / 1.5 / 1 天 |
 
-## 7. 待拍板（3 条）
+## 7. 执行记录（283 本轮实际落地）
+
+拍板结果：**第 1 组全做 + D5**（D6/D7 下轮）；大图只做 EXIF 探测、不提高整取上限；
+D7 本轮不做。以下为逐项落地与验证（每项一个提交、带测试）。
+
+| 项 | 提交 | 落点 | 关键实现 | 验证 |
+|---|---|---|---|---|
+| D1 | `b45ef7e` | 新 `domain/exif_thumbnail.dart`(196)、`application/remote_storage_service.dart`(两段式 + 负缓存)、`domain/remote_storage_models.dart`(`kExifProbeBytes`=256KB / `kExifProbeMissLimit`=500 / `isExifThumbnailCandidate`)、新 `tool/gen_exif_test_fixture.py` + 生成物 `test/.../exif_fixtures.dart` | 超过整取上限（或大小未知）的 JPEG → 读开头 256KB 解析 EXIF IFD1 内嵌缩略图；`Exif\0\0` 前缀有无都认；大端/小端都读；IFD1 命中即用；未命中记入负缓存（内存，上限 500）避免重复花 256KB | 12 个解析用例（真实 PIL 样本字节**精确等于**内嵌缩略图真值、前缀截断、越界偏移、非 JPEG、大端）+ 6 个 service 用例（起点式 Range、**读取量有上界**：4MB 假体只被消费 ~4 个 64KB 块、负缓存、大小未知也探、命中缓存）；插件 310 通过 |
+| D2 | `84d7bf6` | `data/remote_storage_store.dart`(`browserSortFieldKey`/`browserScrollOffsetsKey`/`kMaxRememberedScrollOffsets`=200)、`application/remote_storage_service.dart`(4 个转发)、`presentation/remote_storage_browser_page.dart`(`_loadBrowserPrefs`/`_sortFieldFromName`/800ms 防抖落盘/dispose 兜底) | 排序字段存枚举名（数据层不 import presentation）；滚动位置按 `账户\u0000目录` 存，超 200 条丢最早；坏数据/未知枚举名一律退回默认 | store 5 个用例（往返/裁剪 200/坏 JSON/非法数值）+ widget 6 个用例（切排序即落盘、冷启动按磁盘排序渲染、未知名退回默认、防抖落盘、冷启动恢复偏移、坏数据从顶部）；插件 321 通过 |
+| D3 | `7747043`(+`5538b33`) | `data/remote_thumbnail_cache.dart`(`ThumbnailCacheUsage` + `usage()`)、service(`thumbnailCacheUsage()`)、页面「更多」→「缩略图缓存」面板 | 面板显示张数 + 占用 + 上限，`清空`（空时禁用）→ 清内存+磁盘并即时刷新占用 | cache 5 个用例（空/往返/外部删除后跟实况/清空归零/修剪后余量）+ widget 3 个用例（占用可见、清空后归零、空时禁用）；`5538b33` 修一处真 bug：`'$usage.files 张'` 在 Dart 里会拼成 `'${usage}.files 张'`（渲染出 `Instance of ...`），改用局部变量 |
+| D4 | `6ec60a3` | `application/transfer_queue.dart`(`retry()`)、`domain/remote_storage_models.dart`(`TransferCancelToken.reset()`)、`presentation/remote_storage_page.dart`(失败行「重试」) | 只对**失败**任务给重试：复位状态/进度/错误/结果 + 复位一次性 cancelToken；跑着的（该取消）、成功的（结果有效）、已取消的（用户放弃过）一律拒绝 | queue 7 个用例（重试成功、复位语义、三种拒绝、token 复位、跨队列拒绝、重试仍受并发上限）+ widget 2 个用例（失败显示重试并重跑成功、进行中显示取消）；插件 338 通过 |
+| D5 | `fbb7d22` | 新 `presentation/image_preview_dialog.dart`(282，原对话框从浏览器页移出并改造)、`presentation/remote_storage_browser_page.dart`(带同目录图片列表与下标) | `PageView` 相册式滑动 + 标题「第几张 / 共几张」；**只预取相邻 1 张**并淘汰远程页（不把几十 MB 图都攥在手里）；失败/超大只影响那一页、仍可滑走；`InteractiveViewer` 放大后才接管拖动（否则 PageView 滑不动） | widget 6 个用例（计数正确、只预取相邻、来回滑不重复取、边界不崩、单张不显示计数、某张失败仍可滑到下一张、可关闭）；插件 344 通过 |
+
+**本轮新增的两个测试基建教训**（值得记住，否则会反复踩）：
+1. `pumpEventQueue()` 在 `testWidgets` 的 fake-async 环境里**永远不会完成**（内部是 `Future.delayed`）→ 会让测试直接挂死；要推进定时器只能用 `tester.pump(duration)`。
+2. 队列退避、`AppLogger` 的 250ms 落盘防抖都是定时器：测试结束前必须显式推进假时间，否则框架报"widget 树销毁后仍有未完成定时器"。
+
+**未做的**：D6 递归下载、D7 目录快照（按拍板下轮）；D8–D10 仍为单独立项。
+
+**仍待真机验证的两点**（方案 §5 已列，本轮未变）：
+1. 坚果云上 EXIF 内嵌缩略图的**实际命中率**——相机/手机原图应有；微信转存、截图类可能没有（未命中就是今天的通用图标，不算回退）。
+2. `Flutter 是否已应用 EXIF Orientation`：本仓库零处理，`parseExifOrientation` 已能读出方向值，等真机确认"方向不对"再决定是否用它做旋转修正。
+
+## 8. 待拍板（3 条，拍板前留档）
 
 1. **本轮范围**：建议**第 1 组全做 + D5**（相册滑动是照片目录里最高频动作），D6/D7 下轮。若只想先解决真机碰到的那件事，就只做 **D1**。
 2. **大图策略**：只做 EXIF 探测（256KB 前缀），**不**顺带把 `kThumbnailMaxBytes` 从 3MB 提到 5MB——提高整取上限花的是你的流量，而 EXIF 路径能覆盖大多数相机照；若实测命中率低再回来讨论。
