@@ -22,6 +22,17 @@ import 'package:box/utils/log_channels.dart';
 import '../domain/remote_storage_models.dart';
 import '../domain/webdav_client.dart';
 
+/// 中继预读缓冲上限（279 C6）。
+///
+/// "来一块转一块"（严格背压）在弱 NAS 上会让播放器频繁等下一块；这里让上游先跑在
+/// 前面。但缓冲不能无界——那等于把整部片子读进手机内存。4MB 约等于 1080p 高码率的
+/// 十几秒，足够吸收抖动，又小到可以忽略。
+const int kRelayReadAheadBytes = 4 * 1024 * 1024;
+
+/// 排空到这个水位以下才放开上游（迟滞）：否则会在上限附近"攒满-暂停-放开"高频抖动，
+/// 每次抖动都要重新等一次上游首字节。
+const int kRelayResumeBelowBytes = 1 * 1024 * 1024;
+
 /// 上游取流：head=true 取元信息；rangeHeader 原样透传（如 `bytes=1024-`）。
 typedef RelayUpstream = Future<WebdavResponse> Function({
   required bool head,
@@ -176,27 +187,57 @@ class PlaybackRelay {
 
       final done = Completer<void>();
       late final StreamSubscription<List<int>> subscription;
+      // 预读缓冲（C6）：上游先跑在前面，弱 NAS 上"来一块转一块"会让播放器饿着。
+      final buffer = <List<int>>[];
+      var bufferedBytes = 0;
+      var pumping = false;
+      var upstreamDone = false;
+
+      /// 把缓冲区尽力写给下游；排空到低水位后放开上游（迟滞，避免抖动）。
+      Future<void> pump() async {
+        if (pumping) return;
+        pumping = true;
+        try {
+          while (buffer.isNotEmpty) {
+            final chunk = buffer.removeAt(0);
+            bufferedBytes -= chunk.length;
+            response.add(chunk);
+            await response.flush();
+            _lastActivity = DateTime.now();
+            if (!upstreamDone &&
+                subscription.isPaused &&
+                bufferedBytes <= kRelayResumeBelowBytes) {
+              subscription.resume();
+            }
+          }
+        } catch (e, st) {
+          if (!done.isCompleted) done.completeError(e, st);
+        } finally {
+          pumping = false;
+          if (upstreamDone && buffer.isEmpty && !done.isCompleted) {
+            done.complete();
+          }
+        }
+      }
+
       subscription = upstream.bodyStream!.listen(
         (chunk) {
-          // 背压：写下游期间暂停上游取流，避免无限缓冲。
-          subscription.pause();
-          unawaited(() async {
-            try {
-              response.add(chunk);
-              await response.flush();
-              _lastActivity = DateTime.now();
-            } catch (e, st) {
-              if (!done.isCompleted) done.completeError(e, st);
-              return;
-            }
-            if (!done.isCompleted) subscription.resume();
-          }());
+          buffer.add(chunk);
+          bufferedBytes += chunk.length;
+          // 到上限就暂停上游：缓冲无界 = 把整部片子读进内存。
+          if (bufferedBytes >= kRelayReadAheadBytes && !subscription.isPaused) {
+            subscription.pause();
+          }
+          unawaited(pump());
         },
         onError: (Object e, StackTrace st) {
           if (!done.isCompleted) done.completeError(e, st);
         },
         onDone: () {
-          if (!done.isCompleted) done.complete();
+          upstreamDone = true;
+          if (buffer.isEmpty && !pumping && !done.isCompleted) {
+            done.complete();
+          }
         },
         cancelOnError: true,
       );

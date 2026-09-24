@@ -295,4 +295,84 @@ void main() {
     await relay.close();
     await cancelSeen.future.timeout(const Duration(seconds: 3));
   });
+
+  // ------------------------------------------------------ C6 预读缓冲
+
+  test('预读缓冲（C6）：超过上限的数据完整、按序转发（缓冲不丢不重）', () async {
+    // 总量 6MB（1MB × 6）> 4MB 上限，必然走过"暂停上游 → 排空 → 放开"
+    final chunk = Uint8List.fromList(List<int>.generate(1024 * 1024, (i) => i % 251));
+    final payload = <List<int>>[for (var i = 0; i < 6; i++) chunk];
+    const total = 6 * 1024 * 1024;
+    final relay = await PlaybackRelay.start(
+      upstream: ({required bool head, String? rangeHeader}) async =>
+          WebdavResponse(
+        statusCode: 200,
+        headers: {'content-type': 'video/mp4', 'content-length': '$total'},
+        bodyStream: Stream<List<int>>.fromIterable(payload),
+      ),
+    );
+    addTearDown(relay.close);
+
+    final res = await _request(relay.url);
+    expect(res.statusCode, 200);
+    expect(res.bytes.length, total);
+    // 逐段校验：预读缓冲不能错位或丢块
+    for (var i = 0; i < 6; i++) {
+      expect(
+        res.bytes.sublist(i * 1024 * 1024, (i + 1) * 1024 * 1024),
+        equals(chunk),
+        reason: '第 $i 段不一致',
+      );
+    }
+  });
+
+  test('预读缓冲（C6）：客户端不读时上游被暂停（不会把整段读进内存）', () async {
+    var pauses = 0;
+    var resumes = 0;
+    final controller = StreamController<List<int>>(
+      onPause: () => pauses += 1,
+      onResume: () => resumes += 1,
+    );
+    final relay = await PlaybackRelay.start(
+      upstream: ({required bool head, String? rangeHeader}) async =>
+          WebdavResponse(
+        statusCode: 200,
+        headers: const {'content-type': 'video/mp4'},
+        bodyStream: controller.stream,
+      ),
+    );
+    addTearDown(() async {
+      if (!controller.isClosed) await controller.close();
+      await relay.close();
+    });
+
+    // 用裸 Socket 发请求并**故意不读**：dart:io 的 HttpClient 会把响应体读进自己
+    // 的缓冲里（等于一直消费），只有裸 socket 才能让下游真的堵住——这正是
+    // "播放器卡住/还没开始取流"的场景。
+    final uri = Uri.parse(relay.url);
+    final socket = await Socket.connect(uri.host, uri.port);
+    addTearDown(() => socket.destroy());
+    socket.write('GET ${uri.path} HTTP/1.1\r\nHost: ${uri.host}\r\n\r\n');
+    await socket.flush();
+
+    // 上游拼命推：累计远超 4MB 上限
+    for (var i = 0; i < 12; i++) {
+      if (controller.isClosed) break;
+      controller.add(Uint8List(1024 * 1024));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+
+    expect(
+      pauses,
+      greaterThan(0),
+      reason: '下游不消费时必须暂停上游，否则内存会随文件大小线性增长',
+    );
+
+    // 开始读 → 排空到低水位后放开上游，数据继续流动
+    var received = 0;
+    socket.listen((data) => received += data.length);
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    expect(received, greaterThan(0), reason: '恢复后应能继续收到数据');
+    expect(resumes, greaterThan(0));
+  });
 }
