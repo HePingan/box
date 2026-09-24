@@ -9,6 +9,7 @@ import 'package:box/features/extensions/plugins/remote_storage/application/remot
 import 'package:box/features/extensions/plugins/remote_storage/application/transfer_queue.dart';
 import 'package:box/features/extensions/plugins/remote_storage/data/remote_thumbnail_cache.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
+import 'package:box/features/extensions/plugins/remote_storage/presentation/image_preview_dialog.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_browser_page.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_page.dart';
 import 'package:flutter/material.dart';
@@ -860,6 +861,146 @@ void main() {
 
       expect(find.byType(PageView), findsNothing);
       expect(find.text('p1.png'), findsOneWidget, reason: '回到列表');
+    });
+  });
+
+  group('预览里直接导出（284 P2）', () {
+    RemoteStorageEntry pic(String n) => RemoteStorageEntry(
+      name: n,
+      path: n,
+      isDirectory: false,
+      size: 1024,
+    );
+
+    /// 直接构造对话框（不经列表点击）：这样能给两个回调装桩，不必碰 SharePlus/SAF
+    /// 的平台通道——本组测的是"对话框把哪一张、什么字节交给了调用方"。
+    Future<_FakeService> pumpDialog(
+      WidgetTester tester, {
+      required List<String> names,
+      Future<void> Function(RemoteStorageEntry entry, PreviewPayload payload)?
+          onShare,
+      Future<void> Function(RemoteStorageEntry entry, PreviewPayload payload)?
+          onSave,
+    }) async {
+      final service = _FakeService();
+      debugSetRemoteStorageRuntime(service: service);
+      final entries = names.map(pic).toList();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => Center(
+                child: ElevatedButton(
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => ImagePreviewDialog(
+                      account: testAccount(),
+                      entries: entries,
+                      initialIndex: 0,
+                      onShare: onShare,
+                      onSaveToDevice: onSave,
+                    ),
+                  ),
+                  child: const Text('打开预览'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开预览'));
+      await tester.pumpAndSettle();
+      return service;
+    }
+
+    testWidgets('没给回调时不显示这两个按钮（保持旧行为）', (tester) async {
+      await pumpDialog(tester, names: ['p1.png']);
+
+      expect(find.text('关闭'), findsOneWidget);
+      expect(find.text('分享'), findsNothing);
+      expect(find.text('保存到…'), findsNothing);
+    });
+
+    testWidgets('给了回调就显示「保存到…」「分享」', (tester) async {
+      await pumpDialog(
+        tester,
+        names: ['p1.png'],
+        onShare: (_, _) async {},
+        onSave: (_, _) async {},
+      );
+
+      expect(find.text('分享'), findsOneWidget);
+      expect(find.text('保存到…'), findsOneWidget);
+    });
+
+    testWidgets('点「分享」：回调拿到当前这张和它的字节', (tester) async {
+      final calls = <String>[];
+      await pumpDialog(
+        tester,
+        names: ['p1.png'],
+        onShare: (entry, payload) async =>
+            calls.add('share:${entry.name}:${payload.bytes.length}'),
+        onSave: (entry, _) async => calls.add('save:${entry.name}'),
+      );
+
+      await tester.tap(find.text('分享'));
+      await tester.pumpAndSettle();
+
+      expect(calls, <String>['share:p1.png:${kTinyPng.length}']);
+    });
+
+    testWidgets('点「保存到…」走另一条回调（不会误触发分享）', (tester) async {
+      final calls = <String>[];
+      await pumpDialog(
+        tester,
+        names: ['p1.png'],
+        onShare: (entry, _) async => calls.add('share:${entry.name}'),
+        onSave: (entry, _) async => calls.add('save:${entry.name}'),
+      );
+
+      await tester.tap(find.text('保存到…'));
+      await tester.pumpAndSettle();
+
+      expect(calls, <String>['save:p1.png']);
+    });
+
+    testWidgets('滑到第二张再导出：导出的是第二张（不是最初点开的那张）', (tester) async {
+      final calls = <String>[];
+      await pumpDialog(
+        tester,
+        names: ['p1.png', 'p2.png'],
+        onShare: (entry, _) async => calls.add('share:${entry.name}'),
+      );
+
+      await tester.fling(find.byType(PageView), const Offset(-400, 0), 1200);
+      await tester.pumpAndSettle();
+      expect(find.text('2 / 2'), findsOneWidget);
+
+      await tester.tap(find.text('分享'));
+      await tester.pumpAndSettle();
+
+      expect(calls, <String>['share:p2.png']);
+    });
+
+    testWidgets('取图失败的那张：导出不崩，提示取不到，回调不被调用', (tester) async {
+      final service = await pumpDialog(
+        tester,
+        names: ['p1.png'],
+        onShare: (entry, _) async => fail('不该走到回调：${entry.name}'),
+      );
+      service.previewFailPaths.add('p1.png');
+      // 重新打开一次预览：这次取图会失败。
+      await tester.tap(find.text('关闭'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('打开预览'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('预览失败'), findsOneWidget);
+
+      await tester.tap(find.text('分享'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('分享失败'), findsOneWidget);
+      expect(find.text('关闭'), findsOneWidget, reason: '对话框仍在，用户可继续滑走');
     });
   });
 }

@@ -12,6 +12,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../application/remote_storage_service.dart';
@@ -1056,6 +1057,41 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     );
   }
 
+  /// 预览里直接导出（284 P2）：图已经在内存里（预览上限 20MB），写进临时文件后
+  /// 复用既有的「保存到…」（SAF）与「分享」两条路径——不再下载第二次。
+  Future<void> _exportPreviewPayload(
+    RemoteStorageEntry entry,
+    PreviewPayload payload, {
+    required bool share,
+  }) async {
+    final path = await _writePreviewTempFile(entry.name, payload.bytes);
+    if (path == null) {
+      if (mounted) _snack('导出失败：无法写入临时文件');
+      return;
+    }
+    if (share) {
+      await SharePlus.instance.share(ShareParams(files: [XFile(path)]));
+      return;
+    }
+    if (!mounted) return;
+    await _exportToDevice(path, entry.name, sizeBytes: payload.bytes.length);
+  }
+
+  /// 把预览字节落到临时目录（分享/另存都需要一个真实文件路径）。
+  Future<String?> _writePreviewTempFile(String name, List<int> bytes) async {
+    try {
+      final dir = Directory(
+        '${(await getTemporaryDirectory()).path}/box_preview',
+      );
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final file = File('${dir.path}/$name');
+      await file.writeAsBytes(bytes, flush: true);
+      return file.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// 导出到设备（B2）：小文件走系统「另存为」（SAF），大文件只给说明——
   /// 让用户用「分享 → 保存到文件」而不是赌一次 OOM。
   Future<void> _exportToDevice(
@@ -1125,6 +1161,8 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
             account: widget.account,
             entries: index < 0 ? [entry] : images,
             initialIndex: index < 0 ? 0 : index,
+            onShare: (e, p) => _exportPreviewPayload(e, p, share: true),
+            onSaveToDevice: (e, p) => _exportPreviewPayload(e, p, share: false),
           ),
         );
       case RemoteEntryKind.text:

@@ -30,6 +30,8 @@ class ImagePreviewDialog extends StatefulWidget {
     required this.account,
     required this.entries,
     required this.initialIndex,
+    this.onShare,
+    this.onSaveToDevice,
   });
 
   final RemoteStorageAccount account;
@@ -40,6 +42,16 @@ class ImagePreviewDialog extends StatefulWidget {
   /// 起始下标（用户点的那张）。
   final int initialIndex;
 
+  /// 「分享」/「保存到…」（284 P2）。
+  ///
+  /// 由调用方实现、而不是在对话框里直接做：写临时文件、系统 SAF 另存、SharePlus
+  /// 这一整套流程属于浏览器页（它已有下载/导出的完整实现），在这里复制一份必然会
+  /// 出现两套不一致的提示文案与大小判断。
+  final Future<void> Function(RemoteStorageEntry entry, PreviewPayload payload)?
+      onShare;
+  final Future<void> Function(RemoteStorageEntry entry, PreviewPayload payload)?
+      onSaveToDevice;
+
   @override
   State<ImagePreviewDialog> createState() => _ImagePreviewDialogState();
 }
@@ -47,6 +59,9 @@ class ImagePreviewDialog extends StatefulWidget {
 class _ImagePreviewDialogState extends State<ImagePreviewDialog> {
   late final PageController _controller;
   late int _index;
+
+  /// 导出中：挡住重复点击（一次导出会写临时文件 + 起系统分享，连点会起两次）。
+  bool _exporting = false;
 
   /// 路径 → 取图结果。同一个 Future 复用，滑动来回不会重复下载。
   final Map<String, Future<PreviewPayload>> _payloads = {};
@@ -96,6 +111,33 @@ class _ImagePreviewDialogState extends State<ImagePreviewDialog> {
   void _onPageChanged(int index) {
     setState(() => _index = index);
     _warmNeighbours();
+  }
+
+  /// 分享/保存当前这一张。字节已经在内存里（预览上限 20MB），不再下载第二次。
+  Future<void> _export({required bool share}) async {
+    final action = share ? widget.onShare : widget.onSaveToDevice;
+    if (action == null || _exporting) return;
+    final entry = widget.entries[_index];
+    setState(() => _exporting = true);
+    try {
+      final payload = await _payloadFor(_index);
+      if (!mounted) return;
+      if (payload.oversize || payload.bytes.isEmpty) {
+        _toast('这张图没有可导出的内容');
+        return;
+      }
+      await action(entry, payload);
+    } catch (e) {
+      if (mounted) _toast(share ? '分享失败：$e' : '保存失败：$e');
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  void _toast(String text) {
+    ScaffoldMessenger.maybeOf(
+      context,
+    )?.showSnackBar(SnackBar(content: Text(text)));
   }
 
   @override
@@ -154,6 +196,16 @@ class _ImagePreviewDialogState extends State<ImagePreviewDialog> {
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
+                    ),
+                  if (widget.onSaveToDevice != null)
+                    TextButton(
+                      onPressed: _exporting ? null : () => _export(share: false),
+                      child: const Text('保存到…'),
+                    ),
+                  if (widget.onShare != null)
+                    TextButton(
+                      onPressed: _exporting ? null : () => _export(share: true),
+                      child: const Text('分享'),
                     ),
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(),
