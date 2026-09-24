@@ -33,6 +33,15 @@ const int kRelayReadAheadBytes = 4 * 1024 * 1024;
 /// 每次抖动都要重新等一次上游首字节。
 const int kRelayResumeBelowBytes = 1 * 1024 * 1024;
 
+/// 把 `bytes=1000-2000` 收成 `bytes=1000-`（丢掉结束偏移）。
+///
+/// 已经是起点式（`bytes=1000-`）、多区间或格式不认识时返回 null——调用方据此
+/// 退回"不带 Range"的普通 GET。
+String? _startOnlyRange(String raw) {
+  final match = RegExp(r'^\s*bytes\s*=\s*(\d+)\s*-\s*\d+\s*$').firstMatch(raw);
+  return match == null ? null : 'bytes=${match.group(1)}-';
+}
+
 /// 上游取流：head=true 取元信息；rangeHeader 原样透传（如 `bytes=1024-`）。
 typedef RelayUpstream = Future<WebdavResponse> Function({
   required bool head,
@@ -139,11 +148,12 @@ class PlaybackRelay {
       return;
     }
 
+    final requestedRange = request.headers.value(HttpHeaders.rangeHeader);
     WebdavResponse upstream;
     try {
       upstream = await _upstream(
         head: method == 'HEAD',
-        rangeHeader: request.headers.value(HttpHeaders.rangeHeader),
+        rangeHeader: requestedRange,
       );
     } catch (e) {
       AppLogger.instance.logTo(
@@ -153,6 +163,34 @@ class PlaybackRelay {
       );
       await _simpleResponse(request, HttpStatus.badGateway);
       return;
+    }
+
+    // 上游对 Range 回 416：有些服务器（实测坚果云）对"结束偏移超过文件大小"的区间
+    // 很严格，而 RFC 7233 要求把结束偏移夹到文件末尾。原样透传会让播放器直接吃
+    // 416 报错，所以收窄成起点式 Range 再来一次；连起点式都不行（起点已越过末尾）
+    // 就退回不带 Range 的普通 GET——播放器能接受 200 全量响应。
+    if (upstream.statusCode == HttpStatus.requestedRangeNotSatisfiable &&
+        requestedRange != null) {
+      final retryRange = _startOnlyRange(requestedRange);
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '中继上游 416（range: $requestedRange）→ 收窄为 ${retryRange ?? '无 Range'} 重试',
+        level: LogLevel.warn,
+      );
+      try {
+        upstream = await _upstream(
+          head: method == 'HEAD',
+          rangeHeader: retryRange,
+        );
+      } catch (e) {
+        AppLogger.instance.logTo(
+          LogChannel.storage,
+          '中继上游 416 后重试失败: $e',
+          level: LogLevel.warn,
+        );
+        await _simpleResponse(request, HttpStatus.badGateway);
+        return;
+      }
     }
 
     final response = request.response;

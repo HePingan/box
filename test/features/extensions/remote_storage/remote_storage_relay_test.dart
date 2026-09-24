@@ -296,6 +296,68 @@ void main() {
     await cancelSeen.future.timeout(const Duration(seconds: 3));
   });
 
+  test('上游对区间 Range 回 416 → 收窄为起点式重试，播放器拿到 206', () async {
+    // 坚果云这类服务器对"结束偏移超过文件大小"的区间直接回 416；
+    // 原样透传会让播放器报错，所以中继要自己收窄重试。
+    final seen = <String?>[];
+    final relay = await PlaybackRelay.start(
+      upstream: ({required bool head, String? rangeHeader}) async {
+        seen.add(rangeHeader);
+        if (rangeHeader == 'bytes=100-100000') {
+          return const WebdavResponse(
+            statusCode: 416,
+            headers: {'content-range': 'bytes */300'},
+          );
+        }
+        return WebdavResponse(
+          statusCode: 206,
+          headers: {
+            'content-type': 'video/mp4',
+            'content-range': 'bytes 100-299/300',
+            'content-length': '200',
+          },
+          bodyStream: Stream<List<int>>.value(
+            Uint8List.fromList(List<int>.filled(200, 9)),
+          ),
+        );
+      },
+    );
+    addTearDown(relay.close);
+
+    final res = await _request(relay.url, range: 'bytes=100-100000');
+
+    expect(res.statusCode, 206, reason: '不能让播放器直接吃 416');
+    expect(res.header('content-range'), 'bytes 100-299/300');
+    expect(res.bytes.length, 200);
+    expect(seen, ['bytes=100-100000', 'bytes=100-'], reason: '第二次收窄掉结束偏移');
+  });
+
+  test('上游对起点式 Range 也回 416 → 退回不带 Range 的普通 GET', () async {
+    final seen = <String?>[];
+    final relay = await PlaybackRelay.start(
+      upstream: ({required bool head, String? rangeHeader}) async {
+        seen.add(rangeHeader);
+        if (rangeHeader != null) {
+          return const WebdavResponse(statusCode: 416, headers: {});
+        }
+        return WebdavResponse(
+          statusCode: 200,
+          headers: {'content-type': 'video/mp4', 'content-length': '5'},
+          bodyStream: Stream<List<int>>.value(
+            Uint8List.fromList([1, 2, 3, 4, 5]),
+          ),
+        );
+      },
+    );
+    addTearDown(relay.close);
+
+    final res = await _request(relay.url, range: 'bytes=999999999-');
+
+    expect(res.statusCode, 200, reason: '起点越界时退回全量响应，播放器能处理');
+    expect(res.bytes.length, 5);
+    expect(seen, ['bytes=999999999-', null]);
+  });
+
   // ------------------------------------------------------ C6 预读缓冲
 
   test('预读缓冲（C6）：超过上限的数据完整、按序转发（缓冲不丢不重）', () async {

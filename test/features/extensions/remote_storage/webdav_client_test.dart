@@ -264,13 +264,47 @@ void main() {
     test('超限截断并带 totalLength（Range 生效 206）', () async {
       final payload = List<int>.generate(100, (i) => i);
       final transport = FakeTransport((request) async {
-        expect(request.headers['range'], 'bytes=0-39');
+        // 起点式 Range：结束偏移不写进请求，避免"结束偏移超过文件大小"被回 416
+        expect(request.headers['range'], 'bytes=0-');
         return streamResponse(payload, status: 206);
       });
       final result = await clientWith(transport).readUpTo('f.bin', 40);
       expect(result.bytes.length, 40);
       expect(result.truncated, isTrue);
       expect(result.totalLength, 100);
+    });
+
+    test('服务器对起点式 Range 回 416 → 退回普通 GET，仍然只读 maxBytes（坚果云）', () async {
+      // 实测坚果云：带 Range 的预览请求被回 416（"请求范围不满足"），
+      // 用户看到的就是「预览失败：服务器返回 HTTP 416」。
+      final payload = List<int>.generate(100, (i) => i);
+      final transport = FakeTransport((request) async {
+        if (request.headers.containsKey('range')) {
+          return const WebdavResponse(statusCode: 416, headers: {});
+        }
+        return streamResponse(payload, status: 200);
+      });
+
+      final result = await clientWith(transport).readUpTo('pic.jpg', 40);
+
+      expect(result.bytes.length, 40, reason: '退回普通 GET 后仍只读上限内的字节');
+      expect(result.bytes, payload.sublist(0, 40));
+      expect(result.truncated, isTrue);
+      expect(transport.requestCount, 2, reason: '先带 Range 被拒，再不带 Range 重来');
+      expect(transport.requests.last.headers.containsKey('range'), isFalse);
+    });
+
+    test('0 字节文件（0- 不可满足）→ 退回普通 GET，不报错', () async {
+      final transport = FakeTransport((request) async {
+        if (request.headers.containsKey('range')) {
+          return const WebdavResponse(statusCode: 416, headers: {});
+        }
+        return streamResponse(const <int>[], status: 200);
+      });
+
+      final result = await clientWith(transport).readUpTo('empty.txt', 40);
+      expect(result.bytes, isEmpty);
+      expect(result.truncated, isFalse);
     });
 
     test('恰好等于上限 → 不截断', () async {

@@ -307,16 +307,23 @@ class WebdavClient {
 
   /// 读取文件开头最多 [maxBytes] 字节（用于文本/图片预览）。
   ///
-  /// 优先使用 Range 请求；服务器忽略 Range 时读到的流会截断在 maxBytes+1 处，
-  /// 由调用方通过 [ReadUpTo.truncated] 判断（截断标记为「已读满/超限」）。
+  /// **只用"起点式"Range（`bytes=0-`），不写结束偏移**：有些服务器（实测坚果云）
+  /// 对 `bytes=0-20971519` 这种"结束偏移超过文件大小"的请求直接回 **416**，而
+  /// RFC 7233 要求它把结束偏移夹到文件末尾（应回 206）。起点式 Range 永远可满足，
+  /// 且我们读到 [maxBytes] 就主动断开，不会把整个文件拉下来。
+  ///
+  /// 服务器忽略 Range（200）时读到 maxBytes 即截断，由 [ReadUpTo.truncated] 标记。
   Future<ReadUpTo> readUpTo(
     String path,
     int maxBytes, {
     TransferCancelToken? cancel,
   }) async {
-    final resp = await _send('GET', path, headers: {
-      'range': 'bytes=0-${maxBytes - 1}',
-    });
+    var resp = await _send('GET', path, headers: const {'range': 'bytes=0-'});
+    if (resp.statusCode == 416) {
+      // 连起点式 Range 都不认（或文件是 0 字节，0- 不可满足）→ 退回普通 GET，
+      // 仍然只读到 maxBytes 就断开。
+      resp = await _send('GET', path);
+    }
     // 206：分段成功；200：服务器忽略 Range，仍可读但需要截断。
     _expect(resp, const {200, 206}, path);
 
