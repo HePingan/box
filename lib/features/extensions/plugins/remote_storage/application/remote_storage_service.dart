@@ -443,10 +443,27 @@ class RemoteStorageService {
         for (final entry in entries)
           if (!entry.isDirectory) _basenameOfRemotePath(entry.path),
       };
-      return [
-        for (final candidate in wanted.entries)
-          if (existing.contains(candidate.key)) candidate.value,
-      ];
+      final conflicts = <String>[];
+      for (final candidate in wanted.entries) {
+        if (existing.contains(candidate.key)) {
+          conflicts.add(candidate.value);
+          continue;
+        }
+        // Unicode 归一化差异（O6）：群晖/macOS 以 NFD 存名，我们用 NFC 名去
+        // `exists()` 会得到 404，于是"看起来没冲突"→ 传上去变成第二份看着同名的
+        // 文件。骨架比对能把这种情况认出来，按冲突处理（跳过）。
+        final variant = normalizationVariantOf(candidate.key, existing);
+        if (variant != null) {
+          AppLogger.instance.logTo(
+            LogChannel.storage,
+            '「${candidate.value}」与服务器上的「$variant」只是 Unicode 归一化差异，'
+            '按同名处理（跳过）',
+            level: LogLevel.debug,
+          );
+          conflicts.add(candidate.value);
+        }
+      }
+      return conflicts;
     } on RemoteStorageException catch (e) {
       AppLogger.instance.logTo(
         LogChannel.storage,

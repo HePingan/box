@@ -229,6 +229,31 @@ void main() {
       expect(conflicts, ['real.txt'], reason: '漏判会导致静默覆盖');
     });
 
+    test('服务器以 NFD 存名时按冲突处理，不造出第二份同名文件（O6）', () async {
+      // 服务器上是 NFD 的 café.txt，用户选的是 NFC 的 café.txt：
+      // `exists()` 会返回 404（名字不相等），只看它就会重复上传。
+      transport.handler = (request) async {
+        if (request.method == 'PROPFIND') {
+          return xmlResponse(propfindXml(const [
+            DavItem('/dav/café.txt'),
+          ]));
+        }
+        return const WebdavResponse(statusCode: 404, headers: {});
+      };
+
+      final conflicts = await service.scanConflicts(
+        testAccount(),
+        files: const [
+          LocalUploadFile(path: '/tmp/x', name: 'caf\u00e9.txt', size: 1),
+          LocalUploadFile(path: '/tmp/y', name: 'other.txt', size: 1),
+        ],
+        targetDir: '',
+      );
+
+      expect(conflicts, ['caf\u00e9.txt'], reason: '归一化差异要按同名算');
+      expect(transport.requestCount, 1, reason: '仍然只发一次 PROPFIND');
+    });
+
     test('目录列表失败（403）时退回逐文件 HEAD，保持判定权威', () async {
       transport.handler = (request) async {
         if (request.method == 'PROPFIND') {

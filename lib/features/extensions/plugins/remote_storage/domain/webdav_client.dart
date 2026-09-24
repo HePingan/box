@@ -200,6 +200,19 @@ class WebdavClient {
       baseUri: _baseUri,
       filterSystemNames: filterSystemNames,
     );
+
+    // O6 诊断：目录里出现"看着同名、实为 Unicode 归一化差异"的条目时记一条日志。
+    // 这类问题用户只会描述成"同一个文件有两份"，没有这条日志就只能靠猜是服务器
+    // 以 NFD 存名、还是真的存在两个文件。
+    final pair = _findNormalizationPair(entries);
+    if (pair != null) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '目录「${path.isEmpty ? '/' : path}」里有 Unicode 归一化差异的两个名字：'
+        '「${pair.$1}」/「${pair.$2}」',
+        level: LogLevel.debug,
+      );
+    }
     return entries;
   }
 
@@ -232,6 +245,26 @@ class WebdavClient {
         filterSystemNames: filterSystemNames,
       ),
     );
+  }
+
+  /// 目录里是否存在"看着同名、实为归一化差异"的条目（O6 诊断用）。
+  ///
+  /// 返回第一对，没有则 null。用户报"同一个文件出现两份"时，这条日志能直接
+  /// 判定是服务器以 NFD 存名还是真的有两个文件。
+  static (String, String)? _findNormalizationPair(
+    List<RemoteStorageEntry> entries,
+  ) {
+    final names = <String>[
+      for (final entry in entries) _basename(entry.path),
+    ];
+    for (var i = 0; i < names.length; i++) {
+      for (var j = i + 1; j < names.length; j++) {
+        if (isNormalizationVariant(names[i], names[j])) {
+          return (names[i], names[j]);
+        }
+      }
+    }
+    return null;
   }
 
   /// 判断文件/目录是否存在（HEAD）。

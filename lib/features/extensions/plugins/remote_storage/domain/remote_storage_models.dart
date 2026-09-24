@@ -523,11 +523,105 @@ String? remoteSegmentRejectionReason(String raw) {
   return null;
 }
 
+/// 预组合字符 → "基字符 + 组合记号"的对照表（279 O6）。
+///
+/// dart:core 没有 NFC/NFD 归一化实现（要真做就得引 `unorm_dart` 这类表驱动依赖，
+/// 见 [sanitizeRemoteSegment] 的说明）。但"两个名字是不是同一个名字的不同归一化
+/// 形式"这个问题不需要完整的 Unicode 表：只需知道哪些字符是"基字符 + 一个组合
+/// 记号"。这里按组合记号分组，每行是"基字符、预组合字符"交替的串——由 Unicode
+/// NFD 数据生成，覆盖文件名里真实会出现的拉丁/希腊/西里尔字母。
+///
+/// 已知不含：双记号字符（ǘ = u + ̈ + ́ 等 24 个）、韩文音节、以及拉丁/希腊/西里尔
+/// 之外的文字。这些情况下判定会返回"不是变体"（宁可漏判、不误判——误判会让
+/// 上传把不同文件当同名跳过）。
+const String _nfdGroups = r'''
+\u0300: AÀEÈIÌNǸOÒUÙaàeèiìnǹoòuùЕЀИЍеѐиѝ
+\u0301: AÁCĆEÉGǴIÍLĹNŃOÓRŔSŚUÚYÝZŹaácćeégǵiílĺnńoórŕsśuúyýzźÆǼØǾæǽøǿΑΆΕΈΗΉΙΊΟΌΥΎΩΏαάεέηήιίοόυύωώГЃКЌгѓкќ
+\u0302: AÂCĈEÊGĜHĤIÎJĴOÔSŜUÛWŴYŶaâcĉeêgĝhĥiîjĵoôsŝuûwŵyŷ
+\u0303: AÃIĨNÑOÕUŨaãiĩnñoõuũ
+\u0304: AĀEĒIĪOŌUŪYȲaāeēiīoōuūyȳÆǢæǣ
+\u0306: AĂEĔGĞIĬOŎUŬaăeĕgğiĭoŏuŭИЙУЎийуў
+\u0307: AȦCĊEĖGĠIİOȮZŻaȧcċeėgġoȯzż
+\u0308: AÄEËIÏOÖUÜYŸaäeëiïoöuüyÿΙΪΥΫιϊυϋІЇЕЁеёії
+\u030a: AÅUŮaåuů
+\u030b: OŐUŰoőuű
+\u030c: AǍCČDĎEĚGǦHȞIǏKǨLĽNŇOǑRŘSŠTŤUǓZŽaǎcčdďeěgǧhȟiǐjǰkǩlľnňoǒrřsštťuǔzžƷǮʒǯ
+\u030f: AȀEȄIȈOȌRȐUȔaȁeȅiȉoȍrȑuȕ
+\u0311: AȂEȆIȊOȎRȒUȖaȃeȇiȋoȏrȓuȗ
+\u031b: OƠUƯoơuư
+\u0326: SȘTȚsștț
+\u0327: CÇEȨGĢKĶLĻNŅRŖSŞTŢcçeȩgģkķlļnņrŗsştţ
+\u0328: AĄEĘIĮOǪUŲaąeęiįoǫuų
+''';
+
+/// 预组合字符 → (基字符, 组合记号) 的查找表；由 [_nfdGroups] 懒解析一次。
+final Map<int, (int, String)> _nfdTable = () {
+  final out = <int, (int, String)>{};
+  for (final line in _nfdGroups.trim().split('\n')) {
+    final idx = line.indexOf(':');
+    if (idx <= 0) continue;
+    final mark = String.fromCharCode(
+      int.parse(line.substring(0, idx).trim().substring(2), radix: 16),
+    );
+    final pairs = line.substring(idx + 1).replaceAll(' ', '');
+    for (var i = 0; i + 1 < pairs.length; i += 2) {
+      out[pairs.codeUnitAt(i + 1)] = (pairs.codeUnitAt(i), mark);
+    }
+  }
+  return out;
+}();
+
+/// 把预组合字符拆成"基字符 + 组合记号"（NFD 形态）；表外字符原样保留。
+///
+/// 只用于**比较**，不用于出站路径改写：把用户的 NFC 名字改成 NFD 再传，在只认
+/// NFC 的服务器上反而会取不到。
+String toNfd(String text) {
+  final out = StringBuffer();
+  for (final rune in text.runes) {
+    final entry = _nfdTable[rune];
+    if (entry == null) {
+      out.writeCharCode(rune);
+    } else {
+      out
+        ..writeCharCode(entry.$1)
+        ..write(entry.$2);
+    }
+  }
+  return out.toString();
+}
+
+/// [a] 与 [b] 是否只是同一个名字的不同归一化形式（279 O6）。
+///
+/// 判据：拆成 NFD 后相等（且原形态不同）。这个判据是**精确**的：
+///  - `café`（NFC） vs `cafe` + U+0301（NFD）→ 变体 ✓
+///  - `resume` vs `résumé` → 不是变体 ✓（真的两个不同名字，不能当同名跳过）
+///  - `café` vs `cafè` → 不是变体 ✓
+bool isNormalizationVariant(String a, String b) {
+  if (a == b) return false;
+  if (a.isEmpty || b.isEmpty) return false;
+  return toNfd(a) == toNfd(b);
+}
+
+/// 在 [candidates] 里找 [name] 的归一化变体；没有则返回 null。
+///
+/// 上传前用它判"服务器上是不是已经有同一个名字的另一形态"——命中就该当冲突跳过，
+/// 否则会在群晖/macOS（NFD 存储）上悄悄造出第二份看起来同名的文件。
+String? normalizationVariantOf(String name, Iterable<String> candidates) {
+  for (final candidate in candidates) {
+    if (isNormalizationVariant(name, candidate)) return candidate;
+  }
+  return null;
+}
+
 /// 路径与文件名清洗：返回 null 表示不可用（判据见 [remoteSegmentRejectionReason]）。
 ///
-/// **未做 Unicode 归一化（NFC/NFD）**：dart:core 没有归一化实现，引入
-/// `unorm_dart` 这类依赖需要单独评估。群晖/macOS 后端以 NFD 存名时，同名文件
-/// 可能显示成两份或按 NFC 名取回 404——这是已知缺口，不是遗漏（方案文档 O6）。
+/// **不做 NFC/NFD 归一化改写**：dart:core 没有归一化实现，引入 `unorm_dart`
+/// 这类表驱动依赖需要单独评估。而且"改写"本身有风险——把用户的 NFC 名改成 NFD
+/// 再传，在只认 NFC 的服务器上反而取不到。
+///
+/// 能确定判断的部分已经做了（见 [toNfd] / [isNormalizationVariant]）：上传前把
+/// 服务器上"同一名字的另一归一化形态"按同名处理，避免在群晖/macOS（NFD 存储）
+/// 上造出第二份看起来同名的文件。
 String? sanitizeRemoteSegment(String raw) {
   if (remoteSegmentRejectionReason(raw) != null) return null;
   final text = _normalizeSegment(raw);
