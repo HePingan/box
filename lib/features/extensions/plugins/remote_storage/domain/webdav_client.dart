@@ -281,21 +281,47 @@ class WebdavClient {
     );
   }
 
-  /// 流式下载到 [destFile]（临时文件由调用方负责命名与清理）。
+  /// 下载到 [destFile]。
+  ///
+  /// [resumeFrom] > 0 时带 `Range: bytes=N-` 续传（OSS/C2）：
+  ///  - 服务端返回 **206** → 追加写入 `.part` 剩余部分；
+  ///  - 返回 **200** → 说明它忽略了 Range（或 Range 已失效），**必须截断重写**，
+  ///    否则会在文件头部叠一份重复内容；
+  ///  - 拿到全长（`Content-Range` 的 total 或 200 的 `content-length`）时校验最终
+  ///    字节数，不足即抛错并保留断点——宁可下一轮续传，也不要交出半截文件。
   Future<void> downloadTo(
     String path,
     File destFile, {
     void Function(int received, int total)? onProgress,
     TransferCancelToken? cancel,
+    int resumeFrom = 0,
   }) async {
-    final resp = await _send('GET', path);
+    final canResume =
+        resumeFrom > 0 &&
+        await destFile.exists() &&
+        await destFile.length() == resumeFrom;
+    final resp = await _send(
+      'GET',
+      path,
+      headers: canResume ? {'range': 'bytes=$resumeFrom-'} : const {},
+    );
     _expect(resp, const {200, 206}, path);
 
-    final total = resp.contentLength ?? -1;
-    var received = 0;
+    final partial = parseContentRange(resp.headers['content-range']);
+    // 只有"确实按 Range 返回"才算续传：206 且 Content-Range 起点与请求一致。
+    final appending =
+        canResume && resp.statusCode == 206 && partial?.start == resumeFrom;
+    final startAt = appending ? resumeFrom : 0;
+    final total = appending
+        ? (partial?.total ?? resumeFrom + (resp.contentLength ?? 0))
+        : (resp.contentLength ?? -1);
+
+    var received = startAt;
     IOSink? sink;
     try {
-      sink = destFile.openWrite();
+      sink = appending
+          ? destFile.openWrite(mode: FileMode.append)
+          : destFile.openWrite();
       final stream = resp.bodyStream;
       if (stream != null) {
         await for (final chunk in stream) {
@@ -307,12 +333,22 @@ class WebdavClient {
       } else if (resp.bodyText != null) {
         final bytes = utf8.encode(resp.bodyText!);
         sink.add(bytes);
-        received = bytes.length;
+        received += bytes.length;
         onProgress?.call(received, total);
       }
       await sink.flush();
     } finally {
       await sink?.close();
+    }
+
+    if (total > 0 && received != total) {
+      // 保留 .part（下一轮还能续），但这一轮必须算失败：把不完整的文件当成成果
+      // 交给上层，用户拿到的是"能打开但内容是坏的"包。
+      throw RemoteStorageException(
+        RemoteStorageError.http,
+        '下载不完整（$received/$total 字节），已保留断点可续传',
+        statusCode: resp.statusCode,
+      );
     }
   }
 

@@ -592,6 +592,78 @@ String mimeTypeForFileName(String name) {
   return 'application/octet-stream';
 }
 
+/// `Content-Range` 的解析结果（RFC 7233：`bytes 100-199/200`）。
+///
+/// [total] 为 null 表示服务端给的是 `bytes 100-199/*`（无法从这一段推全长）。
+class RemoteContentRange {
+  const RemoteContentRange({
+    required this.start,
+    required this.end,
+    this.total,
+  });
+
+  final int start;
+  final int end;
+  final int? total;
+
+  /// 这一段有多少字节。
+  int get length => end - start + 1;
+}
+
+/// 解析 `Content-Range`。无法解析（含 `bytes */200` 这种"范围不可满足"）时返回 null
+/// ——调用方据此退化为"从头下载"，而不是猜一个偏移。
+RemoteContentRange? parseContentRange(String? raw) {
+  if (raw == null) return null;
+  final text = raw.trim();
+  if (!text.toLowerCase().startsWith('bytes')) return null;
+  final value = text.substring(5).trim();
+  final slash = value.indexOf('/');
+  if (slash <= 0) return null;
+  final rangePart = value.substring(0, slash).trim();
+  final totalPart = value.substring(slash + 1).trim();
+  final dash = rangePart.indexOf('-');
+  if (dash <= 0) return null; // `*` 或空
+  final start = int.tryParse(rangePart.substring(0, dash).trim());
+  final end = int.tryParse(rangePart.substring(dash + 1).trim());
+  if (start == null || end == null || end < start) return null;
+  final total = totalPart == '*' ? null : int.tryParse(totalPart);
+  return RemoteContentRange(start: start, end: end, total: total);
+}
+
+/// 断点续传的归属元数据（与 `.part` 同放一个 `.part.meta`）。
+///
+/// 为什么需要它：`.part` 只按文件名复用，而同一个文件名完全可能来自**另一个账户或
+/// 另一个远端路径**（两个网盘里都有 `notes.zip` 很常见）。不加归属校验就续传，会把
+/// 两份不同文件的字节拼成一个"能打开但内容是坏的"包——比重新下载危险得多。
+class PartialDownload {
+  const PartialDownload({required this.accountId, required this.remotePath});
+
+  final String accountId;
+  final String remotePath;
+
+  /// 这份断点是否属于当前这次下载。
+  bool matches({required String accountId, required String remotePath}) =>
+      this.accountId == accountId && this.remotePath == remotePath;
+
+  String toJsonString() =>
+      jsonEncode({'accountId': accountId, 'remotePath': remotePath});
+
+  /// 解析失败（文件被手改、写了一半）一律返回 null → 调用方丢弃断点重下。
+  static PartialDownload? tryParse(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      final data = jsonDecode(raw);
+      if (data is! Map) return null;
+      final accountId = data['accountId']?.toString() ?? '';
+      final remotePath = data['remotePath']?.toString() ?? '';
+      if (accountId.isEmpty) return null;
+      return PartialDownload(accountId: accountId, remotePath: remotePath);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
 /// 批量操作结果：逐项失败不中断整批，最后统一汇报。
 ///
 /// 为什么不让批量操作"一错全停"：多选删除/移动时，用户要的是"能做的先做掉"，

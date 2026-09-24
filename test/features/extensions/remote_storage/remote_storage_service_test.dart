@@ -312,6 +312,149 @@ void main() {
           docsDir.listSync(recursive: true).whereType<File>().toList();
       expect(leftovers, isEmpty);
     });
+
+    // ---------------------------------------------------------- C2 断点续传
+
+    /// 造一个"上次中断留下的断点"：`.part` 字节 + 同名 `.part.meta` 归属信息。
+    Future<File> seedPartial(
+      String name,
+      List<int> bytes, {
+      String? accountId,
+      String remotePath = 'a.bin',
+    }) async {
+      final dir = Directory('${docsDir.path}/remote_storage/${testAccount().id}');
+      await dir.create(recursive: true);
+      final part = File('${dir.path}/$name.part');
+      await part.writeAsBytes(bytes);
+      await File('${part.path}.meta').writeAsString(
+        PartialDownload(
+          accountId: accountId ?? testAccount().id,
+          remotePath: remotePath,
+        ).toJsonString(),
+      );
+      return part;
+    }
+
+    test('同账户同路径的断点 → 带 Range 续传，落盘是两段拼接的结果', () async {
+      final part = await seedPartial('a.bin', const [1, 2, 3]);
+      transport.handler = (_) async => WebdavResponse(
+        statusCode: 206,
+        headers: {
+          'content-range': 'bytes 3-5/6',
+          'content-length': '3',
+        },
+        bodyStream: Stream<List<int>>.value(Uint8List.fromList([4, 5, 6])),
+      );
+
+      final path = await service.download(
+        testAccount(),
+        remotePath: 'a.bin',
+        fileName: 'a.bin',
+      );
+
+      expect(transport.lastRequest.headers['range'], 'bytes=3-');
+      expect(await File(path).readAsBytes(), [1, 2, 3, 4, 5, 6]);
+      // 完成品落位、断点与元数据都清掉
+      expect(await File('${part.path}.meta').exists(), isFalse);
+      expect(await part.exists(), isFalse);
+    });
+
+    test('断点属于别的账户 → 不续传：先丢弃断点，再整份重下', () async {
+      final part = await seedPartial('a.bin', const [9, 9, 9], accountId: 'other');
+      transport.handler = (_) async => streamResponse(const [1, 2]);
+
+      final path = await service.download(
+        testAccount(),
+        remotePath: 'a.bin',
+        fileName: 'a.bin',
+      );
+
+      // 没有 Range：偏移错了会把坏字节拼进去
+      expect(transport.lastRequest.headers.containsKey('range'), isFalse);
+      expect(await File(path).readAsBytes(), [1, 2]);
+      expect(await part.exists(), isFalse);
+    });
+
+    test('断点属于别的远端路径（同名文件）→ 同样不续传', () async {
+      await seedPartial('a.bin', const [9, 9, 9], remotePath: 'other/a.bin');
+      transport.handler = (_) async => streamResponse(const [1, 2]);
+
+      final path = await service.download(
+        testAccount(),
+        remotePath: 'a.bin',
+        fileName: 'a.bin',
+      );
+
+      expect(transport.lastRequest.headers.containsKey('range'), isFalse);
+      expect(await File(path).readAsBytes(), [1, 2]);
+    });
+
+    test('0 字节断点不复用（没有可续的字节）', () async {
+      final part = await seedPartial('a.bin', const []);
+      transport.handler = (_) async => streamResponse(const [1, 2]);
+
+      final path = await service.download(
+        testAccount(),
+        remotePath: 'a.bin',
+        fileName: 'a.bin',
+      );
+
+      expect(transport.lastRequest.headers.containsKey('range'), isFalse);
+      expect(await File(path).readAsBytes(), [1, 2]);
+      expect(path, isNot(endsWith('a (1).bin')));
+      expect(await part.exists(), isFalse);
+    });
+
+    test('成品已存在时不覆盖它：落到「a (1).bin」，也不拿它的断点去续传', () async {
+      // 已有成品 a.bin（上一次下载的结果）
+      final dir = Directory('${docsDir.path}/remote_storage/${testAccount().id}');
+      await dir.create(recursive: true);
+      await File('${dir.path}/a.bin').writeAsBytes(const [1, 1, 1]);
+      // 同时存在一份"别的文件"留下的同名断点
+      await seedPartial('a.bin', const [7, 7]);
+
+      transport.handler = (_) async => streamResponse(const [2, 2]);
+
+      final path = await service.download(
+        testAccount(),
+        remotePath: 'b.bin',
+        fileName: 'a.bin',
+      );
+
+      expect(path, endsWith('a (1).bin'));
+      expect(await File('${dir.path}/a.bin').readAsBytes(), [1, 1, 1]);
+      expect(await File(path).readAsBytes(), [2, 2]);
+    });
+
+    test('可重试失败且已收到字节 → 保留 .part 供下一轮续传', () async {
+      transport.handler = (_) async => WebdavResponse(
+        statusCode: 200,
+        headers: {'content-length': '10'},
+        bodyStream: Stream<List<int>>.fromIterable([
+          Uint8List.fromList([1, 2, 3]),
+        ]).asyncExpand((chunk) async* {
+          yield chunk;
+          throw const SocketException('broken mid-stream');
+        }),
+      );
+      // 中途断流抛的是原始 SocketException（不是 RemoteStorageException）——
+      // 队列按 isRetryableTransferError 分类，这里只断言"断点留下了"。
+      try {
+        await service.download(
+          testAccount(),
+          remotePath: 'a.bin',
+          fileName: 'a.bin',
+        );
+        fail('中途断流应当抛出');
+      } catch (_) {
+        // 类型不重要：重要的是别把半截文件当成果交出去
+      }
+      final dir = Directory('${docsDir.path}/remote_storage/${testAccount().id}');
+      final part = File('${dir.path}/a.bin.part');
+      expect(await part.exists(), isTrue);
+      expect(await part.length(), 3);
+      expect(await File('${part.path}.meta').exists(), isTrue);
+    });
   });
 
   group('上传', () {

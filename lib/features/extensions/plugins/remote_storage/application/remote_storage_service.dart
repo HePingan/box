@@ -487,23 +487,100 @@ class RemoteStorageService {
     final client = clientFor(account);
     final safe = sanitizeRemoteSegment(fileName) ?? 'download.bin';
     final dir = await _downloadDirFor(account);
-    final target = await _uniqueFile(dir, safe);
+    final target = await _resolveDownloadTarget(dir, safe);
     final temp = File('${target.path}.part');
+    final metaFile = File('${temp.path}.meta');
+
+    // 断点归属校验（C2）：只有"同一个账户 + 同一个远端路径"的 .part 才能续传。
+    var resumeFrom = 0;
+    if (await temp.exists()) {
+      final length = await temp.length();
+      final meta = PartialDownload.tryParse(await _readTextOrNull(metaFile));
+      if (length > 0 &&
+          meta != null &&
+          meta.matches(accountId: account.id, remotePath: remotePath)) {
+        resumeFrom = length;
+      } else {
+        // 不认识的断点（别的账户/别的文件/元数据坏了）：留着只会拼出坏文件。
+        await _deleteQuietly(temp);
+        await _deleteQuietly(metaFile);
+      }
+    }
+    if (resumeFrom == 0) {
+      await metaFile.writeAsString(
+        PartialDownload(
+          accountId: account.id,
+          remotePath: remotePath,
+        ).toJsonString(),
+      );
+    }
+
     try {
       await client.downloadTo(
         remotePath,
         temp,
         onProgress: onProgress,
         cancel: cancel,
+        resumeFrom: resumeFrom,
       );
       await temp.rename(target.path);
+      await _deleteQuietly(metaFile);
     } catch (e) {
-      try {
-        if (await temp.exists()) await temp.delete();
-      } catch (_) {}
+      // 断点留不留，按两条判断：
+      //  - 可重试的错误（网络抖动/超时/5xx）→ 保留 .part，下一轮从字节数续传；
+      //  - 不可重试（401/403/404/507…）或一个字节都没收到 → 清掉，留着只是占空间。
+      final received = await temp.exists() ? await temp.length() : 0;
+      if (!isRetryableTransferError(e) || received == 0) {
+        await _deleteQuietly(temp);
+        await _deleteQuietly(metaFile);
+      }
       rethrow;
     }
     return target.path;
+  }
+
+  /// 下载落点：优先复用"同一名字的未完成断点"，否则挑一个不撞名的文件（C2）。
+  ///
+  /// 规则（两个条件同时满足才复用）：`<name>.part` 存在 **且** `<name>` 还不存在。
+  /// 后者是关键——否则会在一个已经下载好的成品上继续追加、再把它覆盖掉。
+  static Future<File> _resolveDownloadTarget(
+    Directory dir,
+    String baseName,
+  ) async {
+    final dot = baseName.lastIndexOf('.');
+    final stem = dot > 0 ? baseName.substring(0, dot) : baseName;
+    final ext = dot > 0 ? baseName.substring(dot) : '';
+    for (var i = 0; i <= 200; i++) {
+      final name = i == 0 ? baseName : '$stem ($i)$ext';
+      final target = File('${dir.path}/$name');
+      final hasFinal = await target.exists();
+      if (hasFinal) continue;
+      final part = File('${target.path}.part');
+      final partLength = await part.exists() ? await part.length() : 0;
+      // 有非空断点 → 复用它续传；没有 → 这就是个干净的名字。
+      if (partLength == 0) {
+        await _deleteQuietly(part); // 0 字节的空壳没有续传价值
+      }
+      return target;
+    }
+    return File('${dir.path}/$baseName');
+  }
+
+  static Future<String?> _readTextOrNull(File file) async {
+    try {
+      if (!await file.exists()) return null;
+      return await file.readAsString();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> _deleteQuietly(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      // 清理失败不该盖住真正的错误（尤其是那个让用户看到原因的异常）。
+    }
   }
 
   /// 上传单个文件；返回 false 表示远端已有同名文件且 [overwrite] 为 false（跳过）。
@@ -833,19 +910,6 @@ class RemoteStorageService {
       await dir.create(recursive: true);
     }
     return dir;
-  }
-
-  static Future<File> _uniqueFile(Directory dir, String baseName) async {
-    var candidate = File('${dir.path}/$baseName');
-    if (!await candidate.exists()) return candidate;
-    final dot = baseName.lastIndexOf('.');
-    final stem = dot > 0 ? baseName.substring(0, dot) : baseName;
-    final ext = dot > 0 ? baseName.substring(dot) : '';
-    for (var i = 1; i <= 200; i++) {
-      candidate = File('${dir.path}/$stem ($i)$ext');
-      if (!await candidate.exists()) return candidate;
-    }
-    return candidate;
   }
 }
 
