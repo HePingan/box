@@ -195,7 +195,19 @@ fi
 # 到 debug 签名，产出一个"看起来正常、装到老机器上必失败"的包。线上 1.1.8
 # 与本机构建就是两把不同的 debug key（4f5fa752… vs 8daac29e…），跨签名无法
 # 覆盖安装，用户会拿到 INSTALL_FAILED_UPDATE_INCOMPATIBLE。
-APKSIGNER="$(ls -d /root/android-sdk/build-tools/*/apksigner 2>/dev/null | sort -r | head -1 || true)"
+APKSIGNER=""
+# apksigner 的位置随机器而变：本构建机装在 /root/Android/Sdk，服务端历史上在
+# /root/android-sdk。按 ANDROID_HOME / ANDROID_SDK_ROOT / 两个已知路径依次探测。
+# 为什么不能只写死一个路径：找不到时下面只会打一行 warning 然后**跳过签名核对**，
+# 那等于静默放行一个可能用 debug 签名发的包——正是这个闸门要防的事。
+for _sdk_cand in "${ANDROID_HOME:-}/build-tools" "${ANDROID_SDK_ROOT:-}/build-tools" /root/Android/Sdk/build-tools /root/android-sdk/build-tools; do
+  [[ -n "$_sdk_cand" && -d "$_sdk_cand" ]] || continue
+  _found="$(ls -d "$_sdk_cand"/*/apksigner 2>/dev/null | sort -r | head -1 || true)"
+  if [[ -n "$_found" ]]; then
+    APKSIGNER="$_found"
+    break
+  fi
+done
 if [[ -z "$APKSIGNER" ]]; then
   echo "    [警告] 未找到 apksigner，跳过签名核对" >&2
 else
