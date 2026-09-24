@@ -550,4 +550,109 @@ void main() {
       expect(failing.status, TransferStatus.done);
     });
   });
+
+  group('全部重试（284 P5）', () {
+    test('3 条失败 → 一次调用全部重跑，各自 runner 被再次调用', () async {
+      final queue = newQueue(maxConcurrent: 4);
+      var shouldFail = true;
+      var runs = 0;
+      Future<Object?> runner(TransferCancelToken cancel,
+          void Function(int, int) onProgress) async {
+        runs += 1;
+        if (shouldFail) throw Exception('boom');
+        return 'ok';
+      }
+
+      for (var i = 0; i < 3; i++) {
+        queue.enqueue(
+          kind: TransferKind.download,
+          title: 'f$i.bin',
+          subtitle: 'acct',
+          runner: runner,
+        );
+      }
+      await pumpEventQueue();
+      expect(
+        queue.tasks.where((t) => t.status == TransferStatus.failed).length,
+        3,
+        reason: '三条都失败（内部重试也失败）',
+      );
+      final runsBefore = runs;
+
+      shouldFail = false;
+      expect(queue.retryAllFailed(), 3);
+
+      await pumpEventQueue();
+      expect(queue.tasks.every((t) => t.status == TransferStatus.done), isTrue);
+      expect(
+        runs,
+        greaterThan(runsBefore),
+        reason: '重试真的又跑了一遍，而不是只改状态',
+      );
+    });
+
+    test('只碰失败项：成功、进行中、已取消的一律不动', () async {
+      final queue = newQueue(maxConcurrent: 2);
+      final gate = Completer<void>();
+      var shouldFail = true;
+
+      // 成功项
+      final done = queue.enqueue(
+        kind: TransferKind.download,
+        title: 'done.bin',
+        subtitle: 'acct',
+        runner: (cancel, onProgress) async => 'r',
+      );
+      // 失败项
+      final failed = queue.enqueue(
+        kind: TransferKind.download,
+        title: 'failed.bin',
+        subtitle: 'acct',
+        runner: (cancel, onProgress) async {
+          if (shouldFail) throw Exception('boom');
+          return 'ok';
+        },
+      );
+      await pumpEventQueue();
+      // 进行中项（卡在门上）
+      final running = queue.enqueue(
+        kind: TransferKind.upload,
+        title: 'running.bin',
+        subtitle: 'acct',
+        runner: (cancel, onProgress) async {
+          await gate.future;
+          return 'r';
+        },
+      );
+      await pumpEventQueue();
+
+      expect(done.status, TransferStatus.done);
+      expect(failed.status, TransferStatus.failed);
+      expect(running.status, TransferStatus.running);
+
+      shouldFail = false;
+      expect(queue.retryAllFailed(), 1, reason: '只有那一条失败项');
+
+      expect(done.status, TransferStatus.done);
+      expect(done.result, 'r');
+      expect(running.status, TransferStatus.running);
+      expect(failed.isActive, isTrue, reason: '被重试 → 回到排/跑状态');
+
+      gate.complete();
+      await pumpEventQueue();
+    });
+
+    test('没有失败项时返回 0', () async {
+      final queue = newQueue();
+      queue.enqueue(
+        kind: TransferKind.download,
+        title: 'ok.bin',
+        subtitle: 'acct',
+        runner: (cancel, onProgress) async => 'r',
+      );
+      await pumpEventQueue();
+
+      expect(queue.retryAllFailed(), 0);
+    });
+  });
 }

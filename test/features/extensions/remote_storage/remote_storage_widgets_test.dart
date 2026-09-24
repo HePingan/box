@@ -14,6 +14,7 @@ import 'package:box/features/extensions/plugins/remote_storage/presentation/remo
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_page.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_player_page.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -1123,6 +1124,110 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(picked, <double>[2]);
+    });
+  });
+
+  group('传输面板：全部重试与失败原因（284 P5）', () {
+    Future<TransferQueue> pumpQueueSheet(
+      WidgetTester tester, {
+      required int failures,
+      required bool failForever,
+      int ok = 0,
+    }) async {
+      final queue = TransferQueue(retryDelay: Duration.zero);
+      debugSetRemoteStorageRuntime(queue: queue);
+      for (var i = 0; i < failures; i++) {
+        queue.enqueue(
+          kind: TransferKind.download,
+          title: 'fail$i.bin',
+          subtitle: '账户 · 下载',
+          // 故意用**不重试**的错误类型（凭证类）：队列不会排退避定时器，
+          // widget 测试结束时才不会剩 pending timer（HTTP 5xx 会重试、会有定时器）。
+          runner: (cancel, onProgress) async {
+            if (failForever) {
+              throw const RemoteStorageException(
+                RemoteStorageError.unauthorized,
+                '用户名或密码不正确',
+              );
+            }
+            return 'ok';
+          },
+        );
+      }
+      for (var i = 0; i < ok; i++) {
+        queue.enqueue(
+          kind: TransferKind.download,
+          title: 'ok$i.bin',
+          subtitle: '账户 · 下载',
+          runner: (cancel, onProgress) async => 'ok',
+        );
+      }
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: TransferQueueSheet())),
+      );
+      await tester.pumpAndSettle();
+      return queue;
+    }
+
+    /// 队列失败会经 AppLogger 记一条日志，日志有 250ms 的合并落盘定时器；
+    /// 测试结束前不把它跑掉，flutter_test 会判 "Timer is still pending"。
+    Future<void> drainLogFlush(WidgetTester tester) =>
+        tester.pump(const Duration(milliseconds: 300));
+
+    testWidgets('有失败项才显示「全部重试」', (tester) async {
+      await pumpQueueSheet(tester, failures: 2, failForever: true);
+      expect(find.text('全部重试'), findsOneWidget);
+      await drainLogFlush(tester);
+    });
+
+    testWidgets('没有失败项时不显示「全部重试」', (tester) async {
+      await pumpQueueSheet(tester, failures: 0, failForever: false, ok: 2);
+      expect(find.text('全部重试'), findsNothing);
+      await drainLogFlush(tester);
+    });
+
+    testWidgets('点「全部重试」：两个失败项都回到活动状态，并提示条数', (tester) async {
+      final queue = await pumpQueueSheet(
+        tester,
+        failures: 2,
+        failForever: true,
+      );
+      expect(
+        queue.tasks.every((t) => t.status == TransferStatus.failed),
+        isTrue,
+      );
+
+      await tester.tap(find.text('全部重试'));
+      await tester.pump(); // 让 retryAllFailed 生效
+      expect(find.textContaining('已重试 2 个失败任务'), findsOneWidget);
+      await drainLogFlush(tester);
+      expect(
+        queue.tasks.every((t) => t.status == TransferStatus.failed),
+        isTrue,
+        reason: 'runner 一直失败 → 又会回到 failed，但确实被重跑了',
+      );
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('失败原因可点开：完整报错 + 复制按钮', (tester) async {
+      // 剪贴板是平台通道：装个假实现，断言"点了复制不炸"。
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async => null,
+      );
+      await pumpQueueSheet(tester, failures: 1, failForever: true);
+
+      await tester.tap(find.text('用户名或密码不正确'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('失败原因'), findsOneWidget);
+      expect(find.text('复制'), findsOneWidget);
+
+      await tester.tap(find.text('复制'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('已复制失败原因'), findsOneWidget);
+      expect(find.text('失败原因'), findsNothing, reason: '复制后关掉对话框');
     });
   });
 }

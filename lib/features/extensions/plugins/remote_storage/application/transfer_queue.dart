@@ -150,6 +150,22 @@ class TransferQueue extends ChangeNotifier {
     return true;
   }
 
+  /// 一键重试**所有**失败任务（284 P5），返回真正被重试的条数。
+  ///
+  /// 复用 [retry]：它已经处理了"状态必须 failed、token 复位、计数归零"这几件
+  /// 容易漏的事（token 不复位会被立刻判成取消）。批量重试只是把它套在列表上。
+  int retryAllFailed() {
+    var count = 0;
+    // 先收集再重试：retry 会 notifyListeners + 触发 _pump，边遍历边改列表不安全。
+    final failed = _tasks
+        .where((t) => t.status == TransferStatus.failed)
+        .toList(growable: false);
+    for (final task in failed) {
+      if (retry(task)) count += 1;
+    }
+    return count;
+  }
+
   /// 第 [attempt] 次重试前的等待：固定值（测试注入）优先，服务端 `Retry-After`
   /// 更长时取更长；生产默认走 [kTransferRetryDelays] 退避。
   Duration _delayFor(int attempt, Object error) {

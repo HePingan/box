@@ -5,6 +5,7 @@
 // 拍板 5：私网 http 默认放行（卡片仅提示徽标，不拦截）。
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../application/remote_storage_service.dart';
 import '../application/transfer_queue.dart';
@@ -716,6 +717,18 @@ class TransferQueueSheet extends StatelessWidget {
                   Expanded(
                     child: Text('传输任务', style: theme.textTheme.titleLarge),
                   ),
+                  // 一键重试全部失败（284 P5）：弱网下常有多条同时失败，
+                  // 一条条点太慢；没有失败项时不显示（不做没用的按钮）。
+                  if (tasks.any((t) => t.status == TransferStatus.failed))
+                    TextButton(
+                      onPressed: () {
+                        final retried = queue.retryAllFailed();
+                        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                          SnackBar(content: Text('已重试 $retried 个失败任务')),
+                        );
+                      },
+                      child: const Text('全部重试'),
+                    ),
                   if (tasks.any((t) => !t.isActive))
                     TextButton(
                       onPressed: queue.clearFinished,
@@ -733,7 +746,8 @@ class TransferQueueSheet extends StatelessWidget {
                   child: ListView.builder(
                     shrinkWrap: true,
                     itemCount: tasks.length,
-                    itemBuilder: (_, i) => _buildTask(theme, tasks[i]),
+                    itemBuilder: (context, i) =>
+                        _buildTask(context, theme, tasks[i]),
                   ),
                 ),
             ],
@@ -743,7 +757,44 @@ class TransferQueueSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildTask(ThemeData theme, TransferTask task) {
+  /// 失败原因对话框（284 P5）：完整报错 + 一键复制。
+  Future<void> _showFailureReason(
+    BuildContext context,
+    ThemeData theme,
+    String message,
+  ) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('失败原因'),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            message,
+            style: theme.textTheme.bodySmall,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: message));
+              if (!dialogContext.mounted) return;
+              Navigator.of(dialogContext).pop();
+              ScaffoldMessenger.maybeOf(
+                dialogContext,
+              )?.showSnackBar(const SnackBar(content: Text('已复制失败原因')));
+            },
+            child: const Text('复制'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTask(BuildContext context, ThemeData theme, TransferTask task) {
     final total = task.totalBytes;
     final info = task.status == TransferStatus.done
         ? formatRemoteBytes(task.receivedBytes)
@@ -817,13 +868,18 @@ class TransferQueueSheet extends StatelessWidget {
           ],
           if (task.status == TransferStatus.failed &&
               task.errorMessage?.isNotEmpty == true)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(
-                task.errorMessage!,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: theme.colorScheme.error,
+            // 失败原因点开可复制（284 P5）：求助/自查时经常要贴出完整报错，
+            // 长文案在列表里读不全。SelectableText 之外再给一个「复制」更省事。
+            InkWell(
+              onTap: () => _showFailureReason(context, theme, task.errorMessage!),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(
+                  task.errorMessage!,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: theme.colorScheme.error,
+                  ),
                 ),
               ),
             ),
