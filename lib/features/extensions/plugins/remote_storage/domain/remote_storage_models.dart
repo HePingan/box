@@ -924,6 +924,12 @@ class TransferCancelToken {
 
   void cancel() => _canceled = true;
 
+  /// 复位标记（283 D4：重试一个失败任务时用）。
+  ///
+  /// token 是一次性的——被取消过一次就永远是取消态，重试会立刻被判成取消。
+  /// 复位只用于"用户明确要求重试"这条路径。
+  void reset() => _canceled = false;
+
   /// 在流处理循环中调用：已取消则抛 [TransferCanceledException]。
   void throwIfCanceled() {
     if (_canceled) throw const TransferCanceledException();

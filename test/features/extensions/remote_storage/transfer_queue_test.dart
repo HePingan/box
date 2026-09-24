@@ -343,4 +343,211 @@ void main() {
       expect(task.retryAttempt, 0, reason: '结束后必须归零，避免 UI 停留在重试态');
     });
   });
+  group('失败任务重试（283 D4）', () {
+    test('失败后 retry → 重新跑起来并成功', () async {
+      final queue = newQueue();
+      var attempts = 0;
+      final task = queue.enqueue(
+        kind: TransferKind.download,
+        title: 'a.bin',
+        subtitle: 'acct',
+        runner: (cancel, onProgress) async {
+          attempts += 1;
+          throw const RemoteStorageException(
+            RemoteStorageError.http,
+            '服务器返回 HTTP 500',
+            statusCode: 500,
+          );
+        },
+      );
+
+      await pumpEventQueue();
+      expect(task.status, TransferStatus.failed);
+      expect(attempts, kTransferRetries + 1, reason: '自动重试已用尽');
+
+      // 换一个能成功的 runner（模拟服务器恢复）后手动重试
+      task.runner = (cancel, onProgress) async => '/tmp/a.bin';
+      expect(queue.retry(task), isTrue);
+      await pumpEventQueue();
+
+      expect(task.status, TransferStatus.done);
+      expect(task.result, '/tmp/a.bin');
+      expect(task.errorMessage, isNull, reason: '重试前要清掉上次的错误');
+      expect(task.receivedBytes, 0);
+    });
+
+    test('重试会复位进度与错误信息（不是接着失败态往上叠）', () async {
+      final queue = newQueue();
+      final gate = Completer<void>();
+      final task = queue.enqueue(
+        kind: TransferKind.upload,
+        title: 'b.bin',
+        subtitle: 'acct',
+        totalBytes: 100,
+        runner: (cancel, onProgress) async {
+          onProgress(40, 100);
+          throw const RemoteStorageException(RemoteStorageError.timeout, '连接超时');
+        },
+      );
+
+      await pumpEventQueue();
+      expect(task.status, TransferStatus.failed);
+
+      // 先卡在门上再上报进度：这样"复位为 0"能被观察到一个确定的时刻
+      // （runner 会同步跑到第一个 await，若先上报就看不到 0 了）。
+      task.runner = (cancel, onProgress) async {
+        await gate.future;
+        onProgress(50, 100);
+        return null;
+      };
+      expect(queue.retry(task), isTrue);
+
+      expect(task.receivedBytes, 0, reason: '重试从 0 开始');
+      expect(task.errorMessage, isNull);
+      expect(task.status, TransferStatus.running);
+
+      gate.complete();
+      await pumpEventQueue();
+      expect(task.status, TransferStatus.done);
+    });
+
+    test('只有"失败"能给重试：跑着的/成功的/已取消的都拒绝', () async {
+      final queue = newQueue();
+      final gate = Completer<void>();
+      final running = queue.enqueue(
+        kind: TransferKind.download,
+        title: 'running.bin',
+        subtitle: 'acct',
+        runner: (cancel, onProgress) => gate.future,
+      );
+      final done = queue.enqueue(
+        kind: TransferKind.download,
+        title: 'done.bin',
+        subtitle: 'acct',
+        runner: (cancel, onProgress) async => '/tmp/done',
+      );
+
+      await pumpEventQueue();
+      expect(running.status, TransferStatus.running);
+      expect(done.status, TransferStatus.done);
+
+      expect(queue.retry(running), isFalse, reason: '跑着的应该用取消');
+      expect(queue.retry(done), isFalse, reason: '已完成的结果有效，别覆盖');
+      expect(running.status, TransferStatus.running);
+
+      gate.complete();
+      await pumpEventQueue();
+    });
+
+    test('已取消的任务不给重试（用户主动放弃过）', () async {
+      final queue = newQueue();
+      final gate = Completer<void>();
+      final task = queue.enqueue(
+        kind: TransferKind.download,
+        title: 'c.bin',
+        subtitle: 'acct',
+        runner: (cancel, onProgress) async {
+          await gate.future;
+          cancel.throwIfCanceled();
+          return null;
+        },
+      );
+
+      await pumpEventQueue();
+      task.requestCancel();
+      gate.complete();
+      await pumpEventQueue();
+      expect(task.status, TransferStatus.canceled);
+
+      expect(queue.retry(task), isFalse);
+    });
+
+    test('取消过的 token 复位：重试不会被误判成取消', () async {
+      final queue = newQueue();
+      // 直接构造"失败但 token 已被取消过"的场景：失败回调里取消（用户点了取消
+      // 但任务已失败）——不复位 token 的话重试会立刻抛取消异常。
+      final task = queue.enqueue(
+        kind: TransferKind.download,
+        title: 'd.bin',
+        subtitle: 'acct',
+        runner: (cancel, onProgress) async {
+          throw const RemoteStorageException(RemoteStorageError.http, '服务器返回 HTTP 500', statusCode: 500);
+        },
+      );
+
+      await pumpEventQueue();
+      expect(task.status, TransferStatus.failed);
+      task.cancelToken.cancel(); // 用户放弃，但任务已是失败态
+
+      var ranAgain = false;
+      task.runner = (cancel, onProgress) async {
+        cancel.throwIfCanceled();
+        ranAgain = true;
+        return '/tmp/d.bin';
+      };
+      expect(queue.retry(task), isTrue);
+      await pumpEventQueue();
+
+      expect(ranAgain, isTrue);
+      expect(task.status, TransferStatus.done);
+    });
+
+    test('不属于本队列的任务 → 拒绝', () async {
+      final queue = newQueue();
+      final other = TransferQueue(retryDelay: Duration.zero);
+      final task = other.enqueue(
+        kind: TransferKind.download,
+        title: 'x.bin',
+        subtitle: 'acct',
+        runner: (cancel, onProgress) async => null,
+      );
+      await pumpEventQueue();
+
+      expect(queue.retry(task), isFalse);
+    });
+
+    test('重试后并发上限仍被遵守', () async {
+      final queue = newQueue(maxConcurrent: 1);
+      final gate = Completer<void>();
+      final failing = queue.enqueue(
+        kind: TransferKind.download,
+        title: 'f.bin',
+        subtitle: 'acct',
+        runner: (cancel, onProgress) async => throw const RemoteStorageException(
+          RemoteStorageError.http,
+          '服务器返回 HTTP 500',
+          statusCode: 500,
+        ),
+      );
+      await pumpEventQueue();
+      expect(failing.status, TransferStatus.failed);
+
+      var secondStarted = false;
+      queue.enqueue(
+        kind: TransferKind.download,
+        title: 'blocker.bin',
+        subtitle: 'acct',
+        runner: (cancel, onProgress) async {
+          secondStarted = true;
+          await gate.future;
+          return null;
+        },
+      );
+      await pumpEventQueue();
+      expect(secondStarted, isTrue);
+
+      failing.runner = (cancel, onProgress) async => '/tmp/f.bin';
+      expect(queue.retry(failing), isTrue);
+      await pumpEventQueue();
+      expect(
+        failing.status,
+        TransferStatus.queued,
+        reason: '名额被占着，重试的任务要排队而不是越过并发上限',
+      );
+
+      gate.complete();
+      await pumpEventQueue();
+      expect(failing.status, TransferStatus.done);
+    });
+  });
 }

@@ -128,6 +128,28 @@ class TransferQueue extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 重跑一个**失败**的任务（283 D4）。
+  ///
+  /// 为什么需要：弱网/弱 NAS 上偶发失败很常见。以前只能回列表重新发起一次操作
+  /// （上传还得重新选一遍文件），而 runner 闭包一直在任务对象上，重跑的成本只是
+  /// 复位状态。
+  ///
+  /// 只接受"已失败"的任务：跑着的（该用取消）、已完成的（结果有效，重跑会覆盖）、
+  /// 已取消的（用户主动放弃）都不给重试。返回是否真的重新入队。
+  bool retry(TransferTask task) {
+    if (!_tasks.contains(task)) return false;
+    if (task.status != TransferStatus.failed) return false;
+    task.status = TransferStatus.queued;
+    task.receivedBytes = 0;
+    task.errorMessage = null;
+    task.retryAttempt = 0;
+    task.result = null;
+    task.cancelToken.reset(); // token 一次性：不复位会被立刻判成取消
+    notifyListeners();
+    _pump();
+    return true;
+  }
+
   /// 第 [attempt] 次重试前的等待：固定值（测试注入）优先，服务端 `Retry-After`
   /// 更长时取更长；生产默认走 [kTransferRetryDelays] 退避。
   Duration _delayFor(int attempt, Object error) {

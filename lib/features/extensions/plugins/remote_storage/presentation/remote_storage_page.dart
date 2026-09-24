@@ -778,7 +778,7 @@ class TransferQueueSheet extends StatelessWidget {
                   onPressed: task.requestCancel,
                   child: const Text('取消'),
                 )
-              else
+              else ...[
                 Text(
                   _statusLabel(task.status),
                   style: theme.textTheme.labelSmall?.copyWith(
@@ -787,6 +787,13 @@ class TransferQueueSheet extends StatelessWidget {
                         : theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
+                // 失败任务一键重跑（283 D4）：偶发失败不用回列表重新操作一遍。
+                if (task.status == TransferStatus.failed)
+                  TextButton(
+                    onPressed: () => transferQueue().retry(task),
+                    child: const Text('重试'),
+                  ),
+              ],
             ],
           ),
           const SizedBox(height: 2),

@@ -248,7 +248,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '已缓存 ${usage.files} 张，占用 '
+                    '已缓存 $usage.files 张，占用 '
                     '${formatRemoteBytes(usage.bytes)}',
                   ),
                   const SizedBox(height: 8),

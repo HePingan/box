@@ -2,9 +2,11 @@
 // - 账户编辑面板：空地址 / 地址无法解析 / 缺用户名 / 合法保存 四条校验路径。
 // - 浏览页：空目录空态、加载失败错误态（含重试）、条目列表渲染。
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:box/features/extensions/plugins/remote_storage/application/remote_storage_service.dart';
+import 'package:box/features/extensions/plugins/remote_storage/application/transfer_queue.dart';
 import 'package:box/features/extensions/plugins/remote_storage/data/remote_thumbnail_cache.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_browser_page.dart';
@@ -593,6 +595,82 @@ void main() {
         reason: '不给 cacheWidth 就会按原图尺寸解码：20MB 的图能解成近 200MB 位图',
       );
       expect((image.image as ResizeImage).width, expected);
+    });
+  });
+  group('传输队列失败重试按钮（283 D4）', () {
+    // 注意：本组**不能**用 pumpEventQueue()/pumpAndSettle()。
+    //   - pumpEventQueue() 内部是 Future.delayed → 在 testWidgets 的 fake-async 里
+    //     不推进时间就永远不会完成（测试直接挂死）；
+    //   - 队列的退避、AppLogger 的 250ms 落盘防抖都是定时器，要显式推进假时间。
+    Future<void> settleTimers(WidgetTester tester) async {
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    testWidgets('失败任务显示「重试」；点它真的重跑并变成已完成', (tester) async {
+      final queue = TransferQueue(retryDelay: Duration.zero);
+      debugSetRemoteStorageRuntime(queue: queue);
+      final task = queue.enqueue(
+        kind: TransferKind.download,
+        title: 'photo.jpg',
+        subtitle: '测试账户 / dcim',
+        totalBytes: 1000,
+        runner: (cancel, onProgress) async {
+          throw const RemoteStorageException(
+            RemoteStorageError.network,
+            '连接超时',
+          );
+        },
+      );
+
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: TransferQueueSheet())),
+      );
+      await settleTimers(tester);
+
+      expect(task.status, TransferStatus.failed);
+      expect(find.text('失败'), findsOneWidget);
+      expect(find.text('重试'), findsOneWidget, reason: '失败任务要给一键重跑');
+
+      // 换掉 runner（模拟网络恢复）后点重试
+      task.runner = (cancel, onProgress) async {
+        onProgress(1000, 1000);
+        return '/tmp/photo.jpg';
+      };
+      await tester.tap(find.text('重试'));
+      await settleTimers(tester);
+
+      expect(task.status, TransferStatus.done);
+      expect(find.text('已完成'), findsOneWidget);
+      expect(find.text('重试'), findsNothing, reason: '成功后不再显示重试');
+    });
+
+    testWidgets('进行中的任务显示「取消」而不是「重试」', (tester) async {
+      final queue = TransferQueue(retryDelay: Duration.zero);
+      debugSetRemoteStorageRuntime(queue: queue);
+      final gate = Completer<void>();
+      queue.enqueue(
+        kind: TransferKind.download,
+        title: 'big.bin',
+        subtitle: '测试账户 / dcim',
+        totalBytes: 1000,
+        runner: (cancel, onProgress) async {
+          await gate.future;
+          return '/tmp/big.bin';
+        },
+      );
+
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: TransferQueueSheet())),
+      );
+      await settleTimers(tester);
+
+      expect(find.text('取消'), findsOneWidget);
+      expect(find.text('重试'), findsNothing);
+
+      gate.complete();
+      await settleTimers(tester);
     });
   });
 }
