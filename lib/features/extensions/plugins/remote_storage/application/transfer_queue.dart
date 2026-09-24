@@ -41,6 +41,9 @@ class TransferTask {
   TransferStatus status = TransferStatus.queued;
   String? errorMessage;
 
+  /// 当前处于第几次重试（0 = 未在重试）；UI 用来区分"重试中"与"卡住了"。
+  int retryAttempt = 0;
+
   /// 完成后产物：下载任务为本地文件路径（String）。
   Object? result;
 
@@ -71,10 +74,13 @@ typedef TransferRunner = Future<Object?> Function(
 
 /// 串行传输队列。
 class TransferQueue extends ChangeNotifier {
-  TransferQueue({this.retryDelay = const Duration(milliseconds: 800)});
+  TransferQueue({this.retryDelay});
 
-  /// 重试前的等待（测试传 Duration.zero）。
-  final Duration retryDelay;
+  /// 固定重试等待（测试传 Duration.zero 让退避不占用测试时间）。
+  ///
+  /// null（生产默认）时按 [kTransferRetryDelays] 退避，并尊重服务端的
+  /// `Retry-After`；给了值则一律用该值（但 `Retry-After` 更长时仍取更长）。
+  final Duration? retryDelay;
 
   final List<TransferTask> _tasks = [];
   bool _pumping = false;
@@ -114,6 +120,19 @@ class TransferQueue extends ChangeNotifier {
   void clearFinished() {
     _tasks.removeWhere((t) => !t.isActive);
     notifyListeners();
+  }
+
+  /// 第 [attempt] 次重试前的等待：固定值（测试注入）优先，服务端 `Retry-After`
+  /// 更长时取更长；生产默认走 [kTransferRetryDelays] 退避。
+  Duration _delayFor(int attempt, Object error) {
+    final serverWait =
+        error is RemoteStorageException ? error.retryAfter : null;
+    final fixed = retryDelay;
+    if (fixed != null) {
+      if (serverWait != null && serverWait > fixed) return serverWait;
+      return fixed;
+    }
+    return retryDelayFor(attempt, retryAfter: serverWait);
   }
 
   Future<void> _pump() async {
@@ -169,19 +188,29 @@ class TransferQueue extends ChangeNotifier {
               current.status = TransferStatus.canceled;
               break;
             }
+            current.errorMessage =
+                e is RemoteStorageException ? e.message : '$e';
+            // 分类：凭证/权限/路径/空间/协议不支持类错误重试多少次都一样，
+            // 直接失败——否则用户会因为密码错白等两个退避周期。
+            final retryable = isRetryableTransferError(e);
             attempt += 1;
-            if (attempt > kTransferRetries) {
+            if (!retryable || attempt > kTransferRetries) {
               current.status = TransferStatus.failed;
-              current.errorMessage =
-                  e is RemoteStorageException ? e.message : '$e';
+              current.retryAttempt = 0;
               AppLogger.instance.logTo(
                 LogChannel.storage,
-                '传输失败（已重试 $kTransferRetries 次）: $e',
+                retryable
+                    ? '传输失败（已重试 $kTransferRetries 次）: $e'
+                    : '传输失败（该错误不重试）: $e',
                 level: LogLevel.error,
               );
               break;
             }
-            await Future<void>.delayed(retryDelay);
+            current.retryAttempt = attempt;
+            notifyListeners();
+            await Future<void>.delayed(_delayFor(attempt, e));
+            current.retryAttempt = 0;
+            notifyListeners();
           }
         }
         notifyListeners();

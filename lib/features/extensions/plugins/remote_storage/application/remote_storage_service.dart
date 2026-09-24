@@ -81,6 +81,7 @@ class DioWebdavTransport implements WebdavTransport {
 
   @override
   Future<WebdavResponse> send(WebdavRequest request) async {
+    final watch = Stopwatch()..start();
     try {
       final response = await _dio.requestUri<dynamic>(
         request.uri,
@@ -95,6 +96,11 @@ class DioWebdavTransport implements WebdavTransport {
       );
 
       final data = response.data;
+      final status = data is ResponseBody
+          ? data.statusCode
+          : (response.statusCode ?? 0);
+      traceWebdavRequest(request, status, watch.elapsed);
+
       if (data is ResponseBody) {
         return WebdavResponse(
           statusCode: data.statusCode,
@@ -120,7 +126,16 @@ class DioWebdavTransport implements WebdavTransport {
       // 上传下载流里抛出的人为取消，原样上抛（队列据此标记「已取消」）。
       final inner = e.error;
       if (inner is TransferCanceledException) rethrow;
-      throw mapDioException(e);
+      final mapped = mapDioException(e);
+      // 走到这里的都是"没拿到响应"（连接/证书/超时）：把请求行与耗时也记下来，
+      // 否则日志里只有一句"网络错误"，不知道卡在哪个路径上。
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '${request.method} ${request.uri.path} 未完成'
+        '（${watch.elapsedMilliseconds}ms）: ${mapped.message}',
+        level: LogLevel.warn,
+      );
+      throw mapped;
     }
   }
 
@@ -162,7 +177,14 @@ RemoteStorageException mapDioException(DioException e) {
       );
     case DioExceptionType.badResponse:
       final status = e.response?.statusCode;
-      if (status != null) return remoteStorageExceptionForStatus(status);
+      if (status != null) {
+        return remoteStorageExceptionForStatus(
+          status,
+          retryAfter: parseRetryAfterHeader(
+            e.response?.headers.value('retry-after'),
+          ),
+        );
+      }
       return const RemoteStorageException(
         RemoteStorageError.network,
         '网络错误，无法连接服务器',
@@ -332,29 +354,76 @@ class RemoteStorageService {
   }
 
   /// 扫描同名冲突（仅上传流程用）：返回与远端同名的本地文件名列表。
+  ///
+  /// 实现要点：**一次 PROPFIND 取代每文件一次 HEAD**。原实现是
+  /// `for (file) await client.exists(...)`——选 50 个文件就是 50 次串行往返，
+  /// 弱网/弱 NAS 上用户要等分钟级，且任何一次抖动还要吃满重试退避。
+  ///
+  /// 判据取条目 **href 派生出的 basename**（`entry.path`），而不是 `displayname`：
+  /// Nextcloud / 部分群晖会返回与真实文件名不同的 displayname，用它会漏判冲突，
+  /// 而漏判的后果是用户以为"没有同名"却被静默覆盖。
+  ///
+  /// 目录列表失败（404 目录不存在、403、服务器不支持列目录）时**退回原逐文件
+  /// HEAD 实现**——慢但权威，不因为优化引入"漏判"这种数据安全回归。
   Future<List<String>> scanConflicts(
     RemoteStorageAccount account, {
     required List<LocalUploadFile> files,
     required String targetDir,
   }) async {
-    final client = clientFor(account);
-    final conflicts = <String>[];
+    if (files.isEmpty) return const <String>[];
+
+    // 保持入参顺序；同名重复的本地文件只算一次。
+    final wanted = <String, String>{};
     for (final file in files) {
       final safe = sanitizeRemoteSegment(file.name);
       if (safe == null) continue;
+      wanted.putIfAbsent(safe, () => file.name);
+    }
+    if (wanted.isEmpty) return const <String>[];
+
+    final client = clientFor(account);
+    try {
+      final entries = await client.list(
+        targetDir,
+        filterSystemNames: !account.showSystemFolders,
+      );
+      final existing = <String>{
+        for (final entry in entries)
+          if (!entry.isDirectory) _basenameOfRemotePath(entry.path),
+      };
+      return [
+        for (final candidate in wanted.entries)
+          if (existing.contains(candidate.key)) candidate.value,
+      ];
+    } on RemoteStorageException catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '冲突扫描退化为逐个 HEAD（目录列表失败：${e.message}）',
+        level: LogLevel.debug,
+      );
+    }
+
+    final conflicts = <String>[];
+    for (final candidate in wanted.entries) {
       try {
-        if (await client.exists(joinRemotePath(targetDir, safe))) {
-          conflicts.add(file.name);
+        if (await client.exists(joinRemotePath(targetDir, candidate.key))) {
+          conflicts.add(candidate.value);
         }
       } on RemoteStorageException catch (e) {
         AppLogger.instance.logTo(
           LogChannel.storage,
-          '冲突扫描失败（${file.name}）: ${e.message}',
+          '冲突扫描失败（${candidate.value}）: ${e.message}',
           level: LogLevel.warn,
         );
       }
     }
     return conflicts;
+  }
+
+  /// 远端相对路径的末段（文件名）。列表条目的 `path` 已由客户端按 href 解码。
+  static String _basenameOfRemotePath(String path) {
+    final idx = path.lastIndexOf('/');
+    return idx < 0 ? path : path.substring(idx + 1);
   }
 
   /// 下载到应用文档目录（按账户分子目录、同名自动加序号）。

@@ -186,9 +186,57 @@ void main() {
   });
 
   group('冲突扫描', () {
-    test('scanConflicts 只返回远端已存在的同名文件', () async {
-      transport.handler = (request) async =>
-          request.uri.path.endsWith('a.txt') ? headResponse() : headResponse(status: 404);
+    test('快路径：一次 PROPFIND 判定全部同名文件（不再是每文件一次 HEAD）', () async {
+      transport.handler = (request) async => xmlResponse(
+            propfindXml(const [
+              DavItem('/dav/a.txt'),
+              DavItem('/dav/sub', isCollection: true),
+              DavItem('/dav/b.txt'),
+            ]),
+          );
+
+      final conflicts = await service.scanConflicts(
+        testAccount(),
+        files: const [
+          LocalUploadFile(path: '/tmp/a.txt', name: 'a.txt', size: 1),
+          LocalUploadFile(path: '/tmp/c.txt', name: 'c.txt', size: 1),
+          LocalUploadFile(path: '/tmp/b.txt', name: 'b.txt', size: 1),
+        ],
+        targetDir: '',
+      );
+
+      expect(conflicts, ['a.txt', 'b.txt'], reason: '顺序与入参一致；目录不算冲突');
+      expect(transport.requestCount, 1, reason: '3 个文件也只发 1 次请求');
+      expect(transport.lastRequest.method, 'PROPFIND');
+    });
+
+    test('displayname 与真实文件名不同时按 href 判定，不漏判', () async {
+      transport.handler = (_) async => xmlResponse(
+            propfindXml(const [
+              DavItem('/dav/real.txt', displayName: '显示名不一样.txt'),
+            ]),
+          );
+
+      final conflicts = await service.scanConflicts(
+        testAccount(),
+        files: const [
+          LocalUploadFile(path: '/tmp/real.txt', name: 'real.txt', size: 1),
+        ],
+        targetDir: '',
+      );
+
+      expect(conflicts, ['real.txt'], reason: '漏判会导致静默覆盖');
+    });
+
+    test('目录列表失败（403）时退回逐文件 HEAD，保持判定权威', () async {
+      transport.handler = (request) async {
+        if (request.method == 'PROPFIND') {
+          return const WebdavResponse(statusCode: 403, headers: {});
+        }
+        return request.uri.path.endsWith('a.txt')
+            ? headResponse()
+            : headResponse(status: 404);
+      };
 
       final conflicts = await service.scanConflicts(
         testAccount(),
@@ -198,7 +246,23 @@ void main() {
         ],
         targetDir: '',
       );
+
       expect(conflicts, ['a.txt']);
+      expect(
+        transport.requests.where((r) => r.method == 'HEAD'),
+        hasLength(2),
+        reason: '退化路径必须仍有权威判定，不能因为优化漏判',
+      );
+    });
+
+    test('空文件列表直接返回空，不发请求', () async {
+      final conflicts = await service.scanConflicts(
+        testAccount(),
+        files: const [],
+        targetDir: '',
+      );
+      expect(conflicts, isEmpty);
+      expect(transport.requestCount, 0);
     });
   });
 

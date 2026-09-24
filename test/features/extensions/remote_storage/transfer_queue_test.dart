@@ -248,4 +248,78 @@ void main() {
     queue.clearFinished();
     expect(queue.tasks, isEmpty);
   });
+
+  group('重试分类（O2：重试是否会得到不同结果）', () {
+    Future<({int attempts, TransferTask task})> runWith(
+      TransferQueue queue,
+      Object Function(int attempt) errorFor,
+    ) async {
+      var attempts = 0;
+      final task = queue.enqueue(
+        kind: TransferKind.download,
+        title: 'a.bin',
+        subtitle: '',
+        runner: (cancel, onProgress) async {
+          attempts += 1;
+          throw errorFor(attempts);
+        },
+      );
+      await pumpEventQueue();
+      return (attempts: attempts, task: task);
+    }
+
+    test('401 凭证错：只尝试一次（不为密码错白等退避）', () async {
+      final r = await runWith(newQueue(), (_) => remoteStorageExceptionForStatus(401));
+      expect(r.attempts, 1);
+      expect(r.task.status, TransferStatus.failed);
+      expect(r.task.errorMessage, contains('应用密码'));
+    });
+
+    test('403 / 404 / 405 / 507 同样不重试', () async {
+      for (final status in [403, 404, 405, 507]) {
+        final r = await runWith(
+          newQueue(),
+          (_) => remoteStorageExceptionForStatus(status),
+        );
+        expect(r.attempts, 1, reason: 'HTTP $status 不应重试');
+        expect(r.task.status, TransferStatus.failed);
+      }
+    });
+
+    test('500 / 429 / 超时 仍重试到上限', () async {
+      final cases = <Object>[
+        remoteStorageExceptionForStatus(500),
+        remoteStorageExceptionForStatus(429),
+        const RemoteStorageException(RemoteStorageError.timeout, '连接超时'),
+      ];
+      for (final error in cases) {
+        final r = await runWith(newQueue(), (_) => error);
+        expect(r.attempts, kTransferRetries + 1, reason: '$error 应重试');
+        expect(r.task.status, TransferStatus.failed);
+      }
+    });
+
+    test('重试期间 retryAttempt 被通知（UI 可显示「重试中 n/2」）', () async {
+      final queue = newQueue();
+      var attempts = 0;
+      final task = queue.enqueue(
+        kind: TransferKind.download,
+        title: 'a.bin',
+        subtitle: '',
+        runner: (cancel, onProgress) async {
+          attempts += 1;
+          if (attempts == 1) throw remoteStorageExceptionForStatus(503);
+          return 'ok';
+        },
+      );
+      final seenRetryAttempts = <int>[];
+      queue.addListener(() => seenRetryAttempts.add(task.retryAttempt));
+
+      await pumpEventQueue();
+
+      expect(seenRetryAttempts, contains(1), reason: '重试等待期应通知一次');
+      expect(task.status, TransferStatus.done);
+      expect(task.retryAttempt, 0, reason: '结束后必须归零，避免 UI 停留在重试态');
+    });
+  });
 }

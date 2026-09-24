@@ -25,7 +25,18 @@ const Duration kRelayIdleTimeout = Duration(minutes: 30);
 const int kMaxConcurrentTransfers = 1;
 
 /// 失败自动重试次数（不含首次；调大→更稳但失败等待变长）。
+///
+/// ⚠️ 不是所有失败都值得重试：401/403/404/405/409/507 这类"重试也是一样结果"
+/// 的错误由 [isRetryableTransferError] 挡在重试之外，避免凭证错、空间不足时
+/// 白等两个退避周期才报错。
 const int kTransferRetries = 2;
+
+/// 重试退避序列（第 n 次重试前等待 [n-1]）。固定 800ms 在弱网上等于连撞三次墙。
+/// 服务端给了 `Retry-After` 时取二者较大值（见 [parseRetryAfterHeader]）。
+const List<Duration> kTransferRetryDelays = [
+  Duration(milliseconds: 800),
+  Duration(seconds: 2),
+];
 
 /// WebDAV 系统目录过滤名单（启发式；名单调大→列表更干净但可能误伤同名真实目录）。
 const Set<String> kWebdavSystemDirNames = {
@@ -496,7 +507,13 @@ String remoteStorageErrorMessage(
 }
 
 /// 由 HTTP 状态码构造归一化异常。
-RemoteStorageException remoteStorageExceptionForStatus(int status) {
+///
+/// [retryAfter] 来自响应头 `Retry-After`（秒数或 HTTP-date），供传输队列决定
+/// 退避时长——服务端说"等 30 秒"时就别 800ms 后硬撞第二次。
+RemoteStorageException remoteStorageExceptionForStatus(
+  int status, {
+  Duration? retryAfter,
+}) {
   final RemoteStorageError kind;
   switch (status) {
     case 401:
@@ -518,7 +535,56 @@ RemoteStorageException remoteStorageExceptionForStatus(int status) {
     kind,
     remoteStorageErrorMessage(kind, statusCode: status),
     statusCode: status,
+    retryAfter: retryAfter,
   );
+}
+
+/// 该错误是否值得重试。
+///
+/// 判据是"重试是否会得到不同结果"：网络类抖动与 429/5xx 值得再试；
+/// 凭证、权限、路径、空间、协议不支持类错误重试多少次都一样，只会让用户
+/// 多等两个退避周期。
+///
+/// `http` 且**没有状态码**时按可重试处理（保守：状态码缺失说明错误来自更底层，
+/// 与网络抖动无法区分）。
+bool isRetryableTransferError(Object error) {
+  if (error is TransferCanceledException) return false;
+  if (error is! RemoteStorageException) return true; // 未知异常：按网络类保守重试
+  switch (error.kind) {
+    case RemoteStorageError.timeout:
+    case RemoteStorageError.network:
+      return true;
+    case RemoteStorageError.http:
+      final status = error.statusCode;
+      if (status == null) return true;
+      return status == 408 ||
+          status == 425 ||
+          status == 429 ||
+          status >= 500;
+    case RemoteStorageError.unauthorized:
+    case RemoteStorageError.forbidden:
+    case RemoteStorageError.notFound:
+    case RemoteStorageError.methodNotAllowed:
+    case RemoteStorageError.conflict:
+    case RemoteStorageError.insufficientStorage:
+    case RemoteStorageError.certificate:
+    case RemoteStorageError.canceled:
+    case RemoteStorageError.unknown:
+      return false;
+  }
+}
+
+/// 第 [attempt] 次重试（1 起）前应等待多久：退避序列与 `Retry-After` 取较大值。
+/// [attempt] 越界（≤0 或超过序列长度）时取序列两端，避免调用方传错就崩。
+Duration retryDelayFor(int attempt, {Duration? retryAfter}) {
+  var index = attempt - 1;
+  if (index < 0) index = 0;
+  if (index >= kTransferRetryDelays.length) {
+    index = kTransferRetryDelays.length - 1;
+  }
+  final backoff = kTransferRetryDelays[index];
+  if (retryAfter == null) return backoff;
+  return retryAfter > backoff ? retryAfter : backoff;
 }
 
 /// 插件统一异常。
@@ -528,12 +594,16 @@ class RemoteStorageException implements Exception {
     this.message, {
     this.statusCode,
     this.detail,
+    this.retryAfter,
   });
 
   final RemoteStorageError kind;
   final String message;
   final int? statusCode;
   final String? detail;
+
+  /// 服务端要求的等待时长（`Retry-After`）；无则 null。
+  final Duration? retryAfter;
 
   @override
   String toString() => message;

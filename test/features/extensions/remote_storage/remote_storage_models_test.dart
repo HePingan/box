@@ -379,4 +379,78 @@ void main() {
       expect(big.totalLength, 999999);
     });
   });
+
+  group('重试判定与退避（O2：别让凭证错白等退避）', () {
+    test('可重试：网络抖动 / 超时 / 429 / 5xx / 无状态码的 http / 非归一异常', () {
+      final retryable = <Object>[
+        const RemoteStorageException(RemoteStorageError.timeout, '连接超时'),
+        const RemoteStorageException(RemoteStorageError.network, '网络错误'),
+        remoteStorageExceptionForStatus(408),
+        remoteStorageExceptionForStatus(429),
+        remoteStorageExceptionForStatus(500),
+        remoteStorageExceptionForStatus(503),
+        const RemoteStorageException(RemoteStorageError.http, 'HTTP 未知'),
+        Exception('未知异常'),
+      ];
+      for (final e in retryable) {
+        expect(isRetryableTransferError(e), isTrue, reason: '$e 应可重试');
+      }
+    });
+
+    test('不重试：凭证 / 权限 / 路径 / 方法 / 冲突 / 空间 / 证书 / 取消 / 未知', () {
+      final fatal = <Object>[
+        remoteStorageExceptionForStatus(400),
+        remoteStorageExceptionForStatus(401),
+        remoteStorageExceptionForStatus(403),
+        remoteStorageExceptionForStatus(404),
+        remoteStorageExceptionForStatus(405),
+        remoteStorageExceptionForStatus(409),
+        remoteStorageExceptionForStatus(412),
+        remoteStorageExceptionForStatus(507),
+        const RemoteStorageException(RemoteStorageError.certificate, '证书'),
+        const RemoteStorageException(RemoteStorageError.canceled, '取消'),
+        const RemoteStorageException(RemoteStorageError.unknown, '未知'),
+        const TransferCanceledException(),
+      ];
+      for (final e in fatal) {
+        expect(isRetryableTransferError(e), isFalse, reason: '$e 不应重试');
+      }
+    });
+
+    test('退避序列递进；越界取两端（不崩）', () {
+      expect(kTransferRetryDelays, hasLength(kTransferRetries));
+      expect(retryDelayFor(1), kTransferRetryDelays.first);
+      expect(retryDelayFor(2), kTransferRetryDelays.last);
+      expect(retryDelayFor(9), kTransferRetryDelays.last);
+      expect(retryDelayFor(0), kTransferRetryDelays.first);
+      expect(retryDelayFor(-3), kTransferRetryDelays.first);
+      expect(
+        kTransferRetryDelays.first < kTransferRetryDelays.last,
+        isTrue,
+        reason: '必须是递进而非固定等待',
+      );
+    });
+
+    test('Retry-After 更长时取更长；更短时不拖慢退避', () {
+      expect(
+        retryDelayFor(1, retryAfter: const Duration(seconds: 30)),
+        const Duration(seconds: 30),
+      );
+      expect(
+        retryDelayFor(2, retryAfter: const Duration(milliseconds: 10)),
+        kTransferRetryDelays.last,
+      );
+    });
+
+    test('429 的 Retry-After 挂在异常上，供队列读取', () {
+      final e = remoteStorageExceptionForStatus(
+        429,
+        retryAfter: const Duration(seconds: 5),
+      );
+      expect(e.kind, RemoteStorageError.http);
+      expect(e.statusCode, 429);
+      expect(e.retryAfter, const Duration(seconds: 5));
+      expect(isRetryableTransferError(e), isTrue);
+    });
+  });
 }

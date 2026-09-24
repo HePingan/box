@@ -182,7 +182,7 @@ class WebdavClient {
       _expect(probe, const {200, 207}, path);
       return true;
     }
-    throw _statusToException(resp.statusCode);
+    throw _statusToException(resp);
   }
 
   /// HEAD 探测：大小 / 类型 / 是否支持 Range。
@@ -407,11 +407,16 @@ class WebdavClient {
     String path,
   ) {
     if (okStatuses.contains(resp.statusCode)) return resp;
-    throw _statusToException(resp.statusCode);
+    throw _statusToException(resp);
   }
 
-  RemoteStorageException _statusToException(int status) =>
-      remoteStorageExceptionForStatus(status);
+  /// 状态码 → 归一异常；顺带解析 `Retry-After`，让传输队列按服务端要求退避
+  /// （429/503 常见）。
+  RemoteStorageException _statusToException(WebdavResponse resp) =>
+      remoteStorageExceptionForStatus(
+        resp.statusCode,
+        retryAfter: parseRetryAfterHeader(resp.headers['retry-after']),
+      );
 
   List<RemoteStorageEntry> _parseMultistatus(String xmlText, String basePath) {
     if (xmlText.trim().isEmpty) {
@@ -662,5 +667,48 @@ RemoteStorageException mapTransportError(Object error) {
   return RemoteStorageException(
     RemoteStorageError.unknown,
     '请求失败：${error.runtimeType}',
+  );
+}
+
+/// `Retry-After` 头解析：支持秒数（`120`）与 HTTP-date 两种形式；无法解析、
+/// 或解析结果非正值（已过期）时返回 null。
+///
+/// 放在协议层而非 models：models 保持零 dart:io 依赖，便于纯单测与 web 构建。
+Duration? parseRetryAfterHeader(String? raw) {
+  final text = raw?.trim() ?? '';
+  if (text.isEmpty) return null;
+  final seconds = int.tryParse(text);
+  if (seconds != null) {
+    return seconds > 0 ? Duration(seconds: seconds) : null;
+  }
+  try {
+    final at = HttpDate.parse(text);
+    final delta = at.difference(DateTime.now().toUtc());
+    return delta.inSeconds > 0 ? delta : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// 请求级留痕：方法 / 路径 / 状态码 / 耗时。
+///
+/// 为什么连成功也要记：`404` 通常是"服务器地址少写了 /dav 前缀"，`401` 是
+/// "用了登录密码而不是应用密码"，`507` 是"空间不足"——这些都必须看到**请求行**
+/// 才能定位；原实现只在抛异常时落盘，用户报"连不上"时日志里往往一片空白。
+///
+/// 脱敏：只记路径，绝不记用户名/密码（凭据在请求头里，不进日志）；路径过长时
+/// 保留尾部（文件名在尾部，更有诊断价值），避免超长文件名撑爆日志行。
+void traceWebdavRequest(
+  WebdavRequest request,
+  int statusCode,
+  Duration elapsed,
+) {
+  final path = request.uri.path;
+  final shown =
+      path.length > 200 ? '…${path.substring(path.length - 200)}' : path;
+  AppLogger.instance.logTo(
+    LogChannel.storage,
+    '${request.method} $shown → $statusCode (${elapsed.inMilliseconds}ms)',
+    level: statusCode >= 400 ? LogLevel.warn : LogLevel.debug,
   );
 }

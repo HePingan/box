@@ -455,4 +455,65 @@ void main() {
       expect(result.errorMessage, contains('应用密码'));
     });
   });
+
+  group('Retry-After 与请求留痕（O2/O9）', () {
+    test('秒数与 HTTP-date 两种形式都能解析；非法值返回 null', () {
+      expect(parseRetryAfterHeader('120'), const Duration(seconds: 120));
+      expect(parseRetryAfterHeader(' 30 '), const Duration(seconds: 30));
+      expect(parseRetryAfterHeader('0'), isNull);
+      expect(parseRetryAfterHeader('-5'), isNull);
+      expect(parseRetryAfterHeader('soon'), isNull);
+      expect(parseRetryAfterHeader(''), isNull);
+      expect(parseRetryAfterHeader(null), isNull);
+
+      final futureDate = HttpDate.format(
+        DateTime.now().toUtc().add(const Duration(seconds: 90)),
+      );
+      final parsed = parseRetryAfterHeader(futureDate);
+      expect(parsed, isNotNull);
+      expect(parsed!.inSeconds, inInclusiveRange(60, 90));
+
+      final pastDate = HttpDate.format(
+        DateTime.now().toUtc().subtract(const Duration(seconds: 60)),
+      );
+      expect(parseRetryAfterHeader(pastDate), isNull);
+    });
+
+    test('429 响应的 Retry-After 带进异常，供队列退避', () async {
+      final transport = FakeTransport(
+        (_) async => const WebdavResponse(
+          statusCode: 429,
+          headers: {'retry-after': '45'},
+        ),
+      );
+      await expectLater(
+        () => clientWith(transport).list(''),
+        throwsA(
+          isA<RemoteStorageException>()
+              .having((e) => e.statusCode, 'statusCode', 429)
+              .having(
+                (e) => e.retryAfter,
+                'retryAfter',
+                const Duration(seconds: 45),
+              ),
+        ),
+      );
+    });
+
+    test('没有 Retry-After 时异常上为 null（退回本地退避）', () async {
+      final transport = FakeTransport(
+        (_) async => const WebdavResponse(statusCode: 503, headers: {}),
+      );
+      await expectLater(
+        () => clientWith(transport).list(''),
+        throwsA(
+          isA<RemoteStorageException>().having(
+            (e) => e.retryAfter,
+            'retryAfter',
+            isNull,
+          ),
+        ),
+      );
+    });
+  });
 }
