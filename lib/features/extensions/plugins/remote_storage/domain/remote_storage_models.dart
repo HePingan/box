@@ -74,6 +74,30 @@ const int kExifProbeBytes = 256 * 1024;
 /// 也不要让这个集合无限增长）。
 const int kExifProbeMissLimit = 500;
 
+/// EXIF 内嵌缩略图的探测统计（284 P3）。
+///
+/// 为什么要它：283 D1 的"大图走 EXIF 内嵌缩略图"是没法只靠单测自证的改动——
+/// 到底命中多少，只有把数字摆出来才能判断（也才知道要不要回去动 3MB 上限）。
+/// 计数按**条目去重**、只统计本次运行：跨会话靠缩略图缓存，不重复探测，
+/// 所以跨会话的数字会偏小，界面文案上写清了"本次运行"。
+class ExifThumbnailStats {
+  const ExifThumbnailStats({required this.hits, required this.misses});
+
+  /// 探测成功、拿到内嵌缩略图的条目数。
+  final int hits;
+
+  /// 探测过、文件里没有内嵌缩略图的条目数。
+  final int misses;
+
+  int get probed => hits + misses;
+
+  bool get isEmpty => probed == 0;
+
+  /// 命中率文案（没探测过给 `—`，不编一个 0% 出来）。
+  String get hitRateLabel =>
+      probed == 0 ? '—' : '${(hits * 100 / probed).round()}%';
+}
+
 /// 列表要不要为这个条目**尝试**取缩略图（纯判定，便于单测）。
 ///
 /// 两个来源：[isThumbnailableEntry]（整取，3MB 以内）与 [isExifThumbnailCandidate]

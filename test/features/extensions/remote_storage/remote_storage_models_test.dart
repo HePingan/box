@@ -658,4 +658,39 @@ void main() {
       );
     });
   });
+
+  group('EXIF 探测统计（284 P3）', () {
+    test('probed/isEmpty：没探测过就是空', () {
+      const s = ExifThumbnailStats(hits: 0, misses: 0);
+      expect(s.probed, 0);
+      expect(s.isEmpty, isTrue);
+      expect(s.hitRateLabel, '—', reason: '没数据时不给 0%（会误导）');
+    });
+
+    test('hitRateLabel：四舍五入到整数百分比', () {
+      expect(
+        const ExifThumbnailStats(hits: 1, misses: 3).hitRateLabel,
+        '25%',
+      );
+      expect(
+        const ExifThumbnailStats(hits: 3, misses: 0).hitRateLabel,
+        '100%',
+      );
+      expect(
+        const ExifThumbnailStats(hits: 0, misses: 4).hitRateLabel,
+        '0%',
+      );
+      // 2/3 = 66.67 → 67
+      expect(
+        const ExifThumbnailStats(hits: 2, misses: 1).hitRateLabel,
+        '67%',
+      );
+    });
+
+    test('只有 miss 时不算空（面板要显示"探了但没命中"）', () {
+      const s = ExifThumbnailStats(hits: 0, misses: 2);
+      expect(s.isEmpty, isFalse);
+      expect(s.probed, 2);
+    });
+  });
 }

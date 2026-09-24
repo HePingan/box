@@ -113,6 +113,12 @@ class _FakeService extends RemoteStorageService {
   );
   int clearCacheCalls = 0;
 
+  /// EXIF 探测统计（284 P3）。
+  ExifThumbnailStats exifStats = const ExifThumbnailStats(hits: 0, misses: 0);
+
+  @override
+  ExifThumbnailStats exifThumbnailStats() => exifStats;
+
   @override
   Future<ThumbnailCacheUsage> thumbnailCacheUsage() async => cacheUsage;
 
@@ -1001,6 +1007,64 @@ void main() {
 
       expect(find.textContaining('分享失败'), findsOneWidget);
       expect(find.text('关闭'), findsOneWidget, reason: '对话框仍在，用户可继续滑走');
+    });
+  });
+
+  group('缩略图缓存面板显示 EXIF 命中数（284 P3）', () {
+    Future<_FakeService> pumpWithStats(
+      WidgetTester tester,
+      ExifThumbnailStats stats,
+    ) async {
+      final service = _FakeService();
+      service.exifStats = stats;
+      service.cacheUsage = const ThumbnailCacheUsage(
+        files: 12,
+        bytes: 3 * 1024 * 1024,
+        memoryCount: 12,
+      );
+      debugSetRemoteStorageRuntime(service: service);
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+      return service;
+    }
+
+    Future<void> openCachePanel(WidgetTester tester) async {
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.byTooltip('更多'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('缩略图缓存'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('探测过就显示命中数（命中/探测 + 命中率）', (tester) async {
+      await pumpWithStats(
+        tester,
+        const ExifThumbnailStats(hits: 3, misses: 9),
+      );
+
+      await openCachePanel(tester);
+
+      expect(
+        find.textContaining('本次运行探测 12 张，命中 3 张（25%）'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('没探测过就不显示这一行（不制造噪音）', (tester) async {
+      await pumpWithStats(
+        tester,
+        const ExifThumbnailStats(hits: 0, misses: 0),
+      );
+
+      await openCachePanel(tester);
+
+      expect(find.textContaining('EXIF'), findsNothing);
     });
   });
 }

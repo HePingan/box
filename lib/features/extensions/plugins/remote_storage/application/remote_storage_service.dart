@@ -288,6 +288,13 @@ class RemoteStorageService {
   /// （宁可多探几次，也不要让集合无限增长）。
   final Set<String> _exifProbeMisses = {};
 
+  /// 探测成功、拿到内嵌缩略图的条目（284 P3，与 [_exifProbeMisses] 对称）。
+  final Set<String> _exifProbeHits = {};
+
+  /// EXIF 探测统计（面板上显示"命中多少张"）。
+  ExifThumbnailStats exifThumbnailStats() =>
+      ExifThumbnailStats(hits: _exifProbeHits.length, misses: _exifProbeMisses.length);
+
   // ---------------------------------------------------------------- 账户
 
   Future<List<RemoteStorageAccount>> loadAccounts() async {
@@ -322,6 +329,7 @@ class RemoteStorageService {
     final offsets = await _store.clearBrowserScrollOffsetsForAccount(id);
     final thumbs = await _thumbnails.cache.clearScope(id);
     _exifProbeMisses.removeWhere((key) => key.startsWith('$id|'));
+    _exifProbeHits.removeWhere((key) => key.startsWith('$id|'));
     AppLogger.instance.logTo(
       LogChannel.storage,
       '已删除账户 $id 的本地残留：播放进度 $progress 条、'
@@ -987,6 +995,10 @@ class RemoteStorageService {
           _exifProbeMisses.add(key);
           return null;
         }
+        if (_exifProbeHits.length >= kExifProbeMissLimit) {
+          _exifProbeHits.clear();
+        }
+        _exifProbeHits.add(key);
         return thumb.bytes;
       } on RemoteStorageException catch (e) {
         AppLogger.instance.logTo(

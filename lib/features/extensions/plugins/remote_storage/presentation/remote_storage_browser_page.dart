@@ -236,6 +236,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   Future<void> _showThumbnailCachePanel() async {
     final service = remoteStorageService();
     var usage = await service.thumbnailCacheUsage();
+    final exifStats = service.exifThumbnailStats();
     if (!mounted) return;
     // 注意：Dart 里 '$usage.files' 会被解析成 '${usage}.files'（字符串拼出来是
     // "Instance of 'ThumbnailCacheUsage'.files"）——成员访问必须写成 ${usage.files}，
@@ -260,6 +261,17 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
                     ' / $kThumbnailDiskMaxFiles 张，超出后自动清理最旧的。',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
+                  // 284 P3：大图走的是"读文件开头的 EXIF 内嵌缩略图"这条路，
+                  // 命中率只能这样看——没探测过就不显示，不制造噪音。
+                  if (!exifStats.isEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      '大图 EXIF 内嵌缩略图：本次运行探测 '
+                      '${exifStats.probed} 张，命中 ${exifStats.hits} 张'
+                      '（${exifStats.hitRateLabel}）',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
                 ],
               ),
               actions: [

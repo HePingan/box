@@ -1216,4 +1216,46 @@ void main() {
       );
     });
   });
+
+  group('EXIF 探测统计（284 P3）', () {
+    /// 大图（> 3MB）的 JPEG 条目：走 EXIF 内嵌缩略图那条路。
+    RemoteStorageEntry bigJpeg(String name) => RemoteStorageEntry(
+      path: name,
+      name: name,
+      isDirectory: false,
+      size: kThumbnailMaxBytes + 1,
+    );
+
+    test('命中与未命中分别计数；同一张重复读不重复计数', () async {
+      final a = testAccount(id: 'accStats');
+      final withThumb = bigJpeg('with.jpg');
+      final withoutThumb = bigJpeg('without.jpg');
+      transport.handler = (request) async {
+        if (request.uri.path.contains('with.jpg')) {
+          return streamResponse(kExifJpeg);
+        }
+        return streamResponse(kTinyPng);
+      };
+
+      expect(await service.readThumbnail(a, withThumb), isNotNull);
+      expect(await service.readThumbnail(a, withoutThumb), isNull);
+
+      var stats = service.exifThumbnailStats();
+      expect(stats.hits, 1);
+      expect(stats.misses, 1);
+      expect(stats.probed, 2);
+      expect(stats.hitRateLabel, '50%');
+
+      // 再读一次：命中走缓存、未命中走负缓存，计数都不该再涨。
+      expect(await service.readThumbnail(a, withThumb), isNotNull);
+      expect(await service.readThumbnail(a, withoutThumb), isNull);
+      stats = service.exifThumbnailStats();
+      expect(stats.hits, 1);
+      expect(stats.misses, 1);
+    });
+
+    test('没有探测过时统计为空', () {
+      expect(service.exifThumbnailStats().isEmpty, isTrue);
+    });
+  });
 }
