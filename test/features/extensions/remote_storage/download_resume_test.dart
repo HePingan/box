@@ -106,6 +106,28 @@ void main() {
       expect(progress.last, 200);
     });
 
+    test('416（断点比远端文件还长）：清掉断点重下一次，不卡死', () async {
+      // 远端文件被替换成了更短的版本 → Range 起点超出 → 416。
+      // 不处理就会"每次都失败"：重试再多次也是同一个 416。
+      final file = File('${tmp.path}/r416.bin');
+      await file.writeAsBytes(List<int>.filled(999, 7));
+
+      final transport = FakeTransport();
+      var calls = 0;
+      transport.handler = (request) async {
+        calls += 1;
+        if (request.headers.containsKey('range')) {
+          return const WebdavResponse(statusCode: 416, headers: {});
+        }
+        return streamResponse(Uint8List.fromList([1, 2, 3]));
+      };
+
+      await clientWith(transport).downloadTo('r416.bin', file, resumeFrom: 999);
+
+      expect(calls, 2, reason: '先带 Range 被拒，再不带 Range 重来一次');
+      expect(await file.readAsBytes(), [1, 2, 3]);
+    });
+
     test('服务端忽略 Range（200）→ 截断重写，不叠一份重复内容', () async {
       final file = File('${tmp.path}/f.bin');
       await file.writeAsBytes(List<int>.filled(100, 7));

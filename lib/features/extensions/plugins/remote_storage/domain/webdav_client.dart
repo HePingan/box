@@ -367,15 +367,23 @@ class WebdavClient {
     TransferCancelToken? cancel,
     int resumeFrom = 0,
   }) async {
-    final canResume =
+    var canResume =
         resumeFrom > 0 &&
         await destFile.exists() &&
         await destFile.length() == resumeFrom;
-    final resp = await _send(
+    var resp = await _send(
       'GET',
       path,
       headers: canResume ? {'range': 'bytes=$resumeFrom-'} : const {},
     );
+    if (resp.statusCode == 416 && canResume) {
+      // 416：Range 起点 ≥ 远端文件长度——远端文件比我们的断点还短（它被替换过，
+      // 或断点来自另一次下载）。续传这条路已经不可能成立，清掉断点重下一次，
+      // 否则用户会卡在"每次都失败"里（重试再多次也是同一个 416）。
+      await destFile.writeAsBytes(const <int>[]);
+      canResume = false;
+      resp = await _send('GET', path);
+    }
     _expect(resp, const {200, 206}, path);
 
     final partial = parseContentRange(resp.headers['content-range']);
