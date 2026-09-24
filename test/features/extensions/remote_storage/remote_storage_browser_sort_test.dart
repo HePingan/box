@@ -386,4 +386,94 @@ void main() {
       expect(find.text('f-01.txt'), findsOneWidget);
     });
   });
+
+  group('本地搜索（C3）', () {
+    _FakeService bigDir() => _FakeService({
+      '': [
+        for (var i = 0; i < 40; i++)
+          _file('file${i.toString().padLeft(2, '0')}.TXT'),
+        _file('报告 2024 年度.pdf'),
+      ],
+    });
+
+    testWidgets('小目录不显示搜索入口（不打扰）', (tester) async {
+      await pumpBrowser(
+        tester,
+        _FakeService({
+          '': [_file('a.txt'), _file('b.txt')],
+        }),
+      );
+      expect(find.byIcon(Icons.search_rounded), findsNothing);
+    });
+
+    testWidgets('条目多时给出搜索入口', (tester) async {
+      await pumpBrowser(tester, bigDir());
+      expect(find.byIcon(Icons.search_rounded), findsOneWidget);
+    });
+
+    testWidgets('输入即本地过滤：大小写不敏感、多词是"与"关系', (tester) async {
+      await pumpBrowser(tester, bigDir());
+
+      await tester.tap(find.byIcon(Icons.search_rounded));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'FILE39');
+      await tester.pumpAndSettle();
+      expect(listItems(tester), ['file39.TXT']);
+
+      // 多词：两个词都要命中（'报告' + '2024'）
+      await tester.enterText(find.byType(TextField), '报告 2024');
+      await tester.pumpAndSettle();
+      expect(listItems(tester), ['报告 2024 年度.pdf']);
+
+      // 任一词不命中 → 空
+      await tester.enterText(find.byType(TextField), '报告 1999');
+      await tester.pumpAndSettle();
+      expect(listItems(tester), isEmpty);
+    });
+
+    testWidgets('筛选时给出计数，筛空时给「清空筛选」而不是「空目录」', (tester) async {
+      await pumpBrowser(tester, bigDir());
+      await tester.tap(find.byIcon(Icons.search_rounded));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'file3');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('筛选出'), findsOneWidget);
+      expect(find.textContaining('41'), findsOneWidget); // 总数仍是整目录
+
+      await tester.enterText(find.byType(TextField), 'nonexistent');
+      await tester.pumpAndSettle();
+      expect(find.text('空目录'), findsNothing);
+      expect(find.textContaining('没有匹配'), findsOneWidget);
+
+      await tester.tap(find.text('清空筛选'));
+      await tester.pumpAndSettle();
+      expect(listItems(tester).length, greaterThan(0));
+    });
+
+    testWidgets('筛选后进入多选：全选只作用于筛选出来的条目', (tester) async {
+      await pumpBrowser(tester, bigDir());
+      await tester.tap(find.byIcon(Icons.search_rounded));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'file3');
+      await tester.pumpAndSettle(); // file30…file39 = 10 项
+
+      await tester.longPress(find.text('file30.TXT'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('全选'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('已选 10 项'), findsOneWidget);
+    });
+
+    test('纯函数：空白查询原样返回（连列表都不重建）', () {
+      final entries = [_file('a.txt')];
+      expect(identical(filterRemoteEntries(entries, '   '), entries), isTrue);
+      expect(identical(filterRemoteEntries(entries, ''), entries), isTrue);
+      expect(filterRemoteEntries(entries, 'A.TXT').single.name, 'a.txt');
+      expect(filterRemoteEntries(entries, 'b'), isEmpty);
+    });
+  });
 }

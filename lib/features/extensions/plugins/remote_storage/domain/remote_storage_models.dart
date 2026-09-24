@@ -664,6 +664,39 @@ class PartialDownload {
   }
 }
 
+/// 本地筛选（279 C3）：在已取回的目录内容里按名字过滤，**不发任何请求**。
+///
+/// 规则：
+///  - 大小写不敏感的子串匹配（`REPORT` 能命中 `report.pdf`）；
+///  - 空格分隔多个关键词是"与"关系（`报告 2024` 要求两个词都出现），方便在
+///    上千项目录里逐步收窄；
+///  - 纯空白视为未筛选，原样返回（连列表都不用重建）。
+///
+/// 为什么不走服务端搜索：WebDAV 没有标准的目录内搜索，各家实现的 `SEARCH`
+/// 方法支持度参差；而"过滤已取回的这一屏目录"是零请求、零延迟的，正好解决
+/// "大目录里肉眼找文件"这个实际痛点。
+List<RemoteStorageEntry> filterRemoteEntries(
+  List<RemoteStorageEntry> entries,
+  String query,
+) {
+  final tokens = <String>[
+    for (final token in query.trim().toLowerCase().split(RegExp(r'\s+')))
+      if (token.isNotEmpty) token,
+  ];
+  if (tokens.isEmpty) return entries;
+  return <RemoteStorageEntry>[
+    for (final entry in entries)
+      if (_nameMatchesAll(entry.name.toLowerCase(), tokens)) entry,
+  ];
+}
+
+bool _nameMatchesAll(String lowerName, List<String> tokens) {
+  for (final token in tokens) {
+    if (!lowerName.contains(token)) return false;
+  }
+  return true;
+}
+
 /// 批量操作结果：逐项失败不中断整批，最后统一汇报。
 ///
 /// 为什么不让批量操作"一错全停"：多选删除/移动时，用户要的是"能做的先做掉"，

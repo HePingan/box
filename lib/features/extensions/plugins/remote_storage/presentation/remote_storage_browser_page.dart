@@ -28,6 +28,12 @@ enum RemoteStorageSortField { name, modifiedTime, size }
 /// 当前会话的排序字段（跨目录、跨 route 保持；不落盘）。
 RemoteStorageSortField _sessionSortField = RemoteStorageSortField.modifiedTime;
 
+/// 超过这么多条目才显示搜索入口（279 C3）。
+///
+/// 小目录（十几个文件）用眼睛扫比打字快，多一个搜索图标只是噪音；大目录里
+/// 它是刚需。阈值取 30 是两者之间的经验分界。
+const int kSearchEntryThreshold = 30;
+
 /// 测试用：重置会话级浏览页状态（排序字段 + 滚动位置记忆）。
 @visibleForTesting
 void debugResetRemoteStorageBrowserSessionState() {
@@ -124,6 +130,15 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   /// 这样列表刷新（重新 fetch 出全新对象）后选中态不会丢。
   final Set<String> _selectedPaths = <String>{};
 
+  /// 本目录的完整内容；[_entries] 是它经本地搜索过滤后的视图（279 C3）。
+  /// 两者分开是为了：多选/批量统计按"整目录"算，用户看到的筛选不改变已选项。
+  List<RemoteStorageEntry> _allEntries = const [];
+
+  /// 本地搜索（C3）：纯前端过滤，不发请求。
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+  bool _searching = false;
+
   bool get _selectionMode => _selectedPaths.isNotEmpty;
 
   /// 滚动位置记忆：账户 + 目录 → 离开时的偏移。
@@ -151,7 +166,31 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   void dispose() {
     _rememberScrollOffset(); // 兜底：滚动途中被 pop 也要记住位置
     _scrollController.dispose();
+    _searchController.dispose();
     super.dispose();
+  }
+
+  /// 应用本地搜索：只重算可见列表，不动 [_allEntries]（C3）。
+  void _applyFilter() {
+    _entries = filterRemoteEntries(_allEntries, _query);
+  }
+
+  void _onQueryChanged(String value) {
+    setState(() {
+      _query = value;
+      _applyFilter();
+    });
+  }
+
+  void _toggleSearch() {
+    setState(() {
+      _searching = !_searching;
+      if (!_searching) {
+        _query = '';
+        _searchController.clear();
+        _applyFilter();
+      }
+    });
   }
 
   /// 记住当前滚动位置（滚动过程中持续更新）。
@@ -179,7 +218,9 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     if (field == _sessionSortField) return;
     _sessionSortField = field;
     setState(() {
-      _entries = sortedRemoteStorageEntries(_entries, field);
+      // 排序作用于整目录（[_allEntries]），再套一层当前搜索的过滤。
+      _allEntries = sortedRemoteStorageEntries(_allEntries, field);
+      _applyFilter();
     });
   }
 
@@ -198,7 +239,8 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
           .list(widget.account, _path, forceRefresh: force);
       if (!mounted) return;
       setState(() {
-        _entries = sortedRemoteStorageEntries(entries, _sessionSortField);
+        _allEntries = sortedRemoteStorageEntries(entries, _sessionSortField);
+        _applyFilter();
         _loading = false;
       });
       _restoreScrollOffset();
@@ -243,8 +285,10 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     });
   }
 
+  /// 已选项按**整目录**求值：本地搜索隐藏掉的条目仍在选中集合里，
+  /// 否则"筛一下就少删几个"这种静默偏差最难查（C3）。
   List<RemoteStorageEntry> _selectedEntries() =>
-      _entries.where((e) => _selectedPaths.contains(e.path)).toList();
+      _allEntries.where((e) => _selectedPaths.contains(e.path)).toList();
 
   /// 批量下载：复用传输队列（逐个入队），不阻塞 UI。
   void _downloadSelected() {
@@ -1097,7 +1141,45 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     }
     return AppBar(
       title: Text(_accountTitle),
+      bottom: _searching
+          ? PreferredSize(
+              preferredSize: const Size.fromHeight(56),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: TextField(
+                  controller: _searchController,
+                  autofocus: true,
+                  onChanged: _onQueryChanged,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: '在本目录里筛选名称（多个词用空格）',
+                    prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                    suffixIcon: _query.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: '清空',
+                            icon: const Icon(Icons.close_rounded, size: 18),
+                            onPressed: () {
+                              _searchController.clear();
+                              _onQueryChanged('');
+                            },
+                          ),
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+              ),
+            )
+          : null,
       actions: [
+        if (_allEntries.length > kSearchEntryThreshold)
+          IconButton(
+            tooltip: _searching ? '关闭筛选' : '在本目录筛选',
+            onPressed: _toggleSearch,
+            icon: Icon(
+              _searching ? Icons.search_off_rounded : Icons.search_rounded,
+            ),
+          ),
         PopupMenuButton<RemoteStorageSortField>(
           tooltip: '排序',
           icon: const Icon(Icons.sort_rounded),
@@ -1275,27 +1357,62 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
       );
     }
     if (_entries.isEmpty) {
+      // 区分"目录真的空"与"筛掉了"：后者要给一键清空，否则用户会以为文件没了（C3）。
+      final filtered = _allEntries.isNotEmpty;
       return RefreshIndicator(
         onRefresh: () => _load(force: true),
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          children: const [
-            SizedBox(height: 160),
-            Icon(Icons.folder_open_outlined, size: 56),
-            SizedBox(height: 8),
-            Center(child: Text('空目录')),
+          children: [
+            const SizedBox(height: 160),
+            Icon(
+              filtered ? Icons.search_off_rounded : Icons.folder_open_outlined,
+              size: 56,
+            ),
+            const SizedBox(height: 8),
+            Center(child: Text(filtered ? '本目录没有匹配「$_query」的条目' : '空目录')),
+            if (filtered) ...[
+              const SizedBox(height: 12),
+              Center(
+                child: TextButton(
+                  onPressed: () {
+                    _searchController.clear();
+                    _onQueryChanged('');
+                  },
+                  child: const Text('清空筛选'),
+                ),
+              ),
+            ],
           ],
         ),
       );
     }
     return RefreshIndicator(
       onRefresh: () => _load(force: true),
-      child: ListView.separated(
-        controller: _scrollController,
-        physics: const AlwaysScrollableScrollPhysics(),
-        itemCount: _entries.length,
-        separatorBuilder: (_, _) => const Divider(height: 1, indent: 56),
-        itemBuilder: (_, i) => _buildEntryTile(_entries[i]),
+      child: Column(
+        children: [
+          if (_query.trim().isNotEmpty)
+            Container(
+              width: double.infinity,
+              color: Theme.of(
+                context,
+              ).colorScheme.secondaryContainer.withValues(alpha: 0.5),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Text(
+                '筛选出 ${_entries.length} / ${_allEntries.length} 项',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          Expanded(
+            child: ListView.separated(
+              controller: _scrollController,
+              physics: const AlwaysScrollableScrollPhysics(),
+              itemCount: _entries.length,
+              separatorBuilder: (_, _) => const Divider(height: 1, indent: 56),
+              itemBuilder: (_, i) => _buildEntryTile(_entries[i]),
+            ),
+          ),
+        ],
       ),
     );
   }
