@@ -227,6 +227,18 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
 
     setState(() => _uploading = true);
     try {
+      // O5：上传前问一次剩余配额（读不到就不显示，不影响上传）。
+      final quota = await _safeQuota();
+      if (!mounted) return;
+      final totalBytes = files.fold<int>(0, (sum, f) => sum + f.size);
+      if (uploadExceedsQuota(quota, totalBytes)) {
+        final proceed = await _askInsufficientSpace(
+          available: quota!.availableBytes!,
+          needed: totalBytes,
+        );
+        if (proceed != true) return;
+      }
+
       final conflicts = await remoteStorageService().scanConflicts(
         widget.account,
         files: files,
@@ -249,6 +261,45 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
+  }
+
+  /// 读配额；任何失败都吞掉返回 null（配额只用于提示，绝不能挡住上传）。
+  Future<RemoteStorageQuota?> _safeQuota() async {
+    try {
+      final quota =
+          await remoteStorageService().quota(widget.account, path: _path);
+      return quota.hasAny ? quota : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 空间可能不足时确认一次（只在服务端给了配额、且本次上传超出它时出现）。
+  Future<bool?> _askInsufficientSpace({
+    required int available,
+    required int needed,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('剩余空间可能不足'),
+        content: Text(
+          '服务端剩余约 ${formatRemoteBytes(available)}，'
+          '本次要上传 ${formatRemoteBytes(needed)}。\n\n'
+          '空间不足时服务端会以 507 拒绝，大文件往往传到一半才失败。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('先不传'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('仍然上传'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 返回 true=覆盖，false=跳过，null=放弃。

@@ -20,6 +20,9 @@ class _FakeService extends RemoteStorageService {
   RemoteStorageException? listError;
   RemoteStorageAccount? saved;
 
+  /// 页面读到的配额；本文件不测上传路径，只为避免误走真实传输层。
+  RemoteStorageQuota quotaResult = const RemoteStorageQuota();
+
   @override
   Future<List<RemoteStorageEntry>> list(
     RemoteStorageAccount account,
@@ -34,6 +37,15 @@ class _FakeService extends RemoteStorageService {
   @override
   Future<void> saveAccount(RemoteStorageAccount account) async {
     saved = account;
+  }
+
+  /// 覆写配额：不让 widget 测试走到真实传输层（配额只用于提示，默认给空）。
+  @override
+  Future<RemoteStorageQuota> quota(
+    RemoteStorageAccount account, {
+    String path = '',
+  }) async {
+    return quotaResult;
   }
 }
 

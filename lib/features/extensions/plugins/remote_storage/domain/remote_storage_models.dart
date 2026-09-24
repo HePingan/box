@@ -421,6 +421,17 @@ String formatRemoteBytes(int? bytes) {
   return '${value.toStringAsFixed(digits)} ${units[unit]}';
 }
 
+/// 本次上传是否超出服务端剩余配额（O5）。
+///
+/// 只在**服务端确实给了可用配额**、且总量超过它时返回 true。配额未知（服务器
+/// 未实现 RFC 4331、或属性缺失）时一律不提示——宁可不提示，也不要拿猜出来的
+/// 数字去吓用户。
+bool uploadExceedsQuota(RemoteStorageQuota? quota, int totalBytes) {
+  final available = quota?.availableBytes;
+  if (available == null || available < 0) return false;
+  return totalBytes > available;
+}
+
 /// 单个路径段的**字节**上限。
 ///
 /// 为什么按字节判而不是按字符：旧实现用 `String.length`（UTF-16 单元数）判 255，

@@ -295,6 +295,41 @@ void main() {
     });
   });
 
+  group('上传前配额判断（O5）', () {
+    test('服务端给了可用配额且本次超出 → 提示', () {
+      expect(
+        uploadExceedsQuota(const RemoteStorageQuota(availableBytes: 100), 101),
+        isTrue,
+      );
+      expect(
+        uploadExceedsQuota(const RemoteStorageQuota(availableBytes: 100), 100),
+        isFalse,
+        reason: '刚好用完不算超',
+      );
+      expect(
+        uploadExceedsQuota(const RemoteStorageQuota(availableBytes: 0), 1),
+        isTrue,
+      );
+    });
+
+    test('配额未知/缺属性/负数 → 一律不提示（不拿猜出来的数字吓用户）', () {
+      expect(uploadExceedsQuota(null, 1 << 40), isFalse);
+      expect(uploadExceedsQuota(const RemoteStorageQuota(), 1 << 40), isFalse);
+      expect(
+        uploadExceedsQuota(const RemoteStorageQuota(usedBytes: 5), 1 << 40),
+        isFalse,
+      );
+      expect(
+        uploadExceedsQuota(
+          const RemoteStorageQuota(availableBytes: -3),
+          1 << 40,
+        ),
+        isFalse,
+        reason: 'RFC 4331 的负数表示未知',
+      );
+    });
+  });
+
   group('路径工具', () {
     test('encodeRemotePath 逐段编码', () {
       expect(

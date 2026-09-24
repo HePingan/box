@@ -27,6 +27,15 @@ class _FakeService extends RemoteStorageService {
   }) async {
     return entriesByPath[path] ?? const <RemoteStorageEntry>[];
   }
+
+  /// 覆写配额：本文件不测上传，只为避免误走真实传输层。
+  @override
+  Future<RemoteStorageQuota> quota(
+    RemoteStorageAccount account, {
+    String path = '',
+  }) async {
+    return const RemoteStorageQuota();
+  }
 }
 
 RemoteStorageEntry _file(String name, {int? size, DateTime? modifiedAt}) {
