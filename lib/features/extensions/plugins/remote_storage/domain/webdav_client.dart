@@ -343,6 +343,98 @@ class WebdavClient {
     _expect(resp, const {200, 201, 204}, relativePath);
   }
 
+  /// 删除文件或目录（DELETE）。
+  ///
+  /// 目录是否递归删除由服务器决定（多数实现递归）——UI 的确认文案必须写清
+  /// "目录内所有内容一并删除"。
+  Future<void> delete(String path) async {
+    final resp = await _send('DELETE', path);
+    if (resp.statusCode == 404) {
+      throw RemoteStorageException(
+        RemoteStorageError.notFound,
+        '远端已不存在：${_basename(path)}',
+        statusCode: 404,
+      );
+    }
+    if (resp.statusCode == 403) {
+      throw const RemoteStorageException(
+        RemoteStorageError.forbidden,
+        '服务器拒绝删除（只读挂载或权限不足）',
+        statusCode: 403,
+      );
+    }
+    _expect(resp, const {200, 202, 204}, path);
+  }
+
+  /// 新建目录（MKCOL）。
+  ///
+  /// `405` 在 MKCOL 上的含义是"目录已存在"（不是"服务器不支持该方法"），
+  /// 因此单独给出冲突文案，避免用户以为是 DAV 没开。
+  Future<void> createDirectory(String path) async {
+    final resp = await _send('MKCOL', path);
+    if (resp.statusCode == 405 || resp.statusCode == 409) {
+      throw RemoteStorageException(
+        RemoteStorageError.conflict,
+        '目录已存在：${_basename(path)}',
+        statusCode: resp.statusCode,
+      );
+    }
+    if (resp.statusCode == 403) {
+      throw const RemoteStorageException(
+        RemoteStorageError.forbidden,
+        '服务器拒绝新建目录（只读挂载或权限不足）',
+        statusCode: 403,
+      );
+    }
+    _expect(resp, const {201}, path);
+  }
+
+  /// 重命名 / 移动（MOVE）。[overwrite] 为 false 时目标已存在会失败（412）。
+  Future<void> move(String from, String to, {bool overwrite = false}) =>
+      _relocate('MOVE', from, to, overwrite: overwrite);
+
+  /// 账户内复制（COPY）。跨账户复制服务端不支持，只能下载再上传。
+  Future<void> copy(String from, String to, {bool overwrite = false}) =>
+      _relocate('COPY', from, to, overwrite: overwrite);
+
+  /// MOVE/COPY 共用实现。
+  ///
+  /// 两个协议细节不能省：
+  /// 1. `Destination` 必须是**绝对 URL 且已百分号编码**（相对路径会被拒）；
+  /// 2. `Overwrite: F` 明确"不许静默覆盖"——默认行为各服务器不一致，显式声明后
+  ///    目标存在时统一返回 412，UI 的"目标已存在"提示才有确定语义。
+  Future<void> _relocate(
+    String method,
+    String from,
+    String to, {
+    required bool overwrite,
+  }) async {
+    final resp = await _send(
+      method,
+      from,
+      headers: {
+        'destination': uriFor(to).toString(),
+        'overwrite': overwrite ? 'T' : 'F',
+      },
+    );
+    if (resp.statusCode == 412) {
+      throw RemoteStorageException(
+        RemoteStorageError.conflict,
+        '目标已存在：${_basename(to)}',
+        statusCode: 412,
+      );
+    }
+    if (resp.statusCode == 409) {
+      // 409：目标父目录不存在，或 Destination 指向另一个命名空间。
+      throw RemoteStorageException(
+        RemoteStorageError.conflict,
+        '目标路径不可用（上级目录不存在？）：${_basename(to)}',
+        statusCode: 409,
+      );
+    }
+    _expect(resp, const {200, 201, 204}, from);
+  }
+
   /// 打开原始响应流（播放中继/直连用）：不抛错，状态码原样透传。
   Future<WebdavResponse> openStream(
     String path, {

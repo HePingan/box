@@ -526,6 +526,36 @@ String parentRemotePath(String path) {
   return path.substring(0, idx);
 }
 
+/// 取路径最后一段（文件名/目录名）。
+String remoteBasename(String path) {
+  final idx = path.lastIndexOf('/');
+  return idx < 0 ? path : path.substring(idx + 1);
+}
+
+/// 批量操作结果：逐项失败不中断整批，最后统一汇报。
+///
+/// 为什么不让批量操作"一错全停"：多选删除/移动时，用户要的是"能做的先做掉"，
+/// 单项失败（权限、已不存在）不该把其余 9 项一起卡住。
+class RemoteBatchResult {
+  const RemoteBatchResult({required this.succeeded, required this.failures});
+
+  const RemoteBatchResult.empty()
+      : succeeded = 0,
+        failures = const <String>[];
+
+  /// 成功条数。
+  final int succeeded;
+
+  /// 失败明细（形如 `文件名：原因`），顺序与入参一致。
+  final List<String> failures;
+
+  bool get hasFailures => failures.isNotEmpty;
+
+  /// 给 SnackBar 用的一句话（只陈述事实，措辞由 UI 决定）。
+  String get summary =>
+      failures.isEmpty ? '已完成 $succeeded 项' : '成功 $succeeded 项，失败 ${failures.length} 项';
+}
+
 /// 传输取消令牌（与 dio 解耦，便于单测）。
 class TransferCancelToken {
   bool _canceled = false;
@@ -618,6 +648,9 @@ RemoteStorageException remoteStorageExceptionForStatus(
     case 405:
       kind = RemoteStorageError.methodNotAllowed;
     case 409:
+      kind = RemoteStorageError.conflict;
+    case 412:
+      // MOVE/COPY 带 `Overwrite: F` 且目标已存在（RFC 4918 §9.9.4）。
       kind = RemoteStorageError.conflict;
     case 507:
       kind = RemoteStorageError.insufficientStorage;

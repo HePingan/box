@@ -597,6 +597,120 @@ void main() {
     });
   });
 
+  group('写操作（B1：DELETE / MKCOL / MOVE / COPY）', () {
+    test('delete：204 成功；404 与 403 各自有可读文案', () async {
+      final transport = FakeTransport(
+        (_) async => const WebdavResponse(statusCode: 204, headers: {}),
+      );
+      await clientWith(transport).delete('a/b.txt');
+      expect(transport.lastRequest.method, 'DELETE');
+      expect(transport.lastRequest.uri.path, '/dav/a/b.txt');
+
+      transport.handler =
+          (_) async => const WebdavResponse(statusCode: 404, headers: {});
+      await expectLater(
+        clientWith(transport).delete('b.txt'),
+        throwsA(
+          isA<RemoteStorageException>()
+              .having((e) => e.kind, 'kind', RemoteStorageError.notFound)
+              .having((e) => e.message, 'message', contains('已不存在')),
+        ),
+      );
+
+      transport.handler =
+          (_) async => const WebdavResponse(statusCode: 403, headers: {});
+      await expectLater(
+        clientWith(transport).delete('b.txt'),
+        throwsA(
+          isA<RemoteStorageException>()
+              .having((e) => e.kind, 'kind', RemoteStorageError.forbidden)
+              .having((e) => e.message, 'message', contains('只读')),
+        ),
+      );
+    });
+
+    test('createDirectory：MKCOL 201 成功；405/409 说「目录已存在」而不是「不支持」', () async {
+      final transport = FakeTransport(
+        (_) async => const WebdavResponse(statusCode: 201, headers: {}),
+      );
+      await clientWith(transport).createDirectory('新建 目录');
+      expect(transport.lastRequest.method, 'MKCOL');
+      expect(transport.lastRequest.uri.path, '/dav/%E6%96%B0%E5%BB%BA%20%E7%9B%AE%E5%BD%95');
+
+      for (final status in <int>[405, 409]) {
+        transport.handler =
+            (_) async => WebdavResponse(statusCode: status, headers: const {});
+        await expectLater(
+          clientWith(transport).createDirectory('dup'),
+          throwsA(
+            isA<RemoteStorageException>()
+                .having((e) => e.kind, 'kind', RemoteStorageError.conflict)
+                .having((e) => e.message, 'message', contains('目录已存在')),
+          ),
+          reason: 'MKCOL 的 405 是"已存在"，不能映射成"服务器不支持"',
+        );
+      }
+    });
+
+    test('move：Destination 为绝对 URL 且已百分号编码，Overwrite 显式为 F', () async {
+      final transport = FakeTransport(
+        (_) async => const WebdavResponse(statusCode: 201, headers: {}),
+      );
+
+      await clientWith(transport).move('a/中文.txt', 'b/新 名字.txt');
+
+      expect(transport.lastRequest.method, 'MOVE');
+      expect(transport.lastRequest.uri.path, '/dav/a/%E4%B8%AD%E6%96%87.txt');
+      expect(transport.lastRequest.headers['overwrite'], 'F');
+      expect(
+        transport.lastRequest.headers['destination'],
+        'https://dav.example.com/dav/b/%E6%96%B0%20%E5%90%8D%E5%AD%97.txt',
+        reason: 'Destination 必须是绝对 URL，相对路径会被服务器拒绝',
+      );
+    });
+
+    test('copy：Overwrite 可按参数置 T；与 MOVE 共用同一套头', () async {
+      final transport = FakeTransport(
+        (_) async => const WebdavResponse(statusCode: 204, headers: {}),
+      );
+
+      await clientWith(transport).copy('a.txt', 'sub/a.txt', overwrite: true);
+
+      expect(transport.lastRequest.method, 'COPY');
+      expect(transport.lastRequest.headers['overwrite'], 'T');
+      expect(
+        transport.lastRequest.headers['destination'],
+        'https://dav.example.com/dav/sub/a.txt',
+      );
+    });
+
+    test('MOVE/COPY：412 → 冲突「目标已存在」，409 → 冲突「上级目录不存在」', () async {
+      final transport = FakeTransport();
+
+      transport.handler =
+          (_) async => const WebdavResponse(statusCode: 412, headers: {});
+      await expectLater(
+        clientWith(transport).move('a.txt', 'b.txt'),
+        throwsA(
+          isA<RemoteStorageException>()
+              .having((e) => e.kind, 'kind', RemoteStorageError.conflict)
+              .having((e) => e.message, 'message', contains('目标已存在')),
+        ),
+      );
+
+      transport.handler =
+          (_) async => const WebdavResponse(statusCode: 409, headers: {});
+      await expectLater(
+        clientWith(transport).copy('a.txt', 'missing/a.txt'),
+        throwsA(
+          isA<RemoteStorageException>()
+              .having((e) => e.kind, 'kind', RemoteStorageError.conflict)
+              .having((e) => e.message, 'message', contains('上级目录')),
+        ),
+      );
+    });
+  });
+
   group('Retry-After 与请求留痕（O2/O9）', () {
     test('秒数与 HTTP-date 两种形式都能解析；非法值返回 null', () {
       expect(parseRetryAfterHeader('120'), const Duration(seconds: 120));

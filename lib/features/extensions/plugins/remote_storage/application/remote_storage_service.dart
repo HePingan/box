@@ -566,6 +566,184 @@ class RemoteStorageService {
     );
   }
 
+  // ------------------------------------------------------- 写操作（B1 拍板）
+
+  /// 新建文件夹。名称不可用或已存在时抛异常（由 UI 提示）。
+  Future<void> createFolder(
+    RemoteStorageAccount account, {
+    required String parentPath,
+    required String name,
+  }) async {
+    final safe = sanitizeRemoteSegment(name);
+    if (safe == null) {
+      final why = remoteSegmentRejectionReason(name);
+      throw RemoteStorageException(
+        RemoteStorageError.unknown,
+        '文件夹名不可用：$name（${why ?? '未知原因'}）',
+      );
+    }
+    final client = clientFor(account);
+    final target = joinRemotePath(parentPath, safe);
+    if (await client.exists(target)) {
+      throw RemoteStorageException(
+        RemoteStorageError.conflict,
+        '已存在同名文件夹：$safe',
+      );
+    }
+    await client.createDirectory(target);
+    invalidateListing(account, parentPath);
+  }
+
+  /// 重命名（同目录内 MOVE）。[newName] 与原名相同则直接返回。
+  Future<void> renameEntry(
+    RemoteStorageAccount account, {
+    required RemoteStorageEntry entry,
+    required String newName,
+    bool overwrite = false,
+  }) async {
+    final safe = sanitizeRemoteSegment(newName);
+    if (safe == null) {
+      final why = remoteSegmentRejectionReason(newName);
+      throw RemoteStorageException(
+        RemoteStorageError.unknown,
+        '名称不可用：$newName（${why ?? '未知原因'}）',
+      );
+    }
+    if (safe == entry.name) return;
+
+    final client = clientFor(account);
+    final parentPath = parentRemotePath(entry.path);
+    final target = joinRemotePath(parentPath, safe);
+    if (!overwrite && await client.exists(target)) {
+      throw RemoteStorageException(
+        RemoteStorageError.conflict,
+        '目标已存在：$safe',
+      );
+    }
+    await client.move(entry.path, target, overwrite: overwrite);
+    invalidateListing(account, parentPath);
+  }
+
+  /// 移动到另一个目录（跨目录 MOVE）。
+  Future<void> moveEntry(
+    RemoteStorageAccount account, {
+    required RemoteStorageEntry entry,
+    required String targetDir,
+    bool overwrite = false,
+  }) async {
+    final client = clientFor(account);
+    final sourceDir = parentRemotePath(entry.path);
+    final target = joinRemotePath(targetDir, remoteBasename(entry.path));
+    if (target == entry.path) return;
+
+    if (!overwrite && await client.exists(target)) {
+      throw RemoteStorageException(
+        RemoteStorageError.conflict,
+        '目标目录已有同名项：${remoteBasename(entry.path)}',
+      );
+    }
+    await client.move(entry.path, target, overwrite: overwrite);
+    invalidateListing(account, sourceDir);
+    invalidateListing(account, targetDir);
+  }
+
+  /// 账户内复制到另一个目录（COPY 与 MOVE 同一套代码路径）。
+  Future<void> copyEntry(
+    RemoteStorageAccount account, {
+    required RemoteStorageEntry entry,
+    required String targetDir,
+    bool overwrite = false,
+  }) async {
+    final client = clientFor(account);
+    final target = joinRemotePath(targetDir, remoteBasename(entry.path));
+    if (target == entry.path) return;
+
+    if (!overwrite && await client.exists(target)) {
+      throw RemoteStorageException(
+        RemoteStorageError.conflict,
+        '目标目录已有同名项：${remoteBasename(entry.path)}',
+      );
+    }
+    await client.copy(entry.path, target, overwrite: overwrite);
+    invalidateListing(account, targetDir);
+  }
+
+  /// 删除一个条目（目录是否递归由服务器决定）。
+  Future<void> deleteEntry(
+    RemoteStorageAccount account, {
+    required RemoteStorageEntry entry,
+  }) async {
+    await clientFor(account).delete(entry.path);
+    invalidateListing(account, parentRemotePath(entry.path));
+  }
+
+  /// 批量删除：逐项执行，单项失败不中断整批（返回成功数与失败明细）。
+  Future<RemoteBatchResult> deleteEntries(
+    RemoteStorageAccount account,
+    List<RemoteStorageEntry> entries,
+  ) {
+    return _runBatch(
+      entries,
+      (entry) => deleteEntry(account, entry: entry),
+    );
+  }
+
+  /// 批量移动到同一目录。
+  Future<RemoteBatchResult> moveEntries(
+    RemoteStorageAccount account, {
+    required List<RemoteStorageEntry> entries,
+    required String targetDir,
+    bool overwrite = false,
+  }) {
+    return _runBatch(
+      entries,
+      (entry) => moveEntry(
+        account,
+        entry: entry,
+        targetDir: targetDir,
+        overwrite: overwrite,
+      ),
+    );
+  }
+
+  /// 批量复制到同一目录。
+  Future<RemoteBatchResult> copyEntries(
+    RemoteStorageAccount account, {
+    required List<RemoteStorageEntry> entries,
+    required String targetDir,
+    bool overwrite = false,
+  }) {
+    return _runBatch(
+      entries,
+      (entry) => copyEntry(
+        account,
+        entry: entry,
+        targetDir: targetDir,
+        overwrite: overwrite,
+      ),
+    );
+  }
+
+  /// 批量执行：单项失败记下原因继续，最后统一汇报（"能做的先做掉"）。
+  Future<RemoteBatchResult> _runBatch(
+    List<RemoteStorageEntry> entries,
+    Future<void> Function(RemoteStorageEntry entry) action,
+  ) async {
+    var succeeded = 0;
+    final failures = <String>[];
+    for (final entry in entries) {
+      try {
+        await action(entry);
+        succeeded++;
+      } on RemoteStorageException catch (e) {
+        failures.add('${entry.name}：${e.message}');
+      } catch (e) {
+        failures.add('${entry.name}：$e');
+      }
+    }
+    return RemoteBatchResult(succeeded: succeeded, failures: failures);
+  }
+
   /// 图片预览（拍板6：20MB 上限；超限拒绝解码预览）。
   Future<PreviewPayload> readImagePreview(
     RemoteStorageAccount account,

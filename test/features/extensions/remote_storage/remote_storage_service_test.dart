@@ -453,6 +453,206 @@ void main() {
     });
   });
 
+  group('写操作（B1）', () {
+    FakeTransport writeTransport({
+      int moveStatus = 201,
+      int deleteStatus = 204,
+      int mkcolStatus = 201,
+      bool destinationExists = false,
+    }) {
+      return FakeTransport((request) async {
+        switch (request.method) {
+          case 'HEAD':
+            // 只用于"目标是否存在"的预检。
+            final exists = destinationExists &&
+                (request.uri.path.endsWith('b.txt') ||
+                    request.uri.path.endsWith('dup') ||
+                    request.uri.path.endsWith('%E6%96%B0%E5%BB%BA'));
+            return headResponse(status: exists ? 200 : 404);
+          case 'MOVE':
+          case 'COPY':
+            return WebdavResponse(statusCode: moveStatus, headers: const {});
+          case 'DELETE':
+            return WebdavResponse(statusCode: deleteStatus, headers: const {});
+          case 'MKCOL':
+            return WebdavResponse(statusCode: mkcolStatus, headers: const {});
+          case 'PROPFIND':
+            return xmlResponse(propfindXml(const [DavItem('/dav/a.txt')]));
+          default:
+            return const WebdavResponse(statusCode: 200, headers: {});
+        }
+      });
+    }
+
+    test('createFolder：MKCOL 201 成功并作废父目录缓存', () async {
+      transport = writeTransport();
+      final svc = RemoteStorageService(
+        transportFactory: (_) => transport,
+        docsDirProvider: () async => docsDir,
+        dirCacheTtl: const Duration(seconds: 30),
+      );
+      final account = testAccount();
+
+      await svc.list(account, ''); // 先灌一次缓存
+      await svc.createFolder(account, parentPath: '', name: '新建');
+      await svc.list(account, ''); // 缓存应已失效 → 再发一次 PROPFIND
+
+      expect(
+        transport.requests.where((r) => r.method == 'MKCOL'),
+        hasLength(1),
+      );
+      expect(
+        transport.requests.where((r) => r.method == 'PROPFIND'),
+        hasLength(2),
+      );
+    });
+
+    test('createFolder：名称不可用 → 明确原因，不发请求', () async {
+      transport = writeTransport();
+      await expectLater(
+        service.createFolder(testAccount(), parentPath: '', name: 'NUL'),
+        throwsA(
+          isA<RemoteStorageException>()
+              .having((e) => e.message, 'message', contains('保留名')),
+        ),
+      );
+      expect(transport.requests, isEmpty);
+    });
+
+    test('renameEntry：先查重再 MOVE，Destination 指向同目录新名', () async {
+      transport = writeTransport();
+      const entry = RemoteStorageEntry(
+        name: 'a.txt',
+        path: 'a.txt',
+        isDirectory: false,
+      );
+
+      await service.renameEntry(testAccount(), entry: entry, newName: 'b.txt');
+
+      expect(transport.lastRequest.method, 'MOVE');
+      expect(
+        transport.lastRequest.headers['destination'],
+        'https://dav.example.com/dav/b.txt',
+      );
+      expect(transport.lastRequest.headers['overwrite'], 'F');
+    });
+
+    test('renameEntry：目标已存在 → 冲突且不发 MOVE', () async {
+      transport = writeTransport(destinationExists: true);
+      const entry = RemoteStorageEntry(
+        name: 'a.txt',
+        path: 'a.txt',
+        isDirectory: false,
+      );
+
+      await expectLater(
+        service.renameEntry(testAccount(), entry: entry, newName: 'b.txt'),
+        throwsA(
+          isA<RemoteStorageException>()
+              .having((e) => e.kind, 'kind', RemoteStorageError.conflict),
+        ),
+      );
+      expect(
+        transport.requests.where((r) => r.method == 'MOVE'),
+        isEmpty,
+        reason: '预检发现同名就不该再发 MOVE（避免服务器忽略 Overwrite 时静默覆盖）',
+      );
+    });
+
+    test('renameEntry：名字没变 → 直接返回，不发任何请求', () async {
+      transport = writeTransport();
+      const entry = RemoteStorageEntry(
+        name: 'a.txt',
+        path: 'a.txt',
+        isDirectory: false,
+      );
+
+      await service.renameEntry(testAccount(), entry: entry, newName: 'a.txt');
+      expect(transport.requests, isEmpty);
+    });
+
+    test('moveEntry / copyEntry：目标目录与源目录缓存都作废', () async {
+      transport = writeTransport();
+      final svc = RemoteStorageService(
+        transportFactory: (_) => transport,
+        docsDirProvider: () async => docsDir,
+        dirCacheTtl: const Duration(seconds: 30),
+      );
+      final account = testAccount();
+      const entry = RemoteStorageEntry(
+        name: 'a.txt',
+        path: 'src/a.txt',
+        isDirectory: false,
+      );
+
+      await svc.list(account, 'src');
+      await svc.list(account, 'dst');
+
+      await svc.moveEntry(account, entry: entry, targetDir: 'dst');
+      expect(transport.lastRequest.method, 'MOVE');
+      expect(
+        transport.lastRequest.headers['destination'],
+        'https://dav.example.com/dav/dst/a.txt',
+      );
+
+      await svc.list(account, 'src');
+      await svc.list(account, 'dst');
+      expect(
+        transport.requests.where((r) => r.method == 'PROPFIND'),
+        hasLength(4),
+        reason: '源目录与目标目录的缓存都要失效',
+      );
+
+      await svc.copyEntry(account, entry: entry, targetDir: 'dst');
+      expect(transport.lastRequest.method, 'COPY');
+    });
+
+    test('deleteEntries：逐项执行，单项失败不中断整批', () async {
+      transport = FakeTransport((request) async {
+        if (request.uri.path.endsWith('bad.txt')) {
+          return const WebdavResponse(statusCode: 403, headers: {});
+        }
+        return const WebdavResponse(statusCode: 204, headers: {});
+      });
+
+      final result = await service.deleteEntries(testAccount(), const [
+        RemoteStorageEntry(name: 'ok1.txt', path: 'ok1.txt', isDirectory: false),
+        RemoteStorageEntry(name: 'bad.txt', path: 'bad.txt', isDirectory: false),
+        RemoteStorageEntry(name: 'ok2.txt', path: 'ok2.txt', isDirectory: false),
+      ]);
+
+      expect(result.succeeded, 2);
+      expect(result.hasFailures, isTrue);
+      expect(result.failures.single, contains('bad.txt'));
+      expect(result.summary, contains('成功 2 项'));
+      expect(
+        transport.requests.where((r) => r.method == 'DELETE'),
+        hasLength(3),
+        reason: '一个失败不能挡住后面两个',
+      );
+    });
+
+    test('deleteEntry：403 时抛出可读原因（UI 直接展示）', () async {
+      transport = FakeTransport(
+        (_) async => const WebdavResponse(statusCode: 403, headers: {}),
+      );
+      await expectLater(
+        service.deleteEntry(
+          testAccount(),
+          entry: const RemoteStorageEntry(
+            name: 'ro.txt',
+            path: 'ro.txt',
+            isDirectory: false,
+          ),
+        ),
+        throwsA(
+          isA<RemoteStorageException>()
+              .having((e) => e.message, 'message', contains('只读')),
+        ),
+      );
+    });
+  });
+
   group('目录缓存（O3：返回上一级不再重列）', () {
     RemoteStorageService cachingService(Duration ttl) => RemoteStorageService(
           transportFactory: (_) => transport,
