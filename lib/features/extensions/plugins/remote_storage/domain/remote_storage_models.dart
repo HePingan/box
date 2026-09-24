@@ -40,6 +40,53 @@ int? previewImageDecodeWidth({
 /// 文本预览前缀上限（调大→更完整但载入变慢）。
 const int kPreviewTextMaxBytes = 512 * 1024;
 
+// ---------------------------------------------------------- 列表缩略图（281+）
+
+/// 列表里给图片显示缩略图时，最多为此大小的图片才去取原图。
+///
+/// **为什么不能只取"文件开头"**：JPEG/PNG 都要求完整文件才能解码（渐进式 JPEG
+/// 也至少要读到扫描结束），截断的字节解不出来。所以缩略图只能整张取回来再降采样
+/// 解码——网络代价等于原图。于是给一个上限：超过这个大小就保持通用图标，
+/// 不为一行 40dp 的缩略图去拉一张 10MB 的原图（那是用户流量，不是我们的）。
+const int kThumbnailMaxBytes = 3 * 1024 * 1024;
+
+/// 缩略图解码宽度（物理像素）。
+///
+/// 行内图标位约 40dp，3 倍屏 = 120px；留一点余量取 128。列表里同时可见十几行，
+/// 每行都按原尺寸解码（4MB 的 JPEG 可能是 4000×3000 ≈ 48MB 位图）会直接把内存打满。
+const int kThumbnailDecodeWidth = 128;
+
+/// 内存里最多保留多少张缩略图（LRU；约 128px 的缩略图每张几十 KB）。
+const int kThumbnailMemoryEntries = 120;
+
+/// 缩略图磁盘缓存上限（字节）与最多文件数——滚动、返回目录时不重复下载。
+const int kThumbnailDiskMaxBytes = 32 * 1024 * 1024;
+const int kThumbnailDiskMaxFiles = 400;
+
+/// 同时最多几张缩略图在取（别把带宽占满：缩略图是"顺便看看"，不该压过用户正在做的事）。
+const int kThumbnailMaxConcurrent = 3;
+
+/// 这个条目要不要取缩略图（纯判定，便于单测）。
+///
+/// 只对**图片**且大小已知且在 [kThumbnailMaxBytes] 以内的取；大小未知（0）时不取——
+/// 宁可显示通用图标，也不要为了猜大小而多发一次请求。
+bool isThumbnailableEntry(RemoteStorageEntry entry) {
+  final size = entry.size;
+  return !entry.isDirectory &&
+      remoteEntryKind(entry) == RemoteEntryKind.image &&
+      size != null &&
+      size > 0 &&
+      size <= kThumbnailMaxBytes;
+}
+
+/// 缩略图缓存键：账户 + 路径 + 大小 + 修改时间。
+///
+/// 带上大小与修改时间：远端文件被替换后（同名同路径）旧缩略图自然失效，
+/// 不会把上一版的内容贴在新文件上。
+String thumbnailCacheKey(String accountId, RemoteStorageEntry entry) =>
+    '$accountId|${entry.path}|${entry.size}'
+    '|${entry.modifiedAt?.toIso8601String() ?? ''}';
+
 /// 播放中继空闲自动关闭：无请求且无在途取流超过该时长即回收（调大→保留更久；调小→端口更快回收）。
 const Duration kRelayIdleTimeout = Duration(minutes: 30);
 

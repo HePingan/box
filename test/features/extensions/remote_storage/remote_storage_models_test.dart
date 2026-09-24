@@ -583,4 +583,79 @@ void main() {
       expect(mimeTypeForFileName('noext'), 'application/octet-stream');
     });
   });
+
+  group('列表缩略图判定（281+）', () {
+    RemoteStorageEntry entry({
+      String name = 'a.jpg',
+      String? path,
+      bool dir = false,
+      int? size = 1000,
+      DateTime? modifiedAt,
+    }) => RemoteStorageEntry(
+      name: name,
+      path: path ?? name,
+      isDirectory: dir,
+      size: size,
+      modifiedAt: modifiedAt,
+    );
+
+    test('图片、大小已知且不超上限 → 取缩略图', () {
+      expect(isThumbnailableEntry(entry()), isTrue);
+      expect(
+        isThumbnailableEntry(entry(size: kThumbnailMaxBytes)),
+        isTrue,
+        reason: '正好等于上限也可以取',
+      );
+    });
+
+    test('非图片不取（视频/音频/文本/其他）', () {
+      for (final name in ['a.mp4', 'a.mp3', 'a.txt', 'a.zip', 'noext']) {
+        expect(
+          isThumbnailableEntry(entry(name: name)),
+          isFalse,
+          reason: '$name 不该取缩略图',
+        );
+      }
+    });
+
+    test('超过上限不取：不为一行 40dp 的缩略图去拉一张 10MB 原图', () {
+      expect(isThumbnailableEntry(entry(size: kThumbnailMaxBytes + 1)), isFalse);
+    });
+
+    test('大小未知（null / 0）不取——不为了猜大小多发一次请求', () {
+      expect(isThumbnailableEntry(entry(size: null)), isFalse);
+      expect(isThumbnailableEntry(entry(size: 0)), isFalse);
+    });
+
+    test('目录不取（即使名字像图片）', () {
+      expect(isThumbnailableEntry(entry(name: 'a.jpg', dir: true)), isFalse);
+    });
+
+    test('缓存键：账户 / 路径 / 大小 / 修改时间任一变化都要换键', () {
+      final base = entry(
+        modifiedAt: DateTime.utc(2023, 1, 30, 11, 22),
+      );
+      final key = thumbnailCacheKey('acct1', base);
+      expect(thumbnailCacheKey('acct1', base), key, reason: '同样的条目 → 同样的键');
+
+      expect(thumbnailCacheKey('acct2', base), isNot(key));
+      expect(
+        thumbnailCacheKey('acct1', entry(path: 'other.jpg', modifiedAt: base.modifiedAt)),
+        isNot(key),
+      );
+      expect(
+        thumbnailCacheKey('acct1', entry(size: 2000, modifiedAt: base.modifiedAt)),
+        isNot(key),
+        reason: '文件被替换（大小变了）→ 旧缩略图必须失效',
+      );
+      expect(
+        thumbnailCacheKey(
+          'acct1',
+          entry(modifiedAt: DateTime.utc(2024, 1, 1)),
+        ),
+        isNot(key),
+        reason: '修改时间变了也要失效',
+      );
+    });
+  });
 }

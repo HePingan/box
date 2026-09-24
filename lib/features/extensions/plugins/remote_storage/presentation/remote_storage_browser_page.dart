@@ -19,6 +19,10 @@ import '../application/remote_storage_service.dart';
 import '../application/transfer_queue.dart';
 import '../domain/remote_storage_models.dart';
 import 'remote_storage_player_page.dart';
+import 'remote_thumbnail.dart';
+
+/// 顶栏「更多」里的动作（目前只有缩略图开关；后续视图选项都放这里）。
+enum _BrowserMenuAction { toggleThumbnails }
 
 // ------------------------------------------------------------- 页面级排序
 
@@ -126,6 +130,9 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   /// 写操作进行中（删除/移动/复制/新建）——期间禁用入口，避免同一目标被并发改。
   bool _busy = false;
 
+  /// 列表是否给图片显示缩略图（顶栏"更多"里可关；持久化，默认开）。
+  bool _thumbnailsEnabled = true;
+
   /// 多选态（B1+）：按 [RemoteStorageEntry.path] 记录而不是按对象，
   /// 这样列表刷新（重新 fetch 出全新对象）后选中态不会丢。
   final Set<String> _selectedPaths = <String>{};
@@ -159,7 +166,21 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   void initState() {
     super.initState();
     _scrollController.addListener(_rememberScrollOffset);
+    _loadThumbnailPreference();
     _load();
+  }
+
+  /// 读缩略图开关（默认开）。读不到也不影响列表，只是保持默认。
+  Future<void> _loadThumbnailPreference() async {
+    final enabled = await remoteStorageService().loadThumbnailsEnabled();
+    if (!mounted) return;
+    setState(() => _thumbnailsEnabled = enabled);
+  }
+
+  Future<void> _toggleThumbnails() async {
+    final next = !_thumbnailsEnabled;
+    setState(() => _thumbnailsEnabled = next);
+    await remoteStorageService().saveThumbnailsEnabled(next);
   }
 
   @override
@@ -1215,6 +1236,23 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
           onPressed: () => _load(force: true),
           icon: const Icon(Icons.refresh_rounded),
         ),
+        // 视图选项放"更多"里：顶栏图标已经不少，且这类开关不需要常驻。
+        PopupMenuButton<_BrowserMenuAction>(
+          tooltip: '更多',
+          icon: const Icon(Icons.more_vert_rounded),
+          onSelected: (action) {
+            if (action == _BrowserMenuAction.toggleThumbnails) {
+              _toggleThumbnails();
+            }
+          },
+          itemBuilder: (_) => [
+            CheckedPopupMenuItem<_BrowserMenuAction>(
+              value: _BrowserMenuAction.toggleThumbnails,
+              checked: _thumbnailsEnabled,
+              child: const Text('显示图片缩略图'),
+            ),
+          ],
+        ),
       ],
     );
   }
@@ -1433,7 +1471,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
               value: selected,
               onChanged: (_) => _toggleSelected(entry),
             )
-          : Icon(_iconFor(kind), color: _colorFor(kind, context)),
+          : _leadingFor(entry, kind),
       title: Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: subtitleParts.isEmpty ? null : Text(subtitleParts.join(' · ')),
       trailing: entry.isDirectory
@@ -1457,6 +1495,19 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
       onLongPress: () => _enterSelection(entry),
       onTap: () =>
           _selectionMode ? _toggleSelected(entry) : _onEntryTap(entry),
+    );
+  }
+
+  /// 行首图标：图片条目且开关打开时换成缩略图（取不到就回退通用图标）。
+  Widget _leadingFor(RemoteStorageEntry entry, RemoteEntryKind kind) {
+    final icon = Icon(_iconFor(kind), color: _colorFor(kind, context));
+    if (!_thumbnailsEnabled || !isThumbnailableEntry(entry)) return icon;
+    final account = widget.account;
+    return RemoteThumbnail(
+      // key 里带账户+路径+大小+修改时间：列表复用到别的图片时重建，不贴错图。
+      key: ValueKey(thumbnailCacheKey(account.id, entry)),
+      load: () => remoteStorageService().readThumbnail(account, entry),
+      placeholder: icon,
     );
   }
 

@@ -15,9 +15,11 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../data/remote_storage_store.dart';
+import '../data/remote_thumbnail_cache.dart';
 import '../domain/remote_storage_models.dart';
 import '../domain/webdav_client.dart';
 import 'playback_relay.dart';
+import 'thumbnail_loader.dart';
 import 'transfer_queue.dart';
 
 /// 生产传输：dio → WebdavTransport。
@@ -244,10 +246,14 @@ class RemoteStorageService {
     RemoteStorageStore? store,
     WebdavTransport Function(RemoteStorageAccount account)? transportFactory,
     Future<Directory> Function()? docsDirProvider,
+    RemoteThumbnailCache? thumbnailCache,
     this.dirCacheTtl = kDirCacheTtl,
   })  : _store = store ?? RemoteStorageStore(),
         _transportFactory = transportFactory,
-        _docsDirProvider = docsDirProvider ?? getApplicationDocumentsDirectory;
+        _docsDirProvider = docsDirProvider ?? getApplicationDocumentsDirectory,
+        _thumbnails = ThumbnailLoader(
+          cache: thumbnailCache ?? RemoteThumbnailCache(),
+        );
 
   /// 目录列表缓存有效期（测试注入 Duration.zero 可强制每次都联网）。
   final Duration dirCacheTtl;
@@ -264,6 +270,9 @@ class RemoteStorageService {
 
   /// 在途上传的远端路径（C7 并发防竞态）：同名文件视为"已存在"，见 [uploadFile]。
   final Set<String> _inFlightUploads = {};
+
+  /// 列表缩略图取用器（缓存 + 并发上限 + 同键去重）。
+  final ThumbnailLoader _thumbnails;
 
   // ---------------------------------------------------------------- 账户
 
@@ -890,6 +899,50 @@ class RemoteStorageService {
       totalLength: up.totalLength ?? size,
     );
   }
+
+  // ---------------------------------------------------------- 列表缩略图
+
+  /// 取列表缩略图（281+）。取不到返回 null —— 列表回退通用图标，不显示错误。
+  ///
+  /// 缩略图**只能整张取回来**再降采样解码（JPEG/PNG 要完整文件才能解），所以这里
+  /// 先用条目大小挡一道（[isThumbnailableEntry]），再走缓存（内存/磁盘）避免重复
+  /// 下载，最后由 [ThumbnailLoader] 限制并发。真正的降采样在 widget 层用
+  /// `cacheWidth` 完成（解码尺寸小 → 内存小）。
+  Future<Uint8List?> readThumbnail(
+    RemoteStorageAccount account,
+    RemoteStorageEntry entry, {
+    TransferCancelToken? cancel,
+  }) async {
+    if (!isThumbnailableEntry(entry)) return null;
+    final key = thumbnailCacheKey(account.id, entry);
+    return _thumbnails.load(key, () async {
+      try {
+        final up = await clientFor(
+          account,
+        ).readUpTo(entry.path, kThumbnailMaxBytes + 1, cancel: cancel);
+        // 实际比条目声明的大（列表过期）或被截断 → 不缓存、不显示。
+        if (up.truncated || up.bytes.length > kThumbnailMaxBytes) return null;
+        if (up.bytes.isEmpty) return null;
+        return Uint8List.fromList(up.bytes);
+      } on RemoteStorageException catch (e) {
+        AppLogger.instance.logTo(
+          LogChannel.storage,
+          '缩略图读取失败（${entry.path}）: ${e.message}',
+          level: LogLevel.debug,
+        );
+        return null;
+      }
+    });
+  }
+
+  /// 清空缩略图缓存（内存 + 磁盘）。
+  Future<void> clearThumbnailCache() => _thumbnails.cache.clear();
+
+  /// 列表是否显示图片缩略图（持久化偏好）。
+  Future<bool> loadThumbnailsEnabled() => _store.loadThumbnailsEnabled();
+
+  Future<void> saveThumbnailsEnabled(bool enabled) =>
+      _store.saveThumbnailsEnabled(enabled);
 
   // ------------------------------------------------------- 播放通道（拍板7）
 

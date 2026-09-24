@@ -76,4 +76,38 @@ class RemoteStorageStore {
     final plain = jsonEncode(accounts.map((a) => a.toJson()).toList());
     await prefs.setString(accountsKey, codec.encrypt(plain));
   }
+
+  // ------------------------------------------------------ 列表偏好（非敏感）
+
+  static const String thumbnailsEnabledKey =
+      'remoteStorage.thumbnailsEnabled';
+
+  /// 列表是否显示图片缩略图。默认**开**——用户要的就是"能看到图"；
+  /// 关掉的是少数（流量敏感），所以关这个动作要记下来。
+  Future<bool> loadThumbnailsEnabled() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(thumbnailsEnabledKey) ?? true;
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '读取缩略图开关失败: $e',
+        level: LogLevel.debug,
+      );
+      return true;
+    }
+  }
+
+  Future<void> saveThumbnailsEnabled(bool enabled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(thumbnailsEnabledKey, enabled);
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '保存缩略图开关失败: $e',
+        level: LogLevel.debug,
+      );
+    }
+  }
 }

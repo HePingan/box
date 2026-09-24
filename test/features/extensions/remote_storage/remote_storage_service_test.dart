@@ -11,6 +11,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:box/features/extensions/plugins/remote_storage/application/remote_storage_service.dart';
+import 'package:box/features/extensions/plugins/remote_storage/data/remote_thumbnail_cache.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/webdav_client.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,22 +24,28 @@ void main() {
 
   late FakeTransport transport;
   late Directory docsDir;
+  late Directory thumbRoot;
   late RemoteStorageService service;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     transport = FakeTransport();
     docsDir = await Directory.systemTemp.createTemp('rs_service_test_');
+    thumbRoot = await Directory.systemTemp.createTemp('rs_thumb_test_');
     service = RemoteStorageService(
       transportFactory: (_) => transport,
       docsDirProvider: () async => docsDir,
+      // 注入临时目录：缩略图缓存默认落 path_provider 的目录，单测里要避开平台通道。
+      thumbnailCache: RemoteThumbnailCache(root: thumbRoot),
     );
   });
 
   tearDown(() async {
-    try {
-      await docsDir.delete(recursive: true);
-    } catch (_) {}
+    for (final dir in [docsDir, thumbRoot]) {
+      try {
+        await dir.delete(recursive: true);
+      } catch (_) {}
+    }
   });
 
   group('账户', () {
@@ -956,6 +963,70 @@ void main() {
       transport.handler = (_) async => xmlResponse(quotaXml());
       final empty = await service.quota(testAccount());
       expect(empty.hasAny, isFalse);
+    });
+  });
+
+  group('列表缩略图（281+）', () {
+    RemoteStorageEntry image({String name = 'a.jpg', int size = 1000}) =>
+        RemoteStorageEntry(
+          name: name,
+          path: name,
+          isDirectory: false,
+          size: size,
+          modifiedAt: DateTime.utc(2023, 1, 30, 11, 22),
+        );
+
+    test('超过上限的图片：直接返回 null，一次请求都不发', () async {
+      final result = await service.readThumbnail(
+        testAccount(),
+        image(size: kThumbnailMaxBytes + 1),
+      );
+      expect(result, isNull);
+      expect(transport.requestCount, 0, reason: '不该为了超大图去发请求');
+    });
+
+    test('非图片：返回 null，不发请求', () async {
+      final result = await service.readThumbnail(
+        testAccount(),
+        image(name: 'a.mp4'),
+      );
+      expect(result, isNull);
+      expect(transport.requestCount, 0);
+    });
+
+    test('取回字节并缓存：第二次不再请求（滚动来回不重复下载）', () async {
+      transport.handler = (_) async => streamResponse(kTinyPng, status: 206);
+      final account = testAccount();
+      final entry = image(size: kTinyPng.length);
+
+      final first = await service.readThumbnail(account, entry);
+      expect(first, isNotNull);
+      expect(first!.length, kTinyPng.length);
+      expect(transport.requestCount, 1);
+
+      final second = await service.readThumbnail(account, entry);
+      expect(second, isNotNull);
+      expect(transport.requestCount, 1, reason: '命中缓存，不该再发请求');
+    });
+
+    test('服务器报错 → null（列表回退通用图标，不显示错误）', () async {
+      transport.handler = (_) async => headResponse(status: 500);
+      final result = await service.readThumbnail(testAccount(), image());
+      expect(result, isNull);
+    });
+
+    test('返回内容比条目声明的大（列表过期）→ 不显示、不缓存', () async {
+      // 条目说 1000 字节（够小），实际服务器给了超过上限的内容。
+      final big = List<int>.filled(kThumbnailMaxBytes + 10, 1);
+      transport.handler = (_) async => streamResponse(big, status: 206);
+
+      final result = await service.readThumbnail(testAccount(), image());
+      expect(result, isNull);
+
+      // 再取一次仍然要发请求（没缓存失败结果）
+      transport.handler = (_) async => streamResponse(kTinyPng, status: 206);
+      final again = await service.readThumbnail(testAccount(), image());
+      expect(again, isNotNull);
     });
   });
 }

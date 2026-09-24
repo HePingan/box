@@ -62,6 +62,31 @@ class _FakeService extends RemoteStorageService {
     return PreviewPayload(bytes: imageBytes, truncated: false, oversize: false);
   }
 
+  /// 列表缩略图（281+）：默认不给图（回退图标），用例按需塞字节。
+  Uint8List? thumbnailBytes;
+  final List<String> thumbnailPaths = [];
+  bool thumbnailsEnabled = true;
+  final List<bool> savedThumbnailFlags = [];
+
+  @override
+  Future<Uint8List?> readThumbnail(
+    RemoteStorageAccount account,
+    RemoteStorageEntry entry, {
+    TransferCancelToken? cancel,
+  }) async {
+    thumbnailPaths.add(entry.path);
+    return thumbnailBytes;
+  }
+
+  @override
+  Future<bool> loadThumbnailsEnabled() async => thumbnailsEnabled;
+
+  @override
+  Future<void> saveThumbnailsEnabled(bool enabled) async {
+    thumbnailsEnabled = enabled;
+    savedThumbnailFlags.add(enabled);
+  }
+
   /// 记录批量删除调用（B1 的删除确认测试用），不触网。
   final List<List<RemoteStorageEntry>> deletedBatches = [];
 
@@ -175,6 +200,113 @@ void main() {
       expect(service.saved!.label, '我的坚果云');
       expect(service.saved!.username, 'user@example.com');
       expect(service.saved!.password, 'app-pass');
+    });
+  });
+
+  group('列表缩略图（281+）', () {
+    RemoteStorageEntry imageEntry({
+      String name = 'a.jpg',
+      int size = 1024,
+    }) => RemoteStorageEntry(
+      name: name,
+      path: name,
+      isDirectory: false,
+      size: size,
+      modifiedAt: DateTime.utc(2023, 1, 30, 11, 22),
+    );
+
+    testWidgets('小图显示缩略图（不是通用图标）', (tester) async {
+      final service = _FakeService(entries: [imageEntry()]);
+      service.thumbnailBytes = kTinyPng;
+      debugSetRemoteStorageRuntime(service: service);
+
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(service.thumbnailPaths, ['a.jpg'], reason: '应该去取这张图');
+      expect(
+        find.byType(Image),
+        findsOneWidget,
+        reason: '取到字节后行首应是图片缩略图',
+      );
+      expect(find.byIcon(Icons.image_outlined), findsNothing);
+    });
+
+    testWidgets('超过上限的大图不取：保持通用图标，也不发请求', (tester) async {
+      final service = _FakeService(
+        entries: [imageEntry(size: kThumbnailMaxBytes + 1)],
+      );
+      service.thumbnailBytes = kTinyPng;
+      debugSetRemoteStorageRuntime(service: service);
+
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(service.thumbnailPaths, isEmpty, reason: '大图不该去取');
+      expect(find.byIcon(Icons.image_outlined), findsOneWidget);
+      expect(find.byType(Image), findsNothing);
+    });
+
+    testWidgets('取不到（返回 null）→ 回退通用图标，列表不显示错误', (tester) async {
+      final service = _FakeService(entries: [imageEntry()]);
+      service.thumbnailBytes = null;
+      debugSetRemoteStorageRuntime(service: service);
+
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(service.thumbnailPaths, ['a.jpg'], reason: '尝试过');
+      expect(find.byIcon(Icons.image_outlined), findsOneWidget);
+      expect(find.byType(Image), findsNothing);
+      expect(find.textContaining('失败'), findsNothing);
+    });
+
+    testWidgets('开关关闭时完全不取图（偏好从存储读）', (tester) async {
+      final service = _FakeService(entries: [imageEntry()]);
+      service.thumbnailsEnabled = false;
+      service.thumbnailBytes = kTinyPng;
+      debugSetRemoteStorageRuntime(service: service);
+
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(service.thumbnailPaths, isEmpty);
+      expect(find.byIcon(Icons.image_outlined), findsOneWidget);
+    });
+
+    testWidgets('顶栏「更多」里可以关掉缩略图，并写回偏好', (tester) async {
+      final service = _FakeService(entries: [imageEntry()]);
+      service.thumbnailBytes = kTinyPng;
+      debugSetRemoteStorageRuntime(service: service);
+
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(Image), findsOneWidget);
+
+      // 行内也有 tooltip '更多'（每行的操作菜单），这里只点顶栏那个。
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.byTooltip('更多'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('显示图片缩略图'));
+      await tester.pumpAndSettle();
+
+      expect(service.savedThumbnailFlags, [false], reason: '关掉要持久化');
+      expect(find.byIcon(Icons.image_outlined), findsOneWidget);
+      expect(find.byType(Image), findsNothing);
     });
   });
 
