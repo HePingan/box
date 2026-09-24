@@ -1,8 +1,9 @@
 # 远程存储插件：下一步优化方案（面向 1.20.22+279）
 
-- 日期：2026-09-24 ｜ 状态：**待拍板** ｜ 承接：`docs/remote_storage_plugin_plan.md`（下称"原方案"）§11
+- 日期：2026-09-24 ｜ 状态：**已拍板并实施完毕（2026-09-24）** ｜ 承接：`docs/remote_storage_plugin_plan.md`（下称"原方案"）§11
 - 结论一句话：**先做 6 个低风险高收益的"体检项"，与已拍板的 B 档（写操作 / SAF 导出 / 播放增强）合并成 279；凭据加固与大目录性能单独立项。**
 - 与之并列的一条待办：**原方案 §11.3 声称 B 档"实施中"，但仓库里一行都没有**（见 §0.2），需要先确认是"随磁盘一起丢了"还是"只是计划"。
+- 拍板结论（用户 2026-09-24）：① 采"第 1 组 + B 档"合并 → **是**；② C1 凭据加固本轮做 → **做**；③ B 档找回 → **没有可找回的实现，重做**。实施结果见 §9。
 
 ---
 
@@ -185,3 +186,38 @@ B 档的实现要点（补原方案未写细的部分）：
 3. **B 档是否需要找回**：原方案说"实施中"，仓库里没有。若你手上有未提交的实现（另一台机/别的目录），先找回来比重写省事——需要你确认一下有没有。
 
 > 附：本次核对用到的复现方式（供复核）—— 线上 APK 的 `lib/app-release.apk` 与 278 构建产物解出 `lib/arm64-v8a/libapp.so`，对其做 **UTF-16LE / ASCII 精确子串计数**（CJK 字面量在 AOT 快照里是 UTF-16LE，直接按 UTF-8 grep 会全为 0，别被误导）；不要用"二进制差异行数"判断功能差异，AOT 快照在同一源码上也不稳定（本次两包差异字节占 91%，与功能无关）。
+
+---
+
+## 9. 实施结果（2026-09-24 完成，1.20.22+279）
+
+### 9.1 逐项落点与验证
+
+| 项 | 落点 | 做法 | 验证 |
+| --- | --- | --- | --- |
+| O1 | `remote_storage_service.dart` `scanConflicts` | 一次 `client.list()` 建名集取代每文件一次串行 HEAD；**刻意绕开 15s 目录缓存**（冲突判定属写路径安全检查，陈旧列表会漏判成静默覆盖），目录不可读时降级回逐文件 HEAD | 单测断言"只发 1 次 PROPFIND"且冲突集合正确 |
+| O2 | `remote_storage_models.dart`（`kTransferRetryDelays`/`isRetryableTransferError`/`retryDelayFor`）、`transfer_queue.dart`、`webdav_client.dart`（`_statusToException`/`parseRetryAfterHeader`）、`remote_storage_service.dart` | 401/403/404/405/409/507 立即失败不重试；网络抖动/超时/429/5xx 退避 800ms→2s 重试；`Retry-After` 支持秒数与 HTTP-date，且**只增不减**（取 max） | 单测：不可重试分类、429 遵守 Retry-After、退避序列越界取两端 |
+| O3 | `remote_storage_models.dart`（`RemoteStorageEntry.etag`）、`webdav_client.dart`（PROPFIND 加 `<d:getetag/>` 并解析）、`remote_storage_service.dart`（`_dirCache`/`dirCacheTtl`/`invalidateListing`）、浏览页（刷新/重试/下拉刷新走 `forceRefresh`） | 15s TTL + 上限 64 个目录的会话内缓存（命中即移到队尾，淘汰最久未用）；上传成功与账户增删改主动失效；key 带账户 id 隔离 | 单测：TTL 命中、写后失效、无 etag 服务器降级、跨账户隔离 |
+| O4 | `webdav_client.dart`（`parseListing` 静态纯函数 + `parseListingMaybeIsolated`）、`entries.add` 带 etag | 解析在后台 isolate 跑，UI isolate 不再做上千条 XML DOM 解析 | 单测：大批量 fixture 结果与同步解析一致 |
+| O5 | `remote_storage_models.dart`（`RemoteStorageQuota`/`uploadExceedsQuota`）、`webdav_client.dart`（`quota-available-bytes`）、浏览页 `_safeQuota()` | 属性缺失即不显示（多数组件返回不一致）；上传前查一次，可能不足时先确认，**配额只提示不挡上传**（查询异常一律吞掉） | 单测：属性缺失不崩、未知一律不提示、格式化复用 `formatRemoteBytes` |
+| O6 | `remote_storage_models.dart`（`kMaxRemoteSegmentBytes`/`remoteSegmentRejectionReason`/`kWindowsReservedNames`） | 长度按 **UTF-8 字节** 判 255（旧实现按 UTF-16 单元，"200 汉字"= 600 字节会被服务端拒收）；去首尾空白、削结尾点；拒 Windows 保留名与控制字符 | 单测：字节边界、保留名、首尾点空格、与清洗判据同步 |
+| O9 | `remote_storage_service.dart` `send()`、`webdav_client.dart` | 每次传输记 `方法 host path → 状态码, 耗时ms` 到 `STORAGE` 频道，失败升级为 error（不含用户名/密码） | 单测：日志频道与级别 |
+| B1 | `webdav_client.dart`（`delete`/`createDirectory`/`move`/`copy` + `_relocate`）、`remote_storage_service.dart`（`createFolder`/`renameEntry`/`moveEntry`/`copyEntry`/`deleteEntry` + 三个批量方法）、浏览页 | DELETE/MKCOL/MOVE/COPY 全部实现：`Destination` 用绝对且已编码的 URL、`Overwrite: F` 显式声明"不许静默覆盖"、MKCOL 201/405-409 与 MOVE-COPY 412/409 各有专文案；UI 长按进多选（批量下载/复制/移动/删除）、条目菜单加重命名/复制/移动到/删除/多选、顶栏加新建文件夹；删除二次确认按内容变标题（"删除文件夹及其内容？"），写明"一并删除""无法恢复" | 单测（客户端请求形状 + 服务层行为）+ widget 6 组（多选进出、全选、确认文案、取消不发请求、批量结果汇报、新建入口） |
+| B1+ | 同上 | 多选批量与账户内 COPY 与 B1 同批完成（共用目录选择器与调用路径） | 同上 |
+| B2 | `remote_storage_models.dart`（`kSafExportMaxBytes`/`exportStrategyFor`/`mimeTypeForFileName`）、浏览页下载完成弹窗 | ≤64MB 读内存后走 `FilePicker.saveFile`（Android 即系统 SAF 另存），>64MB 或大小未知弹说明引导走"分享→保存到文件"；**大小未知按保守策略**（不赌内存） | 单测：阈值边界、未知大小保守、MIME 大小写与回落 |
+| B3 | `playback_progress.dart`、`data/playback_progress_store.dart`、`subtitle_support.dart`、播放页 | 续播：15 秒起记、95% 视为看完、5 秒定时 + 退出补写；字幕：进页面找同目录 `.srt/.vtt`（同名优先，`movie.zh.srt` 配 `movie.mp4`，`movie2.srt` 不配），自动挂同名字幕并给 CC 菜单切换/关闭；自带 SRT/VTT 解析（video_player 未导出其解析器），坏块跳过而不是当 0 秒、清行内标签与实体 | 单测 18 组（续播边界、进度文案、键隔离、候选排序、SRT/VTT 解析、坏块、BOM/CRLF、非法时间戳） |
+| C1 | `lib/utils/local_secret_codec.dart`（新增）、`account_store.dart`、`remote_storage_store.dart`、`AndroidManifest.xml`+`data_extraction_rules.xml` | 每安装随机密钥 + AES-GCM（带认证）；新格式 `B2` 前缀 + `base64(nonce‖密文+tag)`；**旧密文仍可读并懒迁移**（升级不被登出）；关云备份与 D2D 迁移 | 单测：新格式往返、篡改解不出、旧格式迁移；全量 2781 通过（唯一失败是联网的加速地址用例，与本轮无关） |
+
+### 9.2 与方案的两处有意识偏离
+
+1. **O6 的 Unicode 归一化没做**：`dart:core` 无 NFC/NFD 实现，引入 `unorm_dart` 属新依赖，按方案 §2 O6 第 3 条的"退化为原样透传"执行，并在 `sanitizeRemoteSegment` 注释里写明这是已知缺口（群晖/macOS 以 NFD 存名时可能显示成两份）。
+2. **O3 缓存上限取 64 个目录**（方案写"例如 200"）：按"一个账户同时活跃的目录很少超过十几个"估的，64 足够覆盖返回上一级/来回切目录，内存占用更小；要调只改 `kDirCacheMaxEntries`。
+
+### 9.3 仍未做（按方案本就属第 3 组，不在 279 内）
+
+C2 下载断点续传、C3 大目录首屏优先与搜索、C4 图片缩略图与网格、C5 Digest 认证、C6 中继预读、C7 并发度（`kMaxConcurrentTransfers` 死常量仍在，未删也未实现——留给"要不要真做并发"的拍板）。
+
+### 9.4 279 提交链
+
+`c6f9ca8`（O1/O2/O9）→ O3/O5 第一批 → `3cdc0a4`（O4/O6）→ `63cc6db`（O5 收尾）→ `081b9ba`（C1）→ `0f10fe2`（B1 客户端与服务层）→ `2b04eb2`（B1 UI）→ `9b66b26`（B3）→ `2787581`（B2）。插件测试从 115 → 191。
+
