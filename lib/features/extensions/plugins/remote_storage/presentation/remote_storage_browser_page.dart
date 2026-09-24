@@ -115,6 +115,15 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   List<RemoteStorageEntry> _entries = const [];
   bool _uploading = false;
 
+  /// 写操作进行中（删除/移动/复制/新建）——期间禁用入口，避免同一目标被并发改。
+  bool _busy = false;
+
+  /// 多选态（B1+）：按 [RemoteStorageEntry.path] 记录而不是按对象，
+  /// 这样列表刷新（重新 fetch 出全新对象）后选中态不会丢。
+  final Set<String> _selectedPaths = <String>{};
+
+  bool get _selectionMode => _selectedPaths.isNotEmpty;
+
   /// 滚动位置记忆：账户 + 目录 → 离开时的偏移。
   ///
   /// 每个目录都是独立 route（`Navigator.push`），route 级 PageStorage 无法
@@ -204,6 +213,388 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
         _loading = false;
       });
     }
+  }
+
+  // ------------------------------------------------------------------ 多选
+
+  void _enterSelection(RemoteStorageEntry entry) {
+    setState(() => _selectedPaths.add(entry.path));
+  }
+
+  void _toggleSelected(RemoteStorageEntry entry) {
+    setState(() {
+      if (!_selectedPaths.remove(entry.path)) _selectedPaths.add(entry.path);
+    });
+  }
+
+  void _clearSelection() => setState(_selectedPaths.clear);
+
+  void _toggleSelectAll() {
+    setState(() {
+      if (_selectedPaths.length == _entries.length) {
+        _selectedPaths.clear();
+      } else {
+        _selectedPaths
+          ..clear()
+          ..addAll(_entries.map((e) => e.path));
+      }
+    });
+  }
+
+  List<RemoteStorageEntry> _selectedEntries() =>
+      _entries.where((e) => _selectedPaths.contains(e.path)).toList();
+
+  /// 批量下载：复用传输队列（逐个入队），不阻塞 UI。
+  void _downloadSelected() {
+    final files = _selectedEntries().where((e) => !e.isDirectory).toList();
+    if (files.isEmpty) {
+      _snack('选中的都是文件夹：文件夹请先进入后逐项下载');
+      return;
+    }
+    for (final entry in files) {
+      _enqueueDownload(entry);
+    }
+    _snack('已加入下载队列：${files.length} 个文件');
+    _clearSelection();
+  }
+
+  /// 删除确认：目录必须写清"内容一并删除、不可恢复"（服务器多为递归删除）。
+  Future<bool> _confirmDelete(List<RemoteStorageEntry> entries) async {
+    final hasDir = entries.any((e) => e.isDirectory);
+    final names = entries.take(3).map((e) => e.name).join('、');
+    final more = entries.length > 3 ? ' 等 ${entries.length} 项' : '';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(hasDir ? '删除文件夹及其内容？' : '删除这些文件？'),
+        content: Text(
+          '$names$more\n\n'
+          '${hasDir ? '文件夹内的所有内容会一并删除。' : ''}'
+          '删除后无法恢复（不进回收站）。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+              foregroundColor: Theme.of(ctx).colorScheme.onError,
+            ),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
+  Future<void> _deleteSelected() async {
+    final entries = _selectedEntries();
+    if (entries.isEmpty || _busy) return;
+    if (!await _confirmDelete(entries)) return;
+    if (!mounted) return;
+
+    final result = await _runWrite(
+      () => remoteStorageService().deleteEntries(widget.account, entries),
+    );
+    if (result == null) return;
+    _clearSelection();
+    _reportBatch('删除', result);
+  }
+
+  Future<void> _deleteEntry(RemoteStorageEntry entry) async {
+    if (_busy) return;
+    if (!await _confirmDelete([entry])) return;
+    if (!mounted) return;
+
+    final result = await _runWrite(
+      () => remoteStorageService().deleteEntries(widget.account, [entry]),
+    );
+    if (result == null) return;
+    _reportBatch('删除', result);
+  }
+
+  /// 复制 / 移动到别的目录（都走同一套目录选择 + 批量执行）。
+  Future<void> _copyOrMoveSelected({required bool copy}) async {
+    final entries = _selectedEntries();
+    if (entries.isEmpty || _busy) return;
+    await _copyOrMoveEntries(entries, copy: copy);
+    if (!mounted) return;
+    _clearSelection();
+  }
+
+  Future<void> _copyOrMoveEntry(
+    RemoteStorageEntry entry, {
+    required bool copy,
+  }) async {
+    if (_busy) return;
+    await _copyOrMoveEntries([entry], copy: copy);
+  }
+
+  Future<void> _copyOrMoveEntries(
+    List<RemoteStorageEntry> entries, {
+    required bool copy,
+  }) async {
+    final action = copy ? '复制' : '移动';
+    final targetDir = await _pickDirectory(
+      title: '$action到…',
+      excludePaths: entries.map((e) => e.path).toSet(),
+    );
+    if (targetDir == null || !mounted) return;
+
+    final service = remoteStorageService();
+    final result = await _runWrite(
+      () => copy
+          ? service.copyEntries(
+              widget.account,
+              entries: entries,
+              targetDir: targetDir,
+            )
+          : service.moveEntries(
+              widget.account,
+              entries: entries,
+              targetDir: targetDir,
+            ),
+    );
+    if (result == null) return;
+    _reportBatch(action, result);
+  }
+
+  Future<void> _createFolder() async {
+    if (_busy) return;
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('新建文件夹'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: '文件夹名',
+            hintText: '例如：备份',
+          ),
+          onSubmitted: (value) => Navigator.pop(ctx, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('创建'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.trim().isEmpty || !mounted) return;
+
+    final result = await _runWrite(() async {
+      await remoteStorageService().createFolder(
+        widget.account,
+        parentPath: _path,
+        name: name,
+      );
+      return const RemoteBatchResult(succeeded: 1, failures: []);
+    });
+    if (result == null) return;
+    _reportBatch('新建文件夹', result);
+  }
+
+  Future<void> _renameEntry(RemoteStorageEntry entry) async {
+    if (_busy) return;
+    final controller = TextEditingController(text: entry.name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重命名'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: '新名称'),
+          onSubmitted: (value) => Navigator.pop(ctx, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.trim().isEmpty || !mounted) return;
+
+    final result = await _runWrite(() async {
+      await remoteStorageService().renameEntry(
+        widget.account,
+        entry: entry,
+        newName: name,
+      );
+      return const RemoteBatchResult(succeeded: 1, failures: []);
+    });
+    if (result == null) return;
+    _reportBatch('重命名', result);
+  }
+
+  /// 目录选择器：只列文件夹，可逐级进入；返回选中的目录路径。
+  ///
+  /// [excludePaths] 用于"移动到自己所在目录"这类空操作提示（服务层本身会 no-op，
+  /// 这里先给出提示，省一次往返）。
+  Future<String?> _pickDirectory({
+    required String title,
+    Set<String> excludePaths = const <String>{},
+  }) {
+    var current = '';
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          title: Text(title),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 340,
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      tooltip: '上一级',
+                      onPressed: current.isEmpty
+                          ? null
+                          : () => setDlg(() => current = parentRemotePath(current)),
+                      icon: const Icon(Icons.arrow_upward_rounded),
+                    ),
+                    Expanded(
+                      child: Text(
+                        current.isEmpty ? '根目录' : '/$current',
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(ctx).textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: FutureBuilder<List<RemoteStorageEntry>>(
+                    future: remoteStorageService().list(
+                      widget.account,
+                      current,
+                      forceRefresh: true,
+                    ),
+                    builder: (ctx, snap) {
+                      if (snap.connectionState != ConnectionState.done) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      final err = snap.error;
+                      if (err != null) {
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Text('$err', textAlign: TextAlign.center),
+                          ),
+                        );
+                      }
+                      final dirs = (snap.data ?? const <RemoteStorageEntry>[])
+                          .where((e) => e.isDirectory)
+                          .toList();
+                      if (dirs.isEmpty) {
+                        return const Center(child: Text('没有子文件夹'));
+                      }
+                      return ListView(
+                        children: [
+                          for (final dir in dirs)
+                            ListTile(
+                              dense: true,
+                              leading: const Icon(Icons.folder_rounded),
+                              title: Text(
+                                dir.name,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              onTap: () => setDlg(() => current = dir.path),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: excludePaths.contains(current)
+                  ? null
+                  : () => Navigator.pop(ctx, current),
+              child: const Text('选此目录'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 包一层统一的忙态 + 异常提示；成功返回结果，失败返回 null（已提示）。
+  Future<RemoteBatchResult?> _runWrite(
+    Future<RemoteBatchResult> Function() action,
+  ) async {
+    setState(() => _busy = true);
+    try {
+      final result = await action();
+      if (mounted) await _load(force: true);
+      return result;
+    } on RemoteStorageException catch (e) {
+      if (mounted) _snack(e.message);
+      return null;
+    } catch (e) {
+      if (mounted) _snack('操作失败：$e');
+      return null;
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// 汇报批量结果：全成功一句 SnackBar；有失败则列出明细。
+  void _reportBatch(String action, RemoteBatchResult result) {
+    if (!result.hasFailures) {
+      _snack('$action完成：${result.succeeded} 项');
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('$action：部分未完成'),
+        content: SingleChildScrollView(
+          child: Text(result.failures.join('\n')),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   // ------------------------------------------------------------- 上传（拍板 2/3）
@@ -511,27 +902,65 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
                 style: Theme.of(ctx).textTheme.labelLarge,
               ),
             ),
-            if (kind == RemoteEntryKind.video || kind == RemoteEntryKind.audio)
+            if (!entry.isDirectory &&
+                (kind == RemoteEntryKind.video ||
+                    kind == RemoteEntryKind.audio))
               ListTile(
                 leading: const Icon(Icons.play_arrow_rounded),
                 title: const Text('播放'),
                 onTap: () => Navigator.pop(ctx, 'play'),
               ),
-            if (kind == RemoteEntryKind.image || kind == RemoteEntryKind.text)
+            if (!entry.isDirectory &&
+                (kind == RemoteEntryKind.image ||
+                    kind == RemoteEntryKind.text))
               ListTile(
                 leading: const Icon(Icons.visibility_outlined),
                 title: const Text('预览'),
                 onTap: () => Navigator.pop(ctx, 'preview'),
               ),
+            if (!entry.isDirectory)
+              ListTile(
+                leading: const Icon(Icons.download_rounded),
+                title: const Text('下载'),
+                onTap: () => Navigator.pop(ctx, 'download'),
+              ),
+            if (!entry.isDirectory)
+              ListTile(
+                leading: const Icon(Icons.open_in_new_rounded),
+                title: const Text('下载并打开'),
+                onTap: () => Navigator.pop(ctx, 'open'),
+              ),
+            const Divider(height: 1),
             ListTile(
-              leading: const Icon(Icons.download_rounded),
-              title: const Text('下载'),
-              onTap: () => Navigator.pop(ctx, 'download'),
+              leading: const Icon(Icons.drive_file_rename_outline_rounded),
+              title: const Text('重命名'),
+              onTap: () => Navigator.pop(ctx, 'rename'),
             ),
             ListTile(
-              leading: const Icon(Icons.open_in_new_rounded),
-              title: const Text('下载并打开'),
-              onTap: () => Navigator.pop(ctx, 'open'),
+              leading: const Icon(Icons.copy_rounded),
+              title: const Text('复制到…'),
+              onTap: () => Navigator.pop(ctx, 'copy'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.drive_file_move_rounded),
+              title: const Text('移动到…'),
+              onTap: () => Navigator.pop(ctx, 'move'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.checklist_rounded),
+              title: const Text('多选'),
+              onTap: () => Navigator.pop(ctx, 'multi'),
+            ),
+            ListTile(
+              leading: Icon(
+                Icons.delete_outline_rounded,
+                color: Theme.of(ctx).colorScheme.error,
+              ),
+              title: Text(
+                '删除',
+                style: TextStyle(color: Theme.of(ctx).colorScheme.error),
+              ),
+              onTap: () => Navigator.pop(ctx, 'delete'),
             ),
           ],
         ),
@@ -547,49 +976,132 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
         _enqueueDownload(entry);
       case 'open':
         _enqueueDownload(entry, openAfter: true);
+      case 'rename':
+        await _renameEntry(entry);
+      case 'copy':
+        await _copyOrMoveEntry(entry, copy: true);
+      case 'move':
+        await _copyOrMoveEntry(entry, copy: false);
+      case 'multi':
+        _enterSelection(entry);
+      case 'delete':
+        await _deleteEntry(entry);
     }
   }
 
   // ------------------------------------------------------------- UI
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_accountTitle),
+  /// 顶栏：多选态与常态是两套（多选时把排序/上传/刷新收起来，只留批量动作）。
+  PreferredSizeWidget _buildAppBar() {
+    if (_selectionMode) {
+      final allSelected =
+          _entries.isNotEmpty && _selectedPaths.length == _entries.length;
+      return AppBar(
+        leading: IconButton(
+          tooltip: '退出多选',
+          onPressed: _clearSelection,
+          icon: const Icon(Icons.close_rounded),
+        ),
+        title: Text('已选 ${_selectedPaths.length} 项'),
         actions: [
-          PopupMenuButton<RemoteStorageSortField>(
-            tooltip: '排序',
-            icon: const Icon(Icons.sort_rounded),
-            initialValue: _sessionSortField,
-            onSelected: _selectSortField,
-            itemBuilder: (_) => [
-              for (final field in RemoteStorageSortField.values)
-                CheckedPopupMenuItem<RemoteStorageSortField>(
-                  value: field,
-                  checked: _sessionSortField == field,
-                  child: Text(_sortFieldLabel(field)),
-                ),
-            ],
+          TextButton(
+            onPressed: _toggleSelectAll,
+            child: Text(allSelected ? '取消全选' : '全选'),
           ),
-          IconButton(
-            tooltip: '上传到当前目录',
-            onPressed: _uploading ? null : _pickAndUpload,
-            icon: _uploading
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.upload_file_rounded),
+        ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(48),
+          child: _buildSelectionActions(),
+        ),
+      );
+    }
+    return AppBar(
+      title: Text(_accountTitle),
+      actions: [
+        PopupMenuButton<RemoteStorageSortField>(
+          tooltip: '排序',
+          icon: const Icon(Icons.sort_rounded),
+          initialValue: _sessionSortField,
+          onSelected: _selectSortField,
+          itemBuilder: (_) => [
+            for (final field in RemoteStorageSortField.values)
+              CheckedPopupMenuItem<RemoteStorageSortField>(
+                value: field,
+                checked: _sessionSortField == field,
+                child: Text(_sortFieldLabel(field)),
+              ),
+          ],
+        ),
+        IconButton(
+          tooltip: '新建文件夹',
+          onPressed: _busy ? null : _createFolder,
+          icon: const Icon(Icons.create_new_folder_outlined),
+        ),
+        IconButton(
+          tooltip: '上传到当前目录',
+          onPressed: _uploading || _busy ? null : _pickAndUpload,
+          icon: _uploading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.upload_file_rounded),
+        ),
+        IconButton(
+          tooltip: '刷新',
+          onPressed: () => _load(force: true),
+          icon: const Icon(Icons.refresh_rounded),
+        ),
+      ],
+    );
+  }
+
+  /// 多选态下的批量动作条（横向可滚动，窄屏不挤爆）。
+  Widget _buildSelectionActions() {
+    final entries = _selectedEntries();
+    final hasFile = entries.any((e) => !e.isDirectory);
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        children: [
+          TextButton.icon(
+            onPressed: _busy || !hasFile ? null : _downloadSelected,
+            icon: const Icon(Icons.download_rounded, size: 20),
+            label: const Text('下载'),
           ),
-          IconButton(
-            tooltip: '刷新',
-            onPressed: () => _load(force: true),
-            icon: const Icon(Icons.refresh_rounded),
+          TextButton.icon(
+            onPressed: _busy ? null : () => _copyOrMoveSelected(copy: true),
+            icon: const Icon(Icons.copy_rounded, size: 20),
+            label: const Text('复制到'),
+          ),
+          TextButton.icon(
+            onPressed: _busy ? null : () => _copyOrMoveSelected(copy: false),
+            icon: const Icon(Icons.drive_file_move_rounded, size: 20),
+            label: const Text('移动到'),
+          ),
+          TextButton.icon(
+            onPressed: _busy ? null : _deleteSelected,
+            icon: Icon(
+              Icons.delete_outline_rounded,
+              size: 20,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            label: Text(
+              '删除',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           ),
         ],
       ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: _buildAppBar(),
       body: Column(
         children: [
           _buildBreadcrumb(),
@@ -710,22 +1222,44 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
 
   Widget _buildEntryTile(RemoteStorageEntry entry) {
     final kind = remoteEntryKind(entry);
+    final selected = _selectedPaths.contains(entry.path);
     final subtitleParts = <String>[
       if (!entry.isDirectory) formatRemoteBytes(entry.size),
       if (entry.modifiedAt != null) _formatDate(entry.modifiedAt!),
     ];
     return ListTile(
-      leading: Icon(_iconFor(kind), color: _colorFor(kind, context)),
+      selected: selected,
+      selectedTileColor:
+          Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
+      leading: _selectionMode
+          ? Checkbox(
+              value: selected,
+              onChanged: (_) => _toggleSelected(entry),
+            )
+          : Icon(_iconFor(kind), color: _colorFor(kind, context)),
       title: Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: subtitleParts.isEmpty ? null : Text(subtitleParts.join(' · ')),
       trailing: entry.isDirectory
-          ? const Icon(Icons.chevron_right_rounded)
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.chevron_right_rounded),
+                IconButton(
+                  tooltip: '更多',
+                  onPressed: _busy ? null : () => _showEntryMenu(entry),
+                  icon: const Icon(Icons.more_vert_rounded),
+                ),
+              ],
+            )
           : IconButton(
               tooltip: '更多',
-              onPressed: () => _showEntryMenu(entry),
+              onPressed: _busy ? null : () => _showEntryMenu(entry),
               icon: const Icon(Icons.more_vert_rounded),
             ),
-      onTap: () => _onEntryTap(entry),
+      // 长按进多选：这是"批量操作"的入口，也避免给每个条目再塞一个图标。
+      onLongPress: () => _enterSelection(entry),
+      onTap: () =>
+          _selectionMode ? _toggleSelected(entry) : _onEntryTap(entry),
     );
   }
 

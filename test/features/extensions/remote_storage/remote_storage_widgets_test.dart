@@ -47,6 +47,20 @@ class _FakeService extends RemoteStorageService {
   }) async {
     return quotaResult;
   }
+
+  /// 记录批量删除调用（B1 的删除确认测试用），不触网。
+  final List<List<RemoteStorageEntry>> deletedBatches = [];
+
+  RemoteBatchResult batchResult = const RemoteBatchResult.empty();
+
+  @override
+  Future<RemoteBatchResult> deleteEntries(
+    RemoteStorageAccount account,
+    List<RemoteStorageEntry> entries,
+  ) async {
+    deletedBatches.add(entries);
+    return batchResult;
+  }
 }
 
 void main() {
@@ -183,6 +197,124 @@ void main() {
       );
       expect(find.textContaining('a.txt'), findsAtLeastNWidgets(1));
       expect(find.textContaining('docs'), findsAtLeastNWidgets(1));
+    });
+  });
+
+  group('写操作 UI（B1：多选与删除确认）', () {
+    const fileA = RemoteStorageEntry(
+      name: 'a.txt',
+      path: 'a.txt',
+      isDirectory: false,
+      size: 5,
+    );
+    const fileB = RemoteStorageEntry(
+      name: 'b.txt',
+      path: 'b.txt',
+      isDirectory: false,
+      size: 7,
+    );
+    const folder = RemoteStorageEntry(
+      name: 'docs',
+      path: 'docs',
+      isDirectory: true,
+    );
+
+    testWidgets('长按进多选：顶栏切成批量动作；再点一下取消选择即退出', (tester) async {
+      await pumpBrowser(tester, entries: const [fileA, fileB]);
+
+      expect(find.text('已选 1 项'), findsNothing);
+
+      await tester.longPress(find.text('a.txt'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('已选 1 项'), findsOneWidget);
+      expect(find.widgetWithText(TextButton, '删除'), findsOneWidget);
+      expect(find.widgetWithText(TextButton, '复制到'), findsOneWidget);
+      expect(find.text('全选'), findsOneWidget);
+
+      // 多选态下点同一项 = 取消选择；选空后自动退出多选。
+      await tester.tap(find.text('a.txt'));
+      await tester.pumpAndSettle();
+      expect(find.text('已选 1 项'), findsNothing);
+      expect(find.widgetWithText(TextButton, '删除'), findsNothing);
+    });
+
+    testWidgets('全选把当前目录所有条目选中（含文件夹）', (tester) async {
+      await pumpBrowser(tester, entries: const [fileA, folder]);
+
+      await tester.longPress(find.text('a.txt'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('全选'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('已选 2 项'), findsOneWidget);
+      expect(find.text('取消全选'), findsOneWidget);
+    });
+
+    testWidgets('删除确认：含文件夹时标题与文案都点明"内容一并删除、不可恢复"', (tester) async {
+      final service = await pumpBrowser(tester, entries: const [fileA, folder]);
+
+      await tester.longPress(find.text('docs'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, '删除'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('删除文件夹及其内容？'), findsOneWidget);
+      expect(find.textContaining('一并删除'), findsOneWidget);
+      expect(find.textContaining('无法恢复'), findsOneWidget);
+
+      // 取消：不发任何删除请求（这是"二次确认"的意义）。
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(service.deletedBatches, isEmpty);
+    });
+
+    testWidgets('确认删除后走批量删除接口，并把结果汇报出来', (tester) async {
+      final service = await pumpBrowser(tester, entries: const [fileA, fileB]);
+
+      await tester.longPress(find.text('a.txt'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('全选'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, '删除'));
+      await tester.pumpAndSettle();
+      // 全是文件：标题不该提文件夹。
+      expect(find.text('删除这些文件？'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, '删除'));
+      await tester.pumpAndSettle();
+
+      expect(service.deletedBatches, hasLength(1));
+      expect(
+        service.deletedBatches.single.map((e) => e.name).toList(),
+        ['a.txt', 'b.txt'],
+      );
+      expect(find.textContaining('删除完成'), findsOneWidget);
+    });
+
+    testWidgets('部分失败时列出明细（不假装成功）', (tester) async {
+      final service = await pumpBrowser(tester, entries: const [fileA, fileB]);
+      service.batchResult = const RemoteBatchResult(
+        succeeded: 1,
+        failures: ['b.txt：服务器拒绝删除（只读挂载或权限不足）'],
+      );
+
+      await tester.longPress(find.text('a.txt'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('全选'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, '删除'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '删除'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('删除：部分未完成'), findsOneWidget);
+      expect(find.textContaining('b.txt：'), findsOneWidget);
+    });
+
+    testWidgets('常态顶栏有「新建文件夹」入口', (tester) async {
+      await pumpBrowser(tester, entries: const [fileA]);
+      expect(find.byIcon(Icons.create_new_folder_outlined), findsOneWidget);
     });
   });
 }
