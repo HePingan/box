@@ -236,6 +236,11 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     final service = remoteStorageService();
     var usage = await service.thumbnailCacheUsage();
     if (!mounted) return;
+    // 注意：Dart 里 '$usage.files' 会被解析成 '${usage}.files'（字符串拼出来是
+    // "Instance of 'ThumbnailCacheUsage'.files"）——成员访问必须写成 ${usage.files}，
+    // 或者先取到局部变量。这里取局部变量，顺便避开 lint 的无谓大括号争议。
+    var countText = usage.files;
+    var bytesText = formatRemoteBytes(usage.bytes);
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
@@ -247,14 +252,11 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    '已缓存 $usage.files 张，占用 '
-                    '${formatRemoteBytes(usage.bytes)}',
-                  ),
+                  Text('已缓存 $countText 张，占用 $bytesText'),
                   const SizedBox(height: 8),
                   Text(
                     '上限 ${formatRemoteBytes(kThumbnailDiskMaxBytes)}'
-                    ' / ${kThumbnailDiskMaxFiles} 张，超出后自动清理最旧的。',
+                    ' / $kThumbnailDiskMaxFiles 张，超出后自动清理最旧的。',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -271,7 +273,11 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
                           await service.clearThumbnailCache();
                           final fresh = await service.thumbnailCacheUsage();
                           if (!dialogContext.mounted) return;
-                          setDialogState(() => usage = fresh);
+                          setDialogState(() {
+                            usage = fresh;
+                            countText = fresh.files;
+                            bytesText = formatRemoteBytes(fresh.bytes);
+                          });
                           if (!mounted) return;
                           ScaffoldMessenger.of(this.context).showSnackBar(
                             const SnackBar(content: Text('缩略图缓存已清空')),
