@@ -1473,4 +1473,117 @@ void main() {
       expect(await service.cachedListing(account, '相册'), isNull);
     });
   });
+
+  group('上传文件夹：本地扫描与建目录（284 D9）', () {
+    late Directory tmp;
+
+    setUp(() async {
+      tmp = await Directory.systemTemp.createTemp('d9_scan_');
+    });
+
+    tearDown(() async {
+      if (await tmp.exists()) await tmp.delete(recursive: true);
+    });
+
+    Future<File> write(String relative, [String content = 'x']) async {
+      final file = File('${tmp.path}/$relative');
+      await file.parent.create(recursive: true);
+      await file.writeAsString(content);
+      return file;
+    }
+
+    test('递归扫描：嵌套结构、相对路径含选中文件夹名、跳过隐藏条目', () async {
+      await write('相册/a.jpg', '12345');
+      await write('相册/2021/b.jpg', '1234567');
+      await write('相册/2021/01/c.jpg', '1');
+      await write('相册/.nomedia');
+      await write('相册/.trashed-123.jpg');
+      await Directory('${tmp.path}/相册/.thumbnails').create(recursive: true);
+
+      final scan = await service.scanLocalDirectory('${tmp.path}/相册');
+
+      final byName = {for (final f in scan.files) f.name: f};
+      expect(byName.keys.toSet(), <String>{'a.jpg', 'b.jpg', 'c.jpg'});
+      expect(byName['b.jpg']!.relativePath, '相册/2021/b.jpg');
+      expect(byName['c.jpg']!.relativePath, '相册/2021/01/c.jpg');
+      expect(byName['a.jpg']!.relativePath, '相册/a.jpg');
+      expect(byName['a.jpg']!.size, 5);
+      expect(
+        scan.skippedHidden,
+        3,
+        reason: '.nomedia/.trashed-*/.thumbnails（隐藏目录）都不是用户内容',
+      );
+      expect(scan.dirs, 3);
+      expect(scan.truncated, isFalse);
+      expect(scan.unreadableDirs, 0);
+      expect(scan.totalBytes, 5 + 7 + 1);
+    });
+
+    test('目录不存在/读不出来：不抛异常，返回空清单 + 计数', () async {
+      final scan = await service.scanLocalDirectory('${tmp.path}/没有这个目录');
+
+      expect(scan.files, isEmpty);
+      expect(scan.unreadableDirs, 1);
+      expect(scan.isEmpty, isTrue);
+    });
+
+    test('文件数命中上限：截断并置 truncated', () async {
+      final dir = Directory('${tmp.path}/大批');
+      await dir.create(recursive: true);
+      for (var i = 0; i < kFolderUploadMaxFiles + 3; i++) {
+        await File('${dir.path}/f$i.bin').writeAsString('x');
+      }
+
+      final scan = await service.scanLocalDirectory(dir.path);
+
+      expect(scan.files.length, kFolderUploadMaxFiles);
+      expect(scan.truncated, isTrue);
+    });
+
+    test('ensureRemoteDirs：父目录在前、已存在就跳过，返回新建数', () async {
+      final created = <String>[];
+      transport.handler = (request) async {
+        // 注意 exists() 走的是 HEAD（405/501 才退回 PROPFIND）；
+        // 中文名一律用已解码的 pathSegments 比对（uri.path 是百分号编码的）。
+        if (request.method == 'HEAD') {
+          return request.uri.pathSegments.last == '相册'
+              ? const WebdavResponse(statusCode: 200, headers: <String, String>{})
+              : const WebdavResponse(statusCode: 404, headers: <String, String>{});
+        }
+        if (request.method == 'MKCOL') {
+          created.add(request.uri.path);
+          return const WebdavResponse(statusCode: 201, headers: <String, String>{});
+        }
+        return const WebdavResponse(statusCode: 404, headers: <String, String>{});
+      };
+
+      final n = await service.ensureRemoteDirs(
+        testAccount(),
+        const ['相册/2021/01', '相册', '相册/2021'],
+      );
+
+      expect(created.map((p) => Uri.decodeComponent(p)).toList(), <String>[
+        '/dav/相册/2021',
+        '/dav/相册/2021/01',
+      ]);
+      expect(n, 2, reason: '已存在的 相册 不算新建');
+    });
+
+    test('ensureRemoteDirs：405（已存在）当成功，别的错误往上抛', () async {
+      transport.handler = (request) async => request.method == 'MKCOL'
+          ? const WebdavResponse(statusCode: 405, headers: <String, String>{})
+          : const WebdavResponse(statusCode: 404, headers: <String, String>{});
+      expect(await service.ensureRemoteDirs(testAccount(), const ['a/b']), 0);
+
+      transport.handler = (request) async => request.method == 'MKCOL'
+          ? const WebdavResponse(statusCode: 403, headers: <String, String>{})
+          : const WebdavResponse(statusCode: 404, headers: <String, String>{});
+      // exists 走 PROPFIND（404=不存在）→ 再 MKCOL 得 403 → 必须往上抛
+      await expectLater(
+        service.ensureRemoteDirs(testAccount(), const ['a']),
+        throwsA(isA<RemoteStorageException>()),
+        reason: '目录建不出来时继续传只会让每个文件都失败，该早点报错',
+      );
+    });
+  });
 }

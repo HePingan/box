@@ -835,4 +835,61 @@ void main() {
       );
     });
   });
+
+  group('上传文件夹的路径数学（284 D9）', () {
+    test('远端要建的目录：父目录在前、去重、不含文件名', () {
+      final dirs = remoteDirsToCreate(const [
+        '相册/2021/a.jpg',
+        '相册/2021/01/b.jpg',
+        '相册/c.jpg',
+        '单独.txt',
+      ]);
+
+      expect(dirs, <String>['相册', '相册/2021', '相册/2021/01']);
+      expect(
+        dirs.indexOf('相册') < dirs.indexOf('相册/2021'),
+        isTrue,
+        reason: 'MKCOL 父目录不存在时服务器返回 409，顺序错了整批都传不上去',
+      );
+    });
+
+    test('同一目录下的多个文件只建一次目录', () {
+      final dirs = remoteDirsToCreate(const [
+        'a/x1.bin',
+        'a/x2.bin',
+        'a/x3.bin',
+      ]);
+      expect(dirs, <String>['a']);
+    });
+
+    test('全在根层的文件：没有目录要建', () {
+      expect(remoteDirsToCreate(const ['a.txt', 'b.txt']), isEmpty);
+      expect(remoteDirsToCreate(const <String>[]), isEmpty);
+    });
+
+    test('选中文件夹名：从本地路径取，收掉尾斜杠与异常值', () {
+      expect(folderUploadRootName('/sdcard/DCIM/相册'), '相册');
+      expect(folderUploadRootName('/sdcard/DCIM/相册/'), '相册');
+      expect(folderUploadRootName('相册'), '相册');
+      expect(folderUploadRootName(''), '文件夹');
+      expect(folderUploadRootName('/'), '文件夹');
+      expect(folderUploadRootName('..'), '文件夹');
+    });
+
+    test('相对路径含选中文件夹名本身，且远端非法字符被清洗', () {
+      expect(
+        folderUploadRelativePath(rootName: '相册', relativeToRoot: '2021/a.jpg'),
+        '相册/2021/a.jpg',
+      );
+      expect(
+        folderUploadRelativePath(rootName: '相册', relativeToRoot: 'a.jpg'),
+        '相册/a.jpg',
+      );
+      expect(
+        folderUploadRelativePath(rootName: '相册', relativeToRoot: '../逃逸.jpg'),
+        '相册/逃逸.jpg',
+        reason: '`..` 段被丢掉：上传不能写到目标目录之外',
+      );
+    });
+  });
 }

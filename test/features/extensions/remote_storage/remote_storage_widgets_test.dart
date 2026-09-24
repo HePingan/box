@@ -140,6 +140,57 @@ class _FakeService extends RemoteStorageService {
 
   RemoteBatchResult batchResult = const RemoteBatchResult.empty();
 
+  /// 本地目录扫描（284 D9）：默认空清单，用例按需设置。
+  LocalFolderScan folderScan = const LocalFolderScan(
+    files: <LocalUploadFile>[],
+    dirs: 0,
+    skippedHidden: 0,
+    unreadableDirs: 0,
+    truncated: false,
+  );
+  final List<String> ensuredDirs = <String>[];
+  final List<(String, String)> uploadedTo = <(String, String)>[];
+  List<String> conflictNames = <String>[];
+
+  @override
+  Future<LocalFolderScan> scanLocalDirectory(
+    String dirPath, {
+    TransferCancelToken? cancel,
+  }) async =>
+      folderScan;
+
+  @override
+  Future<int> ensureRemoteDirs(
+    RemoteStorageAccount account,
+    List<String> relativeDirs, {
+    String basePath = '',
+  }) async {
+    ensuredDirs.addAll(relativeDirs);
+    return relativeDirs.length;
+  }
+
+  @override
+  Future<List<String>> scanConflicts(
+    RemoteStorageAccount account, {
+    required List<LocalUploadFile> files,
+    required String targetDir,
+  }) async =>
+      conflictNames;
+
+  @override
+  Future<bool> uploadFile(
+    RemoteStorageAccount account, {
+    required LocalUploadFile file,
+    required String targetDir,
+    required bool overwrite,
+    void Function(int sent, int total)? onProgress,
+    TransferCancelToken? cancel,
+  }) async {
+    uploadedTo.add((file.name, targetDir));
+    onProgress?.call(1, 1);
+    return true;
+  }
+
   /// 上次列出的内容（284 D7）：默认没有快照。
   DirSnapshot? snapshot;
 
@@ -595,6 +646,164 @@ void main() {
       );
       expect(find.textContaining('a.txt'), findsAtLeastNWidgets(1));
       expect(find.textContaining('docs'), findsAtLeastNWidgets(1));
+    });
+  });
+
+  group('上传整个文件夹（284 D9）', () {
+    const folder = '/sdcard/DCIM/相册';
+
+    LocalFolderScan scanOf(List<LocalUploadFile> files) => LocalFolderScan(
+          files: files,
+          dirs: 2,
+          skippedHidden: 0,
+          unreadableDirs: 0,
+          truncated: false,
+        );
+
+    LocalUploadFile upload(String name, String relative, int size) =>
+        LocalUploadFile(
+          path: '$folder/$relative',
+          name: name,
+          size: size,
+          relativePath: '相册/$relative',
+        );
+
+    Future<(TransferQueue, _FakeService)> open(
+      WidgetTester tester, {
+      required String? dir,
+    }) async {
+      final service = _FakeService();
+      final queue = TransferQueue();
+      debugSetRemoteStorageRuntime(
+        service: service,
+        queue: queue,
+        pickDirectory: () async => dir,
+      );
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+      return (queue, service);
+    }
+
+    /// 不能对这段流程用 `pumpAndSettle`：`_uploading` 期间顶栏是**不定进度圈**，
+    /// 它永远在动 → pumpAndSettle 必然超时（这个坑在 D9 里踩了一次）。
+    /// 用有界 pump 循环推进，同时把 AppLogger 的 250ms 反抖跑完。
+    Future<void> settle(WidgetTester tester) async {
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    Future<void> tapUploadFolder(WidgetTester tester) async {
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.byTooltip('更多'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('上传整个文件夹'));
+      await settle(tester);
+    }
+
+    testWidgets('选目录 → 摆出规模 → 按结构建目录并入队', (tester) async {
+      final (queue, service) = await open(tester, dir: folder);
+      service.folderScan = scanOf([
+        upload('a.jpg', 'a.jpg', 5),
+        upload('b.jpg', '2021/b.jpg', 7),
+        upload('c.jpg', '2021/01/c.jpg', 9),
+      ]);
+
+      await tapUploadFolder(tester);
+
+      expect(find.text('上传文件夹'), findsOneWidget);
+      expect(
+        find.textContaining('选中文件夹「相册」：共 3 个文件'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('将在远端新建 3 个目录'),
+        findsOneWidget,
+        reason: '相册 / 相册-2021 / 相册-2021-01 三层都要建',
+      );
+
+      await tester.tap(find.text('开始上传'));
+      await settle(tester);
+
+      // 目录父先子后、去重
+      expect(service.ensuredDirs, <String>['相册', '相册/2021', '相册/2021/01']);
+      // 文件按结构落到各自的远端目录
+      expect(service.uploadedTo, <(String, String)>[
+        ('a.jpg', '相册'),
+        ('b.jpg', '相册/2021'),
+        ('c.jpg', '相册/2021/01'),
+      ]);
+      expect(queue.tasks.length, 3);
+      expect(queue.tasks.every((t) => t.status == TransferStatus.done), isTrue);
+    });
+
+    testWidgets('取消确认：不建目录、一个任务都不入队', (tester) async {
+      final (queue, service) = await open(tester, dir: folder);
+      service.folderScan = scanOf([upload('a.jpg', 'a.jpg', 5)]);
+
+      await tapUploadFolder(tester);
+      await tester.tap(find.text('取消'));
+      await settle(tester);
+
+      expect(service.ensuredDirs, isEmpty);
+      expect(queue.tasks, isEmpty);
+    });
+
+    testWidgets('没选目录（用户直接返回）：什么都不做', (tester) async {
+      final (queue, service) = await open(tester, dir: null);
+      service.folderScan = scanOf([upload('a.jpg', 'a.jpg', 5)]);
+
+      await tapUploadFolder(tester);
+
+      expect(service.ensuredDirs, isEmpty);
+      expect(queue.tasks, isEmpty);
+      expect(find.text('上传文件夹'), findsNothing);
+    });
+
+    testWidgets('隐藏条目/截断/无权限都摆在确认框里', (tester) async {
+      final (_, service) = await open(tester, dir: folder);
+      service.folderScan = LocalFolderScan(
+        files: [upload('a.jpg', 'a.jpg', 5)],
+        dirs: 40,
+        skippedHidden: 3,
+        unreadableDirs: 2,
+        truncated: true,
+      );
+
+      await tapUploadFolder(tester);
+
+      expect(find.textContaining('跳过 3 个隐藏条目'), findsOneWidget);
+      expect(
+        find.textContaining('只上传前 $kFolderUploadMaxFiles 个文件'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('有 2 个子目录读不出来'), findsOneWidget);
+    });
+
+    testWidgets('同名冲突：摘要写进确认框，选择覆盖后按覆盖上传', (tester) async {
+      final (_, service) = await open(tester, dir: folder);
+      service.folderScan = scanOf([upload('a.jpg', 'a.jpg', 5)]);
+      service.conflictNames = <String>['a.jpg'];
+
+      await tapUploadFolder(tester);
+
+      expect(find.textContaining('其中 1 个与远端同名'), findsOneWidget);
+
+      await tester.tap(find.text('开始上传'));
+      await settle(tester);
+
+      // 冲突策略对话框照旧出现（复用既有流程）
+      expect(find.text('发现同名文件'), findsOneWidget);
+      await tester.tap(find.text('覆盖'));
+      await settle(tester);
+
+      expect(service.uploadedTo, <(String, String)>[('a.jpg', '相册')]);
     });
   });
 

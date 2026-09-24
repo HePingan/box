@@ -84,6 +84,95 @@ const int kRecursiveDownloadMaxFiles = 300;
 /// 递归扫描的目录数上限（防止深/宽的目录树把一次列表变成几十次请求）。
 const int kRecursiveDownloadMaxDirs = 200;
 
+/// 上传整个文件夹的上限（284 D9）。
+///
+/// 与 D6 同一套思路：本地目录也可能是几千文件（相册/下载目录），一次点选就把
+/// 队列塞满、把流量跑光。命中上限时**明确告知**"只传了前 N 个"。
+const int kFolderUploadMaxFiles = 500;
+
+/// 上传时递归扫描的目录数上限。
+const int kFolderUploadMaxDirs = 200;
+
+/// 本地目录扫描结果（284 D9）。
+class LocalFolderScan {
+  const LocalFolderScan({
+    required this.files,
+    required this.dirs,
+    required this.skippedHidden,
+    required this.unreadableDirs,
+    required this.truncated,
+  });
+
+  final List<LocalUploadFile> files;
+
+  /// 走过的目录数（含根）。
+  final int dirs;
+
+  /// 跳过的隐藏条目数（`.` 开头：`.nomedia`/`.trashed-*` 不是用户内容）。
+  final int skippedHidden;
+
+  /// 读不出来的子目录数（权限/已被删除）。
+  final int unreadableDirs;
+
+  /// 命中上限被截断——界面必须告知。
+  final bool truncated;
+
+  int get totalBytes =>
+      files.fold<int>(0, (sum, f) => sum + (f.size > 0 ? f.size : 0));
+
+  bool get isEmpty => files.isEmpty;
+}
+
+/// 从上传清单推出**需要在远端创建**的目录，父目录在前、去重（284 D9）。
+///
+/// 纯函数：MKCOL 必须父先子后，顺序错了服务器会 409/404；而且目录只需建一次，
+/// 逐个文件去建会在几百个文件时变成几百次多余的 MKCOL。
+///
+/// 例：`['相册/2021/a.jpg', '相册/2021/01/b.jpg', '相册/c.jpg']`
+///   → `['相册', '相册/2021', '相册/2021/01']`
+List<String> remoteDirsToCreate(Iterable<String> relativePaths) {
+  final dirs = <String>{};
+  for (final rel in relativePaths) {
+    final parts = rel.split('/').where((s) => s.isNotEmpty).toList();
+    if (parts.length <= 1) continue;
+    for (var i = 1; i < parts.length; i++) {
+      dirs.add(parts.take(i).join('/'));
+    }
+  }
+  final list = dirs.toList();
+  list.sort((a, b) {
+    final byDepth = a.split('/').length.compareTo(b.split('/').length);
+    return byDepth != 0 ? byDepth : a.compareTo(b);
+  });
+  return list;
+}
+
+/// 从本地目录路径取"选中文件夹的名字"（284 D9）。
+///
+/// service 与页面共用同一个函数：两边各写一遍的话，算出来的目录名一旦不一致，
+/// 就会出现"界面说传到 相册/ 下、实际传到别处"这种最难查的偏差。
+String folderUploadRootName(String localPath) {
+  final trimmed = localPath.endsWith('/')
+      ? localPath.substring(0, localPath.length - 1)
+      : localPath;
+  final name = trimmed.split('/').last;
+  return name.isEmpty || name == '.' || name == '..' ? '文件夹' : name;
+}
+
+/// 上传整个文件夹时，文件在远端要落的相对位置（含选中文件夹名本身，284 D9）。
+///
+/// [rootName] 是用户在本地选中的目录名：上传后远端多一层同名目录，
+/// 与 D6（下载文件夹保结构）方向相反、规则一致。
+/// 目录名逐段清洗，`..`/空段不会把文件写到目标目录之外。
+String folderUploadRelativePath({
+  required String rootName,
+  required String relativeToRoot,
+}) {
+  final safeRoot = sanitizeRemoteSegment(rootName) ?? '_';
+  final inner = sanitizeLocalSubPath(relativeToRoot);
+  return inner.isEmpty ? safeRoot : '$safeRoot/$inner';
+}
+
 /// 递归收集的结果（284 D6）。
 class RecursiveListing {
   const RecursiveListing({
@@ -1340,11 +1429,16 @@ class LocalUploadFile {
     required this.path,
     required this.name,
     required this.size,
+    this.relativePath,
   });
 
   final String path;
   final String name;
   final int size;
+
+  /// 上传整个文件夹时（284 D9）：相对于所选目录的路径，含所选目录名本身，
+  /// 如 `相册/2021/a.jpg`。单个文件上传时为 null。
+  final String? relativePath;
 }
 
 /// 预览数据（图片/文本共用）。

@@ -738,6 +738,136 @@ class RemoteStorageService {
     }
   }
 
+  /// 递归扫描本地目录（284 D9，上传整个文件夹用）。
+  ///
+  /// - 跳过 `.` 开头的隐藏条目：那是 `.nomedia`/`.trashed-*`/缩略图缓存一类的东西，
+  ///   不是用户想上传的内容；
+  /// - 单个子目录读不出来 → 跳过并计数，不因一个子目录失败让整批上传泡汤；
+  /// - 命中 [kFolderUploadMaxFiles] / [kFolderUploadMaxDirs] 即停下并置
+  ///   [LocalFolderScan.truncated]，由界面告知用户。
+  Future<LocalFolderScan> scanLocalDirectory(
+    String dirPath, {
+    TransferCancelToken? cancel,
+  }) async {
+    final rootName = folderUploadRootName(dirPath);
+    final files = <LocalUploadFile>[];
+    final pending = <String>[dirPath];
+    var dirs = 0;
+    var hidden = 0;
+    var unreadable = 0;
+    var truncated = false;
+    final prefix = dirPath.endsWith('/') ? dirPath : '$dirPath/';
+
+    while (pending.isNotEmpty) {
+      if (cancel?.isCanceled ?? false) break;
+      if (dirs >= kFolderUploadMaxDirs) {
+        truncated = true;
+        break;
+      }
+      final current = pending.removeAt(0);
+      dirs += 1;
+      final List<FileSystemEntity> children;
+      try {
+        children = await Directory(current).list(followLinks: false).toList();
+      } catch (_) {
+        unreadable += 1;
+        continue;
+      }
+      for (final entity in children) {
+        if (cancel?.isCanceled ?? false) break;
+        final path = entity.path;
+        final name = path.split('/').last;
+        if (name.isEmpty) continue;
+        if (name.startsWith('.')) {
+          hidden += 1;
+          continue;
+        }
+        if (entity is Directory) {
+          pending.add(path);
+          continue;
+        }
+        if (entity is! File) continue;
+        var size = 0;
+        try {
+          size = await entity.length();
+        } catch (_) {
+          size = 0;
+        }
+        final relativeToRoot =
+            path.startsWith(prefix) ? path.substring(prefix.length) : name;
+        files.add(
+          LocalUploadFile(
+            path: path,
+            name: name,
+            size: size,
+            relativePath: folderUploadRelativePath(
+              rootName: rootName,
+              relativeToRoot: relativeToRoot,
+            ),
+          ),
+        );
+        if (files.length >= kFolderUploadMaxFiles) {
+          truncated = true;
+          break;
+        }
+      }
+      if (truncated) break;
+    }
+
+    if (!await Directory(dirPath).exists()) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '上传扫描：本地目录不存在 $dirPath',
+        level: LogLevel.debug,
+      );
+    }
+
+    return LocalFolderScan(
+      files: files,
+      dirs: dirs,
+      skippedHidden: hidden,
+      unreadableDirs: unreadable,
+      truncated: truncated,
+    );
+  }
+
+  /// 确保远端目录存在（284 D9）：父目录在前逐级创建，已存在就跳过。
+  ///
+  /// 为什么自己排序而不是信调用方：MKCOL 的父目录不存在时服务器返回 409，
+  /// 顺序错了就是"传了 300 个文件、一个都没上去"。清单在 [remoteDirsToCreate] 里已去重排序。
+  /// 返回实际新建的目录数。
+  Future<int> ensureRemoteDirs(
+    RemoteStorageAccount account,
+    List<String> relativeDirs, {
+    String basePath = '',
+  }) async {
+    if (relativeDirs.isEmpty) return 0;
+    final client = clientFor(account);
+    var created = 0;
+    // 自己去重 + 按层数排序，不信调用方给的顺序：MKCOL 的父目录不存在时服务器返回
+    // 409，顺序错了就是"传了几百个文件、一个都没上去"，而这个错误在真机上很难复现。
+    final ordered = relativeDirs.toSet().toList()
+      ..sort((a, b) {
+        final byDepth = a.split('/').length.compareTo(b.split('/').length);
+        return byDepth != 0 ? byDepth : a.compareTo(b);
+      });
+    for (final rel in ordered) {
+      final target = joinRemotePath(basePath, rel);
+      try {
+        if (await client.exists(target)) continue;
+        await client.createDirectory(target);
+        created += 1;
+      } on RemoteStorageException catch (e) {
+        // 已存在（竞态/别的客户端刚建）→ 不算失败；其他错误往上抛：
+        // 目录建不出来时继续传文件只会让每个文件都失败，早点告诉用户更好。
+        if (e.statusCode == 405 || e.statusCode == 409) continue;
+        rethrow;
+      }
+    }
+    if (created > 0) invalidateListing(account, basePath);
+    return created;
+  }
+
   /// 上传单个文件；返回 false 表示远端已有同名文件且 [overwrite] 为 false（跳过）。
   Future<bool> uploadFile(
     RemoteStorageAccount account, {
@@ -1110,13 +1240,13 @@ class RemoteStorageService {
   /// 清空缩略图缓存（内存 + 磁盘）。
   Future<void> clearThumbnailCache() => _thumbnails.cache.clear();
 
-  /// 列表是否显示图片缩略图（持久化偏好）。
   /// 播放倍速偏好（284 P4）。
   Future<double> loadPlaybackSpeed() => _store.loadPlaybackSpeed();
 
   Future<void> savePlaybackSpeed(double speed) =>
       _store.savePlaybackSpeed(speed);
 
+  /// 列表是否显示图片缩略图（持久化偏好）。
   Future<bool> loadThumbnailsEnabled() => _store.loadThumbnailsEnabled();
 
   Future<void> saveThumbnailsEnabled(bool enabled) =>
@@ -1220,8 +1350,12 @@ class _CachedListing {
 RemoteStorageService? _runtimeService;
 TransferQueue? _runtimeQueue;
 
+/// 测试接缝（284 D9）：目录选择器。生产为 null，页面回落到真实 `FilePicker`。
+Future<String?> Function()? _runtimePickDirectory;
+
 /// 页面共享的 service 实例。
-RemoteStorageService remoteStorageService() => _runtimeService ??= RemoteStorageService();
+RemoteStorageService remoteStorageService() =>
+    _runtimeService ??= RemoteStorageService();
 
 /// 页面共享的传输队列实例。
 TransferQueue transferQueue() => _runtimeQueue ??= TransferQueue();
@@ -1230,7 +1364,13 @@ TransferQueue transferQueue() => _runtimeQueue ??= TransferQueue();
 void debugSetRemoteStorageRuntime({
   RemoteStorageService? service,
   TransferQueue? queue,
+  Future<String?> Function()? pickDirectory,
 }) {
   if (service != null) _runtimeService = service;
   if (queue != null) _runtimeQueue = queue;
+  if (pickDirectory != null) _runtimePickDirectory = pickDirectory;
 }
+
+/// 测试接缝（284 D9）：目录选择器。生产为 null，页面回落到真实 `FilePicker`。
+Future<String?> Function()? debugRemoteStoragePickDirectory() =>
+    _runtimePickDirectory;

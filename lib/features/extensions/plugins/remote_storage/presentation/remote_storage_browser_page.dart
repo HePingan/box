@@ -31,7 +31,7 @@ class _RecursiveFilePlan {
 }
 
 /// 顶栏「更多」里的动作（目前只有缩略图开关；后续视图选项都放这里）。
-enum _BrowserMenuAction { toggleThumbnails, thumbnailCache }
+enum _BrowserMenuAction { toggleThumbnails, thumbnailCache, uploadFolder }
 
 // ------------------------------------------------------------- 页面级排序
 
@@ -1074,6 +1074,148 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     }
   }
 
+  /// 上传整个文件夹（284 D9）：选本地目录 → 递归扫描 → 摆出规模 → 建远端目录 → 入队。
+  ///
+  /// 与 D6（下载文件夹）方向相反、规则一致：保留目录结构、上限明说、跳过隐藏条目、
+  /// 单目录失败不拖垮整批。
+  Future<void> _pickAndUploadFolder() async {
+    if (_uploading) return;
+    final picker = debugRemoteStoragePickDirectory();
+    final dirPath =
+        picker != null ? await picker() : await FilePicker.getDirectoryPath();
+    if (dirPath == null || dirPath.isEmpty || !mounted) return;
+
+    setState(() => _uploading = true);
+    try {
+      final service = remoteStorageService();
+      final scan = await service.scanLocalDirectory(dirPath);
+      if (!mounted) return;
+      if (scan.isEmpty) {
+        _snack(
+          scan.unreadableDirs > 0
+              ? '这个文件夹读不出来（权限或已被删除）'
+              : '这个文件夹里没有可上传的文件',
+        );
+        return;
+      }
+
+      final totalBytes = scan.totalBytes;
+      final quota = await _safeQuota();
+      if (!mounted) return;
+      if (uploadExceedsQuota(quota, totalBytes)) {
+        final proceed = await _askInsufficientSpace(
+          available: quota!.availableBytes!,
+          needed: totalBytes,
+        );
+        if (proceed != true) return;
+      }
+
+      final dirs = remoteDirsToCreate(
+        scan.files.map((f) => f.relativePath ?? f.name),
+      );
+      // 冲突按目标子目录分组各查一次：不同目录里的同名文件是两件事，
+      // 混在一起查会把 A 目录的同名文件误判成 B 目录的冲突。
+      final conflicts = <String>[];
+      final grouped = <String, List<LocalUploadFile>>{};
+      for (final file in scan.files) {
+        grouped
+            .putIfAbsent(_uploadSubDirOf(file), () => <LocalUploadFile>[])
+            .add(file);
+      }
+      for (final entry in grouped.entries) {
+        final targetDir = entry.key.isEmpty
+            ? _path
+            : joinRemotePath(_path, entry.key);
+        final found = await service.scanConflicts(
+          widget.account,
+          files: entry.value,
+          targetDir: targetDir,
+        );
+        if (!mounted) return;
+        conflicts.addAll(
+          found.map((name) => entry.key.isEmpty ? name : '${entry.key}/$name'),
+        );
+      }
+
+      final go = await _confirmFolderUpload(
+        scan: scan,
+        rootName: folderUploadRootName(dirPath),
+        dirCount: dirs.length,
+        totalBytes: totalBytes,
+        conflictCount: conflicts.length,
+      );
+      if (go != true || !mounted) return;
+
+      var overwrite = false;
+      if (conflicts.isNotEmpty) {
+        final choice = await _askConflictPolicy(conflicts);
+        if (choice == null) return;
+        overwrite = choice;
+      }
+
+      // 先把目录建好（父先子后）：建不出来就别开始传，否则每个文件都白失败一次。
+      await service.ensureRemoteDirs(widget.account, dirs, basePath: _path);
+      if (!mounted) return;
+
+      _enqueueUploads(
+        scan.files,
+        overwrite: overwrite,
+        conflictCount: conflicts.length,
+        subDirOf: _uploadSubDirOf,
+      );
+    } on RemoteStorageException catch (e) {
+      if (mounted) _snack('上传准备失败：${e.message}');
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  /// 文件夹上传里某个文件的目标子目录（相对当前远端目录）。
+  String _uploadSubDirOf(LocalUploadFile file) {
+    final rel = file.relativePath;
+    if (rel == null || rel.isEmpty) return '';
+    return parentRemotePath(rel);
+  }
+
+  /// 上传文件夹前的确认（284 D9）：文件数、体积、要建的目录数、跳过与截断都摆出来。
+  Future<bool?> _confirmFolderUpload({
+    required LocalFolderScan scan,
+    required String rootName,
+    required int dirCount,
+    required int totalBytes,
+    required int conflictCount,
+  }) {
+    final lines = <String>[
+      '选中文件夹「$rootName」：共 ${scan.files.length} 个文件、'
+          '${formatRemoteBytes(totalBytes)}。',
+      '将在远端新建 $dirCount 个目录，并保持原目录结构。',
+      if (scan.skippedHidden > 0)
+        '跳过 ${scan.skippedHidden} 个隐藏条目（以 . 开头，如 .nomedia）。',
+      if (conflictCount > 0) '其中 $conflictCount 个与远端同名（下一步选择覆盖或跳过）。',
+      if (scan.truncated)
+        '文件夹过大，本次只上传前 $kFolderUploadMaxFiles 个文件。',
+      if (scan.unreadableDirs > 0)
+        '有 ${scan.unreadableDirs} 个子目录读不出来，已跳过。',
+    ];
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('上传文件夹'),
+        content: Text(lines.join('\n')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('开始上传'),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// 读配额；任何失败都吞掉返回 null（配额只用于提示，绝不能挡住上传）。
   Future<RemoteStorageQuota?> _safeQuota() async {
     try {
@@ -1140,20 +1282,25 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     List<LocalUploadFile> files, {
     required bool overwrite,
     required int conflictCount,
+    /// 上传整个文件夹时（284 D9）：每个文件在远端要落的**相对**子目录，
+    /// 为空则落在当前目录。返回 null 当作落在当前目录。
+    String? Function(LocalUploadFile file)? subDirOf,
   }) {
     final service = remoteStorageService();
     final queue = transferQueue();
     final dirLabel = _path.isEmpty ? '根目录' : _path;
     for (final file in files) {
+      final sub = subDirOf?.call(file) ?? '';
+      final targetDir = sub.isEmpty ? _path : joinRemotePath(_path, sub);
       queue.enqueue(
         kind: TransferKind.upload,
         title: file.name,
-        subtitle: '$_accountTitle · $dirLabel',
+        subtitle: '$_accountTitle · ${sub.isEmpty ? dirLabel : sub}',
         totalBytes: file.size,
         runner: (cancel, onProgress) => service.uploadFile(
           widget.account,
           file: file,
-          targetDir: _path,
+          targetDir: targetDir,
           overwrite: overwrite,
           onProgress: onProgress,
           cancel: cancel,
@@ -1649,6 +1796,8 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
                 _toggleThumbnails();
               case _BrowserMenuAction.thumbnailCache:
                 _showThumbnailCachePanel();
+              case _BrowserMenuAction.uploadFolder:
+                _pickAndUploadFolder();
             }
           },
           itemBuilder: (_) => [
@@ -1661,6 +1810,11 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
             const PopupMenuItem<_BrowserMenuAction>(
               value: _BrowserMenuAction.thumbnailCache,
               child: Text('缩略图缓存'),
+            ),
+            const PopupMenuDivider(),
+            const PopupMenuItem<_BrowserMenuAction>(
+              value: _BrowserMenuAction.uploadFolder,
+              child: Text('上传整个文件夹'),
             ),
           ],
         ),
