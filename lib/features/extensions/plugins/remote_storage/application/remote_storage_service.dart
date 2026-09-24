@@ -16,6 +16,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../data/remote_storage_store.dart';
 import '../data/remote_thumbnail_cache.dart';
+import '../domain/exif_thumbnail.dart';
 import '../domain/remote_storage_models.dart';
 import '../domain/webdav_client.dart';
 import 'playback_relay.dart';
@@ -273,6 +274,14 @@ class RemoteStorageService {
 
   /// 列表缩略图取用器（缓存 + 并发上限 + 同键去重）。
   final ThumbnailLoader _thumbnails;
+
+  /// 探测过但没有 EXIF 内嵌缩略图的条目（283 D1）。
+  ///
+  /// 为什么需要：EXIF 探测要读文件开头（最多 [kExifProbeBytes]），如果没命中，
+  /// 取用器不会缓存 null（失败结果本就不该缓存），于是每次滚动回来都会再花一次
+  /// 256KB。这个集合把"探过没有"记在内存里；上限 [kExifProbeMissLimit]，超了清空
+  /// （宁可多探几次，也不要让集合无限增长）。
+  final Set<String> _exifProbeMisses = {};
 
   // ---------------------------------------------------------------- 账户
 
@@ -913,7 +922,11 @@ class RemoteStorageService {
     RemoteStorageEntry entry, {
     TransferCancelToken? cancel,
   }) async {
-    if (!isThumbnailableEntry(entry)) return null;
+    if (!isThumbnailableEntry(entry)) {
+      // 超过整取上限（或大小未知）的 JPEG：试 EXIF 内嵌缩略图（283 D1）。
+      // 代价有界（一次 [kExifProbeBytes] 的前缀读），比"整取一张 10MB 的图"便宜得多。
+      return _readExifThumbnail(account, entry, cancel: cancel);
+    }
     final key = thumbnailCacheKey(account.id, entry);
     return _thumbnails.load(key, () async {
       try {
@@ -928,6 +941,40 @@ class RemoteStorageService {
         AppLogger.instance.logTo(
           LogChannel.storage,
           '缩略图读取失败（${entry.path}）: ${e.message}',
+          level: LogLevel.debug,
+        );
+        return null;
+      }
+    });
+  }
+
+  /// EXIF 内嵌缩略图（大图/未知大小的 JPEG 走这条）。
+  Future<Uint8List?> _readExifThumbnail(
+    RemoteStorageAccount account,
+    RemoteStorageEntry entry, {
+    TransferCancelToken? cancel,
+  }) async {
+    if (!isExifThumbnailCandidate(entry)) return null;
+    final key = thumbnailCacheKey(account.id, entry);
+    if (_exifProbeMisses.contains(key)) return null;
+    return _thumbnails.load('$key|exif', () async {
+      try {
+        final up = await clientFor(
+          account,
+        ).readUpTo(entry.path, kExifProbeBytes, cancel: cancel);
+        final thumb = parseExifThumbnail(Uint8List.fromList(up.bytes));
+        if (thumb == null) {
+          if (_exifProbeMisses.length >= kExifProbeMissLimit) {
+            _exifProbeMisses.clear();
+          }
+          _exifProbeMisses.add(key);
+          return null;
+        }
+        return thumb.bytes;
+      } on RemoteStorageException catch (e) {
+        AppLogger.instance.logTo(
+          LogChannel.storage,
+          'EXIF 缩略图探测失败（${entry.path}）: ${e.message}',
           level: LogLevel.debug,
         );
         return null;

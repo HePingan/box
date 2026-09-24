@@ -17,6 +17,7 @@ import 'package:box/features/extensions/plugins/remote_storage/domain/webdav_cli
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'exif_fixtures.dart';
 import 'fakes.dart';
 
 void main() {
@@ -976,10 +977,12 @@ void main() {
           modifiedAt: DateTime.utc(2023, 1, 30, 11, 22),
         );
 
-    test('超过上限的图片：直接返回 null，一次请求都不发', () async {
+    test('超过上限的**非 JPEG**：直接返回 null，一次请求都不发', () async {
+      // 283 D1 起，超过上限的 JPEG 会走"EXIF 内嵌缩略图"探测（见下一组），
+      // 但 PNG/WebP 里没有内嵌缩略图，探测没有意义。
       final result = await service.readThumbnail(
         testAccount(),
-        image(size: kThumbnailMaxBytes + 1),
+        image(name: 'a.png', size: kThumbnailMaxBytes + 1),
       );
       expect(result, isNull);
       expect(transport.requestCount, 0, reason: '不该为了超大图去发请求');
@@ -1027,6 +1030,96 @@ void main() {
       transport.handler = (_) async => streamResponse(kTinyPng, status: 206);
       final again = await service.readThumbnail(testAccount(), image());
       expect(again, isNotNull);
+    });
+  });
+
+  group('EXIF 内嵌缩略图（283 D1）', () {
+    RemoteStorageEntry jpeg({String name = 'big.jpg', int? size = 4 * 1024 * 1024}) =>
+        RemoteStorageEntry(
+          name: name,
+          path: name,
+          isDirectory: false,
+          size: size,
+          modifiedAt: DateTime.utc(2021, 8, 7, 13, 47),
+        );
+
+    test('大 JPEG 命中：一次有界前缀读就拿到内嵌缩略图（字节与真值一致）', () async {
+      transport.handler = (_) async =>
+          streamResponse(kExifJpeg, status: 206); // 服务器只回了文件开头一段
+
+      final result = await service.readThumbnail(testAccount(), jpeg());
+
+      expect(result, kExifEmbeddedThumb, reason: '取出的必须是 EXIF 里那张缩略图');
+      expect(transport.requestCount, 1);
+      expect(
+        transport.requests.single.headers['range'],
+        'bytes=0-',
+        reason: '起点式 Range——带结束偏移的写法在坚果云上会被 416（281 的教训）',
+      );
+    });
+
+    test('探测有上界：大图不会被整个读回来', () async {
+      var chunksProduced = 0;
+      Stream<List<int>> bigBody() async* {
+        yield kExifJpeg; // 文件开头（EXIF 在这里）
+        for (var i = 0; i < 64; i++) {
+          chunksProduced++;
+          yield Uint8List(64 * 1024); // 再补 4MB，模拟真实大图
+        }
+      }
+
+      transport.handler = (_) async => WebdavResponse(
+        statusCode: 206,
+        headers: const {'content-length': '4194304'},
+        bodyStream: bigBody(),
+      );
+
+      final result = await service.readThumbnail(testAccount(), jpeg());
+
+      expect(result, kExifEmbeddedThumb);
+      expect(
+        chunksProduced,
+        lessThan(64),
+        reason: '读到 kExifProbeBytes 上限就该断开，不该把整张图读完',
+      );
+    });
+
+    test('没有内嵌缩略图：返回 null，且**不重复探测**（负缓存）', () async {
+      transport.handler = (_) async =>
+          streamResponse(kJpegWithoutExif, status: 206);
+
+      expect(await service.readThumbnail(testAccount(), jpeg()), isNull);
+      expect(transport.requestCount, 1);
+
+      expect(await service.readThumbnail(testAccount(), jpeg()), isNull);
+      expect(
+        transport.requestCount,
+        1,
+        reason: '探过没有就该记住，否则每次滚动都白花一次 256KB',
+      );
+    });
+
+    test('大小未知的 JPEG 也走探测（未知大小原本一律不取）', () async {
+      transport.handler = (_) async => streamResponse(kExifJpeg, status: 206);
+
+      final result = await service.readThumbnail(testAccount(), jpeg(size: null));
+
+      expect(result, kExifEmbeddedThumb);
+    });
+
+    test('命中后第二次走缓存，不再请求', () async {
+      transport.handler = (_) async => streamResponse(kExifJpeg, status: 206);
+
+      await service.readThumbnail(testAccount(), jpeg());
+      await service.readThumbnail(testAccount(), jpeg());
+
+      expect(transport.requestCount, 1, reason: '缩略图缓存命中');
+    });
+
+    test('探测失败（服务器 500）→ null，列表回退通用图标', () async {
+      transport.handler = (_) async => headResponse(status: 500);
+
+      expect(await service.readThumbnail(testAccount(), jpeg()), isNull);
     });
   });
 }

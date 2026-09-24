@@ -66,6 +66,30 @@ const int kThumbnailDiskMaxFiles = 400;
 /// 同时最多几张缩略图在取（别把带宽占满：缩略图是"顺便看看"，不该压过用户正在做的事）。
 const int kThumbnailMaxConcurrent = 3;
 
+/// EXIF 探测读多少字节：内嵌缩略图在文件开头的 EXIF 段里（通常前几 KB），
+/// 256KB 是很宽裕的上界；读到这里还没找到就不再读。
+const int kExifProbeBytes = 256 * 1024;
+
+/// "探测过但没有内嵌缩略图"的内存记录上限；超了整表清空（宁可多探几次，
+/// 也不要让这个集合无限增长）。
+const int kExifProbeMissLimit = 500;
+
+/// 这个条目要不要走"EXIF 内嵌缩略图"这条路（纯判定，便于单测）。
+///
+/// 适用条件：
+/// - 是图片，且扩展名是 JPEG（EXIF 只在 JPEG/TIFF/HEIC 这类容器里；PNG 没有内嵌缩略图）；
+/// - **超过整取上限**（3MB 以内直接整取更可靠，能覆盖所有格式），**或大小未知**
+///   （未知大小原本一律不取；EXIF 探测的代价有界，值得一试）。
+bool isExifThumbnailCandidate(RemoteStorageEntry entry) {
+  if (entry.isDirectory) return false;
+  if (remoteEntryKind(entry) != RemoteEntryKind.image) return false;
+  final name = entry.name.toLowerCase();
+  if (!name.endsWith('.jpg') && !name.endsWith('.jpeg')) return false;
+  final size = entry.size;
+  if (size == null) return true;
+  return size > kThumbnailMaxBytes;
+}
+
 /// 这个条目要不要取缩略图（纯判定，便于单测）。
 ///
 /// 只对**图片**且大小已知且在 [kThumbnailMaxBytes] 以内的取；大小未知（0）时不取——
