@@ -10,6 +10,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
@@ -21,6 +22,50 @@ import '../domain/remote_storage_models.dart';
 import 'image_preview_dialog.dart';
 import 'remote_storage_player_page.dart';
 import 'remote_thumbnail.dart';
+
+/// 跨目录搜索的进度弹窗（284 D10）。
+///
+/// 单独成组件而不是写在页面里：弹窗是另一条 route，用页面的 setState 推不动它，
+/// 必须让弹窗自己监听进度（`ValueListenableBuilder`）。
+class _SubtreeSearchProgressDialog extends StatelessWidget {
+  const _SubtreeSearchProgressDialog({
+    required this.baseLabel,
+    required this.progress,
+    required this.onCancel,
+  });
+
+  final String baseLabel;
+  final ValueListenable<String> progress;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('在「$baseLabel」里搜索'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const LinearProgressIndicator(),
+          const SizedBox(height: 12),
+          ValueListenableBuilder<String>(
+            valueListenable: progress,
+            builder: (_, text, _) => Text(text),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '云盘没有搜索索引，只能一个目录一个目录地看，'
+            '所以慢一些，而且只搜得到当前目录以下的范围。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: onCancel, child: const Text('取消')),
+      ],
+    );
+  }
+}
 
 /// 递归下载里的一个文件：条目 + 它的本地落点（284 D6）。
 class _RecursiveFilePlan {
@@ -1074,6 +1119,130 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     }
   }
 
+  /// 在当前目录树里按名称搜索（284 D10）。
+  ///
+  /// 界面必须诚实：WebDAV 没有服务端搜索，这里是**客户端逐目录遍历**，
+  /// 所以范围有界、可随时取消，结果里也写清"扫描了 N 个目录 / 只搜了当前目录树"。
+  Future<void> _searchSubtree() async {
+    final query = _query.trim();
+    if (query.isEmpty) return;
+    final basePath = _path;
+    final baseLabel = basePath.isEmpty ? '根目录' : basePath;
+    final cancel = TransferCancelToken();
+    SubtreeSearchResult? result;
+
+    // 进度用 ValueNotifier + ValueListenableBuilder 推进：弹窗是另一条 route，
+    // 页面这边的 setState 不会重建它（这个坑写第一版时正好踩了）。
+    final progress = ValueNotifier<String>('正在扫描…');
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _SubtreeSearchProgressDialog(
+        baseLabel: baseLabel,
+        progress: progress,
+        onCancel: () {
+          cancel.cancel();
+          Navigator.of(context, rootNavigator: true).pop();
+        },
+      ),
+    );
+
+    try {
+      result = await remoteStorageService().searchSubtree(
+        widget.account,
+        rootPath: basePath,
+        query: query,
+        cancel: cancel,
+        onProgress: (dirs, hits) {
+          progress.value = '已扫描 $dirs 个目录、找到 $hits 个';
+        },
+      );
+    } on RemoteStorageException catch (e) {
+      if (mounted) _snack('搜索失败：${e.message}');
+    } finally {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      progress.dispose();
+    }
+    if (!mounted || result == null) return;
+    await _showSubtreeResults(result, query, baseLabel);
+  }
+
+  /// 搜索结果面板（284 D10）：写清范围、命中上限与取消，点一条跳到它所在的目录。
+  Future<void> _showSubtreeResults(
+    SubtreeSearchResult result,
+    String query,
+    String baseLabel,
+  ) async {
+    final notes = <String>[
+      '在「$baseLabel」下扫描 ${result.dirsScanned} 个目录，命中 ${result.entries.length} 个「$query」。',
+      if (result.truncated) '目录或结果太多，本次只搜了一部分。',
+      if (result.canceled) '你取消了搜索，下面是取消前的结果。',
+      if (result.entries.isEmpty) '换个关键词，或到上层目录再搜一次。',
+    ];
+    final picked = await showDialog<RemoteStorageEntry>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('搜索结果'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(notes.join('\n')),
+              if (result.entries.isNotEmpty) const Divider(),
+              if (result.entries.isNotEmpty)
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: result.entries.length,
+                    itemBuilder: (_, i) {
+                      final entry = result.entries[i];
+                      return ListTile(
+                        dense: true,
+                        leading: Icon(
+                          entry.isDirectory
+                              ? Icons.folder_outlined
+                              : Icons.insert_drive_file_outlined,
+                          size: 20,
+                        ),
+                        title: Text(entry.name),
+                        subtitle: Text(
+                          parentRemotePath(entry.path).isEmpty
+                              ? '根目录'
+                              : parentRemotePath(entry.path),
+                          style: Theme.of(ctx).textTheme.bodySmall,
+                        ),
+                        onTap: () => Navigator.pop(ctx, entry),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+    if (picked == null || !mounted) return;
+    // 跳到它所在的目录：搜索的意义就是"找到它在哪"，看见了却过不去等于没找到。
+    final parent = parentRemotePath(picked.path);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RemoteStorageBrowserPage(
+          account: widget.account,
+          initialPath: parent,
+        ),
+      ),
+    );
+  }
+
   /// 上传整个文件夹（284 D9）：选本地目录 → 递归扫描 → 摆出规模 → 建远端目录 → 入队。
   ///
   /// 与 D6（下载文件夹）方向相反、规则一致：保留目录结构、上限明说、跳过隐藏条目、
@@ -1989,6 +2158,15 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
                   child: const Text('清空筛选'),
                 ),
               ),
+              // 本目录没有 → 最可能的是"在别的目录里"（284 D10）。
+              // 这个入口必须出现在这里：等用户滚回非空列表才给按钮，等于没给。
+              Center(
+                child: TextButton.icon(
+                  onPressed: _searchSubtree,
+                  icon: const Icon(Icons.travel_explore_rounded, size: 18),
+                  label: const Text('搜子目录'),
+                ),
+              ),
             ],
           ],
         ),
@@ -2005,10 +2183,22 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
               color: Theme.of(
                 context,
               ).colorScheme.secondaryContainer.withValues(alpha: 0.5),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              child: Text(
-                '筛选出 ${_entries.length} / ${_allEntries.length} 项',
-                style: Theme.of(context).textTheme.bodySmall,
+              padding: const EdgeInsets.only(left: 12, right: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '筛选出 ${_entries.length} / ${_allEntries.length} 项',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  // 本目录筛不到时最容易想到的就是"别的目录里有没有"（284 D10）。
+                  TextButton.icon(
+                    onPressed: _searchSubtree,
+                    icon: const Icon(Icons.travel_explore_rounded, size: 18),
+                    label: const Text('搜子目录'),
+                  ),
+                ],
               ),
             ),
           Expanded(

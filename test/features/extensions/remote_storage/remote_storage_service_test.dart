@@ -1354,6 +1354,21 @@ void main() {
       expect(listing.truncated, isTrue);
     });
 
+    test('自引用列表不会让递归绕圈（同一目录只走一次）', () async {
+      transport.handler = (request) async =>
+          xmlResponse(propfindXml(const [
+            DavItem('/dav/环/', isCollection: true),
+            DavItem('/dav/环/a.jpg', displayName: 'a.jpg', size: 1),
+            DavItem('/dav/环/子/', isCollection: true),
+          ]));
+
+      final listing = await service.listRecursive(testAccount(), '环');
+
+      expect(listing.files.length, 1, reason: '同一个路径只下一次');
+      expect(listing.dirsScanned, 2, reason: '环 + 环/子 各走一次就停');
+      expect(listing.truncated, isFalse);
+    });
+
     test('取消后立即停下', () async {
       serve(<String, List<DavItem>>{
         '相册': const [
@@ -1584,6 +1599,149 @@ void main() {
         throwsA(isA<RemoteStorageException>()),
         reason: '目录建不出来时继续传只会让每个文件都失败，该早点报错',
       );
+    });
+  });
+
+  group('跨目录搜索（284 D10）', () {
+    void serve(Map<String, List<DavItem>> tree) {
+      transport.handler = (request) async {
+        final segments = request.uri.pathSegments;
+        if (segments.isNotEmpty) {
+          final items = tree[segments.last];
+          if (items != null) return xmlResponse(propfindXml(items));
+        }
+        return xmlResponse(propfindXml(const <DavItem>[]));
+      };
+    }
+
+    test('跨目录命中：文件与目录都能搜到，系统目录不下探', () async {
+      serve(<String, List<DavItem>>{
+        '相册': const [
+          DavItem('/dav/相册/', isCollection: true),
+          DavItem('/dav/相册/2021-08-07.jpg', displayName: '2021-08-07.jpg', size: 5),
+          DavItem('/dav/相册/2021/', isCollection: true),
+          DavItem('/dav/相册/@eaDir/', isCollection: true),
+        ],
+        '2021': const [
+          DavItem('/dav/相册/2021/', isCollection: true),
+          DavItem('/dav/相册/2021/2021-09-01.jpg', displayName: '2021-09-01.jpg', size: 6),
+          DavItem('/dav/相册/2021/别的.jpg', displayName: '别的.jpg', size: 7),
+        ],
+      });
+
+      final result = await service.searchSubtree(
+        testAccount(),
+        rootPath: '相册',
+        query: '2021',
+      );
+
+      expect(
+        result.entries.map((e) => e.name).toList()..sort(),
+        <String>['2021', '2021-08-07.jpg', '2021-09-01.jpg'],
+        reason: '"2021" 目录本身也算命中，但 @eaDir 这类系统目录不下探',
+      );
+      expect(result.dirsScanned, 2);
+      expect(result.truncated, isFalse);
+      expect(result.canceled, isFalse);
+    });
+
+    test('某个子目录读不出来：跳过它继续搜，不整体失败', () async {
+      transport.handler = (request) async {
+        final last = request.uri.pathSegments.isEmpty
+            ? ''
+            : request.uri.pathSegments.last;
+        if (last == '拒绝') {
+          return const WebdavResponse(statusCode: 403, headers: <String, String>{});
+        }
+        return xmlResponse(propfindXml(const [
+          DavItem('/dav/相册/', isCollection: true),
+          DavItem('/dav/相册/命中1.jpg', displayName: '命中1.jpg', size: 1),
+          DavItem('/dav/相册/拒绝/', isCollection: true),
+        ]));
+      };
+
+      final result = await service.searchSubtree(
+        testAccount(),
+        rootPath: '相册',
+        query: '命中',
+      );
+
+      expect(result.entries.map((e) => e.name).toList(), <String>['命中1.jpg']);
+      expect(result.dirsScanned, 2);
+    });
+
+    test('自引用/环状列表：同一目录只走一次，结果不重复（防绕圈）', () async {
+      // 服务端把集合自身也列出来（PROPFIND 的常见形态），且子目录指向回父目录：
+      // 不去重就会反复列同一个目录——现象是"扫了 100 多个目录、结果里全是重复项"。
+      transport.handler = (request) async =>
+          xmlResponse(propfindXml(const [
+            DavItem('/dav/环/', isCollection: true),
+            DavItem('/dav/环/命中.jpg', displayName: '命中.jpg', size: 1),
+            DavItem('/dav/环/子/', isCollection: true),
+          ]));
+
+      final result = await service.searchSubtree(
+        testAccount(),
+        rootPath: '环',
+        query: '命中',
+      );
+
+      expect(result.entries.length, 1, reason: '重复命中只算一次（按路径去重）');
+      expect(
+        result.dirsScanned,
+        2,
+        reason: '环 + 环/子 各走一次就停：没有目录去重的话这里会是 100 多次',
+      );
+      expect(
+        result.truncated,
+        isFalse,
+        reason: '不该因为绕圈把自己逼到上限',
+      );
+    });
+
+    test('结果数命中上限：截断并置 truncated', () async {
+      final many = <DavItem>[
+        const DavItem('/dav/大批/', isCollection: true),
+        for (var i = 0; i < kSubtreeSearchMaxResults + 5; i++)
+          DavItem('/dav/大批/命中$i.jpg', displayName: '命中$i.jpg', size: 1),
+      ];
+      serve(<String, List<DavItem>>{'大批': many});
+
+      final result = await service.searchSubtree(
+        testAccount(),
+        rootPath: '大批',
+        query: '命中',
+      );
+
+      expect(result.entries.length, kSubtreeSearchMaxResults);
+      expect(result.truncated, isTrue);
+    });
+
+    test('取消：返回取消前的部分结果，算 canceled 不算错误', () async {
+      serve(<String, List<DavItem>>{
+        '相册': const [
+          DavItem('/dav/相册/', isCollection: true),
+          DavItem('/dav/相册/命中1.jpg', displayName: '命中1.jpg', size: 1),
+          DavItem('/dav/相册/子/', isCollection: true),
+        ],
+      });
+      final cancel = TransferCancelToken();
+      var calls = 0;
+
+      final result = await service.searchSubtree(
+        testAccount(),
+        rootPath: '相册',
+        query: '命中',
+        cancel: cancel,
+        onProgress: (dirs, hits) {
+          calls += 1;
+          if (calls == 1) cancel.cancel();
+        },
+      );
+
+      expect(result.canceled, isTrue);
+      expect(result.entries.map((e) => e.name).toList(), <String>['命中1.jpg']);
+      expect(result.dirsScanned, 1, reason: '取消后不再往下走');
     });
   });
 }

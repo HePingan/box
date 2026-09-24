@@ -612,6 +612,48 @@ class RemoteStorageEntry {
   final String? etag;
 }
 
+/// 跨目录搜索的上限（284 D10）。
+///
+/// WebDAV 没有服务端搜索索引（`Depth: infinity` 在坚果云/群晖默认关闭），
+/// 只能客户端逐目录遍历。上限存在的意义是"别让一次搜索把手机和服务器拖住"，
+/// 命中上限时界面必须写明"只搜了一部分"。
+const int kSubtreeSearchMaxDirs = 120;
+
+/// 结果上限：再多也没人往下翻，反而让内存和界面都吃力。
+const int kSubtreeSearchMaxResults = 200;
+
+/// 名称匹配（纯函数）：忽略大小写与首尾空格；空查询不匹配任何条目。
+///
+/// 只匹配**名字**不匹配路径：用户找的是"那张图"，不是"路径里含 2021 的东西"。
+bool matchesRemoteQuery(String name, String query) {
+  final q = query.trim().toLowerCase();
+  if (q.isEmpty) return false;
+  return name.toLowerCase().contains(q);
+}
+
+/// 子树搜索结果（284 D10）。
+class SubtreeSearchResult {
+  const SubtreeSearchResult({
+    required this.entries,
+    required this.dirsScanned,
+    required this.truncated,
+    required this.canceled,
+  });
+
+  final List<RemoteStorageEntry> entries;
+
+  /// 实际走过的目录数（界面写出来，用户才知道"搜了多远"）。
+  final int dirsScanned;
+
+  /// 命中目录/结果上限被截断。
+  final bool truncated;
+
+  /// 用户中途取消——结果仍是有效的部分结果，不是错误。
+  final bool canceled;
+
+  bool get isEmpty => entries.isEmpty;
+}
+
 /// 目录快照：上次列出的结果 + 时间（284 D7）。
 ///
 /// 用途：冷启动/切目录时**先显示上次的内容**，同时后台刷新——直接把用户丢进

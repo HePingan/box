@@ -590,4 +590,98 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
     });
   });
+
+  group('跨目录搜索（284 D10）', () {
+    RemoteStorageEntry fileAt(String path, {int size = 1}) => RemoteStorageEntry(
+          name: path.split('/').last,
+          path: path,
+          isDirectory: false,
+          size: size,
+        );
+
+    RemoteStorageEntry dirAt(String path) => RemoteStorageEntry(
+          name: path.split('/').last,
+          path: path,
+          isDirectory: true,
+        );
+
+    /// 根目录 40 个不相关文件（触发搜索入口）+ 一棵含命中的子树。
+    _FakeService tree() => _FakeService({
+          '': [
+            for (var i = 0; i < 40; i++) _file('file${i.toString().padLeft(2, '0')}.TXT'),
+            dirAt('相册'),
+          ],
+          '相册': [
+            fileAt('相册/2021-08-07_13-47-19_719.jpg'),
+            dirAt('相册/2021'),
+            fileAt('相册/别的.jpg'),
+          ],
+          '相册/2021': [fileAt('相册/2021/2021-09-01.jpg')],
+        });
+
+    /// 有不定进度圈时不能 pumpAndSettle（会超时），用有界 pump 推进。
+    Future<void> settle(WidgetTester tester) async {
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    testWidgets('本目录筛不到 → 搜子目录 → 列出跨目录命中与所在目录', (tester) async {
+      await pumpBrowser(tester, tree());
+      await tester.tap(find.byIcon(Icons.search_rounded));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '2021');
+      await tester.pumpAndSettle();
+
+      // 本目录没命中：给的是"没有匹配"，同时给出跨目录搜索的入口
+      expect(find.textContaining('没有匹配'), findsOneWidget);
+      expect(find.text('搜子目录'), findsOneWidget);
+
+      await tester.tap(find.text('搜子目录'));
+      await settle(tester);
+
+      expect(find.text('搜索结果'), findsOneWidget);
+      expect(
+        find.textContaining('扫描 3 个目录'),
+        findsOneWidget,
+        reason: '根目录 + 相册 + 相册/2021',
+      );
+      expect(find.text('2021-08-07_13-47-19_719.jpg'), findsOneWidget);
+      expect(find.text('2021-09-01.jpg'), findsOneWidget);
+      expect(find.text('别的.jpg'), findsNothing, reason: '不命中的不该出现在结果里');
+      // 每条结果标出它所在的目录，否则用户不知道文件在哪
+      expect(find.text('相册/2021'), findsOneWidget);
+    });
+
+    testWidgets('点一条结果 → 跳到它所在的目录', (tester) async {
+      await pumpBrowser(tester, tree());
+      await tester.tap(find.byIcon(Icons.search_rounded));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '2021-09-01');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('搜子目录'));
+      await settle(tester);
+
+      await tester.tap(find.text('2021-09-01.jpg'));
+      await settle(tester);
+
+      // 新页面：2021 目录的内容（该目录里有一个同名 jpg 与占位目录条目）
+      expect(find.text('2021-09-01.jpg'), findsOneWidget);
+      expect(find.text('2021-08-07_13-47-19_719.jpg'), findsNothing);
+    });
+
+    testWidgets('搜索中没有命中时不显示"空目录"，而是说明换个关键词', (tester) async {
+      await pumpBrowser(tester, tree());
+      await tester.tap(find.byIcon(Icons.search_rounded));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '根本不存在');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('搜子目录'));
+      await settle(tester);
+
+      expect(find.textContaining('命中 0 个'), findsOneWidget);
+      expect(find.textContaining('换个关键词'), findsOneWidget);
+      expect(find.text('空目录'), findsNothing);
+    });
+  });
 }

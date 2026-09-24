@@ -892,4 +892,23 @@ void main() {
       );
     });
   });
+
+  group('跨目录搜索的匹配（284 D10）', () {
+    test('忽略大小写与首尾空格', () {
+      expect(matchesRemoteQuery('IMG_1234.JPG', 'img_1234'), isTrue);
+      expect(matchesRemoteQuery('photo.jpg', '  PHOTO '), isTrue);
+      expect(matchesRemoteQuery('photo.jpg', 'jpg'), isTrue, reason: '子串匹配');
+    });
+
+    test('空查询不匹配任何条目（否则空筛选会把整棵树都算命中）', () {
+      expect(matchesRemoteQuery('anything', ''), isFalse);
+      expect(matchesRemoteQuery('anything', '   '), isFalse);
+    });
+
+    test('中文名按字符子串匹配', () {
+      expect(matchesRemoteQuery('2021-08-07_13-47-19_719.jpg', '08-07'), isTrue);
+      expect(matchesRemoteQuery('相册备份', '备份'), isTrue);
+      expect(matchesRemoteQuery('相册备份', '视频'), isFalse);
+    });
+  });
 }

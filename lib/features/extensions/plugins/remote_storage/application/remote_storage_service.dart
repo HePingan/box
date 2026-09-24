@@ -407,6 +407,8 @@ class RemoteStorageService {
   }) async {
     final files = <RemoteStorageEntry>[];
     final pending = <String>[path];
+    final visited = <String>{};
+    final seen = <String>{};
     var dirs = 0;
     var unreadable = 0;
     var truncated = false;
@@ -418,6 +420,8 @@ class RemoteStorageService {
         break;
       }
       final current = pending.removeAt(0);
+      // 去重（同 284 D10 的理由）：自引用/环状 href 会让同一个目录被反复列。
+      if (!visited.add(current)) continue;
       dirs += 1;
       final List<RemoteStorageEntry> entries;
       try {
@@ -433,6 +437,9 @@ class RemoteStorageService {
           pending.add(entry.path);
           continue;
         }
+        // 按路径去重：同一批文件被两个目录列表同时报出来时（别名/共享/服务端怪癖），
+        // 不去重就会把同一个文件下载两遍（第二遍还会被另存成 `xx (1).jpg`）。
+        if (!seen.add(entry.path)) continue;
         files.add(entry);
         if (files.length >= kRecursiveDownloadMaxFiles) {
           truncated = true;
@@ -447,6 +454,78 @@ class RemoteStorageService {
       dirsScanned: dirs,
       truncated: truncated,
       unreadableDirs: unreadable,
+    );
+  }
+
+  /// 在当前目录树里按名称搜索（284 D10）。
+  ///
+  /// 为什么是"目录树"而不是"整个账户"：完整遍历一个云盘账户可能是几千次请求，
+  /// 坚果云这类服务器上就是"界面假死"。范围从当前目录往下、目录数有上限
+  /// （[kSubtreeSearchMaxDirs]）、结果有上限（[kSubtreeSearchMaxResults]）、可取消，
+  /// 并在界面写清范围——把"搜了什么、没搜什么"告诉用户，比假装搜了全部诚实。
+  Future<SubtreeSearchResult> searchSubtree(
+    RemoteStorageAccount account, {
+    required String rootPath,
+    required String query,
+    void Function(int scannedDirs, int found)? onProgress,
+    TransferCancelToken? cancel,
+  }) async {
+    final results = <RemoteStorageEntry>[];
+    final pending = <String>[rootPath];
+    final visited = <String>{};
+    // 结果也按路径去重：同一批文件被两个目录列表同时报出来时（别名/共享/服务端怪癖），
+    // 结果里出现两条一模一样的路径只会让人以为搜重了。
+    final seen = <String>{};
+    var dirs = 0;
+    var truncated = false;
+    var canceled = false;
+
+    while (pending.isNotEmpty) {
+      if (cancel?.isCanceled ?? false) {
+        canceled = true;
+        break;
+      }
+      if (dirs >= kSubtreeSearchMaxDirs) {
+        truncated = true;
+        break;
+      }
+      final current = pending.removeAt(0);
+      // 同一个目录只走一次（284 D10）：服务端列表里出现自引用/环状 href 时
+      // （PROPFIND 的集合自身、或两个目录互指），不去重就会反复列同一个目录——
+      // 表现为"扫了 100 多个目录、结果里全是同一批文件的重复项"。
+      if (!visited.add(current)) continue;
+      dirs += 1;
+      final List<RemoteStorageEntry> entries;
+      try {
+        entries = await list(account, current);
+      } catch (_) {
+        // 某个子目录读不出来（403 等）→ 跳过它继续搜别的，不因为一个目录失败
+        // 把整次搜索变成错误。
+        onProgress?.call(dirs, results.length);
+        continue;
+      }
+      for (final entry in entries) {
+        if (matchesRemoteQuery(entry.name, query) && seen.add(entry.path)) {
+          results.add(entry);
+          if (results.length >= kSubtreeSearchMaxResults) {
+            truncated = true;
+            break;
+          }
+        }
+        if (entry.isDirectory &&
+            !kWebdavSystemDirNames.contains(entry.name)) {
+          pending.add(entry.path);
+        }
+      }
+      onProgress?.call(dirs, results.length);
+      if (truncated) break;
+    }
+
+    return SubtreeSearchResult(
+      entries: results,
+      dirsScanned: dirs,
+      truncated: truncated,
+      canceled: canceled,
     );
   }
 
