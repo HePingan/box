@@ -145,4 +145,85 @@ void main() {
     final loaded = await RemoteStorageStore().loadAccounts();
     expect(loaded.single.id, 'rs_only_legacy');
   });
+
+  group('浏览页偏好（283 D2）', () {
+    test('排序字段：存了读回来一致；没存过/空串当没存', () async {
+      final store = RemoteStorageStore();
+
+      expect(await store.loadBrowserSortFieldName(), isNull, reason: '未存过');
+
+      await store.saveBrowserSortFieldName('size');
+      expect(await store.loadBrowserSortFieldName(), 'size');
+
+      await store.saveBrowserSortFieldName('');
+      expect(await store.loadBrowserSortFieldName(), isNull, reason: '空串不算偏好');
+    });
+
+    test('滚动位置：往返一致（含多目录）', () async {
+      final store = RemoteStorageStore();
+
+      expect(await store.loadBrowserScrollOffsets(), isEmpty);
+
+      await store.saveBrowserScrollOffsets({
+        'acc\u0000/': 120.5,
+        'acc\u0000/照片': 4096.0,
+      });
+
+      final loaded = await store.loadBrowserScrollOffsets();
+      expect(loaded['acc\u0000/'], 120.5);
+      expect(loaded['acc\u0000/照片'], 4096.0);
+    });
+
+    test('超过上限：只保留最后 200 条（Map 是插入序，丢最早的）', () async {
+      final store = RemoteStorageStore();
+      final offsets = <String, double>{
+        for (var i = 0; i < RemoteStorageStore.kMaxRememberedScrollOffsets + 50; i++)
+          'acc\u0000/dir$i': i.toDouble(),
+      };
+
+      await store.saveBrowserScrollOffsets(offsets);
+      final loaded = await store.loadBrowserScrollOffsets();
+
+      expect(loaded.length, RemoteStorageStore.kMaxRememberedScrollOffsets);
+      expect(loaded.containsKey('acc\u0000/dir0'), isFalse, reason: '最早的最先丢');
+      expect(
+        loaded.containsKey('acc\u0000/dir249'),
+        isTrue,
+        reason: '最近的必须留住',
+      );
+    });
+
+    test('坏数据一律当空：不抛异常、不拖垮列表', () async {
+      final store = RemoteStorageStore();
+
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        RemoteStorageStore.browserScrollOffsetsKey: '{"a": 1.5, "b": "x", "c": -3, "d": null}',
+      });
+      final parsed = await store.loadBrowserScrollOffsets();
+      expect(parsed, {'a': 1.5}, reason: '只留合法正数，其余丢弃');
+
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        RemoteStorageStore.browserScrollOffsetsKey: '这不是 JSON',
+      });
+      expect(await store.loadBrowserScrollOffsets(), isEmpty);
+
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        RemoteStorageStore.browserScrollOffsetsKey: '[1, 2, 3]',
+      });
+      expect(await store.loadBrowserScrollOffsets(), isEmpty, reason: '不是对象');
+    });
+
+    test('无穷大/负数偏移不写盘（滚不到的位置没意义）', () async {
+      final store = RemoteStorageStore();
+      await store.saveBrowserScrollOffsets({
+        'ok': 10,
+        'inf': double.infinity,
+        'nan': double.nan,
+        'neg': -5,
+      });
+
+      final loaded = await store.loadBrowserScrollOffsets();
+      expect(loaded, {'ok': 10.0});
+    });
+  });
 }

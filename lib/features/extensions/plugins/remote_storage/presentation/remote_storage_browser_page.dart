@@ -29,8 +29,11 @@ enum _BrowserMenuAction { toggleThumbnails }
 /// 浏览页排序字段（名称 / 修改时间 / 大小）。
 enum RemoteStorageSortField { name, modifiedTime, size }
 
-/// 当前会话的排序字段（跨目录、跨 route 保持；不落盘）。
+/// 当前排序字段：跨目录、跨 route 保持，且**落盘**（283 D2——以前退出应用就重置）。
 RemoteStorageSortField _sessionSortField = RemoteStorageSortField.modifiedTime;
+
+/// 磁盘偏好是否已载入（进程内只做一次；载入前用的是默认值）。
+bool _browserPrefsLoaded = false;
 
 /// 超过这么多条目才显示搜索入口（279 C3）。
 ///
@@ -42,6 +45,7 @@ const int kSearchEntryThreshold = 30;
 @visibleForTesting
 void debugResetRemoteStorageBrowserSessionState() {
   _sessionSortField = RemoteStorageSortField.modifiedTime;
+  _browserPrefsLoaded = false;
   _RemoteStorageBrowserPageState._savedScrollOffsets.clear();
 }
 
@@ -151,10 +155,14 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   /// 滚动位置记忆：账户 + 目录 → 离开时的偏移。
   ///
   /// 每个目录都是独立 route（`Navigator.push`），route 级 PageStorage 无法
-  /// 跨 route 恢复，故用会话级 Map（static：进程内有效，不落盘）。
+  /// 跨 route 恢复，故用这张 static 表；283 D2 起它还会**落盘**（进程重启后
+  /// 进同一个目录回到上次位置），见 [_loadBrowserPrefs]。
   static final Map<String, double> _savedScrollOffsets = <String, double>{};
 
   final ScrollController _scrollController = ScrollController();
+
+  /// 滚动位置落盘的防抖定时器（283 D2）。
+  Timer? _saveOffsetTimer;
 
   String get _scrollMemoryKey => '${widget.account.id}\u0000$_path';
 
@@ -167,7 +175,44 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     super.initState();
     _scrollController.addListener(_rememberScrollOffset);
     _loadThumbnailPreference();
+    _loadBrowserPrefs();
     _load();
+  }
+
+  /// 载入浏览页偏好（排序字段 + 各目录滚动位置）；进程内只读一次磁盘。
+  ///
+  /// 为什么放在 initState 而不是等 first frame：两者都是"越早越好"的偏好——
+  /// 排序晚到会让列表先按默认序闪一下，滚动位置晚到会让用户看到跳动。
+  Future<void> _loadBrowserPrefs() async {
+    if (!_browserPrefsLoaded) {
+      _browserPrefsLoaded = true;
+      final service = remoteStorageService();
+      final field = _sortFieldFromName(await service.loadBrowserSortFieldName());
+      final offsets = await service.loadBrowserScrollOffsets();
+      _savedScrollOffsets
+        ..clear()
+        ..addAll(offsets);
+      if (field != null) _sessionSortField = field;
+      if (!mounted) return;
+      setState(() {
+        _allEntries = sortedRemoteStorageEntries(
+          _allEntries,
+          _sessionSortField,
+        );
+        _applyFilter();
+      });
+    }
+    // 列表可能比偏好先到（[_load] 更快），所以载入后补一次恢复。
+    _restoreScrollOffset();
+  }
+
+  /// 枚举名 → 排序字段；名字不认识（旧数据/手改）就当没存过。
+  static RemoteStorageSortField? _sortFieldFromName(String? name) {
+    if (name == null) return null;
+    for (final field in RemoteStorageSortField.values) {
+      if (field.name == name) return field;
+    }
+    return null;
   }
 
   /// 读缩略图开关（默认开）。读不到也不影响列表，只是保持默认。
@@ -186,6 +231,8 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   @override
   void dispose() {
     _rememberScrollOffset(); // 兜底：滚动途中被 pop 也要记住位置
+    _saveScrollOffsets(); // 并立即落盘（防抖的写盘可能还没到）
+    _saveOffsetTimer?.cancel();
     _scrollController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -218,7 +265,25 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   void _rememberScrollOffset() {
     if (_scrollController.hasClients) {
       _savedScrollOffsets[_scrollMemoryKey] = _scrollController.offset;
+      _scheduleScrollOffsetSave();
     }
+  }
+
+  /// 滚动时不要每帧写磁盘：防抖 800ms（dispose 时立即落盘兜底）。
+  void _scheduleScrollOffsetSave() {
+    _saveOffsetTimer?.cancel();
+    _saveOffsetTimer = Timer(
+      const Duration(milliseconds: 800),
+      _saveScrollOffsets,
+    );
+  }
+
+  void _saveScrollOffsets() {
+    _saveOffsetTimer?.cancel();
+    _saveOffsetTimer = null;
+    unawaited(
+      remoteStorageService().saveBrowserScrollOffsets(_savedScrollOffsets),
+    );
   }
 
   /// 列表重建后（首帧结束）恢复到该目录上次离开时的位置。
@@ -238,6 +303,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   void _selectSortField(RemoteStorageSortField field) {
     if (field == _sessionSortField) return;
     _sessionSortField = field;
+    unawaited(remoteStorageService().saveBrowserSortFieldName(field.name));
     setState(() {
       // 排序作用于整目录（[_allEntries]），再套一层当前搜索的过滤。
       _allEntries = sortedRemoteStorageEntries(_allEntries, field);

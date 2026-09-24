@@ -110,4 +110,93 @@ class RemoteStorageStore {
       );
     }
   }
+
+  // ------------------------------------------------- 浏览页偏好（283 D2）
+
+  static const String browserSortFieldKey = 'remoteStorage.browserSortField';
+  static const String browserScrollOffsetsKey =
+      'remoteStorage.browserScrollOffsets';
+
+  /// 记住多少个目录的滚动位置；超了丢最早的（Map 是插入序）。
+  static const int kMaxRememberedScrollOffsets = 200;
+
+  /// 排序字段名（**枚举名字符串**，不 import presentation 层）。
+  ///
+  /// 数据层存字符串、由页面做 name↔枚举映射，是为了让这里不依赖 presentation：
+  /// 数据层不认识 UI 类型，坏数据也不至于让整个偏好失效。
+  Future<String?> loadBrowserSortFieldName() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(browserSortFieldKey);
+      return raw == null || raw.isEmpty ? null : raw;
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '读取排序偏好失败: $e',
+        level: LogLevel.debug,
+      );
+      return null;
+    }
+  }
+
+  Future<void> saveBrowserSortFieldName(String name) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(browserSortFieldKey, name);
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '保存排序偏好失败: $e',
+        level: LogLevel.debug,
+      );
+    }
+  }
+
+  /// 账户+目录 → 离开时的滚动偏移。读不到/坏数据一律当空（下次重来即可）。
+  Future<Map<String, double>> loadBrowserScrollOffsets() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(browserScrollOffsetsKey);
+      if (raw == null || raw.isEmpty) return <String, double>{};
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return <String, double>{};
+      final result = <String, double>{};
+      decoded.forEach((key, value) {
+        if (key is String && value is num) {
+          final offset = value.toDouble();
+          if (offset.isFinite && offset >= 0) result[key] = offset;
+        }
+      });
+      return result;
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '读取滚动位置失败: $e',
+        level: LogLevel.debug,
+      );
+      return <String, double>{};
+    }
+  }
+
+  Future<void> saveBrowserScrollOffsets(Map<String, double> offsets) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final entries = offsets.entries
+          .where((e) => e.value.isFinite && e.value >= 0)
+          .toList();
+      final trimmed = entries.length > kMaxRememberedScrollOffsets
+          ? entries.sublist(entries.length - kMaxRememberedScrollOffsets)
+          : entries;
+      await prefs.setString(
+        browserScrollOffsetsKey,
+        jsonEncode({for (final e in trimmed) e.key: e.value}),
+      );
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '保存滚动位置失败: $e',
+        level: LogLevel.debug,
+      );
+    }
+  }
 }

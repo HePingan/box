@@ -4,7 +4,10 @@
 // - 浏览页滚动位置恢复：离开子目录再进入恢复偏移。
 // - 排序纯函数：目录优先、稳定性（同键保持相对顺序）。
 
+import 'dart:convert';
+
 import 'package:box/features/extensions/plugins/remote_storage/application/remote_storage_service.dart';
+import 'package:box/features/extensions/plugins/remote_storage/data/remote_storage_store.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_browser_page.dart';
 import 'package:flutter/material.dart';
@@ -474,6 +477,117 @@ void main() {
       expect(identical(filterRemoteEntries(entries, ''), entries), isTrue);
       expect(filterRemoteEntries(entries, 'A.TXT').single.name, 'a.txt');
       expect(filterRemoteEntries(entries, 'b'), isEmpty);
+    });
+  });
+
+  group('偏好持久化（283 D2）', () {
+    List<RemoteStorageEntry> sizedFiles() => <RemoteStorageEntry>[
+      _file('a.txt', size: 100, modifiedAt: DateTime(2024, 1, 1)),
+      _file('b.txt', size: 300, modifiedAt: DateTime(2024, 2, 1)),
+      _file('c.txt', size: 200, modifiedAt: DateTime(2024, 3, 1)),
+    ];
+
+    List<RemoteStorageEntry> longList() => <RemoteStorageEntry>[
+      for (var i = 1; i <= 40; i++) _file('f-${i.toString().padLeft(2, '0')}.txt', size: i),
+    ];
+
+    testWidgets('切换排序 → 落盘（以前只活在进程里）', (tester) async {
+      await pumpBrowser(tester, _FakeService({'': sizedFiles()}));
+
+      await chooseSort(tester, '大小（大在前）');
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        prefs.getString(RemoteStorageStore.browserSortFieldKey),
+        'size',
+        reason: '排序选择要写进磁盘',
+      );
+      expect(
+        listItems(tester).take(3).toList(),
+        <String>['b.txt', 'c.txt', 'a.txt'],
+        reason: '当场也要按新排序显示',
+      );
+    });
+
+    testWidgets('冷启动按磁盘上的排序渲染（不用再手动切一次）', (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        RemoteStorageStore.browserSortFieldKey: 'size',
+      });
+
+      await pumpBrowser(tester, _FakeService({'': sizedFiles()}));
+
+      expect(
+        listItems(tester).take(3).toList(),
+        <String>['b.txt', 'c.txt', 'a.txt'],
+        reason: '读盘后要按大小排（默认是按修改时间）',
+      );
+      await openSortMenu(tester);
+      expect(checkedFlags(tester), <bool>[false, false, true]);
+    });
+
+    testWidgets('磁盘上的排序名不认识（旧数据/手改）→ 退回默认，不崩', (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        RemoteStorageStore.browserSortFieldKey: 'nonsense',
+      });
+
+      await pumpBrowser(tester, _FakeService({'': sizedFiles()}));
+
+      expect(
+        listItems(tester).take(3).toList(),
+        <String>['c.txt', 'b.txt', 'a.txt'],
+        reason: '退回默认「修改时间 新在前」',
+      );
+      await openSortMenu(tester);
+      expect(checkedFlags(tester), <bool>[false, true, false]);
+    });
+
+    testWidgets('滚动位置落盘（防抖后写盘，键含账户+目录）', (tester) async {
+      await pumpBrowser(tester, _FakeService({'': longList()}));
+
+      await tester.drag(visibleList(tester), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      final scrolled =
+          tester.widget<ListView>(visibleList(tester)).controller!.offset;
+      expect(scrolled, greaterThan(100));
+
+      await tester.pump(const Duration(seconds: 1)); // 越过 800ms 防抖
+
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(RemoteStorageStore.browserScrollOffsetsKey);
+      expect(raw, isNotNull, reason: '滚动位置应当落盘');
+      final saved = (jsonDecode(raw!) as Map)['rs_test\u0000'];
+      expect((saved! as num).toDouble(), closeTo(scrolled, 1));
+    });
+
+    testWidgets('冷启动恢复：磁盘上有位置 → 进目录直接回到那里', (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        RemoteStorageStore.browserScrollOffsetsKey: jsonEncode(
+          <String, double>{'rs_test\u0000': 300},
+        ),
+      });
+
+      await pumpBrowser(tester, _FakeService({'': longList()}));
+
+      final controller =
+          tester.widget<ListView>(visibleList(tester)).controller!;
+      expect(controller.offset, closeTo(300, 1), reason: '从磁盘恢复偏移');
+      expect(find.text('f-01.txt').hitTestable(), findsNothing);
+    });
+
+    testWidgets('磁盘上的滚动位置是坏数据 → 从顶部开始，不崩', (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        RemoteStorageStore.browserScrollOffsetsKey: '{坏 JSON',
+      });
+
+      await pumpBrowser(tester, _FakeService({'': longList()}));
+
+      final controller =
+          tester.widget<ListView>(visibleList(tester)).controller!;
+      expect(controller.offset, 0);
+
+      // 走到"坏数据"分支会写一条 debug 日志，AppLogger 有 250ms 防抖落盘定时器；
+      // 不把它跑完，测试框架会判定"widget 树销毁后仍有未完成定时器"而失败。
+      await tester.pump(const Duration(milliseconds: 400));
     });
   });
 }

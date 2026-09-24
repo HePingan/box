@@ -991,6 +991,20 @@ class RemoteStorageService {
   Future<void> saveThumbnailsEnabled(bool enabled) =>
       _store.saveThumbnailsEnabled(enabled);
 
+  /// 浏览页排序字段（283 D2，持久化；存枚举名字符串）。
+  Future<String?> loadBrowserSortFieldName() =>
+      _store.loadBrowserSortFieldName();
+
+  Future<void> saveBrowserSortFieldName(String name) =>
+      _store.saveBrowserSortFieldName(name);
+
+  /// 各目录的滚动位置（283 D2，持久化）。
+  Future<Map<String, double>> loadBrowserScrollOffsets() =>
+      _store.loadBrowserScrollOffsets();
+
+  Future<void> saveBrowserScrollOffsets(Map<String, double> offsets) =>
+      _store.saveBrowserScrollOffsets(offsets);
+
   // ------------------------------------------------------- 播放通道（拍板7）
 
   /// 判定播放通道：http 明文或自签证书 → 回环中继；否则携带 Basic 直连。
