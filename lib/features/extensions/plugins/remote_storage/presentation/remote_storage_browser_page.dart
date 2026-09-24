@@ -8,7 +8,6 @@
 
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +17,7 @@ import 'package:share_plus/share_plus.dart';
 import '../application/remote_storage_service.dart';
 import '../application/transfer_queue.dart';
 import '../domain/remote_storage_models.dart';
+import 'image_preview_dialog.dart';
 import 'remote_storage_player_page.dart';
 import 'remote_thumbnail.dart';
 
@@ -1109,10 +1109,19 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     final kind = remoteEntryKind(entry);
     switch (kind) {
       case RemoteEntryKind.image:
+        // 相册式滑动（283 D5）：带上同目录（当前筛选视图）里的其他图片，
+        // 以及被点这张的下标。
+        final images = _entries
+            .where((e) => remoteEntryKind(e) == RemoteEntryKind.image)
+            .toList(growable: false);
+        final index = images.indexWhere((e) => e.path == entry.path);
         await showDialog<void>(
           context: context,
-          builder: (_) =>
-              _ImagePreviewDialog(account: widget.account, entry: entry),
+          builder: (_) => ImagePreviewDialog(
+            account: widget.account,
+            entries: index < 0 ? [entry] : images,
+            initialIndex: index < 0 ? 0 : index,
+          ),
         );
       case RemoteEntryKind.text:
         await showDialog<void>(
@@ -1692,110 +1701,6 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
 }
 
 // ------------------------------------------------------------- 图片预览
-
-class _ImagePreviewDialog extends StatefulWidget {
-  const _ImagePreviewDialog({required this.account, required this.entry});
-
-  final RemoteStorageAccount account;
-  final RemoteStorageEntry entry;
-
-  @override
-  State<_ImagePreviewDialog> createState() => _ImagePreviewDialogState();
-}
-
-class _ImagePreviewDialogState extends State<_ImagePreviewDialog> {
-  late Future<PreviewPayload> _future;
-
-  @override
-  void initState() {
-    super.initState();
-    _future = remoteStorageService()
-        .readImagePreview(widget.account, widget.entry.path);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: const EdgeInsets.all(12),
-      child: FutureBuilder<PreviewPayload>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const SizedBox(
-              height: 240,
-              child: Center(child: CircularProgressIndicator()),
-            );
-          }
-          if (snapshot.hasError) {
-            return _dialogMessage(
-              context,
-              '预览失败：${snapshot.error}',
-            );
-          }
-          final payload = snapshot.data!;
-          if (payload.oversize) {
-            return _dialogMessage(
-              context,
-              '图片超过 ${formatRemoteBytes(kPreviewImageMaxBytes)}，'
-              '已跳过预览。\n可下载后查看。',
-            );
-          }
-          // 降采样解码（C4）：20MB 的图可能解码成近 200MB 的位图，全尺寸解码在
-          // 小内存设备上直接 OOM。按屏幕宽度 ×2 解，视网膜屏上看不出差别。
-          final media = MediaQuery.maybeOf(context);
-          final decodeWidth = media == null
-              ? null
-              : previewImageDecodeWidth(
-                  logicalWidth: media.size.width,
-                  devicePixelRatio: media.devicePixelRatio,
-                );
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: InteractiveViewer(
-                  maxScale: 5,
-                  child: Image.memory(
-                    Uint8List.fromList(payload.bytes),
-                    fit: BoxFit.contain,
-                    gaplessPlayback: true,
-                    cacheWidth: decodeWidth,
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(8),
-                child: Text(
-                  widget.entry.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _dialogMessage(BuildContext context, String text) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(text, textAlign: TextAlign.center),
-          const SizedBox(height: 12),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('关闭'),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 // ------------------------------------------------------------- 文本预览
 

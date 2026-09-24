@@ -56,12 +56,26 @@ class _FakeService extends RemoteStorageService {
   /// 图片预览返回的字节（C4 测试用）：一张 1×1 PNG 就够，测的是解码参数不是图。
   Uint8List imageBytes = kTinyPng;
 
+  /// 取过哪些图（D5 断言"只预取相邻一张"）。
+  final List<String> previewPaths = [];
+
+  /// 这些路径取图时抛错（D5 断言"一张坏图不阻塞整个相册"）。
+  final Set<String> previewFailPaths = {};
+
   @override
   Future<PreviewPayload> readImagePreview(
     RemoteStorageAccount account,
     String path, {
     TransferCancelToken? cancel,
   }) async {
+    previewPaths.add(path);
+    if (previewFailPaths.contains(path)) {
+      throw const RemoteStorageException(
+        RemoteStorageError.http,
+        '服务器返回 HTTP 500',
+        statusCode: 500,
+      );
+    }
     return PreviewPayload(bytes: imageBytes, truncated: false, oversize: false);
   }
 
@@ -671,6 +685,116 @@ void main() {
 
       gate.complete();
       await settleTimers(tester);
+    });
+  });
+  group('图片预览相册滑动（283 D5）', () {
+    RemoteStorageEntry pic(String n) => RemoteStorageEntry(
+      name: n,
+      path: n,
+      isDirectory: false,
+      size: 1024,
+      modifiedAt: DateTime(2024, 1, 1),
+    );
+
+    Future<_FakeService> pumpGallery(WidgetTester tester, List<String> names) async {
+      final service = await pumpBrowser(
+        tester,
+        entries: names.map(pic).toList(),
+      );
+      await tester.tap(find.text(names.first));
+      await tester.pumpAndSettle();
+      return service;
+    }
+
+    Future<void> swipe(WidgetTester tester) async {
+      await tester.fling(find.byType(PageView), const Offset(-400, 0), 1200);
+      await tester.pumpAndSettle();
+    }
+
+    /// 对话框里的文本（列表还压在下面，同名文件在两层都有，必须限定范围）。
+    Finder inDialog(String text) => find.descendant(
+      of: find.byType(Dialog),
+      matching: find.text(text),
+    );
+
+    testWidgets('滑动浏览：标题显示"第几张 / 共几张"，且只预取相邻一张', (tester) async {
+      final service = await pumpGallery(tester, ['p1.png', 'p2.png', 'p3.png']);
+
+      expect(find.text('1 / 3'), findsOneWidget);
+      expect(
+        service.previewPaths.toSet(),
+        {'p1.png', 'p2.png'},
+        reason: '当前张 + 相邻一张；不该把整个目录的图都拉下来',
+      );
+
+      await swipe(tester);
+      expect(find.text('2 / 3'), findsOneWidget);
+      expect(
+        service.previewPaths.toSet(),
+        {'p1.png', 'p2.png', 'p3.png'},
+        reason: '滑到第二张后预取第三张',
+      );
+    });
+
+    testWidgets('滑到相邻张再滑回来：不重复下载', (tester) async {
+      final service = await pumpGallery(tester, ['p1.png', 'p2.png', 'p3.png']);
+
+      await swipe(tester);
+      await tester.fling(find.byType(PageView), const Offset(400, 0), 1200);
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 / 3'), findsOneWidget);
+      expect(
+        service.previewPaths.where((p) => p == 'p1.png').length,
+        1,
+        reason: '同一个 future 复用，来回滑不该重复取',
+      );
+    });
+
+    testWidgets('滑到最后一张继续左滑 → 停在最后一张，不崩', (tester) async {
+      await pumpGallery(tester, ['p1.png', 'p2.png']);
+
+      await swipe(tester);
+      expect(find.text('2 / 2'), findsOneWidget);
+
+      await swipe(tester); // 已到边界
+      expect(find.text('2 / 2'), findsOneWidget);
+      expect(inDialog('p2.png'), findsOneWidget, reason: '标题仍是当前这张');
+    });
+
+    testWidgets('单张图：不显示计数（没什么可数的）', (tester) async {
+      await pumpGallery(tester, ['only.png']);
+
+      expect(inDialog('only.png'), findsOneWidget);
+      expect(find.textContaining('1 / 1'), findsNothing);
+    });
+
+    testWidgets('某一张取不到：那一页说明原因，仍可滑到下一张', (tester) async {
+      final service = await pumpBrowser(
+        tester,
+        entries: ['p1.png', 'p2.png', 'p3.png'].map(pic).toList(),
+      );
+      service.previewFailPaths.add('p1.png');
+
+      await tester.tap(find.text('p1.png'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('预览失败'), findsOneWidget);
+      expect(find.textContaining('可左右滑动看下一张'), findsOneWidget);
+
+      await swipe(tester);
+      expect(find.text('2 / 3'), findsOneWidget);
+      expect(find.byType(Image), findsOneWidget, reason: '下一张正常显示');
+    });
+
+    testWidgets('预览对话框可关闭', (tester) async {
+      await pumpGallery(tester, ['p1.png', 'p2.png']);
+
+      await tester.tap(find.text('关闭'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(PageView), findsNothing);
+      expect(find.text('p1.png'), findsOneWidget, reason: '回到列表');
     });
   });
 }
