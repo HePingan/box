@@ -1649,7 +1649,9 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   /// 行首图标：图片条目且开关打开时换成缩略图（取不到就回退通用图标）。
   Widget _leadingFor(RemoteStorageEntry entry, RemoteEntryKind kind) {
     final icon = Icon(_iconFor(kind), color: _colorFor(kind, context));
-    if (!_thumbnailsEnabled || !isThumbnailableEntry(entry)) return icon;
+    // 用 canHaveThumbnail（整取 + EXIF 两条路都算）：只按整取判定的话，
+    // 超过 3MB 的图根本不会去问 service，EXIF 那条路等于没接上。
+    if (!_thumbnailsEnabled || !canHaveThumbnail(entry)) return icon;
     final account = widget.account;
     return RemoteThumbnail(
       // key 里带账户+路径+大小+修改时间：列表复用到别的图片时重建，不贴错图。

@@ -272,22 +272,29 @@ void main() {
       expect(find.byIcon(Icons.image_outlined), findsNothing);
     });
 
-    testWidgets('超过上限的大图不取：保持通用图标，也不发请求', (tester) async {
-      final service = _FakeService(
-        entries: [imageEntry(size: kThumbnailMaxBytes + 1)],
-      );
-      service.thumbnailBytes = kTinyPng;
-      debugSetRemoteStorageRuntime(service: service);
+    testWidgets(
+      '超过上限的大图：不给整取，但会去试 EXIF 内嵌缩略图（283 D1 改的规则）',
+      (tester) async {
+        // 281 时的规则是"大图一律不取"；283 D1 起大 JPEG 走 EXIF 内嵌缩略图
+        // （读文件开头 256KB），所以页面必须去问 service——但它仍然**不会**整取。
+        final service = _FakeService(
+          entries: [imageEntry(size: kThumbnailMaxBytes + 1)],
+        );
+        service.thumbnailBytes = kTinyPng;
+        debugSetRemoteStorageRuntime(service: service);
 
-      await tester.pumpWidget(
-        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
-      );
-      await tester.pumpAndSettle();
+        await tester.pumpWidget(
+          MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+        );
+        await tester.pumpAndSettle();
 
-      expect(service.thumbnailPaths, isEmpty, reason: '大图不该去取');
-      expect(find.byIcon(Icons.image_outlined), findsOneWidget);
-      expect(find.byType(Image), findsNothing);
-    });
+        expect(
+          service.thumbnailPaths,
+          contains('a.jpg'),
+          reason: '整取上限只挡"整取"，不挡 EXIF 探测',
+        );
+      },
+    );
 
     testWidgets('取不到（返回 null）→ 回退通用图标，列表不显示错误', (tester) async {
       final service = _FakeService(entries: [imageEntry()]);
@@ -345,6 +352,64 @@ void main() {
       expect(service.savedThumbnailFlags, [false], reason: '关掉要持久化');
       expect(find.byIcon(Icons.image_outlined), findsOneWidget);
       expect(find.byType(Image), findsNothing);
+    });
+
+    testWidgets('超过整取上限的大图（JPEG）也会去要缩略图（283 D1 的 EXIF 路径）', (tester) async {
+      // 这条用例存在的理由：service 层单测全绿不代表功能接上了——页面若只按
+      // isThumbnailableEntry 判定，大图根本不会去问 service。
+      final service = await pumpBrowser(
+        tester,
+        entries: const [
+          RemoteStorageEntry(
+            name: 'big.jpg',
+            path: 'big.jpg',
+            isDirectory: false,
+            size: kThumbnailMaxBytes + 1,
+          ),
+        ],
+      );
+      service.thumbnailBytes = kTinyPng;
+      await tester.pumpAndSettle();
+
+      expect(
+        service.thumbnailPaths,
+        contains('big.jpg'),
+        reason: '大 JPEG 必须走到 service（由 it 去试 EXIF 内嵌缩略图）',
+      );
+    });
+
+    testWidgets('超过整取上限的 PNG 不去要缩略图（没有内嵌缩略图可试）', (tester) async {
+      final service = await pumpBrowser(
+        tester,
+        entries: const [
+          RemoteStorageEntry(
+            name: 'big.png',
+            path: 'big.png',
+            isDirectory: false,
+            size: kThumbnailMaxBytes + 1,
+          ),
+        ],
+      );
+      await tester.pumpAndSettle();
+
+      expect(service.thumbnailPaths, isEmpty);
+      expect(find.byIcon(Icons.image_outlined), findsOneWidget);
+    });
+
+    testWidgets('大小未知的 JPEG 也会去要缩略图（探测代价有界）', (tester) async {
+      final service = await pumpBrowser(
+        tester,
+        entries: const [
+          RemoteStorageEntry(
+            name: 'unknown.jpg',
+            path: 'unknown.jpg',
+            isDirectory: false,
+          ),
+        ],
+      );
+      await tester.pumpAndSettle();
+
+      expect(service.thumbnailPaths, contains('unknown.jpg'));
     });
   });
 

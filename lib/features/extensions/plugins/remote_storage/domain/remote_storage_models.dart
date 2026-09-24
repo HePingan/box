@@ -74,6 +74,16 @@ const int kExifProbeBytes = 256 * 1024;
 /// 也不要让这个集合无限增长）。
 const int kExifProbeMissLimit = 500;
 
+/// 列表要不要为这个条目**尝试**取缩略图（纯判定，便于单测）。
+///
+/// 两个来源：[isThumbnailableEntry]（整取，3MB 以内）与 [isExifThumbnailCandidate]
+/// （大图/未知大小的 JPEG，走 EXIF 内嵌缩略图）。
+///
+/// 为什么要合成一个函数：页面若只按 `isThumbnailableEntry` 决定要不要显示缩略图槽位，
+/// 那"大图走 EXIF"这条路在真机上永远走不到——service 层的单测会全绿，功能却不生效。
+bool canHaveThumbnail(RemoteStorageEntry entry) =>
+    isThumbnailableEntry(entry) || isExifThumbnailCandidate(entry);
+
 /// 这个条目要不要走"EXIF 内嵌缩略图"这条路（纯判定，便于单测）。
 ///
 /// 适用条件：
