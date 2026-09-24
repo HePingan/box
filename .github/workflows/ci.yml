@@ -64,6 +64,11 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
+      - name: 悬挂 API 扫描（写了没人调的公开方法）
+        # 283 之前 clearThumbnailCache() 全仓零调用——有实现、有单测、就是没入口。
+        # 这类问题编译器不管、测试也不会红，只能扫调用点。脚本自带 ALLOW 白名单。
+        run: python3 tool/scan_dangling_apis.py
+
       - name: 包名一致性 + 备份覆盖面
         # --exclude-tags live 不能漏：test/update/update_live_backend_test.dart
         # 标了 @Tags(['live'])，会真的去打 https://box.hpa888.top。

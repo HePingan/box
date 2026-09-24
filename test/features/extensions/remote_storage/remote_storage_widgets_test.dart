@@ -3,7 +3,6 @@
 // - 浏览页：空目录空态、加载失败错误态（含重试）、条目列表渲染。
 
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:box/features/extensions/plugins/remote_storage/application/remote_storage_service.dart';
 import 'package:box/features/extensions/plugins/remote_storage/application/transfer_queue.dart';
