@@ -693,4 +693,24 @@ void main() {
       expect(s.probed, 2);
     });
   });
+
+  group('播放倍速（284 P4）', () {
+    test('档位表：升序、含 1×、无重复、都在合理范围', () {
+      expect(kPlaybackSpeeds, contains(1));
+      expect(kPlaybackSpeeds.toSet().length, kPlaybackSpeeds.length);
+      for (var i = 1; i < kPlaybackSpeeds.length; i++) {
+        expect(kPlaybackSpeeds[i], greaterThan(kPlaybackSpeeds[i - 1]));
+      }
+      expect(kPlaybackSpeeds.first, greaterThan(0));
+      expect(kPlaybackSpeeds.last, lessThanOrEqualTo(2));
+    });
+
+    test('文案：整数档不带小数点，小数档原样', () {
+      expect(formatPlaybackSpeed(1), '1×');
+      expect(formatPlaybackSpeed(2), '2×');
+      expect(formatPlaybackSpeed(1.5), '1.5×');
+      expect(formatPlaybackSpeed(0.75), '0.75×');
+      expect(formatPlaybackSpeed(0.5), '0.5×');
+    });
+  });
 }

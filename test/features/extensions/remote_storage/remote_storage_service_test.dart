@@ -1258,4 +1258,18 @@ void main() {
       expect(service.exifThumbnailStats().isEmpty, isTrue);
     });
   });
+
+  group('播放倍速偏好转发（284 P4）', () {
+    test('默认 1×；保存后读回一致（走服务门面）', () async {
+      expect(await service.loadPlaybackSpeed(), 1);
+      await service.savePlaybackSpeed(1.5);
+      expect(await service.loadPlaybackSpeed(), 1.5);
+    });
+
+    test('非法档位不落盘（服务层也拦住）', () async {
+      await service.savePlaybackSpeed(1.25);
+      await service.savePlaybackSpeed(0);
+      expect(await service.loadPlaybackSpeed(), 1.25);
+    });
+  });
 }

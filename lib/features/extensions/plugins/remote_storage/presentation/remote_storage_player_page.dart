@@ -8,6 +8,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:box/utils/app_logger.dart';
+import 'package:box/utils/log_channels.dart';
 import 'package:chewie/chewie.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
@@ -19,6 +21,56 @@ import '../data/playback_progress_store.dart';
 import '../domain/playback_progress.dart';
 import '../domain/remote_storage_models.dart';
 import '../domain/subtitle_support.dart';
+
+/// 倍速菜单（284 P4）。
+///
+/// 独立成组件有两个原因：① 播放页需要真实的视频控制器才能起来，单测里起不来，
+/// 把"选择倍速"这段拆出来就能直接测；② 档位与文案都在 domain 层，这里只做展示。
+class PlaybackSpeedMenu extends StatelessWidget {
+  const PlaybackSpeedMenu({
+    super.key,
+    required this.value,
+    required this.onSelected,
+    this.foregroundColor = Colors.white,
+  });
+
+  final double value;
+  final ValueChanged<double> onSelected;
+  final Color foregroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<double>(
+      tooltip: '倍速',
+      onSelected: onSelected,
+      icon: Text(
+        formatPlaybackSpeed(value),
+        style: TextStyle(
+          color: foregroundColor,
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      itemBuilder: (context) => <PopupMenuEntry<double>>[
+        for (final speed in kPlaybackSpeeds)
+          PopupMenuItem<double>(
+            value: speed,
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 24,
+                  child: speed == value
+                      ? const Icon(Icons.check_rounded, size: 18)
+                      : null,
+                ),
+                Text(formatPlaybackSpeed(speed)),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
 
 class RemoteStoragePlayerPage extends StatefulWidget {
   const RemoteStoragePlayerPage({
@@ -53,6 +105,9 @@ class _RemoteStoragePlayerPageState extends State<RemoteStoragePlayerPage> {
   static const RemotePlaybackProgressStore _progressStore =
       RemotePlaybackProgressStore();
   Timer? _progressTimer;
+
+  /// 倍速（284 P4）：全局一个值，选择记住（下次打开还是它）。
+  double _speed = 1;
 
   /// 字幕（B3）：候选列表（同目录 .srt/.vtt，同名的排前面）与当前生效项。
   List<RemoteStorageEntry> _subtitleCandidates = const [];
@@ -108,6 +163,9 @@ class _RemoteStoragePlayerPageState extends State<RemoteStoragePlayerPage> {
         ),
       );
       setState(() => _ready = true);
+      // 倍速（284 P4）：先读偏好再应用，避免先按 1× 播一下再跳成 1.5×。
+      _speed = await service.loadPlaybackSpeed();
+      await _applySpeed();
       // 续播（B3）：放在 ready 之后，避免首帧还没出来就被 seek 打断。
       await _applyResume(controller);
       _startProgressTicker();
@@ -119,6 +177,32 @@ class _RemoteStoragePlayerPageState extends State<RemoteStoragePlayerPage> {
         _error = e is RemoteStorageException ? e.message : '$e';
       });
     }
+  }
+
+  // -------------------------------------------------------------- 倍速（284 P4）
+
+  /// 把当前倍速套到播放器上（没初始化好就跳过，初始化流程里会再调一次）。
+  Future<void> _applySpeed() async {
+    final controller = _controller;
+    if (controller == null) return;
+    try {
+      // 只有 VideoPlayerController 有 setPlaybackSpeed；ChewieController 没有这个方法
+      // （它的控制条内部也是转发给 video_player 的）。
+      await controller.setPlaybackSpeed(_speed);
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '设置播放倍速失败（$_speed×）: $e',
+        level: LogLevel.debug,
+      );
+    }
+  }
+
+  Future<void> _selectSpeed(double speed) async {
+    if (speed == _speed) return;
+    setState(() => _speed = speed);
+    await _applySpeed();
+    await remoteStorageService().savePlaybackSpeed(speed);
   }
 
   // -------------------------------------------------------------- 续播（B3）
@@ -393,6 +477,8 @@ class _RemoteStoragePlayerPageState extends State<RemoteStoragePlayerPage> {
           style: const TextStyle(fontSize: 16),
         ),
         actions: [
+          // 倍速（284 P4）：放 AppBar 与「字幕」入口一致，选择会记住。
+          PlaybackSpeedMenu(value: _speed, onSelected: _selectSpeed),
           // 本地兜底播放没有远端目录上下文，找不到候选字幕，索性不显示入口。
           if (!_isLocal)
             IconButton(

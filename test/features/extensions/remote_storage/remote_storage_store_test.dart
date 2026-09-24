@@ -323,4 +323,36 @@ void main() {
       });
     });
   });
+
+  group('播放倍速偏好（284 P4）', () {
+    test('没存过 → 1×（默认不能是 0）', () async {
+      final store = RemoteStorageStore();
+      expect(await store.loadPlaybackSpeed(), 1);
+    });
+
+    test('存了读回来一致', () async {
+      final store = RemoteStorageStore();
+      await store.savePlaybackSpeed(1.5);
+      expect(await store.loadPlaybackSpeed(), 1.5);
+    });
+
+    test('坏数据（不在档位表里）→ 回落 1×', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        RemoteStorageStore.playbackSpeedKey: 0.3,
+      });
+      final store = RemoteStorageStore();
+      expect(
+        await store.loadPlaybackSpeed(),
+        1,
+        reason: '0 或负数会让播放器卡住不动，必须拦住',
+      );
+    });
+
+    test('写非法档位不落盘（保持原值）', () async {
+      final store = RemoteStorageStore();
+      await store.savePlaybackSpeed(1.25);
+      await store.savePlaybackSpeed(3);
+      expect(await store.loadPlaybackSpeed(), 1.25);
+    });
+  });
 }

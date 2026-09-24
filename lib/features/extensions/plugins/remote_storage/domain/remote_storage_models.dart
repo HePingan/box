@@ -74,6 +74,19 @@ const int kExifProbeBytes = 256 * 1024;
 /// 也不要让这个集合无限增长）。
 const int kExifProbeMissLimit = 500;
 
+/// 播放倍速档位（284 P4）。
+///
+/// 0.5–2.0 五档足够覆盖"听课调慢"和"跳过废话"；再细的档位只增加选择成本。
+const List<double> kPlaybackSpeeds = <double>[0.5, 0.75, 1, 1.25, 1.5, 2];
+
+/// 倍速文案：`1×` / `1.5×` / `0.75×`（整数档不带小数点，菜单里对齐好看）。
+String formatPlaybackSpeed(double speed) {
+  final text = speed == speed.roundToDouble()
+      ? speed.toStringAsFixed(0)
+      : speed.toString();
+  return '$text×';
+}
+
 /// EXIF 内嵌缩略图的探测统计（284 P3）。
 ///
 /// 为什么要它：283 D1 的"大图走 EXIF 内嵌缩略图"是没法只靠单测自证的改动——

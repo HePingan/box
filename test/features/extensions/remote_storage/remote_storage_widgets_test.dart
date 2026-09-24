@@ -12,6 +12,7 @@ import 'package:box/features/extensions/plugins/remote_storage/domain/remote_sto
 import 'package:box/features/extensions/plugins/remote_storage/presentation/image_preview_dialog.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_browser_page.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_page.dart';
+import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_player_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1065,6 +1066,63 @@ void main() {
       await openCachePanel(tester);
 
       expect(find.textContaining('EXIF'), findsNothing);
+    });
+  });
+
+  group('倍速菜单（284 P4）', () {
+    Future<List<double>> pumpMenu(
+      WidgetTester tester, {
+      required double value,
+    }) async {
+      final picked = <double>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            appBar: AppBar(
+              actions: [
+                PlaybackSpeedMenu(
+                  value: value,
+                  onSelected: picked.add,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      return picked;
+    }
+
+    testWidgets('按钮上显示当前倍速', (tester) async {
+      await pumpMenu(tester, value: 1.5);
+      expect(find.text('1.5×'), findsOneWidget);
+    });
+
+    testWidgets('菜单列出全部档位，当前档打勾', (tester) async {
+      await pumpMenu(tester, value: 1.25);
+
+      await tester.tap(find.byTooltip('倍速'));
+      await tester.pumpAndSettle();
+
+      for (final speed in kPlaybackSpeeds) {
+        expect(
+          find.text(formatPlaybackSpeed(speed)),
+          findsWidgets,
+          reason: '档位 ${formatPlaybackSpeed(speed)} 应该在菜单里',
+        );
+      }
+      expect(find.byIcon(Icons.check_rounded), findsOneWidget);
+    });
+
+    testWidgets('点一档 → 回调拿到该档位', (tester) async {
+      final picked = await pumpMenu(tester, value: 1);
+
+      await tester.tap(find.byTooltip('倍速'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('2×').last);
+      await tester.pumpAndSettle();
+
+      expect(picked, <double>[2]);
     });
   });
 }

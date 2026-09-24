@@ -1019,6 +1019,12 @@ class RemoteStorageService {
   Future<void> clearThumbnailCache() => _thumbnails.cache.clear();
 
   /// 列表是否显示图片缩略图（持久化偏好）。
+  /// 播放倍速偏好（284 P4）。
+  Future<double> loadPlaybackSpeed() => _store.loadPlaybackSpeed();
+
+  Future<void> savePlaybackSpeed(double speed) =>
+      _store.savePlaybackSpeed(speed);
+
   Future<bool> loadThumbnailsEnabled() => _store.loadThumbnailsEnabled();
 
   Future<void> saveThumbnailsEnabled(bool enabled) =>

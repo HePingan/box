@@ -113,6 +113,8 @@ class RemoteStorageStore {
 
   // ------------------------------------------------- 浏览页偏好（283 D2）
 
+  static const String playbackSpeedKey = 'remoteStorage.playbackSpeed';
+
   static const String browserSortFieldKey = 'remoteStorage.browserSortField';
   static const String browserScrollOffsetsKey =
       'remoteStorage.browserScrollOffsets';
@@ -147,6 +149,39 @@ class RemoteStorageStore {
       AppLogger.instance.logTo(
         LogChannel.storage,
         '保存排序偏好失败: $e',
+        level: LogLevel.debug,
+      );
+    }
+  }
+
+  /// 播放倍速（284 P4）：没存过、坏数据、不在档位表里的一律回落到 1×。
+  ///
+  /// 校验档位是有必要的：0 或负数会让播放器"卡住不动"，而用户只会觉得播放器坏了。
+  Future<double> loadPlaybackSpeed() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getDouble(playbackSpeedKey);
+      if (raw == null) return 1;
+      return kPlaybackSpeeds.contains(raw) ? raw : 1;
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '读取倍速偏好失败: $e',
+        level: LogLevel.debug,
+      );
+      return 1;
+    }
+  }
+
+  Future<void> savePlaybackSpeed(double speed) async {
+    if (!kPlaybackSpeeds.contains(speed)) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(playbackSpeedKey, speed);
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '保存倍速偏好失败: $e',
         level: LogLevel.debug,
       );
     }
