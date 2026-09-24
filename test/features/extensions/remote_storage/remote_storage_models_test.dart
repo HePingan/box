@@ -530,4 +530,34 @@ void main() {
       expect(isRetryableTransferError(e), isTrue);
     });
   });
+
+  group('导出策略（B2：SAF 阈值与 MIME）', () {
+    test('64MB 以内走系统另存，超过走分享', () {
+      expect(
+        exportStrategyFor(1024),
+        RemoteExportStrategy.safSave,
+      );
+      expect(
+        exportStrategyFor(kSafExportMaxBytes),
+        RemoteExportStrategy.safSave,
+      );
+      expect(
+        exportStrategyFor(kSafExportMaxBytes + 1),
+        RemoteExportStrategy.shareFromAppDir,
+      );
+    });
+
+    test('大小未知/非法 → 保守走分享（不赌内存）', () {
+      expect(exportStrategyFor(null), RemoteExportStrategy.shareFromAppDir);
+      expect(exportStrategyFor(0), RemoteExportStrategy.shareFromAppDir);
+      expect(exportStrategyFor(-1), RemoteExportStrategy.shareFromAppDir);
+    });
+
+    test('MIME 按扩展名给，大小写不敏感，未知扩展名回落二进制流', () {
+      expect(mimeTypeForFileName('a.mp4'), 'video/mp4');
+      expect(mimeTypeForFileName('A.JPG'), 'image/jpeg');
+      expect(mimeTypeForFileName('book.epub'), 'application/epub+zip');
+      expect(mimeTypeForFileName('noext'), 'application/octet-stream');
+    });
+  });
 }

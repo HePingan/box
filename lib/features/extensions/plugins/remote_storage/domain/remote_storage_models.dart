@@ -532,6 +532,66 @@ String remoteBasename(String path) {
   return idx < 0 ? path : path.substring(idx + 1);
 }
 
+/// SAF「另存到…」的大小上限（279 B2）。
+///
+/// file_picker 的 `saveFile` 接口本身就是 `required Uint8List bytes`——要先把整个
+/// 文件读进内存。超大文件走这条路会直接 OOM，所以超过阈值的改走
+/// 「下载到应用目录 + 分享/打开」这条流式路径。
+const int kSafExportMaxBytes = 64 * 1024 * 1024;
+
+/// 导出策略（B2）。
+enum RemoteExportStrategy {
+  /// 读进内存后调系统「另存为」（SAF / 文件选择器）。
+  safSave,
+
+  /// 只能靠「下载到应用目录 → 分享 / 打开」由用户另存。
+  shareFromAppDir,
+}
+
+/// 该大小该走哪条导出路径。
+///
+/// **大小未知时选保守路径**：拿不准就别赌内存——用户还能用分享另存，
+/// 而 OOM 是直接把 App 干掉。
+RemoteExportStrategy exportStrategyFor(int? sizeBytes) {
+  if (sizeBytes == null || sizeBytes <= 0) {
+    return RemoteExportStrategy.shareFromAppDir;
+  }
+  return sizeBytes <= kSafExportMaxBytes
+      ? RemoteExportStrategy.safSave
+      : RemoteExportStrategy.shareFromAppDir;
+}
+
+/// 另存时的 MIME（SAF 用它决定默认过滤与缩略图；拿不准就给二进制流）。
+String mimeTypeForFileName(String name) {
+  final lower = name.toLowerCase();
+  const table = <String, String>{
+    '.mp4': 'video/mp4',
+    '.mkv': 'video/x-matroska',
+    '.webm': 'video/webm',
+    '.mp3': 'audio/mpeg',
+    '.m4a': 'audio/mp4',
+    '.flac': 'audio/flac',
+    '.wav': 'audio/wav',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.heic': 'image/heic',
+    '.pdf': 'application/pdf',
+    '.epub': 'application/epub+zip',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.json': 'application/json',
+    '.zip': 'application/zip',
+    '.apk': 'application/vnd.android.package-archive',
+  };
+  for (final entry in table.entries) {
+    if (lower.endsWith(entry.key)) return entry.value;
+  }
+  return 'application/octet-stream';
+}
+
 /// 批量操作结果：逐项失败不中断整批，最后统一汇报。
 ///
 /// 为什么不让批量操作"一错全停"：多选删除/移动时，用户要的是"能做的先做掉"，

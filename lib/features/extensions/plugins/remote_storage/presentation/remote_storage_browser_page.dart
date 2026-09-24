@@ -3,9 +3,11 @@
 // 拍板 2：P0 仅上传（含浏览、下载、预览、播放），不做删除/重命名。
 // 拍板 3：上传遇同名 → 默认跳过，可手动选择覆盖。
 // 拍板 6：图片预览 20MB 上限、文本预览 512KB 前缀。
-// 拍板 8：下载先落应用文档目录，导出到公共下载目录推 P1。
+// 拍板 8：下载先落应用文档目录；279 B2 起补上「保存到…」（小文件走系统 SAF 另存，
+//         超过 64MB 只给分享/打开指引——saveFile 需要整文件进内存，大文件会 OOM）。
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -802,12 +804,29 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   }
 
   void _showDownloadedDialog(String path, String name) {
+    // 大小取自当前列表里的条目（缩略图下载等场景取不到就给 null → 保守策略）。
+    int? sizeBytes;
+    for (final entry in _entries) {
+      if (entry.name == name) {
+        sizeBytes = entry.size;
+        break;
+      }
+    }
+    final canSafSave =
+        exportStrategyFor(sizeBytes) == RemoteExportStrategy.safSave;
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('下载完成'),
         content: Text('$name\n已保存到应用目录，可打开或分享。'),
         actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _exportToDevice(path, name, sizeBytes: sizeBytes);
+            },
+            child: Text(canSafSave ? '保存到…' : '保存到…（大文件）'),
+          ),
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
@@ -825,6 +844,57 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
         ],
       ),
     );
+  }
+
+  /// 导出到设备（B2）：小文件走系统「另存为」（SAF），大文件只给说明——
+  /// 让用户用「分享 → 保存到文件」而不是赌一次 OOM。
+  Future<void> _exportToDevice(
+    String path,
+    String name, {
+    required int? sizeBytes,
+  }) async {
+    final strategy = exportStrategyFor(sizeBytes);
+    if (strategy == RemoteExportStrategy.shareFromAppDir) {
+      final sizeLabel = sizeBytes == null ? '未知大小' : formatRemoteBytes(sizeBytes);
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('文件较大'),
+          content: Text(
+            '$name（$sizeLabel）超过 64MB，系统「另存为」需要先把整个文件读进内存，'
+            '大文件走这条路会拖垮 App。\n\n请改用「分享」→ 保存到文件/相册，'
+            '或先用「打开」交给能接收大文件的 App。',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('知道了'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    try {
+      final bytes = await File(path).readAsBytes();
+      final saved = await FilePicker.saveFile(
+        fileName: name,
+        bytes: bytes,
+        mimeType: mimeTypeForFileName(name),
+        dialogTitle: '保存 $name',
+      );
+      if (!mounted) return;
+      if (saved != null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('已保存到所选位置')));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('保存失败：$e')));
+    }
   }
 
   // ------------------------------------------------------------- 预览 / 播放
