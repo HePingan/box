@@ -421,15 +421,76 @@ String formatRemoteBytes(int? bytes) {
   return '${value.toStringAsFixed(digits)} ${units[unit]}';
 }
 
-/// 路径与文件名清洗：拒绝越权与非法字符；返回 null 表示不可用。
-String? sanitizeRemoteSegment(String raw) {
-  final text = raw.trim();
-  if (text.isEmpty) return null;
-  if (text == '.' || text == '..') return null;
-  if (text.contains('/') || text.contains('\\')) return null;
-  if (text.runes.any((r) => r < 0x20)) return null;
-  if (text.length > 255) return null;
+/// 单个路径段的**字节**上限。
+///
+/// 为什么按字节判而不是按字符：旧实现用 `String.length`（UTF-16 单元数）判 255，
+/// "200 个汉字"在那里算 200 通过，但服务端收到的是 600 字节 → ext4/SMB/NFS 后端
+/// 直接拒收，而客户端以为传得动（用户看到的是莫名其妙的失败）。
+const int kMaxRemoteSegmentBytes = 255;
+
+/// UTF-8 字节数（长度判定与提示文案共用）。
+int remoteSegmentByteLength(String text) => utf8.encode(text).length;
+
+/// Windows/SMB 保留设备名：DAV 后面挂 SMB 共享时会被拒收或截断。
+const Set<String> kWindowsReservedNames = {
+  'con', 'prn', 'aux', 'nul',
+  'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9',
+  'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9',
+};
+
+/// 归一化一个路径段：去首尾空白，再削掉结尾的点/空格。
+///
+/// 削而不是拒：`报告.` 在 Linux 后端合法、在 SMB 后端会被静默截断成 `报告`，
+/// 统一削掉后两种后端落地的名字一致，且用户至少能传上去（拒收则完全没法传）。
+String _normalizeSegment(String raw) {
+  var text = raw.trim();
+  while (text.isNotEmpty && (text.endsWith('.') || text.endsWith(' '))) {
+    text = text.substring(0, text.length - 1);
+  }
   return text;
+}
+
+/// 取保留名判定用的主名（到第一个点为止，`NUL.txt` 也算保留名）。
+String _reservedStem(String name) {
+  final idx = name.indexOf('.');
+  return (idx < 0 ? name : name.substring(0, idx)).toLowerCase();
+}
+
+/// 文件名不可用的原因；返回 null 表示可用。
+///
+/// 与 [sanitizeRemoteSegment] 必须同步改：两处判据不一致就会出现
+/// "提示说合法、实际传不上去"或反过来的情况。
+String? remoteSegmentRejectionReason(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return '文件名为空';
+  if (trimmed == '.' || trimmed == '..') return '文件名不能是「.」或「..」';
+  if (trimmed.contains('/') || trimmed.contains('\\')) {
+    return '文件名不能包含路径分隔符';
+  }
+  if (trimmed.runes.any((r) => r < 0x20)) return '文件名包含控制字符';
+
+  final text = _normalizeSegment(raw);
+  if (text.isEmpty) return '文件名只由点/空格组成';
+
+  final bytes = remoteSegmentByteLength(text);
+  if (bytes > kMaxRemoteSegmentBytes) {
+    return '文件名太长（$bytes 字节，服务端上限 $kMaxRemoteSegmentBytes 字节）';
+  }
+  if (kWindowsReservedNames.contains(_reservedStem(text))) {
+    return '「${_reservedStem(text)}」是 Windows 保留名，服务端可能拒收';
+  }
+  return null;
+}
+
+/// 路径与文件名清洗：返回 null 表示不可用（判据见 [remoteSegmentRejectionReason]）。
+///
+/// **未做 Unicode 归一化（NFC/NFD）**：dart:core 没有归一化实现，引入
+/// `unorm_dart` 这类依赖需要单独评估。群晖/macOS 后端以 NFD 存名时，同名文件
+/// 可能显示成两份或按 NFC 名取回 404——这是已知缺口，不是遗漏（方案文档 O6）。
+String? sanitizeRemoteSegment(String raw) {
+  if (remoteSegmentRejectionReason(raw) != null) return null;
+  final text = _normalizeSegment(raw);
+  return text.isEmpty ? null : text;
 }
 
 /// 把相对路径按段做百分号编码（保留 `/`），供 WebDAV URL 拼接。

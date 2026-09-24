@@ -251,6 +251,48 @@ void main() {
       expect(sanitizeRemoteSegment('a\u0001b'), isNull);
       expect(sanitizeRemoteSegment('x' * 256), isNull);
     });
+
+    test('长度按 UTF-8 字节判：86 个汉字 = 258 字节被拒，85 个通过', () {
+      final bytes = remoteSegmentByteLength('中' * 86);
+      expect(bytes, 258, reason: '汉字 3 字节，旧实现按 UTF-16 数只有 86 通过');
+      expect(sanitizeRemoteSegment('中' * 86), isNull);
+      expect(sanitizeRemoteSegment('中' * 85), '中' * 85);
+      expect(remoteSegmentByteLength('中' * 85), 255);
+    });
+
+    test('结尾的点会被削掉（SMB 会静默截断，削掉后两种后端一致）', () {
+      expect(sanitizeRemoteSegment('报告.'), '报告');
+      expect(sanitizeRemoteSegment('a.txt...'), 'a.txt');
+      expect(sanitizeRemoteSegment('...'), isNull, reason: '全是点 → 空名');
+      expect(sanitizeRemoteSegment('名字 .'), '名字');
+    });
+
+    test('Windows 保留名被拒（含带扩展名的形式）', () {
+      for (final name in ['CON', 'con', 'NUL', 'nul.txt', 'aux.tar.gz', 'COM1', 'lpt9.log']) {
+        expect(sanitizeRemoteSegment(name), isNull, reason: name);
+      }
+      expect(sanitizeRemoteSegment('console.txt'), 'console.txt', reason: '不做前缀匹配');
+      expect(sanitizeRemoteSegment('COM10'), 'COM10', reason: 'COM10 不是保留名');
+    });
+
+    test('拒绝原因可读，且与清洗判定一致', () {
+      expect(remoteSegmentRejectionReason('a.txt'), isNull);
+      expect(remoteSegmentRejectionReason(''), contains('空'));
+      expect(remoteSegmentRejectionReason('.'), contains('不能是'));
+      expect(remoteSegmentRejectionReason('a/b'), contains('分隔符'));
+      expect(remoteSegmentRejectionReason('中' * 86), contains('字节'));
+      expect(remoteSegmentRejectionReason('NUL'), contains('保留名'));
+      expect(remoteSegmentRejectionReason('...'), contains('点'));
+
+      // 判据一致：reason 说合法 ⇔ sanitize 返回非 null
+      for (final name in ['a.txt', '.', '..', '...', 'NUL', '报告.', '中' * 86]) {
+        expect(
+          remoteSegmentRejectionReason(name) == null,
+          sanitizeRemoteSegment(name) != null,
+          reason: '两处判据必须同步：$name',
+        );
+      }
+    });
   });
 
   group('路径工具', () {

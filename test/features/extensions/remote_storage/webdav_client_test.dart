@@ -526,6 +526,77 @@ void main() {
     });
   });
 
+  group('大目录解析（O4：后台 isolate）', () {
+    final baseUri = Uri.parse('https://dav.example.com/dav/');
+
+    String bigMultistatus(int count) => propfindXml(
+          List<DavItem>.generate(
+            count,
+            (i) => DavItem(
+              '/dav/目录$i/文件$i.txt',
+              size: i,
+              etag: '"e$i"',
+            ),
+          ),
+        );
+
+    test('超过阈值：隔离解析结果与主 isolate 解析逐项一致', () async {
+      final xml = bigMultistatus(1200);
+      expect(
+        xml.length >= kParseIsolateThresholdChars,
+        isTrue,
+        reason: 'fixture 必须超过阈值，否则测不到 isolate 分支（实际 ${xml.length}）',
+      );
+
+      final main = WebdavClient.parseListing(xml, '', baseUri);
+      final isolated = await WebdavClient.parseListingMaybeIsolated(
+        xml,
+        basePath: '',
+        baseUri: baseUri,
+        filterSystemNames: true,
+      );
+
+      expect(isolated.length, main.length);
+      for (var i = 0; i < main.length; i++) {
+        expect(isolated[i].name, main[i].name);
+        expect(isolated[i].path, main[i].path);
+        expect(isolated[i].size, main[i].size);
+        expect(isolated[i].etag, main[i].etag);
+        expect(isolated[i].isDirectory, main[i].isDirectory);
+      }
+    });
+
+    test('低于阈值：直接在本 isolate 解析（普通目录不为几毫秒起 isolate）', () async {
+      final xml = propfindXml(const [DavItem('/dav/a.txt')]);
+      final entries = await WebdavClient.parseListingMaybeIsolated(
+        xml,
+        basePath: '',
+        baseUri: baseUri,
+        filterSystemNames: true,
+      );
+      expect(entries.single.name, 'a.txt');
+    });
+
+    test('isolate 里的解析错误能带回调用方（而不是静默空列表）', () async {
+      final broken = '<broken>${'z' * kParseIsolateThresholdChars}';
+      await expectLater(
+        WebdavClient.parseListingMaybeIsolated(
+          broken,
+          basePath: '',
+          baseUri: baseUri,
+          filterSystemNames: true,
+        ),
+        throwsA(
+          isA<RemoteStorageException>().having(
+            (e) => e.message,
+            'message',
+            contains('无法解析'),
+          ),
+        ),
+      );
+    });
+  });
+
   group('Retry-After 与请求留痕（O2/O9）', () {
     test('秒数与 HTTP-date 两种形式都能解析；非法值返回 null', () {
       expect(parseRetryAfterHeader('120'), const Duration(seconds: 120));

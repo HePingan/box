@@ -518,9 +518,10 @@ class RemoteStorageService {
     final client = clientFor(account);
     final safe = sanitizeRemoteSegment(file.name);
     if (safe == null) {
+      final why = remoteSegmentRejectionReason(file.name);
       throw RemoteStorageException(
         RemoteStorageError.unknown,
-        '文件名不合法：${file.name}',
+        '文件名不可用：${file.name}（${why ?? '未知原因'}）',
       );
     }
     final remotePath = joinRemotePath(targetDir, safe);

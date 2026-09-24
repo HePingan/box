@@ -7,6 +7,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -15,6 +16,10 @@ import 'package:box/utils/log_channels.dart';
 import 'package:xml/xml.dart';
 
 import 'remote_storage_models.dart';
+
+/// 超过这个字符数才把 PROPFIND 解析丢到后台 isolate（见
+/// [WebdavClient.parseListingMaybeIsolated]）。
+const int kParseIsolateThresholdChars = 64 * 1024;
 
 /// 一次 WebDAV 请求（传输层无关）。
 class WebdavRequest {
@@ -151,17 +156,44 @@ class WebdavClient {
     _expect(resp, const {200, 207}, path);
 
     final xmlText = resp.bodyText ?? '';
-    final entries = _parseMultistatus(xmlText, path);
+    final entries = await parseListingMaybeIsolated(
+      xmlText,
+      basePath: path,
+      baseUri: _baseUri,
+      filterSystemNames: filterSystemNames,
+    );
+    return entries;
+  }
 
-    var result = entries;
-    if (filterSystemNames) {
-      result = entries
-          .where((e) => !kWebdavSystemDirNames.contains(e.name))
-          .toList(growable: false);
+  /// 响应较小就在本 isolate 解析，超过阈值才起后台 isolate。
+  ///
+  /// 阈值取 64KB 的理由：普通目录（几十条）响应只有几 KB，起 isolate 的固定
+  /// 开销（约 1–3ms + 一次内存拷贝）比解析本身还贵；而 64KB 大约是 500–800 条
+  /// 条目，从这里开始 DOM 解析会出现可感知的卡顿。按字符数近似估算，不做解码。
+  static Future<List<RemoteStorageEntry>> parseListingMaybeIsolated(
+    String xmlText, {
+    required String basePath,
+    required Uri baseUri,
+    required bool filterSystemNames,
+  }) {
+    if (xmlText.length < kParseIsolateThresholdChars) {
+      return Future<List<RemoteStorageEntry>>.value(
+        parseListing(
+          xmlText,
+          basePath,
+          baseUri,
+          filterSystemNames: filterSystemNames,
+        ),
+      );
     }
-    final sorted = List<RemoteStorageEntry>.from(result);
-    sorted.sort(_entryComparator);
-    return sorted;
+    return Isolate.run(
+      () => parseListing(
+        xmlText,
+        basePath,
+        baseUri,
+        filterSystemNames: filterSystemNames,
+      ),
+    );
   }
 
   /// 判断文件/目录是否存在（HEAD）。
@@ -406,6 +438,7 @@ class WebdavClient {
     return value;
   }
 
+  /// 取 DAV:prop（优先取 propstat 状态为 200 的那个）。
   static XmlElement? _propElementStatic(XmlElement response) {
     XmlElement? fallback;
     for (final propstat in _elementsByLocal(response, 'propstat')) {
@@ -486,7 +519,16 @@ class WebdavClient {
         retryAfter: parseRetryAfterHeader(resp.headers['retry-after']),
       );
 
-  List<RemoteStorageEntry> _parseMultistatus(String xmlText, String basePath) {
+  /// 解析 PROPFIND 响应，并完成系统目录过滤与排序。
+  ///
+  /// 静态纯函数（只吃参数、不读实例状态），因此可以在后台 isolate 里跑：
+  /// 上千条的 multistatus 在 UI isolate 做 DOM 解析会直接掉帧（方案文档 O4）。
+  static List<RemoteStorageEntry> parseListing(
+    String xmlText,
+    String basePath,
+    Uri baseUri, {
+    bool filterSystemNames = true,
+  }) {
     if (xmlText.trim().isEmpty) {
       throw const RemoteStorageException(
         RemoteStorageError.unknown,
@@ -510,12 +552,12 @@ class WebdavClient {
       final href = _firstTextByLocal(response, 'href');
       if (href == null || href.trim().isEmpty) continue;
 
-      final relPath = _relativizeHref(href.trim());
+      final relPath = _relativizeHref(href.trim(), baseUri);
       if (relPath == null) continue;
       final normalized = relPath.isEmpty ? '' : relPath;
       if (normalized == selfPath) continue; // 目录自身
 
-      final prop = _propElement(response);
+      final prop = _propElementStatic(response);
       final isCollection =
           prop != null && _hasCollectionChild(prop);
       final displayName = prop == null
@@ -544,25 +586,35 @@ class WebdavClient {
         etag: etag,
       ));
     }
-    return entries;
+
+    // 过滤与排序一并放在这里：后台 isolate 里做完再回传，避免把上千条又搬到
+    // UI isolate 再排一遍。
+    var result = entries;
+    if (filterSystemNames) {
+      result = entries
+          .where((e) => !kWebdavSystemDirNames.contains(e.name))
+          .toList(growable: false);
+    }
+    final sorted = List<RemoteStorageEntry>.from(result);
+    sorted.sort(_entryComparator);
+    return sorted;
   }
 
-  /// 取 DAV:prop（优先取 propstat 状态为 200 的那个）。
-  XmlElement? _propElement(XmlElement response) =>
-      _propElementStatic(response);
-
-  bool _hasCollectionChild(XmlElement prop) {
+  static bool _hasCollectionChild(XmlElement prop) {
     final rts = _elementsByLocal(prop, 'resourcetype');
     if (rts.isEmpty) return false;
     return _elementsByLocal(rts.first, 'collection').isNotEmpty;
   }
 
   /// href → 相对账户根的路径（不含首斜杠）；不在根内时返回 null。
-  String? _relativizeHref(String href) {
-    final basePrefix = _baseUri.path; // 以 / 结尾
+  ///
+  /// 参数化 [baseUri] 而不是读实例字段：解析要在后台 isolate 里跑
+  /// （见 [parseListing]），静态纯函数才送得进 isolate。
+  static String? _relativizeHref(String href, Uri baseUri) {
+    final basePrefix = baseUri.path; // 以 / 结尾
     String rawPath;
     try {
-      final full = _baseUri.resolve(href);
+      final full = baseUri.resolve(href);
       rawPath = full.path;
       // 用解码后的段重建，避免 %E4%B8%AD 之类的编码进入名称。
       final decodedSegments = full.pathSegments;
@@ -579,7 +631,7 @@ class WebdavClient {
 
     String decodedBase;
     try {
-      final baseSegments = _baseUri.pathSegments;
+      final baseSegments = baseUri.pathSegments;
       decodedBase = baseSegments.isEmpty ? '/' : '/${baseSegments.join('/')}/';
       decodedBase = decodedBase.replaceAll('//', '/');
     } on FormatException {
@@ -608,7 +660,7 @@ class WebdavClient {
     return null;
   }
 
-  String _tryDecode(String s) {
+  static String _tryDecode(String s) {
     try {
       return Uri.decodeComponent(s);
     } on ArgumentError {
