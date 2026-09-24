@@ -65,6 +65,25 @@ class RemoteThumbnailCache {
   /// 内存里当前有哪些键（最久未使用的在前）——LRU 行为可观测，测试与排查都用它。
   List<String> get memoryKeys => _memory.keys.toList();
 
+  /// 收集缓存目录下的全部文件（含作用域子目录；作用域只有一层）。
+  ///
+  /// 占用统计与修剪都必须走这里：只扫根目录的话，加了作用域之后
+  /// 子目录里的图既不计入占用、也不会被淘汰——32MB 上限直接失效。
+  Future<List<File>> _collectFiles(Directory dir) async {
+    final files = <File>[];
+    if (!await dir.exists()) return files;
+    await for (final entity in dir.list(followLinks: false)) {
+      if (entity is File) {
+        files.add(entity);
+      } else if (entity is Directory) {
+        await for (final child in entity.list(followLinks: false)) {
+          if (child is File) files.add(child);
+        }
+      }
+    }
+    return files;
+  }
+
   Future<Directory> _dir() async {
     final cached = _root;
     if (cached != null) return cached;
@@ -81,15 +100,34 @@ class RemoteThumbnailCache {
   static String fileNameFor(String key) =>
       '${sha1.convert(utf8.encode(key))}.bin';
 
+  /// 账户作用域 → 子目录名。
+  ///
+  /// 为什么要目录而不是把账户 id 编进文件名：磁盘文件名是键的 sha1（键里有中文
+  /// 路径、斜杠、任意长度，只能取摘要），**从文件名反推不出账户**。删账户时想清掉
+  /// 它留下的图，作用域就必须落在目录结构上，而不是文件名里。
+  static String scopeDirName(String scope) =>
+      sha1.convert(utf8.encode(scope)).toString();
+
+  /// 键在磁盘上的位置：有作用域进子目录，无作用域直接落根目录（测试/无账户场景）。
+  Future<File> _fileFor(String key, String? scope) async {
+    final root = await _dir();
+    if (scope == null || scope.isEmpty) {
+      return File('${root.path}/${fileNameFor(key)}');
+    }
+    return File('${root.path}/${scopeDirName(scope)}/${fileNameFor(key)}');
+  }
+
   /// 取：内存命中直接返回；否则读磁盘并把结果提进内存。
-  Future<Uint8List?> get(String key) async {
+  ///
+  /// [scope] 见 [_fileFor]；内存里始终用完整键（跨作用域也唯一）。
+  Future<Uint8List?> get(String key, {String? scope}) async {
     final hit = _memory.remove(key);
     if (hit != null) {
       _memory[key] = hit;
       return hit;
     }
     try {
-      final file = File('${(await _dir()).path}/${fileNameFor(key)}');
+      final file = await _fileFor(key, scope);
       if (!await file.exists()) return null;
       final bytes = await file.readAsBytes();
       if (bytes.isEmpty) return null;
@@ -106,11 +144,12 @@ class RemoteThumbnailCache {
   }
 
   /// 存：内存 + 磁盘。磁盘写失败不影响本次显示（内存里已经有了）。
-  Future<void> put(String key, Uint8List bytes) async {
+  Future<void> put(String key, Uint8List bytes, {String? scope}) async {
     if (bytes.isEmpty) return;
     _remember(key, bytes);
     try {
-      final file = File('${(await _dir()).path}/${fileNameFor(key)}');
+      final file = await _fileFor(key, scope);
+      if (!await file.parent.exists()) await file.parent.create(recursive: true);
       await file.writeAsBytes(bytes, flush: false);
       unawaitedPrune();
     } on FileSystemException catch (e) {
@@ -138,13 +177,9 @@ class RemoteThumbnailCache {
     var files = 0;
     var bytes = 0;
     try {
-      final dir = await _dir();
-      if (await dir.exists()) {
-        await for (final entity in dir.list(followLinks: false)) {
-          if (entity is! File) continue;
-          files += 1;
-          bytes += await entity.length();
-        }
+      for (final file in await _collectFiles(await _dir())) {
+        files += 1;
+        bytes += await file.length();
       }
     } on FileSystemException catch (e) {
       AppLogger.instance.logTo(
@@ -162,6 +197,36 @@ class RemoteThumbnailCache {
 
   /// 只清内存（账户切换等场景）；磁盘缓存跨会话复用。
   void clearMemory() => _memory.clear();
+
+  /// 清掉某个账户作用域下的缩略图（删账户时调用），返回清掉的**磁盘文件数**。
+  ///
+  /// 内存里的键保留了完整键（`thumbnailCacheKey` 以账户 id 开头，EXIF 变体是
+  /// `...|exif`），按前缀过滤即可；磁盘靠作用域目录。返回值只数磁盘文件——
+  /// "清了多少张图"对调用方才有意义，内存条目是顺带清掉的（它们本来就会被 LRU 淘汰）。
+  Future<int> clearScope(String scope) async {
+    final prefix = '$scope|';
+    final keys = _memory.keys.where((k) => k.startsWith(prefix)).toList();
+    for (final key in keys) {
+      _memory.remove(key);
+    }
+    var removed = 0;
+    try {
+      final dir = Directory(
+        '${(await _dir()).path}/${scopeDirName(scope)}',
+      );
+      if (await dir.exists()) {
+        removed = (await _collectFiles(dir)).length;
+        await dir.delete(recursive: true);
+      }
+    } on FileSystemException catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '清理账户缩略图失败（$scope）: $e',
+        level: LogLevel.debug,
+      );
+    }
+    return removed;
+  }
 
   /// 清内存 + 磁盘（设置里的"清空缩略图缓存"）。
   Future<void> clear() async {
@@ -197,15 +262,10 @@ class RemoteThumbnailCache {
   /// 供测试直接 await 的修剪实现。
   Future<void> prune() async {
     try {
-      final dir = await _dir();
-      if (!await dir.exists()) return;
-      final files = <File>[];
+      final files = await _collectFiles(await _dir());
       var total = 0;
-      await for (final entity in dir.list(followLinks: false)) {
-        if (entity is! File) continue;
-        final stat = await entity.stat();
-        files.add(entity);
-        total += stat.size;
+      for (final file in files) {
+        total += await file.length();
       }
       if (files.length <= maxFiles && total <= maxBytes) return;
       files.sort(

@@ -12,6 +12,8 @@ import 'dart:typed_data';
 
 import 'package:box/features/extensions/plugins/remote_storage/application/remote_storage_service.dart';
 import 'package:box/features/extensions/plugins/remote_storage/data/remote_thumbnail_cache.dart';
+import 'package:box/features/extensions/plugins/remote_storage/data/playback_progress_store.dart';
+import 'package:box/features/extensions/plugins/remote_storage/data/remote_storage_store.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/webdav_client.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1120,6 +1122,98 @@ void main() {
       transport.handler = (_) async => headResponse(status: 500);
 
       expect(await service.readThumbnail(testAccount(), jpeg()), isNull);
+    });
+  });
+
+  group('删账户清理本地残留（284 P1）', () {
+    test('deleteAccount 清掉该账户的进度/滚动位置/缩略图，别的账户不受影响', () async {
+      final cache = RemoteThumbnailCache(root: thumbRoot);
+      final svc = RemoteStorageService(
+        transportFactory: (_) => transport,
+        docsDirProvider: () async => docsDir,
+        thumbnailCache: cache,
+      );
+      const progress = RemotePlaybackProgressStore();
+      final store = RemoteStorageStore();
+      final a = testAccount(id: 'accA', createdAt: 1000);
+      final b = testAccount(id: 'accB', createdAt: 2000);
+      await svc.saveAccount(a);
+      await svc.saveAccount(b);
+
+      await progress.save(
+        a,
+        '/v.mp4',
+        position: const Duration(minutes: 3),
+        duration: const Duration(minutes: 10),
+      );
+      await progress.save(
+        b,
+        '/v.mp4',
+        position: const Duration(minutes: 4),
+        duration: const Duration(minutes: 10),
+      );
+      await store.saveBrowserScrollOffsets(<String, double>{
+        'accA|/photos': 10,
+        'accB|/photos': 20,
+      });
+      await cache.put('accA|/a.jpg|1', Uint8List.fromList(<int>[1, 2, 3]),
+          scope: 'accA');
+      await cache.put('accB|/b.jpg|1', Uint8List.fromList(<int>[1, 2, 3]),
+          scope: 'accB');
+
+      await svc.deleteAccount('accA');
+
+      expect((await svc.loadAccounts()).map((x) => x.id).toList(), <String>['accB']);
+      expect(
+        await progress.positionFor(a, '/v.mp4'),
+        isNull,
+        reason: '进度残留是最像隐私的一条',
+      );
+      expect(await progress.positionFor(b, '/v.mp4'), isNotNull);
+      expect(
+        (await store.loadBrowserScrollOffsets()).keys.toSet(),
+        <String>{'accB|/photos'},
+      );
+      expect(await cache.get('accA|/a.jpg|1', scope: 'accA'), isNull);
+      expect(await cache.get('accB|/b.jpg|1', scope: 'accB'), isNotNull);
+    });
+
+    test('deleteAccount 后 EXIF 负缓存里该账户的条目也被清掉', () async {
+      final cache = RemoteThumbnailCache(root: thumbRoot);
+      final svc = RemoteStorageService(
+        transportFactory: (_) => transport,
+        docsDirProvider: () async => docsDir,
+        thumbnailCache: cache,
+      );
+      final a = testAccount(id: 'accA', createdAt: 1000);
+      await svc.saveAccount(a);
+
+      // 一张大图（> 3MB）走 EXIF 探测：字节里没有 EXIF 内嵌缩略图 → 进负缓存。
+      transport.handler = (request) async {
+        if (request.method == 'GET') return streamResponse(kTinyPng);
+        return const WebdavResponse(statusCode: 200, headers: <String, String>{});
+      };
+      const entry = RemoteStorageEntry(
+        path: 'big.jpg',
+        name: 'big.jpg',
+        isDirectory: false,
+        size: kThumbnailMaxBytes + 1,
+      );
+      int getCount() =>
+          transport.requests.where((r) => r.method == 'GET').length;
+
+      expect(await svc.readThumbnail(a, entry), isNull);
+      expect(getCount(), 1, reason: '第一次探测发一次请求');
+      expect(await svc.readThumbnail(a, entry), isNull);
+      expect(getCount(), 1, reason: '第二次不再发请求（负缓存生效）');
+
+      await svc.deleteAccount('accA');
+      await svc.readThumbnail(a, entry);
+      expect(
+        getCount(),
+        2,
+        reason: '删账户清了负缓存，重新读时该探还得探',
+      );
     });
   });
 }

@@ -14,6 +14,7 @@ import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../data/playback_progress_store.dart';
 import '../data/remote_storage_store.dart';
 import '../data/remote_thumbnail_cache.dart';
 import '../domain/exif_thumbnail.dart';
@@ -275,6 +276,10 @@ class RemoteStorageService {
   /// 列表缩略图取用器（缓存 + 并发上限 + 同键去重）。
   final ThumbnailLoader _thumbnails;
 
+  /// 播放进度仓库（284 P1：删账户时按前缀清该账户的全部进度键）。
+  final RemotePlaybackProgressStore _progressStore =
+      const RemotePlaybackProgressStore();
+
   /// 探测过但没有 EXIF 内嵌缩略图的条目（283 D1）。
   ///
   /// 为什么需要：EXIF 探测要读文件开头（最多 [kExifProbeBytes]），如果没命中，
@@ -311,6 +316,18 @@ class RemoteStorageService {
     await _store.saveAccounts(all);
     _invalidateClient(id);
     _dirCache.removeWhere((key, _) => key.startsWith('$id|'));
+    // 本地残留一起清（284 P1）：删账户不能只删"账户表"——播放进度、目录滚动位置、
+    // 磁盘缩略图都带账户 id，不清就是永久残留（也近似隐私）。
+    final progress = await _progressStore.clearAccount(id);
+    final offsets = await _store.clearBrowserScrollOffsetsForAccount(id);
+    final thumbs = await _thumbnails.cache.clearScope(id);
+    _exifProbeMisses.removeWhere((key) => key.startsWith('$id|'));
+    AppLogger.instance.logTo(
+      LogChannel.storage,
+      '已删除账户 $id 的本地残留：播放进度 $progress 条、'
+      '滚动位置 $offsets 条、缩略图 $thumbs 个',
+      level: LogLevel.debug,
+    );
   }
 
   // ------------------------------------------------------------ 客户端
@@ -928,7 +945,7 @@ class RemoteStorageService {
       return _readExifThumbnail(account, entry, cancel: cancel);
     }
     final key = thumbnailCacheKey(account.id, entry);
-    return _thumbnails.load(key, () async {
+    return _thumbnails.load(key, scope: account.id, () async {
       try {
         final up = await clientFor(
           account,
@@ -957,7 +974,7 @@ class RemoteStorageService {
     if (!isExifThumbnailCandidate(entry)) return null;
     final key = thumbnailCacheKey(account.id, entry);
     if (_exifProbeMisses.contains(key)) return null;
-    return _thumbnails.load('$key|exif', () async {
+    return _thumbnails.load('$key|exif', scope: account.id, () async {
       try {
         final up = await clientFor(
           account,

@@ -5,6 +5,9 @@
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:box/utils/app_logger.dart';
+import 'package:box/utils/log_channels.dart';
+
 import '../domain/playback_progress.dart';
 import '../domain/remote_storage_models.dart';
 
@@ -44,5 +47,28 @@ class RemotePlaybackProgressStore {
   Future<void> clear(RemoteStorageAccount account, String path) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(playbackProgressKey(account.id, path));
+  }
+
+  /// 清除某账户的**全部**进度记录（删账户时调用），返回清掉的条数。
+  ///
+  /// 不额外维护索引：SharedPreferences 能列出所有键，直接按前缀过滤即可。
+  /// 索引方案看着更"正规"，但漏掉本次改动之前写下的历史键——而那正是要清的东西。
+  Future<int> clearAccount(String accountId) async {
+    final prefix = playbackProgressKeyPrefix(accountId);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final keys = prefs.getKeys().where((k) => k.startsWith(prefix)).toList();
+      for (final key in keys) {
+        await prefs.remove(key);
+      }
+      return keys.length;
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '清理播放进度失败（账户 $accountId）: $e',
+        level: LogLevel.debug,
+      );
+      return 0;
+    }
   }
 }

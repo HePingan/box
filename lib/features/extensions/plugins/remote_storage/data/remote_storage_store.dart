@@ -178,6 +178,21 @@ class RemoteStorageStore {
     }
   }
 
+  /// 删除账户时清掉它的滚动位置（键是 `accountId|path`），返回清掉的条数。
+  ///
+  /// 留着不清不会有功能问题，但"删了账户还留着它看过哪些目录"既占地方也接近隐私。
+  Future<int> clearBrowserScrollOffsetsForAccount(String accountId) async {
+    final prefix = '$accountId|';
+    final offsets = await loadBrowserScrollOffsets();
+    final kept = <String, double>{};
+    for (final entry in offsets.entries) {
+      if (!entry.key.startsWith(prefix)) kept[entry.key] = entry.value;
+    }
+    final removed = offsets.length - kept.length;
+    if (removed > 0) await saveBrowserScrollOffsets(kept);
+    return removed;
+  }
+
   Future<void> saveBrowserScrollOffsets(Map<String, double> offsets) async {
     try {
       final prefs = await SharedPreferences.getInstance();

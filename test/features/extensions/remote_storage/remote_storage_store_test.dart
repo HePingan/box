@@ -5,6 +5,8 @@
 import 'dart:convert';
 
 import 'package:box/features/extensions/plugins/remote_storage/data/remote_storage_store.dart';
+import 'package:box/features/extensions/plugins/remote_storage/data/playback_progress_store.dart';
+import 'package:box/features/extensions/plugins/remote_storage/domain/playback_progress.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -224,6 +226,101 @@ void main() {
 
       final loaded = await store.loadBrowserScrollOffsets();
       expect(loaded, {'ok': 10.0});
+    });
+  });
+
+  group('删账户清理本地残留（284 P1）', () {
+    const progress = RemotePlaybackProgressStore();
+
+    test('播放进度：只清该账户的键', () async {
+      final a = testAccount(id: 'accA');
+      final b = testAccount(id: 'accB');
+      await progress.save(
+        a,
+        '/v1.mp4',
+        position: const Duration(minutes: 5),
+        duration: const Duration(minutes: 30),
+      );
+      await progress.save(
+        a,
+        '/v2.mp4',
+        position: const Duration(minutes: 6),
+        duration: const Duration(minutes: 30),
+      );
+      await progress.save(
+        b,
+        '/v1.mp4',
+        position: const Duration(minutes: 7),
+        duration: const Duration(minutes: 30),
+      );
+
+      expect(await progress.clearAccount('accA'), 2);
+      expect(await progress.positionFor(a, '/v1.mp4'), isNull);
+      expect(await progress.positionFor(a, '/v2.mp4'), isNull);
+      expect(
+        await progress.positionFor(b, '/v1.mp4'),
+        isNotNull,
+        reason: '别的账户不受影响',
+      );
+    });
+
+    test('播放进度：前缀按 | 收边，accA 不会清到 accAA', () async {
+      final a = testAccount(id: 'accA');
+      final aa = testAccount(id: 'accAA');
+      await progress.save(
+        a,
+        '/v.mp4',
+        position: const Duration(minutes: 5),
+        duration: const Duration(minutes: 30),
+      );
+      await progress.save(
+        aa,
+        '/v.mp4',
+        position: const Duration(minutes: 5),
+        duration: const Duration(minutes: 30),
+      );
+
+      expect(await progress.clearAccount('accA'), 1);
+      expect(await progress.positionFor(aa, '/v.mp4'), isNotNull);
+    });
+
+    test('播放进度：前缀与键格式同源（改键格式不会让清理静默失效）', () {
+      expect(
+        playbackProgressKey('accA', '/v.mp4'),
+        startsWith(playbackProgressKeyPrefix('accA')),
+      );
+      expect(
+        playbackProgressKey('accB', '/v.mp4'),
+        isNot(startsWith(playbackProgressKeyPrefix('accA'))),
+      );
+    });
+
+    test('播放进度：没有该账户的键时返回 0', () async {
+      expect(await progress.clearAccount('accNobody'), 0);
+    });
+
+    test('滚动位置：只清该账户的条目，别的账户保留', () async {
+      final store = RemoteStorageStore();
+      await store.saveBrowserScrollOffsets(<String, double>{
+        'accA|/photos': 120,
+        'accAA|/photos': 30,
+        'accB|/docs': 5,
+      });
+
+      expect(await store.clearBrowserScrollOffsetsForAccount('accA'), 1);
+
+      final left = await store.loadBrowserScrollOffsets();
+      expect(left.keys.toSet(), <String>{'accAA|/photos', 'accB|/docs'});
+      expect(left['accAA|/photos'], 30);
+    });
+
+    test('滚动位置：无匹配时返回 0 且不改动存档', () async {
+      final store = RemoteStorageStore();
+      await store.saveBrowserScrollOffsets(<String, double>{'accB|/docs': 5});
+      expect(await store.clearBrowserScrollOffsetsForAccount('accA'), 0);
+      expect(await store.loadBrowserScrollOffsets(), <String, double>{
+        'accB|/docs': 5,
+      });
     });
   });
 }

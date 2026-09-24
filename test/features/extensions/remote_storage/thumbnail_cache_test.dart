@@ -214,4 +214,89 @@ void main() {
       expect(usage.bytes, 5 * 64);
     });
   });
+
+  group('账户作用域与按账户清理（284 P1）', () {
+    test('带作用域存取：落在子目录，get 仍命中', () async {
+      await cache.put('accA|/photo.jpg|100', bytesOf(12), scope: 'accA');
+      final scopeDir = Directory(
+        '${root.path}/${RemoteThumbnailCache.scopeDirName('accA')}',
+      );
+      expect(
+        await scopeDir.exists(),
+        isTrue,
+        reason: '作用域必须落在目录上：文件名是键的 sha1，反推不出账户',
+      );
+      expect(
+        (await scopeDir.list().toList()).whereType<File>(),
+        hasLength(1),
+      );
+
+      cache.clearMemory();
+      final got = await cache.get('accA|/photo.jpg|100', scope: 'accA');
+      expect(got, isNotNull);
+      expect(got!.length, 12);
+    });
+
+    test('不传作用域仍落根目录（无账户/测试场景）', () async {
+      await cache.put('k1', bytesOf(8));
+      final file = File(
+        '${root.path}/${RemoteThumbnailCache.fileNameFor('k1')}',
+      );
+      expect(await file.exists(), isTrue);
+    });
+
+    test('占用统计含子目录（否则 32MB 上限会被绕过）', () async {
+      await cache.put('accA|/a.jpg|1', bytesOf(64), scope: 'accA');
+      await cache.put('accB|/b.jpg|1', bytesOf(32), scope: 'accB');
+      await cache.put('plain', bytesOf(16));
+
+      final usage = await cache.usage();
+      expect(usage.files, 3);
+      expect(usage.bytes, 64 + 32 + 16);
+    });
+
+    test('修剪也扫子目录', () async {
+      final small = RemoteThumbnailCache(
+        root: root,
+        maxFiles: 2,
+        maxBytes: 1 << 20,
+      );
+      for (var i = 0; i < 4; i++) {
+        await cache.put('accA|/$i.jpg|1', bytesOf(32), scope: 'accA');
+      }
+      await small.prune();
+
+      final usage = await small.usage();
+      expect(usage.files, 2, reason: '子目录里的图也要被修剪');
+    });
+
+    test('clearScope 只清该账户：别的账户与根目录条目保留', () async {
+      await cache.put('accA|/a.jpg|1', bytesOf(10), scope: 'accA');
+      // EXIF 变体（键是 `...|exif`）也要一起清掉。
+      await cache.put('accA|/a.jpg|1|exif', bytesOf(11), scope: 'accA');
+      await cache.put('accB|/b.jpg|1', bytesOf(20), scope: 'accB');
+      await cache.put('plain', bytesOf(30));
+
+      expect(await cache.clearScope('accA'), 2);
+
+      expect(await cache.get('accA|/a.jpg|1', scope: 'accA'), isNull);
+      expect(await cache.get('accA|/a.jpg|1|exif', scope: 'accA'), isNull);
+      expect(await cache.get('accB|/b.jpg|1', scope: 'accB'), isNotNull);
+      expect(await cache.get('plain'), isNotNull);
+      expect((await cache.usage()).files, 2);
+    });
+
+    test('clearScope 对不存在的账户返回 0 且不动别人', () async {
+      await cache.put('accB|/b.jpg|1', bytesOf(20), scope: 'accB');
+      expect(await cache.clearScope('accA'), 0);
+      expect(await cache.get('accB|/b.jpg|1', scope: 'accB'), isNotNull);
+    });
+
+    test('作用域按 | 收边：accA 不会清到 accAA', () async {
+      await cache.put('accA|/a.jpg|1', bytesOf(10), scope: 'accA');
+      await cache.put('accAA|/a.jpg|1', bytesOf(10), scope: 'accAA');
+      expect(await cache.clearScope('accA'), 1);
+      expect(await cache.get('accAA|/a.jpg|1', scope: 'accAA'), isNotNull);
+    });
+  });
 }

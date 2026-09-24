@@ -35,17 +35,20 @@ class ThumbnailLoader {
   int get activeCount => _active;
 
   /// 取缩略图：[fetch] 只在缓存未命中时被调用，且同一 [key] 同时只调一次。
+  ///
+  /// [scope] 是账户 id，只用于把磁盘缓存分到子目录（删账户时按作用域清理）。
   Future<Uint8List?> load(
     String key,
-    Future<Uint8List?> Function() fetch,
-  ) async {
-    final cached = await cache.get(key);
+    Future<Uint8List?> Function() fetch, {
+    String? scope,
+  }) async {
+    final cached = await cache.get(key, scope: scope);
     if (cached != null) return cached;
 
     final existing = _inFlight[key];
     if (existing != null) return existing;
 
-    final future = _run(key, fetch);
+    final future = _run(key, fetch, scope);
     _inFlight[key] = future;
     try {
       return await future;
@@ -57,12 +60,13 @@ class ThumbnailLoader {
   Future<Uint8List?> _run(
     String key,
     Future<Uint8List?> Function() fetch,
+    String? scope,
   ) async {
     await _acquire();
     try {
       final bytes = await fetch();
       if (bytes == null || bytes.isEmpty) return null;
-      await cache.put(key, bytes);
+      await cache.put(key, bytes, scope: scope);
       return bytes;
     } catch (e) {
       // 列表里的缩略图失败不是错误状态：记一条调试日志，回退图标。

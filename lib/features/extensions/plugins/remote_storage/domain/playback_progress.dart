@@ -43,4 +43,11 @@ String formatPlaybackPosition(Duration position) {
 /// 用账户 id 做前缀而不是只用路径：同一个 Dropbox/坚果云路径可能挂在两个账户下，
 /// 只按路径存会让两个账户互相覆盖进度。
 String playbackProgressKey(String accountId, String path) =>
-    'remoteStorage.playback.$accountId|$path';
+    '${playbackProgressKeyPrefix(accountId)}$path';
+
+/// 某账户全部进度键的前缀（删账户时按它过滤）。
+///
+/// 单独成函数是为了让"前缀长什么样"只有一处定义：清理逻辑若自己拼字符串，
+/// 改了键格式就会静默清理不到（这种错不会报错，只会留下残留）。
+String playbackProgressKeyPrefix(String accountId) =>
+    'remoteStorage.playback.$accountId|';
