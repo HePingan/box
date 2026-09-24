@@ -982,6 +982,10 @@ class RemoteStorageService {
     });
   }
 
+  /// 缩略图缓存占用（283 D3：让"看不见的磁盘占用"可观测）。
+  Future<ThumbnailCacheUsage> thumbnailCacheUsage() =>
+      _thumbnails.cache.usage();
+
   /// 清空缩略图缓存（内存 + 磁盘）。
   Future<void> clearThumbnailCache() => _thumbnails.cache.clear();
 

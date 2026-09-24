@@ -23,6 +23,23 @@ import 'package:box/utils/log_channels.dart';
 
 import '../domain/remote_storage_models.dart';
 
+/// 缩略图缓存占用（283 D3）。
+class ThumbnailCacheUsage {
+  const ThumbnailCacheUsage({
+    required this.files,
+    required this.bytes,
+    required this.memoryCount,
+  });
+
+  final int files;
+  final int bytes;
+
+  /// 内存里缓存的张数（不占磁盘，但也是"缓存"的一部分）。
+  final int memoryCount;
+
+  bool get isEmpty => files == 0 && memoryCount == 0;
+}
+
 class RemoteThumbnailCache {
   RemoteThumbnailCache({
     Directory? root,
@@ -111,6 +128,36 @@ class RemoteThumbnailCache {
     while (_memory.length > memoryEntries) {
       _memory.remove(_memory.keys.first);
     }
+  }
+
+  /// 当前占用：磁盘文件数 + 总字节（外加内存张数）。
+  ///
+  /// 为什么要这个：缓存是"看不见的磁盘占用"。用户看到设置里有一个开关、
+  /// 一个占用数字、一个清空按钮，才知道那 32MB 去哪了、能不能回收。
+  Future<ThumbnailCacheUsage> usage() async {
+    var files = 0;
+    var bytes = 0;
+    try {
+      final dir = await _dir();
+      if (await dir.exists()) {
+        await for (final entity in dir.list(followLinks: false)) {
+          if (entity is! File) continue;
+          files += 1;
+          bytes += await entity.length();
+        }
+      }
+    } on FileSystemException catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '缩略图缓存占用统计失败: $e',
+        level: LogLevel.debug,
+      );
+    }
+    return ThumbnailCacheUsage(
+      files: files,
+      bytes: bytes,
+      memoryCount: _memory.length,
+    );
   }
 
   /// 只清内存（账户切换等场景）；磁盘缓存跨会话复用。

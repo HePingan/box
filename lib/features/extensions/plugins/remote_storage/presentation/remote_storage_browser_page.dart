@@ -22,7 +22,7 @@ import 'remote_storage_player_page.dart';
 import 'remote_thumbnail.dart';
 
 /// 顶栏「更多」里的动作（目前只有缩略图开关；后续视图选项都放这里）。
-enum _BrowserMenuAction { toggleThumbnails }
+enum _BrowserMenuAction { toggleThumbnails, thumbnailCache }
 
 // ------------------------------------------------------------- 页面级排序
 
@@ -226,6 +226,65 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     final next = !_thumbnailsEnabled;
     setState(() => _thumbnailsEnabled = next);
     await remoteStorageService().saveThumbnailsEnabled(next);
+  }
+
+  /// 缩略图缓存占用面板（283 D3）：看得到占了多少，也能一键回收。
+  ///
+  /// 缓存是"看不见的磁盘占用"——没有这个入口，用户既不知道空间去哪了，
+  /// 也没法主动回收（缓存上限 32MB / 400 张，是能吃掉一点空间的）。
+  Future<void> _showThumbnailCachePanel() async {
+    final service = remoteStorageService();
+    var usage = await service.thumbnailCacheUsage();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('缩略图缓存'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '已缓存 ${usage.files} 张，占用 '
+                    '${formatRemoteBytes(usage.bytes)}',
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '上限 ${formatRemoteBytes(kThumbnailDiskMaxBytes)}'
+                    ' / ${kThumbnailDiskMaxFiles} 张，超出后自动清理最旧的。',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('关闭'),
+                ),
+                TextButton(
+                  onPressed: usage.isEmpty
+                      ? null
+                      : () async {
+                          await service.clearThumbnailCache();
+                          final fresh = await service.thumbnailCacheUsage();
+                          if (!dialogContext.mounted) return;
+                          setDialogState(() => usage = fresh);
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(this.context).showSnackBar(
+                            const SnackBar(content: Text('缩略图缓存已清空')),
+                          );
+                        },
+                  child: const Text('清空'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -1307,8 +1366,11 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
           tooltip: '更多',
           icon: const Icon(Icons.more_vert_rounded),
           onSelected: (action) {
-            if (action == _BrowserMenuAction.toggleThumbnails) {
-              _toggleThumbnails();
+            switch (action) {
+              case _BrowserMenuAction.toggleThumbnails:
+                _toggleThumbnails();
+              case _BrowserMenuAction.thumbnailCache:
+                _showThumbnailCachePanel();
             }
           },
           itemBuilder: (_) => [
@@ -1316,6 +1378,11 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
               value: _BrowserMenuAction.toggleThumbnails,
               checked: _thumbnailsEnabled,
               child: const Text('显示图片缩略图'),
+            ),
+            const PopupMenuDivider(),
+            const PopupMenuItem<_BrowserMenuAction>(
+              value: _BrowserMenuAction.thumbnailCache,
+              child: Text('缩略图缓存'),
             ),
           ],
         ),

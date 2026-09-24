@@ -5,6 +5,7 @@
 import 'dart:typed_data';
 
 import 'package:box/features/extensions/plugins/remote_storage/application/remote_storage_service.dart';
+import 'package:box/features/extensions/plugins/remote_storage/data/remote_thumbnail_cache.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_browser_page.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_page.dart';
@@ -85,6 +86,27 @@ class _FakeService extends RemoteStorageService {
   Future<void> saveThumbnailsEnabled(bool enabled) async {
     thumbnailsEnabled = enabled;
     savedThumbnailFlags.add(enabled);
+  }
+
+  /// 缩略图缓存占用（283 D3）：面板与清空按钮的假数据/调用记录。
+  ThumbnailCacheUsage cacheUsage = const ThumbnailCacheUsage(
+    files: 0,
+    bytes: 0,
+    memoryCount: 0,
+  );
+  int clearCacheCalls = 0;
+
+  @override
+  Future<ThumbnailCacheUsage> thumbnailCacheUsage() async => cacheUsage;
+
+  @override
+  Future<void> clearThumbnailCache() async {
+    clearCacheCalls += 1;
+    cacheUsage = const ThumbnailCacheUsage(
+      files: 0,
+      bytes: 0,
+      memoryCount: 0,
+    );
   }
 
   /// 记录批量删除调用（B1 的删除确认测试用），不触网。
@@ -307,6 +329,84 @@ void main() {
       expect(service.savedThumbnailFlags, [false], reason: '关掉要持久化');
       expect(find.byIcon(Icons.image_outlined), findsOneWidget);
       expect(find.byType(Image), findsNothing);
+    });
+  });
+
+  group('缩略图缓存面板（283 D3）', () {
+    Future<_FakeService> pumpWithCache(
+      WidgetTester tester, {
+      required int files,
+      required int bytes,
+    }) async {
+      final service = _FakeService();
+      service.cacheUsage = ThumbnailCacheUsage(
+        files: files,
+        bytes: bytes,
+        memoryCount: files,
+      );
+      debugSetRemoteStorageRuntime(service: service);
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+      return service;
+    }
+
+    Future<void> openCachePanel(WidgetTester tester) async {
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.byTooltip('更多'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('缩略图缓存'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('「更多」里能看到缓存占用（张数 + 大小）', (tester) async {
+      await pumpWithCache(tester, files: 37, bytes: 5 * 1024 * 1024);
+
+      await openCachePanel(tester);
+
+      expect(find.text('缩略图缓存'), findsWidgets, reason: '面板标题');
+      expect(
+        find.textContaining('已缓存 37 张'),
+        findsOneWidget,
+        reason: '占用要能看到，缓存不该是黑盒',
+      );
+      expect(find.textContaining('5.00 MB'), findsOneWidget);
+    });
+
+    testWidgets('有缓存时点「清空」→ 调用清空并刷新为 0', (tester) async {
+      final service = await pumpWithCache(
+        tester,
+        files: 12,
+        bytes: 2 * 1024 * 1024,
+      );
+
+      await openCachePanel(tester);
+      await tester.tap(find.text('清空'));
+      await tester.pumpAndSettle();
+
+      expect(service.clearCacheCalls, 1);
+      expect(
+        find.textContaining('已缓存 0 张'),
+        findsOneWidget,
+        reason: '清空后占用立刻归零',
+      );
+      expect(find.text('缩略图缓存已清空'), findsOneWidget);
+    });
+
+    testWidgets('空缓存时「清空」按钮禁用（没什么可清的）', (tester) async {
+      await pumpWithCache(tester, files: 0, bytes: 0);
+
+      await openCachePanel(tester);
+
+      final button = tester.widget<TextButton>(
+        find.ancestor(of: find.text('清空'), matching: find.byType(TextButton)),
+      );
+      expect(button.onPressed, isNull);
     });
   });
 

@@ -148,4 +148,70 @@ void main() {
       );
     });
   });
+
+  group('占用统计（283 D3）', () {
+    test('空缓存：0 张 0 字节', () async {
+      final usage = await cache.usage();
+      expect(usage.files, 0);
+      expect(usage.bytes, 0);
+      expect(usage.isEmpty, isTrue);
+    });
+
+    test('put 之后能报出文件数与总字节（含内存张数）', () async {
+      await cache.put('k1', bytesOf(100));
+      await cache.put('k2', bytesOf(250));
+
+      final usage = await cache.usage();
+      expect(usage.files, 2);
+      expect(usage.bytes, 350);
+      expect(usage.memoryCount, 2);
+      expect(usage.isEmpty, isFalse);
+    });
+
+    test('文件被外部删掉后统计跟着变（数的是磁盘实况，不是记账）', () async {
+      await cache.put('k1', bytesOf(100));
+      await File(
+        '${root.path}/${RemoteThumbnailCache.fileNameFor('k1')}',
+      ).delete();
+
+      final usage = await cache.usage();
+      expect(usage.files, 0);
+      expect(usage.bytes, 0);
+      expect(usage.memoryCount, 1, reason: '内存里还有一份（没读盘不算丢）');
+    });
+
+    test('清空后占用归零', () async {
+      await cache.put('k1', bytesOf(100));
+      await cache.clear();
+
+      final usage = await cache.usage();
+      expect(usage.files, 0);
+      expect(usage.bytes, 0);
+      expect(usage.memoryCount, 0);
+      expect(usage.isEmpty, isTrue);
+    });
+
+    test('修剪后统计反映真实剩余（数的是磁盘实况）', () async {
+      // 直接铺文件而不是走 put：put 会顺手触发一次异步修剪，
+      // 与本用例显式调用的 prune 交错时删除次数不可预期。
+      final dir = Directory(root.path);
+      if (!await dir.exists()) await dir.create(recursive: true);
+      for (var i = 0; i < 8; i++) {
+        await File(
+          '${dir.path}/${RemoteThumbnailCache.fileNameFor('k$i')}',
+        ).writeAsBytes(bytesOf(64));
+      }
+
+      final small = RemoteThumbnailCache(
+        root: dir,
+        maxFiles: 5,
+        maxBytes: 1 << 20,
+      );
+      await small.prune();
+
+      final usage = await small.usage();
+      expect(usage.files, 5, reason: '修剪到上限');
+      expect(usage.bytes, 5 * 64);
+    });
+  });
 }
