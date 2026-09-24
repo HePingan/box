@@ -254,7 +254,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
       return;
     }
     for (final entry in files) {
-      _enqueueDownload(entry);
+      _enqueueDownload(entry, silent: true);
     }
     _snack('已加入下载队列：${files.length} 个文件');
     _clearSelection();
@@ -538,7 +538,11 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
               child: const Text('取消'),
             ),
             FilledButton(
-              onPressed: excludePaths.contains(current)
+              // 目标不能是「被移动项自己」或「它自己的子树」——服务器多半回 409/412，
+              // 而且把目录移进自身子树在语义上就说不通，这里先拦住。
+              onPressed: excludePaths.any(
+                (item) => current == item || current.startsWith('$item/'),
+              )
                   ? null
                   : () => Navigator.pop(ctx, current),
               child: const Text('选此目录'),
@@ -767,7 +771,12 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
 
   // ------------------------------------------------------------- 下载
 
-  void _enqueueDownload(RemoteStorageEntry entry, {bool openAfter = false}) {
+  /// [silent] 用于批量下载：逐个入队时不要每项弹一次 SnackBar，由调用方汇总。
+  void _enqueueDownload(
+    RemoteStorageEntry entry, {
+    bool openAfter = false,
+    bool silent = false,
+  }) {
     final service = remoteStorageService();
     final dirLabel = _path.isEmpty ? '根目录' : _path;
     transferQueue().enqueue(
@@ -798,6 +807,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
         }
       },
     );
+    if (silent) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('已加入下载队列：${entry.name}')),
     );
