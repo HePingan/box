@@ -210,14 +210,26 @@ B 档的实现要点（补原方案未写细的部分）：
 
 ### 9.2 与方案的两处有意识偏离
 
-1. **O6 的 Unicode 归一化没做**：`dart:core` 无 NFC/NFD 实现，引入 `unorm_dart` 属新依赖，按方案 §2 O6 第 3 条的"退化为原样透传"执行，并在 `sanitizeRemoteSegment` 注释里写明这是已知缺口（群晖/macOS 以 NFD 存名时可能显示成两份）。
+1. **O6 的 Unicode 归一化不做改写**：`dart:core` 无 NFC/NFD 实现，引入 `unorm_dart` 属新依赖（且改写本身有风险：把 NFC 名改成 NFD 传，在只认 NFC 的服务器上反而取不到）。279 里按方案 §2 O6 第 3 条"退化为原样透传"执行；**第 3 组已把"能确定判断"的部分补上**（识别归一化差异、上传按同名处理、目录诊断日志），见 §9.3。
 2. **O3 缓存上限取 64 个目录**（方案写"例如 200"）：按"一个账户同时活跃的目录很少超过十几个"估的，64 足够覆盖返回上一级/来回切目录，内存占用更小；要调只改 `kDirCacheMaxEntries`。
 
-### 9.3 仍未做（按方案本就属第 3 组，不在 279 内）
+### 9.3 第 3 组：已逐项实施完毕（279 发布后追加，未随 279 发版）
 
-C2 下载断点续传、C3 大目录首屏优先与搜索、C4 图片缩略图与网格、C5 Digest 认证、C6 中继预读、C7 并发度（`kMaxConcurrentTransfers` 死常量仍在，未删也未实现——留给"要不要真做并发"的拍板）。
+279 上线后继续做完了方案第 3 组的全部剩余项，每项一个提交、各自带测试：
+
+| 项 | 落点 | 做法 | 与方案的差异 |
+| --- | --- | --- | --- |
+| C2 下载断点续传 | `webdav_client.dart`（`downloadTo` 的 `resumeFrom`/`parseContentRange`）、`remote_storage_service.dart`（断点归属与落点）、`models.dart`（`PartialDownload`） | 带 `Range: bytes=N-` 续传；**206 → 追加**、**200 → 截断重写**（服务端忽略 Range 时必须重来，否则拼出坏文件）；`.part` 旁写 `{accountId, remotePath}` 元数据，归属对不上就丢弃（同名不同账户的断点拼在一起 = 坏文件）；可重试错误保留断点、不可重试或 0 字节清掉 | 上传侧分块仍未做（方案里就标为"成本高得多"） |
+| C3 大目录 | `models.dart`（`filterRemoteEntries`）、浏览页（搜索入口 + 计数 + 空态） | 本地零请求筛选：大小写不敏感、空格分词是"与"关系；>30 项才给搜索入口；筛空区分"没有匹配"与"空目录"并给一键清空 | **"首屏优先"没做**：列表本来就是 `ListView.separated` 懒构建，再切一刀没有收益——力气花在"上千项目录里找文件"这个真痛点上 |
+| C4 图片预览 | `models.dart`（`previewImageDecodeWidth`）、浏览页预览弹窗 | 按 `屏幕逻辑宽 × 像素比 × 2` 给 `cacheWidth` 降采样解码（20MB 的 JPEG 可解成近 200MB 位图）；设备信息拿不到时不限制 | 网格视图/缩略图磁盘缓存未做（属"相册式体验"前置，另立项） |
+| C5 Digest 认证 | `domain/digest_auth.dart`（新增）、`webdav_client.dart` | 401 的 `WWW-Authenticate: Digest` 挑战 → 带 Digest 重试一次并**记住**挑战（后续请求不再吃 401，`nc` 递增）；MD5/MD5-sess/SHA-256、`qop=auth`；不支持的形式明确报错而不是发看不懂的头；PUT 传可重放请求体 | — |
+| C6 中继预读 | `playback_relay.dart` | 有界预读：上游先跑在前面，4MB 上限暂停、1MB 低水位放开（迟滞防抖动）；缓冲有界是硬要求（无界 = 把整部片子读进内存） | — |
+| C7 并发度 | `models.dart`（`kMaxConcurrentTransfers` 1→3）、`transfer_queue.dart`、`remote_storage_service.dart` | 队列真并发（原来常量是死的、`_pumping` 开关只能表达串行）；并发暴露的同名上传竞态用 `_inFlightUploads` 在途占位堵掉（否则后写的静默覆盖先写的） | 取 3 而非"实测样本再定"：3 路已能把网络往返叠满，再多对弱 NAS 是纯失败率来源 |
+| O6 收尾 | `models.dart`（`toNfd`/`isNormalizationVariant`/`normalizationVariantOf`）、`webdav_client.dart`（诊断）、`scanConflicts` | **不改写、但把判准做出来**：小表（17 组 / 264 字符，由 Unicode NFD 数据生成）把预组合字符拆成 NFD 后比对——`café`(NFC) 与 `cafe`+U+0301(NFD) 判为同一名字，`resume` vs `résumé` 判为不同名字；上传冲突按同名跳过、目录列表出现差异时落诊断日志 | 仍**不引** `unorm_dart`：改写本身有风险（把 NFC 名改成 NFD 传，在只认 NFC 的服务器上反而取不到）；表外字符（双记号、韩文）宁可漏判不误判 |
 
 ### 9.4 279 提交链
 
-`c6f9ca8`（O1/O2/O9）→ O3/O5 第一批 → `3cdc0a4`（O4/O6）→ `63cc6db`（O5 收尾）→ `081b9ba`（C1）→ `0f10fe2`（B1 客户端与服务层）→ `2b04eb2`（B1 UI）→ `9b66b26`（B3）→ `2787581`（B2）。插件测试从 115 → 191。
+279 本体：`c6f9ca8`（O1/O2/O9）→ O3/O5 第一批 → `3cdc0a4`（O4/O6）→ `63cc6db`（O5 收尾）→ `081b9ba`（C1）→ `0f10fe2`（B1 客户端与服务层）→ `2b04eb2`（B1 UI）→ `9b66b26`（B3）→ `2787581`（B2）→ 版本 1.20.22+279 → `e277fa8`（批量下载修复）。插件测试 115 → 191；**已发布**（release id=121）。
+
+第 3 组追加（未发版）：`e039f92`（C2）→ `6ca301b`（C3）→ `aed9ff0`（C6）→ `8ff141f`（C7）→ `a30be83`（C4）→ `6d2ced3`（C5）→ `94a2f23`（O6 收尾）。插件测试 191 → 252。
 
