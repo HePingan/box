@@ -51,8 +51,8 @@ void main() {
 
   Future<void> pumpGate(WidgetTester tester) async {
     await tester.pumpWidget(
-      MaterialApp(
-        home: ShareInboxGate(child: const Scaffold(body: Text('主页'))),
+      const MaterialApp(
+        home: ShareInboxGate(child: Scaffold(body: Text('主页'))),
       ),
     );
     await boundedPump(tester);

@@ -3,6 +3,8 @@ import 'package:box/features/extensions/plugins/remote_storage/domain/share_inbo
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  // 诚实计数（287 P2）的用例在文件末尾，这里挂上去。
+  _honestCounts();
   group('tryParse', () {
     test('正常条目：字段齐全', () {
       final f = SharedInboxFile.tryParse(<Object?, Object?>{
@@ -91,6 +93,106 @@ void main() {
         'mimeType': 'image/jpeg',
       })!;
       expect(f.toString(), contains('a.jpg'));
+    });
+  });
+}
+
+/// 诚实计数（287 P2）：分享里几个、收到几个、丢了哪几个、为什么。
+void _honestCounts() {
+  group('SkippedShare', () {
+    test('解析与文案', () {
+      final s = SkippedShare.tryParse(<String, Object?>{
+        'name': 'big.mov',
+        'reason': 'tooLarge',
+      })!;
+      expect(s.displayName, 'big.mov');
+      expect(s.reasonLabel, '超过单文件大小上限');
+    });
+
+    test('没有名字给占位；坏结构不采信', () {
+      expect(
+        SkippedShare.tryParse(<String, Object?>{'reason': 'unreadable'})!
+            .displayName,
+        '未命名文件',
+      );
+      expect(SkippedShare.tryParse(<String, Object?>{'name': 'x'}), isNull);
+      expect(SkippedShare.tryParse('nope'), isNull);
+    });
+
+    test('不认识的原因也给一句能看的话（不暴露代号）', () {
+      expect(shareSkipReasonLabel('weird'), '没有收到');
+      expect(shareSkipReasonLabel('tooMany'), '超过单次数量上限');
+      expect(shareSkipReasonLabel('unsupported'), '类型不支持');
+      expect(shareSkipReasonLabel('unreadable'), '读不出来');
+    });
+  });
+
+  group('ShareInboxBatch.parse', () {
+    Object? file(String name) => <String, Object?>{
+          'path': '/data/cache/shared_inbox/$name',
+          'name': name,
+          'sizeBytes': 10,
+          'mimeType': 'image/jpeg',
+        };
+
+    test('新形状：files/total/skipped 都认', () {
+      final batch = ShareInboxBatch.parse(<String, Object?>{
+        'files': <Object?>[file('a.jpg')],
+        'total': 3,
+        'received': 1,
+        'skipped': <Object?>[
+          <String, Object?>{'name': 'b.mov', 'reason': 'tooLarge'},
+        ],
+      });
+      expect(batch.files, hasLength(1));
+      expect(batch.total, 3);
+      expect(batch.received, 1);
+      expect(batch.skipped.single.displayName, 'b.mov');
+      expect(batch.hasLosses, isTrue);
+    });
+
+    test('旧形状（裸列表）：当成 total == received、没有丢失', () {
+      final batch = ShareInboxBatch.parse(<Object?>[file('a.jpg'), file('b.jpg')]);
+      expect(batch.received, 2);
+      expect(batch.total, 2);
+      expect(batch.skipped, isEmpty);
+      expect(batch.hasLosses, isFalse);
+    });
+
+    test('计数不自相矛盾：total 小于"收到 + 跳过"时按后者抬上来', () {
+      final batch = ShareInboxBatch.parse(<String, Object?>{
+        'files': <Object?>[file('a.jpg')],
+        'total': 0,
+        'skipped': <Object?>[
+          <String, Object?>{'name': 'b.mov', 'reason': 'tooLarge'},
+        ],
+      });
+      expect(batch.total, 2);
+    });
+
+    test('结构完全不对 → 空包（不抛）', () {
+      expect(ShareInboxBatch.parse(null).isEmpty, isTrue);
+      expect(ShareInboxBatch.parse('nope').isEmpty, isTrue);
+      expect(ShareInboxBatch.parse(<String, Object?>{}).isEmpty, isTrue);
+    });
+
+    test('summaryLabel：没丢就说收到几个；丢了就说清总/收/原因分布', () {
+      expect(
+        ShareInboxBatch.parse(<Object?>[file('a.jpg')]).summaryLabel,
+        '收到 1 个分享文件',
+      );
+      final lost = ShareInboxBatch.parse(<String, Object?>{
+        'files': <Object?>[file('a.jpg')],
+        'total': 4,
+        'skipped': <Object?>[
+          <String, Object?>{'name': 'b.mov', 'reason': 'tooLarge'},
+          <String, Object?>{'name': 'c.mov', 'reason': 'tooLarge'},
+          <String, Object?>{'name': 'd.png', 'reason': 'tooMany'},
+        ],
+      });
+      expect(lost.summaryLabel, contains('分享 4 个，收到 1 个'));
+      expect(lost.summaryLabel, contains('2 个超过单文件大小上限'));
+      expect(lost.summaryLabel, contains('1 个超过单次数量上限'));
     });
   });
 }

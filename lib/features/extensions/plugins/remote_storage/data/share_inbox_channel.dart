@@ -23,11 +23,11 @@ class ShareInboxChannel {
 
   final MethodChannel _channel;
 
-  final StreamController<List<SharedInboxFile>> _incoming =
-      StreamController<List<SharedInboxFile>>.broadcast();
+  final StreamController<ShareInboxBatch> _incoming =
+      StreamController<ShareInboxBatch>.broadcast();
 
-  /// 热启动时原生推过来的分享文件。
-  Stream<List<SharedInboxFile>> get onSharedFiles => _incoming.stream;
+  /// 热启动时原生推过来的分享（文件 + 诚实计数）。
+  Stream<ShareInboxBatch> get onSharedFiles => _incoming.stream;
 
   bool _listening = false;
 
@@ -37,8 +37,10 @@ class ShareInboxChannel {
       _listening = true;
       _channel.setMethodCallHandler((call) async {
         if (call.method == 'onSharedFiles') {
-          final files = SharedInboxFile.parseList(call.arguments);
-          if (files.isNotEmpty) _incoming.add(files);
+          final batch = ShareInboxBatch.parse(call.arguments);
+          // 一个文件都没收到、但有跳过记录时**也要报**：否则"分享 25 个结果
+          // 一个都没进来"这件事会被完全吞掉。
+          if (!batch.isEmpty) _incoming.add(batch);
         }
         return null;
       });
@@ -56,20 +58,20 @@ class ShareInboxChannel {
     }
   }
 
-  /// 取走冷启动时攒下的分享文件（取完原生侧即清空，不会重复提示）。
-  Future<List<SharedInboxFile>> takePending() async {
+  /// 取走冷启动时攒下的分享（取完原生侧即清空，不会重复提示）。
+  Future<ShareInboxBatch> takePending() async {
     try {
       final raw = await _channel.invokeMethod<Object?>('takePending');
-      return SharedInboxFile.parseList(raw);
+      return ShareInboxBatch.parse(raw);
     } on MissingPluginException {
-      return const <SharedInboxFile>[];
+      return ShareInboxBatch.empty;
     } catch (e) {
       AppLogger.instance.logTo(
         LogChannel.storage,
         '读取分享暂存失败: $e',
         level: LogLevel.debug,
       );
-      return const <SharedInboxFile>[];
+      return ShareInboxBatch.empty;
     }
   }
 

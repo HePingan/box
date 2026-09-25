@@ -17,9 +17,13 @@ import 'package:box/features/extensions/plugins/remote_storage/domain/share_inbo
 import 'package:flutter/material.dart';
 
 class ShareInboxSheet extends StatefulWidget {
-  const ShareInboxSheet({super.key, required this.files});
+  const ShareInboxSheet({super.key, required this.batch});
 
-  final List<SharedInboxFile> files;
+  /// 收到的东西 + 诚实计数（287 P2）：分享里共几个、丢了哪几个、为什么。
+  final ShareInboxBatch batch;
+
+  /// 真正收到的文件（界面列表用）。
+  List<SharedInboxFile> get files => batch.files;
 
   @override
   State<ShareInboxSheet> createState() => _ShareInboxSheetState();
@@ -164,12 +168,33 @@ class _ShareInboxSheetState extends State<ShareInboxSheet> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '收到 ${files.length} 个分享文件',
+                    widget.batch.summaryLabel,
                     style: theme.textTheme.titleMedium,
                   ),
                 ),
               ],
             ),
+            // 有丢失时把"谁没进来、为什么"逐条写出来（287 P2）：
+            // 一句"收到 20 个"没法让用户知道分享里其实有 25 个。
+            if (widget.batch.hasLosses && widget.batch.skipped.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              for (final skipped in widget.batch.skipped.take(5))
+                Text(
+                  '· ${skipped.displayName}：${skipped.reasonLabel}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              if (widget.batch.skipped.length > 5)
+                Text(
+                  '· 还有 ${widget.batch.skipped.length - 5} 个没收到',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+            ],
             const SizedBox(height: 4),
             Text(
               '传到哪里？',

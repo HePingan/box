@@ -48,9 +48,11 @@ void main() {
       ];
     });
     final ch = ShareInboxChannel();
-    final files = await ch.takePending();
-    expect(files, hasLength(1));
-    expect(files.single.name, 'a.jpg');
+    final batch = await ch.takePending();
+    expect(batch.files, hasLength(1));
+    expect(batch.files.single.name, 'a.jpg');
+    expect(batch.total, 1, reason: '老形状（裸列表）时 total == received');
+    expect(batch.skipped, isEmpty);
     expect(calls.single.method, 'takePending');
     await ch.dispose();
   });
@@ -60,7 +62,7 @@ void main() {
     final ch = ShareInboxChannel();
     await ch.markReady();
 
-    final received = <List<SharedInboxFile>>[];
+    final received = <ShareInboxBatch>[];
     final sub = ch.onSharedFiles.listen(received.add);
 
     // 模拟原生侧主动推
@@ -82,7 +84,82 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(received, hasLength(1));
-    expect(received.single.single.name, 'b.mp4');
+    expect(received.single.files.single.name, 'b.mp4');
+    expect(received.single.total, 1);
+    await sub.cancel();
+    await ch.dispose();
+  });
+
+  test('新形状：files + total + skipped 一起解析，跳过记录进得来（287 P2）', () async {
+    mock((call) async => true);
+    final ch = ShareInboxChannel();
+    await ch.markReady();
+    final received = <ShareInboxBatch>[];
+    final sub = ch.onSharedFiles.listen(received.add);
+
+    await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .handlePlatformMessage(
+      ShareInboxChannel.channelName,
+      const StandardMethodCodec().encodeMethodCall(
+        const MethodCall('onSharedFiles', <Object?, Object?>{
+          'files': <Object?>[
+            <Object?, Object?>{
+              'path': '/data/cache/shared_inbox/1_a.jpg',
+              'name': 'a.jpg',
+              'sizeBytes': 10,
+              'mimeType': 'image/jpeg',
+            },
+          ],
+          'total': 3,
+          'received': 1,
+          'skipped': <Object?>[
+            <Object?, Object?>{'name': 'big.mov', 'reason': 'tooLarge'},
+            <Object?, Object?>{'name': 'c.png', 'reason': 'tooMany'},
+          ],
+        }),
+      ),
+      (_) {},
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(received, hasLength(1));
+    final batch = received.single;
+    expect(batch.files.single.name, 'a.jpg');
+    expect(batch.total, 3);
+    expect(batch.skipped.map((s) => s.reason), <String>['tooLarge', 'tooMany']);
+    expect(batch.hasLosses, isTrue);
+    await sub.cancel();
+    await ch.dispose();
+  });
+
+  test('一个文件都没收到、但有跳过记录：也要推给界面（287 P2）', () async {
+    mock((call) async => true);
+    final ch = ShareInboxChannel();
+    await ch.markReady();
+    final received = <ShareInboxBatch>[];
+    final sub = ch.onSharedFiles.listen(received.add);
+
+    await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .handlePlatformMessage(
+      ShareInboxChannel.channelName,
+      const StandardMethodCodec().encodeMethodCall(
+        const MethodCall('onSharedFiles', <Object?, Object?>{
+          'files': <Object?>[],
+          'total': 1,
+          'received': 0,
+          'skipped': <Object?>[
+            <Object?, Object?>{'name': 'huge.mov', 'reason': 'tooLarge'},
+          ],
+        }),
+      ),
+      (_) {},
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(received, hasLength(1),
+        reason: '全被跳过也不能静默：否则用户以为分享成功了');
+    expect(received.single.files, isEmpty);
+    expect(received.single.hasLosses, isTrue);
     await sub.cancel();
     await ch.dispose();
   });
@@ -91,7 +168,7 @@ void main() {
     mock((call) async => true);
     final ch = ShareInboxChannel();
     await ch.markReady();
-    final received = <List<SharedInboxFile>>[];
+    final received = <ShareInboxBatch>[];
     final sub = ch.onSharedFiles.listen(received.add);
 
     await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

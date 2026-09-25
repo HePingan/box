@@ -68,7 +68,8 @@ void main() {
     required RemoteStorageService service,
     required TransferQueue queue,
     required List<SharedInboxFile> files,
-  }) async {
+    ShareInboxBatch? batch,
+    }) async {
     debugSetRemoteStorageRuntime(service: service, queue: queue);
     await tester.pumpWidget(
       MaterialApp(
@@ -78,7 +79,14 @@ void main() {
               onPressed: () => showModalBottomSheet<void>(
                 context: context,
                 isScrollControlled: true,
-                builder: (_) => ShareInboxSheet(files: files),
+                builder: (_) => ShareInboxSheet(
+                  batch: batch ??
+                      ShareInboxBatch(
+                        files: files,
+                        total: files.length,
+                        skipped: const <SkippedShare>[],
+                      ),
+                ),
               ),
               child: const Text('打开'),
             ),
@@ -245,5 +253,70 @@ void main() {
     await boundedPump(tester);
     expect(queue.tasks, isEmpty);
     expect(service.uploads, isEmpty);
+  });
+
+  testWidgets('有丢失时：标题写清"分享几个/收到几个"，并逐条列出没收到的名字与原因（287 P2）',
+      (tester) async {
+    final service = _FakeService(accounts: [_account('a1')]);
+    final queue = TransferQueue();
+    await pumpSheet(
+      tester,
+      service: service,
+      queue: queue,
+      files: const [
+        SharedInboxFile(
+          path: '/data/cache/shared_inbox/1_a.jpg',
+          name: 'a.jpg',
+          sizeBytes: 10,
+          mimeType: 'image/jpeg',
+        ),
+      ],
+      batch: ShareInboxBatch(
+        files: const [
+          SharedInboxFile(
+            path: '/data/cache/shared_inbox/1_a.jpg',
+            name: 'a.jpg',
+            sizeBytes: 10,
+            mimeType: 'image/jpeg',
+          ),
+        ],
+        total: 25,
+        skipped: const [
+          SkippedShare(name: 'big.mov', reason: 'tooLarge'),
+          SkippedShare(name: '', reason: 'unreadable'),
+        ],
+      ),
+    );
+
+    expect(find.textContaining('分享 25 个，收到 1 个'), findsOneWidget,
+        reason: '不能只说"收到 1 个"——用户看不出分享里其实有 25 个');
+    expect(find.textContaining('big.mov'), findsOneWidget);
+    expect(find.textContaining('超过单文件大小上限'), findsWidgets);
+    expect(find.textContaining('未命名文件'), findsOneWidget,
+        reason: '没有名字的也要给占位，不能空着');
+    expect(find.textContaining('读不出来'), findsWidgets);
+  });
+
+  testWidgets('没有丢失时：不显示"丢了什么"，只说收到几个（不给无谓疑虑）', (tester) async {
+    final service = _FakeService(accounts: [_account('a1')]);
+    final queue = TransferQueue();
+    await pumpSheet(
+      tester,
+      service: service,
+      queue: queue,
+      files: const [
+        SharedInboxFile(
+          path: '/data/cache/shared_inbox/1_a.jpg',
+          name: 'a.jpg',
+          sizeBytes: 10,
+          mimeType: 'image/jpeg',
+        ),
+      ],
+    );
+
+    expect(find.text('收到 1 个分享文件'), findsOneWidget);
+    // 注意：标题本身就含"分享"两个字，所以不能拿"分享"当反例，要用丢失句式。
+    expect(find.textContaining('分享 1 个，收到'), findsNothing);
+    expect(find.textContaining('超过单文件大小上限'), findsNothing);
   });
 }

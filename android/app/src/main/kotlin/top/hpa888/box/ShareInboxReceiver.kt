@@ -45,9 +45,28 @@ object ShareInboxReceiver {
     /** 缓存里的中转文件保留多久：上传成功会删；失败/中途退出的靠这里兜底清理。 */
     private const val INBOX_TTL_MS = 24L * 60 * 60 * 1000
 
+    // 没收到的原因（287 P2）：跨进程只传代号，中文文案在 Dart 侧（便于单测）。
+    private const val REASON_TOO_MANY = "tooMany"
+    private const val REASON_TOO_LARGE = "tooLarge"
+    private const val REASON_UNREADABLE = "unreadable"
+    private const val REASON_UNSUPPORTED = "unsupported"
+
     private var channel: MethodChannel? = null
     private var dartReady = false
     private val pending = mutableListOf<Map<String, Any?>>()
+
+    /**
+     * 攒着等 Dart 取走时的**诚实计数**（287 P2）：这一次分享里共几个、收了几个、
+     * 没收到的分别叫什么、为什么。以前只把成功的那批给 Dart，界面于是说"收到 20 个"，
+     * 用户根本不知道分享里其实有 25 个（静默截断）。
+     *
+     * 多次分享（冷启动期间连发几次）会累加，取走时清零。
+     */
+    private var reportTotal = 0
+    private val reportSkipped = mutableListOf<Map<String, Any?>>()
+
+    /** 一次复制的结果：成功给 entry，失败给原因。 */
+    private class CopyOutcome(val entry: Map<String, Any?>?, val reason: String?)
 
     fun register(messenger: BinaryMessenger) {
         val ch = MethodChannel(messenger, CHANNEL)
@@ -61,8 +80,8 @@ object ShareInboxReceiver {
                     result.success(true)
                 }
                 METHOD_TAKE_PENDING -> {
-                    val out = pending.toList()
-                    pending.clear()
+                    val out = payloadMap()
+                    resetReport()
                     result.success(out)
                 }
                 else -> result.notImplemented()
@@ -83,16 +102,30 @@ object ShareInboxReceiver {
 
         pruneInbox(activity)
 
+        reportTotal += uris.size
+
         val copied = mutableListOf<Map<String, Any?>>()
-        for (uri in uris.take(MAX_FILES)) {
-            val entry = try {
+        uris.forEachIndexed { index, uri ->
+            if (index >= MAX_FILES) {
+                // 超出单次上限的**也要报出来**（只报名字，不去复制）。
+                reportSkipped.add(skipEntry(activity, uri, REASON_TOO_MANY))
+                return@forEachIndexed
+            }
+            val outcome = try {
                 copyToInbox(activity, uri)
             } catch (_: Throwable) {
-                null
+                CopyOutcome(null, REASON_UNREADABLE)
             }
-            if (entry != null) copied.add(entry)
+            val entry = outcome.entry
+            if (entry != null) {
+                copied.add(entry)
+            } else {
+                reportSkipped.add(
+                    skipEntry(activity, uri, outcome.reason ?: REASON_UNREADABLE),
+                )
+            }
         }
-        if (copied.isEmpty()) return
+        if (copied.isEmpty() && reportSkipped.isEmpty()) return
 
         pending.addAll(copied)
         if (dartReady) pushToDart()
@@ -112,12 +145,50 @@ object ShareInboxReceiver {
         else -> emptyList()
     }
 
-    private fun pushToDart() {
-        val payload = pending.toList()
-        if (payload.isEmpty()) return
+    /** 给 Dart 的整包：文件 + 诚实计数（287 P2）。 */
+    private fun payloadMap(): Map<String, Any?> = mapOf(
+        "files" to pending.toList(),
+        "total" to reportTotal,
+        "received" to pending.size,
+        "skipped" to reportSkipped.toList(),
+    )
+
+    private fun resetReport() {
         pending.clear()
+        reportTotal = 0
+        reportSkipped.clear()
+    }
+
+    /** 没收到的一条：只报显示名与原因（完全不去读内容）。 */
+    private fun skipEntry(activity: Activity, uri: Uri, reason: String): Map<String, Any?> {
+        var name = ""
+        try {
+            activity.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0 && !cursor.isNull(idx)) name = cursor.getString(idx) ?: ""
+                }
+            }
+        } catch (_: Throwable) {
+        }
+        val mime = try {
+            activity.contentResolver.getType(uri) ?: ""
+        } catch (_: Throwable) {
+            ""
+        }
+        return mapOf(
+            "name" to (if (name.isBlank()) "未命名文件" else name.substringAfterLast('/').take(120)),
+            "reason" to reason,
+            "mimeType" to mime,
+        )
+    }
+
+    private fun pushToDart() {
+        val payload = payloadMap()
+        if ((payload["files"] as List<*>).isEmpty()) return
         try {
             channel?.invokeMethod(METHOD_ON_SHARED_FILES, payload)
+            resetReport()
         } catch (_: Throwable) {
             // 推失败就当没收到：文件已在 inbox 目录，用户可以重发分享。
         }
@@ -142,11 +213,13 @@ object ShareInboxReceiver {
      * 把 `content://` 内容复制进缓存，返回给 Dart 的描述。
      * 拿不到大小（部分 provider 不给）时按复制出来的字节数算。
      */
-    private fun copyToInbox(activity: Activity, uri: Uri): Map<String, Any?>? {
+    private fun copyToInbox(activity: Activity, uri: Uri): CopyOutcome {
         val resolver = activity.contentResolver
         val mime = resolver.getType(uri) ?: ""
         // 双重保险：intent-filter 已经只放 image/video 进来，这里再挡一次。
-        if (!mime.startsWith("image/") && !mime.startsWith("video/")) return null
+        if (!mime.startsWith("image/") && !mime.startsWith("video/")) {
+            return CopyOutcome(null, REASON_UNSUPPORTED)
+        }
 
         var name = "shared"
         var declaredSize = -1L
@@ -166,7 +239,7 @@ object ShareInboxReceiver {
         } catch (_: Throwable) {
         }
 
-        if (declaredSize > MAX_FILE_BYTES) return null
+        if (declaredSize > MAX_FILE_BYTES) return CopyOutcome(null, REASON_TOO_LARGE)
 
         val safeName = sanitizeName(name, mime)
         val target = File(inboxDir(activity), "${System.currentTimeMillis()}_$safeName")
@@ -180,29 +253,32 @@ object ShareInboxReceiver {
                         if (n <= 0) break
                         written += n
                         if (written > MAX_FILE_BYTES) {
-                            // 中间发现超限：删掉半截文件，当没收到。
+                            // 中间发现超限：删掉半截文件，当没收到（原因要报出去）。
                             output.close()
                             target.delete()
-                            return null
+                            return CopyOutcome(null, REASON_TOO_LARGE)
                         }
                         output.write(buf, 0, n)
                     }
                 }
-            } ?: return null
+            } ?: return CopyOutcome(null, REASON_UNREADABLE)
         } catch (e: Throwable) {
             target.delete()
             throw e
         }
         if (written <= 0) {
             target.delete()
-            return null
+            return CopyOutcome(null, REASON_UNREADABLE)
         }
 
-        return mapOf(
-            "path" to target.absolutePath,
-            "name" to safeName,
-            "sizeBytes" to written,
-            "mimeType" to mime,
+        return CopyOutcome(
+            mapOf(
+                "path" to target.absolutePath,
+                "name" to safeName,
+                "sizeBytes" to written,
+                "mimeType" to mime,
+            ),
+            null,
         )
     }
 

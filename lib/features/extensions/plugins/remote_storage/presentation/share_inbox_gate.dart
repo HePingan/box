@@ -28,7 +28,7 @@ class ShareInboxGate extends StatefulWidget {
 
 class _ShareInboxGateState extends State<ShareInboxGate> {
   late final ShareInboxChannel _channel = widget.channel ?? ShareInboxChannel();
-  StreamSubscription<List<SharedInboxFile>>? _subscription;
+  StreamSubscription<ShareInboxBatch>? _subscription;
   bool _sheetOpen = false;
 
   @override
@@ -41,7 +41,7 @@ class _ShareInboxGateState extends State<ShareInboxGate> {
   Future<void> _bootstrap() async {
     await _channel.markReady();
     final pending = await _channel.takePending();
-    if (pending.isNotEmpty) _show(pending);
+    if (!pending.isEmpty) _show(pending);
   }
 
   @override
@@ -52,8 +52,8 @@ class _ShareInboxGateState extends State<ShareInboxGate> {
     super.dispose();
   }
 
-  void _show(List<SharedInboxFile> files) {
-    if (!mounted || files.isEmpty) return;
+  void _show(ShareInboxBatch batch) {
+    if (!mounted || batch.isEmpty) return;
     if (_sheetOpen) {
       // 面板已经开着：先把旧的收掉，再弹新的（用户看到的是"又收到一次"）。
       Navigator.of(context, rootNavigator: true).pop();
@@ -64,7 +64,7 @@ class _ShareInboxGateState extends State<ShareInboxGate> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (_) => ShareInboxSheet(files: files),
+      builder: (_) => ShareInboxSheet(batch: batch),
     ).whenComplete(() => _sheetOpen = false);
   }
 
