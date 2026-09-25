@@ -42,3 +42,13 @@ const ServerOpsSettings testSettingsOnSecondary = ServerOpsSettings(
   selectedServerId: 'tencent175',
   passwords: {'hpa888': 'pw', 'tencent175': 'pw'},
 );
+
+/// 主服务器、口令与**设备令牌**都配好：写档（解压 / 权限属主 / 服务启停）用例用。
+///
+/// 令牌与口令是两套凭据 —— 只配口令的用例不该走只读接口，配了令牌的才会发 POST。
+const ServerOpsSettings testSettingsWithApiToken = ServerOpsSettings(
+  servers: [testPrimaryServer],
+  selectedServerId: 'hpa888',
+  passwords: {'hpa888': 'pw'},
+  apiTokens: {'hpa888': 'tk'},
+);

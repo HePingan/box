@@ -49,6 +49,7 @@ MockClient _api({
   required List<String> seen,
   int? failStatusFor,
   String? failAction,
+  bool write = true,
 }) =>
     MockClient((req) async {
       final action = req.url.path.split('/').where((s) => s.isNotEmpty).last;
@@ -61,6 +62,21 @@ MockClient _api({
         );
       }
       switch (action) {
+        case 'capabilities':
+          return http.Response(
+            jsonEncode({
+              'hostname': 'VM-0-15-debian',
+              'version': '1.1.0',
+              'admin': true,
+              'write': write,
+              'readActions': ['health', 'overview', 'capabilities'],
+              'writeActions': ['capabilities', 'service', 'mkdir', 'chmod', 'chown', 'extract'],
+              'selfDestructiveUnits': ['sshd.service', 'box-ops-api.service'],
+              'protectedPaths': ['/root/.secrets'],
+            }),
+            200,
+            headers: _jsonHeaders,
+          );
         case 'overview':
           return http.Response(
             jsonEncode({
@@ -94,6 +110,23 @@ MockClient _api({
                 {'unit': 'nginx.service', 'active': 'active', 'sub': 'running', 'enabled': 'enabled', 'description': 'nginx'},
                 {'unit': 'box-ops-api.service', 'active': 'failed', 'sub': 'failed', 'enabled': 'enabled', 'description': 'box-ops api'},
               ],
+            }),
+            200,
+            headers: _jsonHeaders,
+          );
+        case 'service':
+          // 同一个 action 既用于 GET（详情）也用于 POST（启停）：形状都带 activeState。
+          return http.Response(
+            jsonEncode({
+              'unit': 'nginx.service',
+              'activeState': 'active',
+              'subState': 'running',
+              'unitFileState': 'enabled',
+              'mainPid': '1234',
+              'memoryBytes': 45678901,
+              'restarts': '0',
+              'since': 'Fri 2026-09-25 20:00:00 CST',
+              'journal': '20:00:01 started',
             }),
             200,
             headers: _jsonHeaders,
@@ -189,7 +222,11 @@ void main() {
     final seen = <String>[];
     await _pump(tester, _settings(), _api(seen: seen));
 
-    expect(seen, containsAll(['overview', 'processes', 'services', 'ports', 'diskusage', 'sessions', 'audit']));
+    expect(
+      seen,
+      containsAll(['capabilities', 'overview', 'processes', 'services', 'ports',
+        'diskusage', 'sessions', 'audit']),
+    );
     expect(find.textContaining('概览'), findsWidgets);
     expect(find.text('VM-0-15-debian'), findsOneWidget);
     expect(find.textContaining('Intel(R) Xeon(R) Platinum'), findsOneWidget);
@@ -250,7 +287,7 @@ void main() {
     }
   });
 
-  testWidgets('服务列表点得开：详情抽屉里有状态与日志', (tester) async {
+  testWidgets('服务详情：有写权限时出现启停按钮，点了要确认', (tester) async {
     final seen = <String>[];
     await _pump(tester, _settings(), _api(seen: seen));
 
@@ -259,6 +296,31 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(seen, contains('service'));
+    expect(find.text('重启'), findsOneWidget);
+    expect(find.text('开机自启'), findsOneWidget);
+
+    // 点了要先确认（写动作会真的改机器）。
+    await tester.tap(find.text('重启'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.textContaining('这会真的改动这台机器'), findsOneWidget);
+    expect(find.text('取消'), findsOneWidget);
+  });
+
+  testWidgets('服务详情：只读令牌不显示写按钮，并说明怎么开', (tester) async {
+    final seen = <String>[];
+    await _pump(tester, _settings(), _api(seen: seen, write: false));
+
+    await tester.tap(find.text('nginx.service').first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.textContaining('这把令牌只能读'), findsOneWidget);
+    // 按钮还在（形状一致），但是禁用的 —— 不让用户点了才知道。
+    final restart = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, '重启'),
+    );
+    expect(restart.onPressed, isNull);
   });
 
   testWidgets('切到另一台机器：按新机器的地址/令牌重新拉', (tester) async {

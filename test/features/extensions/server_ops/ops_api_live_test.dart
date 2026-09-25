@@ -108,4 +108,39 @@ void main() {
       }
     }, timeout: const Timeout(Duration(seconds: 40)));
   }, skip: missing ? '需要 OPS_API_BASE / OPS_API_TOKEN（live）' : null);
+
+  test('写档：这台机器的令牌能写，且拒绝路径都挡得住（不真写东西）', () async {
+    final c = client();
+    addTearDown(c.close);
+
+    final caps = await c.capabilities();
+    expect(caps.write, isTrue, reason: 'App 用的令牌要带 write 作用域');
+    expect(caps.writeActions, contains('service'));
+    expect(caps.writeActions, contains('extract'));
+
+    // 受保护路径：一律拒绝（不会真改任何东西）。
+    await expectLater(
+      c.mkdir('/root/.secrets/box-ops-live-should-never-exist'),
+      throwsA(isA<OpsApiException>()),
+    );
+
+    // 自杀单元：停 sshd 要被拒。
+    await expectLater(
+      c.serviceOp('sshd.service', 'stop'),
+      throwsA(isA<OpsApiException>()),
+    );
+
+    // 参数不合规：单元名带路径 → 直接 400（不是"执行了才发现"）。
+    await expectLater(
+      c.serviceOp('../../etc/passwd', 'restart'),
+      throwsA(isA<OpsApiException>()),
+    );
+
+    // 不存在的单元 → 404。
+    await expectLater(
+      c.serviceOp('no-such-unit-xyz.service', 'restart'),
+      throwsA(isA<OpsApiException>()),
+    );
+  });
+
 }

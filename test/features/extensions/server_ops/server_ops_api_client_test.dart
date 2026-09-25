@@ -5,7 +5,6 @@
 //   * 401 的文案必须把"口令/令牌是两回事"讲清楚 —— 这是 291 那个真 bug
 //     （地址和口令不是同一台）在 C2 上的同类坑；
 //   * 服务端字段缺了/多了解析都不炸（旧包对新服务端）。
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:box/features/extensions/plugins/server_ops/server_ops_api_client.dart';
@@ -34,9 +33,6 @@ class _Recorder {
 }
 
 const String _token = 'tok-abcdefghijklmnop';
-
-OpsApiClient _client(_Recorder rec, {String base = 'https://box.hpa888.top/opsapi175', String token = _token}) =>
-    OpsApiClient(baseUrl: base, token: token, client: rec.respond(const {}));
 
 void main() {
   group('身份与地址', () {
@@ -273,7 +269,6 @@ void main() {
     });
 
     test('服务详情与日志 tail', () async {
-      final rec = _Recorder();
       final c = OpsApiClient(
         baseUrl: 'https://x/opsapi',
         token: _token,
@@ -357,9 +352,100 @@ void main() {
       expect(formatUptime(30), '0 分钟');
     });
   });
+
+  group('写档（要 write 作用域）', () {
+    OpsApiClient clientWith(Object body, {int status = 200}) {
+      final rec = _Recorder();
+      return OpsApiClient(
+        baseUrl: 'https://box.hpa888.top/opsapi175',
+        token: _token,
+        client: rec.respond(body, status: status),
+      );
+    }
+
+    test('capabilities：把"能不能写、哪些动作不能做"解析出来', () async {
+      final c = clientWith(const {
+        'hostname': 'VM-0-15-debian',
+        'version': '1.1.0',
+        'admin': true,
+        'write': true,
+        'writeActions': ['service', 'extract'],
+        'selfDestructiveUnits': ['sshd.service'],
+        'protectedPaths': ['/root/.secrets'],
+      });
+
+      final caps = await c.capabilities();
+      expect(caps.hostname, 'VM-0-15-debian');
+      expect(caps.write, isTrue);
+      expect(caps.writeActions, contains('extract'));
+      expect(caps.protectedPaths, contains('/root/.secrets'));
+      // 自杀单元要在界面上就把按钮禁掉，而不是点了才知道。
+      expect(caps.selfDestructiveUnits, contains('sshd.service'));
+      expect(caps.stopBlockedReason('sshd.service'), isNotNull);
+      expect(caps.stopBlockedReason('nginx.service'), isNull);
+    });
+
+    test('写动作发的是 POST，参数进 JSON 体，令牌仍在请求头', () async {
+      final rec = _Recorder();
+      final c = OpsApiClient(
+        baseUrl: 'https://box.hpa888.top/opsapi175',
+        token: _token,
+        client: rec.respond(const {'unit': 'nginx.service', 'activeState': 'active'}),
+      );
+
+      await c.serviceOp('nginx.service', 'restart');
+      final req = rec.requests.single;
+      expect(req.method, 'POST');
+      expect(req.url.path, endsWith('/service'));
+      expect(jsonDecode(req.body)['unit'], 'nginx.service');
+      expect(jsonDecode(req.body)['op'], 'restart');
+      expect(req.headers['Authorization'], startsWith('Bearer '));
+    });
+
+    test('客户端封装与服务端参数一一对应：mkdir / chmod / chown / extract', () async {
+      final rec = _Recorder();
+      final c = OpsApiClient(
+        baseUrl: 'https://box.hpa888.top/opsapi175',
+        token: _token,
+        client: rec.respond(const {'path': '/tmp/x', 'count': 1, 'mode': '700'}),
+      );
+
+      await c.mkdir('/tmp/x');
+      await c.chmod('/tmp/x', '700', recursive: true);
+      await c.chown('/tmp/x', owner: 'www', group: 'www');
+      await c.extract('/tmp/x/a.zip', dest: '/tmp/x');
+
+      final bodies = rec.requests
+          .map((r) => jsonDecode(r.body) as Map<String, dynamic>)
+          .toList();
+      expect(bodies[0], {'path': '/tmp/x'});
+      expect(bodies[1]['mode'], '700');
+      expect(bodies[1]['recursive'], isTrue);
+      expect(bodies[2]['owner'], 'www');
+      expect(bodies[3]['path'], '/tmp/x/a.zip');
+      expect(bodies[3]['dest'], '/tmp/x');
+    });
+
+    test('没有写作用域（403）时把服务端原话给出来，不吞成"网络错"', () async {
+      final c = clientWith(
+        const {'error': '这把令牌没有写作用域，写动作一律拒绝（要用 --write 重签）'},
+        status: 403,
+      );
+
+      await expectLater(
+        c.serviceOp('nginx.service', 'stop'),
+        throwsA(isA<OpsApiException>().having(
+          (e) => e.message,
+          'message',
+          contains('没有写作用域'),
+        )),
+      );
+    });
+  });
 }
 
 /// 假一个"连不上"的异常（不引 dart:io，widget 测试里也能用）。
 class SocketLikeError implements Exception {
   const SocketLikeError();
+
 }
