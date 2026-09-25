@@ -1,4 +1,5 @@
-// 服务器运维插件：「服务器」页签 —— 各主机的 CPU / 内存 / 磁盘 / 负载 / 网络。
+// 服务器运维插件：「服务器」页签 —— 各主机的 CPU / 内存 / 磁盘 / 负载 / 网络，
+// 以及扩展的盘 IO / Swap / 温度（**取不到的那几行整体不显示**，见文件末尾的参数）。
 //
 // 形状与「服务监控」页一致：
 //   * 冷启动先用上次成功的快照渲染，同时后台刷新（不转圈等网络）；
@@ -388,6 +389,27 @@ class _HostCard extends StatelessWidget {
               text: '↓ ${hostRateText(host.netRxBytesPerSec)}'
                   '  /  ↑ ${hostRateText(host.netTxBytesPerSec)}',
             ),
+            // 扩展指标：**取不到就整行不显示**（云主机没温度传感器、老快照没这两个
+            // 字段都是常态）。显示 0 B/s 或 0℃ 会被读成"盘很闲 / 机器很凉"，
+            // 缺字段 ≠ 0，宁可少一行。
+            if (hostDiskIoText(host.diskReadBytesPerSec, host.diskWriteBytesPerSec)
+                case final diskIo?)
+              _FactLine(
+                icon: Icons.storage_rounded,
+                text: '盘 IO $diskIo',
+              ),
+            if (host.swapTotalBytes case final swapTotal?)
+              if (swapTotal > 0)
+                _FactLine(
+                  icon: Icons.memory_rounded,
+                  text: 'Swap '
+                      '${hostUsageText(host.swapUsedBytes, swapTotal, host.swapPercent)}',
+                ),
+            if (host.temperatureC case final temperature?)
+              _FactLine(
+                icon: Icons.thermostat_rounded,
+                text: '温度 ${hostTempText(temperature)}',
+              ),
             if (history.hasAny)
               Padding(
                 padding: const EdgeInsets.only(top: 6),

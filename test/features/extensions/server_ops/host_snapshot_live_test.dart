@@ -64,6 +64,33 @@ void main() {
         for (final host in snapshot.hosts.where((h) => !h.online)) {
           expect(host.cpuPercent, isNull, reason: '${host.id} 离线却带着 CPU 值');
         }
+
+        // 290 A7 的扩展字段（盘 IO / Swap / 温度）：**允许缺**（289 老快照、
+        // 云主机没有温度传感器都是常态），但给出来了就必须是合理值——
+        // 温度 0 那种"假读数"已在解析层滤成 null，这里再兜一道。
+        for (final host in online) {
+          for (final rate in [
+            host.diskReadBytesPerSec,
+            host.diskWriteBytesPerSec,
+          ]) {
+            if (rate != null) {
+              expect(rate, greaterThanOrEqualTo(0), reason: '${host.id} 盘 IO 速率不能为负');
+            }
+          }
+          final celsius = host.temperatureC;
+          if (celsius != null) {
+            expect(celsius, inInclusiveRange(0, 150), reason: '${host.id} 温度不在合理范围');
+          }
+          final swapTotal = host.swapTotalBytes;
+          if (swapTotal != null && swapTotal > 0) {
+            expect(
+              host.swapPercent,
+              isNotNull,
+              reason: '${host.id} 有 swap 却没算出百分比（used/total 应能反算）',
+            );
+            expect(host.swapPercent!, inInclusiveRange(0, 100));
+          }
+        }
       } finally {
         client.close(force: true);
       }

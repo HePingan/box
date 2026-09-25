@@ -45,15 +45,19 @@ class HostEntry {
     this.memPercent,
     this.swapTotalBytes,
     this.swapUsedBytes,
+    this.swapPercent,
     this.diskTotalBytes,
     this.diskUsedBytes,
     this.diskPercent,
+    this.diskReadBytesPerSec,
+    this.diskWriteBytesPerSec,
     this.load1,
     this.load5,
     this.load15,
     this.uptimeSeconds,
     this.netRxBytesPerSec,
     this.netTxBytesPerSec,
+    this.temperatureC,
   });
 
   /// 机器标识：服务端 id 缺失时退化成名字（名字在 hosts.json 里是人写的，够稳定）。
@@ -71,9 +75,17 @@ class HostEntry {
   final int? swapTotalBytes;
   final int? swapUsedBytes;
 
+  /// Swap 用量百分比；服务端没给就按 used/total 反算（total 为 0 时是 null）。
+  final double? swapPercent;
+
   final int? diskTotalBytes;
   final int? diskUsedBytes;
   final double? diskPercent;
+
+  /// 磁盘 IO 速率（只统计物理整盘）。**老快照没有这两个字段，云主机也认不出盘**，
+  /// 两种情况都是 null —— 界面据此整行不显示，而不是显示 0 B/s。
+  final int? diskReadBytesPerSec;
+  final int? diskWriteBytesPerSec;
 
   final double? load1;
   final double? load5;
@@ -82,6 +94,10 @@ class HostEntry {
   final int? uptimeSeconds;
   final int? netRxBytesPerSec;
   final int? netTxBytesPerSec;
+
+  /// 温度（℃）；**云主机通常没有温度传感器 → null**，界面整行不显示。
+  /// 0 不是"很凉"，是没传感器，所以这里绝不用 0 兜底。
+  final double? temperatureC;
 
   /// 从一条记录里尽力取值；**名字缺失返回 null（调用方丢掉这条）**。
   ///
@@ -98,6 +114,8 @@ class HostEntry {
     final memUsed = _asInt(raw['memUsedBytes']);
     final diskTotal = _asInt(raw['diskTotalBytes']);
     final diskUsed = _asInt(raw['diskUsedBytes']);
+    final swapTotal = _asInt(raw['swapTotalBytes']);
+    final swapUsed = _asInt(raw['swapUsedBytes']);
 
     return HostEntry(
       id: id,
@@ -109,17 +127,22 @@ class HostEntry {
       memTotalBytes: memTotal,
       memUsedBytes: memUsed,
       memPercent: _percent(raw['memPercent'], used: memUsed, total: memTotal),
-      swapTotalBytes: _asInt(raw['swapTotalBytes']),
-      swapUsedBytes: _asInt(raw['swapUsedBytes']),
+      swapTotalBytes: swapTotal,
+      swapUsedBytes: swapUsed,
+      swapPercent: _percent(raw['swapPercent'], used: swapUsed, total: swapTotal),
       diskTotalBytes: diskTotal,
       diskUsedBytes: diskUsed,
       diskPercent: _percent(raw['diskPercent'], used: diskUsed, total: diskTotal),
+      // 扩展字段：**缺了就是 null**（老快照 / 没传感器），不做任何兜底。
+      diskReadBytesPerSec: _asInt(raw['diskReadBytesPerSec']),
+      diskWriteBytesPerSec: _asInt(raw['diskWriteBytesPerSec']),
       load1: _asDouble(raw['load1']),
       load5: _asDouble(raw['load5']),
       load15: _asDouble(raw['load15']),
       uptimeSeconds: _asInt(raw['uptimeSeconds']),
       netRxBytesPerSec: _asInt(raw['netRxBytesPerSec']),
       netTxBytesPerSec: _asInt(raw['netTxBytesPerSec']),
+      temperatureC: _temperature(raw['temperatureC']),
     );
   }
 }
@@ -281,6 +304,21 @@ String hostLoadText(double? one, double? five, double? fifteen) {
   return '${fmt(one)} / ${fmt(five)} / ${fmt(fifteen)}';
 }
 
+/// 磁盘 IO 文案：`读 … / 写 …`；**两侧都没有返回 null**（调用方整行不显示）。
+///
+/// 只缺一侧（例如老快照只有读）时另一侧给 `—`，保持"这一行有两个数"的形状。
+String? hostDiskIoText(int? readBytesPerSec, int? writeBytesPerSec) {
+  if (readBytesPerSec == null && writeBytesPerSec == null) return null;
+  return '读 ${hostRateText(readBytesPerSec)}'
+      '  /  写 ${hostRateText(writeBytesPerSec)}';
+}
+
+/// 温度文案（一位小数）；null 返回 `—`（调用方本该整行不显示，这里只是兜底）。
+String hostTempText(double? celsius) {
+  if (celsius == null) return '—';
+  return '${celsius.toStringAsFixed(1)} ℃';
+}
+
 /// 运行时长文案；null 显示 `—`。
 String hostUptimeText(int? seconds) {
   if (seconds == null || seconds < 0) return '—';
@@ -329,6 +367,15 @@ double? _asDouble(Object? v) {
   if (v is int) return v.toDouble();
   if (v is String) return double.tryParse(v.trim());
   return null;
+}
+
+/// 温度：**0 或负数一律当"没有传感器"**（运行中的机器不可能是 0℃），
+/// 上限挡掉明显不是温度的脏值。宁可整行不显示，也不显示一个假读数。
+double? _temperature(Object? raw) {
+  final value = _asDouble(raw);
+  if (value == null) return null;
+  if (value <= 0 || value > 150) return null;
+  return value;
 }
 
 bool? _asBool(Object? v) {

@@ -13,7 +13,7 @@ import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.da
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-String _body({bool online = true}) => jsonEncode({
+String _body({bool online = true, bool extended = false}) => jsonEncode({
       'generatedAt': '2026-09-25T16:00:00+08:00',
       'hosts': [
         {
@@ -27,6 +27,8 @@ String _body({bool online = true}) => jsonEncode({
             'memTotalBytes': 7843819520,
             'memUsedBytes': 4307644416,
             'memPercent': 54.9,
+            'swapTotalBytes': 2147483648,
+            'swapUsedBytes': 268435456,
             'diskTotalBytes': 63224078336,
             'diskUsedBytes': 42084376576,
             'diskPercent': 66.6,
@@ -36,6 +38,14 @@ String _body({bool online = true}) => jsonEncode({
             'uptimeSeconds': 445041,
             'netRxBytesPerSec': 15205,
             'netTxBytesPerSec': 47497,
+            // 默认不给扩展字段：289 线上的老快照就是这样（界面不许显示
+            // 盘 IO / 温度这些假 0）。
+            if (extended) ...{
+              'swapPercent': 12.5,
+              'diskReadBytesPerSec': 1048576,
+              'diskWriteBytesPerSec': 2097152,
+              'temperatureC': 52.4,
+            },
           },
         },
         {
@@ -173,6 +183,57 @@ void main() {
     expect(find.text('拿不到主机快照'), findsOneWidget);
     expect(find.textContaining('连不上服务端'), findsOneWidget);
     expect(find.text('重试'), findsOneWidget);
+  });
+
+  testWidgets('扩展指标（盘 IO / Swap / 温度）在字段齐全时显示', (tester) async {
+    final service = _FakeHostService(snapshotBody: _body(extended: true));
+    await _pumpHostTab(tester, service);
+
+    expect(find.text('盘 IO 读 1.0 MB/s  /  写 2.0 MB/s'), findsOneWidget);
+    expect(find.text('Swap 256.0 MB / 2.0 GB（12.5%）'), findsOneWidget);
+    expect(find.text('温度 52.4 ℃'), findsOneWidget);
+    // 原有指标不受影响。
+    expect(find.text('3.1% · 4 核'), findsOneWidget);
+  });
+
+  testWidgets('老快照缺扩展字段：Swap 照显，盘 IO 与温度整行不显示（不显示 0）',
+      (tester) async {
+    final service = _FakeHostService(snapshotBody: _body());
+    await _pumpHostTab(tester, service);
+
+    // Swap 的字段 289 就在采（总量/用量），所以这一行应该出现。
+    expect(find.textContaining('Swap 256.0 MB'), findsOneWidget);
+    // 盘 IO / 温度没字段：整行不显示，而不是 "0 B/s" / "0.0 ℃"。
+    expect(find.textContaining('盘 IO'), findsNothing);
+    expect(find.textContaining('温度'), findsNothing);
+    expect(find.textContaining('℃'), findsNothing);
+    expect(find.textContaining('0 B/s'), findsNothing);
+    // 页面照常渲染。
+    expect(find.text('阿里云 · 主服务端'), findsOneWidget);
+  });
+
+  testWidgets('机器没启用 swap（total=0）时整行不显示', (tester) async {
+    final service = _FakeHostService(
+      snapshotBody: jsonEncode({
+        'hosts': [
+          {
+            'id': 'a',
+            'name': '无 swap 机',
+            'online': true,
+            'swapTotalBytes': 0,
+            'swapUsedBytes': 0,
+            // 云主机没温度传感器：采集器报 null（不是 0）。
+            'temperatureC': null,
+          },
+        ],
+      }),
+    );
+    await _pumpHostTab(tester, service);
+
+    expect(find.text('无 swap 机'), findsOneWidget);
+    expect(find.textContaining('Swap'), findsNothing);
+    expect(find.textContaining('温度'), findsNothing);
+    expect(find.textContaining('盘 IO'), findsNothing);
   });
 
   testWidgets('刷新失败但保留旧内容：横幅写明"显示的是上次的内容（N 分钟前）"',

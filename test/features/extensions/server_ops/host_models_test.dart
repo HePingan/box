@@ -158,6 +158,78 @@ void main() {
       );
       expect(snap.hosts.single.id, '只有名字');
     });
+
+    test('扩展字段（289 之前的老快照）：缺了就是 null，不许兜成 0', () {
+      // _goodBody 就是 289 线上那份形状：有 swap 总量/用量，但没有
+      // swapPercent、盘 IO、温度。它必须还能正常渲染。
+      final host = HostSnapshot.parse(_goodBody).hosts.first;
+      expect(host.swapUsedBytes, 244748288, reason: '老快照的 swap 字段照收');
+      expect(
+        host.swapPercent,
+        closeTo(11.4, 0.1),
+        reason: '服务端没给 swapPercent 就按 used/total 反算',
+      );
+      expect(host.diskReadBytesPerSec, isNull);
+      expect(host.diskWriteBytesPerSec, isNull);
+      expect(host.temperatureC, isNull);
+      expect(hostDiskIoText(host.diskReadBytesPerSec, host.diskWriteBytesPerSec),
+          isNull, reason: '两个都没有 → 界面整行不显示');
+    });
+
+    test('扩展字段齐全：盘 IO / Swap 百分比 / 温度都收', () {
+      final host = HostSnapshot.parse(
+        jsonEncode({
+          'hosts': [
+            {
+              'id': 'a',
+              'name': 'A',
+              'online': true,
+              'swapTotalBytes': 2147483648,
+              'swapUsedBytes': 268435456,
+              'swapPercent': 12.5,
+              'diskReadBytesPerSec': 1048576,
+              'diskWriteBytesPerSec': 2097152,
+              'temperatureC': 52.4,
+            },
+          ],
+        }),
+      ).hosts.single;
+      expect(host.swapPercent, closeTo(12.5, 1e-9));
+      expect(host.diskReadBytesPerSec, 1048576);
+      expect(host.diskWriteBytesPerSec, 2097152);
+      expect(host.temperatureC, closeTo(52.4, 1e-9));
+    });
+
+    test('盘 IO 的 null 语义：一个字段没有就是 null，不是 0', () {
+      final host = HostSnapshot.parse(
+        jsonEncode({
+          'hosts': [
+            // 空盘没进过日志时采集器可能只报一侧：另一侧必须是 null。
+            {'id': 'a', 'name': 'A', 'online': true, 'diskWriteBytesPerSec': 0},
+          ],
+        }),
+      ).hosts.single;
+      expect(host.diskReadBytesPerSec, isNull);
+      expect(host.diskWriteBytesPerSec, 0, reason: '服务端明确给了 0 就照收');
+      expect(hostDiskIoText(host.diskReadBytesPerSec, host.diskWriteBytesPerSec),
+          '读 —  /  写 0 B/s');
+    });
+
+    test('温度：0 / 负数 / 明显不是温度的脏值都当"没传感器"（null）', () {
+      HostEntry parse(Object? temp) => HostSnapshot.parse(
+            jsonEncode({
+              'hosts': [
+                {'id': 'a', 'name': 'A', 'online': true, 'temperatureC': temp},
+              ],
+            }),
+          ).hosts.single;
+
+      expect(parse(0).temperatureC, isNull, reason: '0 不是"很凉"');
+      expect(parse(-5).temperatureC, isNull);
+      expect(parse(999).temperatureC, isNull);
+      expect(parse(52.4).temperatureC, closeTo(52.4, 1e-9));
+      expect(parse(null).temperatureC, isNull);
+    });
   });
 
   group('坏快照', () {
@@ -293,6 +365,27 @@ void main() {
       );
       expect(hostUsageText(null, null, 54.9), '54.9%');
       expect(hostUsageText(null, null, null), '—');
+    });
+
+    test('盘 IO 一行：读 / 写各一个速率；两个都没有才是 null', () {
+      expect(hostDiskIoText(1048576, 2097152), '读 1.0 MB/s  /  写 2.0 MB/s');
+      expect(hostDiskIoText(null, 2097152), '读 —  /  写 2.0 MB/s');
+      expect(hostDiskIoText(1048576, null), '读 1.0 MB/s  /  写 —');
+      expect(hostDiskIoText(null, null), isNull, reason: '整行不显示，不是"——"');
+    });
+
+    test('Swap 一行复用内存那条文案（已用 / 总量（百分比））', () {
+      expect(
+        hostUsageText(268435456, 2147483648, 12.5),
+        '256.0 MB / 2.0 GB（12.5%）',
+      );
+      expect(hostUsageText(null, 2147483648, 12.5), '12.5%');
+    });
+
+    test('温度：一位小数带 ℃；null（没传感器）给 —', () {
+      expect(hostTempText(52.4), '52.4 ℃');
+      expect(hostTempText(60), '60.0 ℃');
+      expect(hostTempText(null), '—');
     });
 
     test('采样时间的人话', () {
