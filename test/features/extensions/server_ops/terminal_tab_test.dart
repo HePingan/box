@@ -9,20 +9,29 @@ import 'package:box/features/extensions/plugins/server_ops/terminal_tab.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+/// 单台服务器的等价构造：口令只在内存缓存里（对应"从加密存储读出来"那一刻）。
+const _oneServer = ServerOpsServer(id: 's1', label: '测试机');
+
+ServerOpsSettings _withPassword(String password, {String user = ''}) =>
+    ServerOpsSettings(
+      servers: [_oneServer.copyWith(user: user)],
+      selectedServerId: 's1',
+      passwords: {'s1': password},
+    );
+
 void main() {
   group('Basic 凭据', () {
     test('没口令时不给凭据（页面改走"先去设置里填"）', () {
       expect(opsTerminalCredential(const ServerOpsSettings()), isNull);
       expect(
-        opsTerminalCredential(const ServerOpsSettings(password: '   ')),
+        opsTerminalCredential(_withPassword('   ')),
         isNull,
+        reason: '全是空白的口令等于没配',
       );
     });
 
     test('有口令时给出用户名 + 口令（用户名缺省是 boxops）', () {
-      final credential = opsTerminalCredential(
-        const ServerOpsSettings(password: 'pw'),
-      );
+      final credential = opsTerminalCredential(_withPassword('pw'));
       expect(credential, isNotNull);
       expect(credential!.user, 'boxops');
       expect(credential.password, 'pw');
@@ -30,9 +39,32 @@ void main() {
 
     test('用户填过的用户名以其为准', () {
       final credential = opsTerminalCredential(
-        const ServerOpsSettings(user: 'someone', password: 'pw'),
+        _withPassword('pw', user: 'someone'),
       );
       expect(credential!.user, 'someone');
+    });
+
+    test('凭据按当前选中的那台算（切了机器就换人）', () {
+      const onA = ServerOpsSettings(
+        servers: [
+          ServerOpsServer(id: 'a', label: 'A 机', user: 'ua'),
+          ServerOpsServer(id: 'b', label: 'B 机', user: 'ub'),
+        ],
+        selectedServerId: 'a',
+        passwords: {'a': 'pw-a', 'b': 'pw-b'},
+      );
+      const onB = ServerOpsSettings(
+        servers: [
+          ServerOpsServer(id: 'a', label: 'A 机', user: 'ua'),
+          ServerOpsServer(id: 'b', label: 'B 机', user: 'ub'),
+        ],
+        selectedServerId: 'b',
+        passwords: {'a': 'pw-a', 'b': 'pw-b'},
+      );
+      expect(opsTerminalCredential(onA)!.user, 'ua');
+      expect(opsTerminalCredential(onA)!.password, 'pw-a');
+      expect(opsTerminalCredential(onB)!.user, 'ub');
+      expect(opsTerminalCredential(onB)!.password, 'pw-b');
     });
   });
 

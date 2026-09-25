@@ -10,8 +10,11 @@ import 'package:box/features/extensions/plugins/server_ops/host_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_sparkline.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_tab.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'ops_test_servers.dart';
 
 String _body({bool online = true, bool extended = false}) => jsonEncode({
       'generatedAt': '2026-09-25T16:00:00+08:00',
@@ -291,5 +294,58 @@ void main() {
 
     expect(service.clearCalls, 1);
     expect(service.fetchCalls, greaterThan(before));
+  });
+
+  group('当前服务器标记（B1）', () {
+    /// 快照里有 hpa888 与 tencent175 两台（正好是内置那两台的 id）。
+    String body() => jsonEncode({
+          'hosts': [
+            {'id': 'hpa888', 'name': '阿里云 · 主服务端', 'online': true},
+            {'id': 'tencent175', 'name': '腾讯云 · 构建/监控机', 'online': true},
+          ],
+        });
+
+    Future<void> pumpWith(WidgetTester tester, ServerOpsSettings settings) async {
+      debugSetServerOpsRuntime(
+        hostService: _FakeHostService(snapshotBody: body()),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: ServerOpsHostTab(settings: settings)),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    testWidgets('标记只打在 currentServer 的 snapshotId 那一行', (tester) async {
+      await pumpWith(tester, testSettingsPrimary);
+      expect(find.text('当前'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('ops-host-current-hpa888')),
+        findsOneWidget,
+        reason: '「当前」要在阿里云那张卡片里',
+      );
+
+      await pumpWith(tester, testSettingsOnSecondary);
+      expect(find.text('当前'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('ops-host-current-hpa888')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('ops-host-current-tencent175')),
+        findsOneWidget,
+        reason: '切到 175 后标记要跟着挪过去',
+      );
+    });
+
+    testWidgets('快照里没有这台机器时一个标记都不打（不硬凑）', (tester) async {
+      await pumpWith(tester, const ServerOpsSettings(
+        servers: [ServerOpsServer(id: 'srv1', label: '别的机器')],
+        selectedServerId: 'srv1',
+      ));
+      expect(find.text('当前'), findsNothing);
+    });
   });
 }

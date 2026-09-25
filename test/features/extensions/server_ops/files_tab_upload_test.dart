@@ -9,15 +9,12 @@ import 'package:box/features/extensions/plugins/remote_storage/domain/remote_sto
 import 'package:box/features/extensions/plugins/server_ops/files_tab.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
-import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _settings = ServerOpsSettings(
-  baseUrl: 'https://box.hpa888.top/dav',
-  user: 'boxops',
-  password: 'pw',
-);
+import 'ops_test_servers.dart';
+
+const _settings = testSettingsPrimary;
 
 class _FakeUploadService extends ServerOpsFilesService {
   _FakeUploadService() : super(settings: _settings);

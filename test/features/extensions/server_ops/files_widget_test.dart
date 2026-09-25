@@ -14,11 +14,9 @@ import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.d
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _settings = ServerOpsSettings(
-  baseUrl: 'https://box.hpa888.top/dav',
-  user: 'boxops',
-  password: 'pw',
-);
+import 'ops_test_servers.dart';
+
+const _settings = testSettingsPrimary;
 
 class _FakeFilesService extends ServerOpsFilesService {
   _FakeFilesService({this.entries = const []}) : super(settings: _settings);

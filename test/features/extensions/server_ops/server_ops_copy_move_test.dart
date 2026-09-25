@@ -8,20 +8,16 @@ import 'package:box/features/extensions/plugins/remote_storage/domain/webdav_cli
 import 'package:box/features/extensions/plugins/server_ops/files_tab.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
-import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../remote_storage/fakes.dart';
+import 'ops_test_servers.dart';
 
 const _base = 'https://box.hpa888.top/dav';
 const _basePath = '/dav/';
 
-const _settings = ServerOpsSettings(
-  baseUrl: _base,
-  user: 'boxops',
-  password: 'pw',
-);
+const _settings = testSettingsPrimary;
 
 /// 内存假 WebDAV 文件系统：MKCOL / PROPFIND / COPY / MOVE / HEAD / DELETE 都能跑。
 /// 用它才能断言"复制后子文件真的存在"，而不是只看发过什么请求。

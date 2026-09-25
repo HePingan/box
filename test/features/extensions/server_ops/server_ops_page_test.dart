@@ -79,18 +79,41 @@ void main() {
     expect(find.text('还没配置终端口令'), findsOneWidget);
   });
 
-  testWidgets('设置入口可打开（口令等秘密默认留空，不预填明文）', (tester) async {
+  testWidgets('设置入口打开的是服务器列表，两台内置都在（不预填任何口令）', (tester) async {
     await _pumpPage(tester);
     await tester.tap(find.byTooltip('设置'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.text('运维通道设置'), findsOneWidget);
-    // 地址/用户名预填的是生效值，口令输入框必须是空的。
-    final passwordField = tester.widgetList<TextField>(find.byType(TextField));
-    expect(passwordField.length, 4, reason: '地址/用户名/口令/终端地址');
-    final obscure = passwordField.where((f) => f.obscureText).toList();
+    expect(find.text('腾讯云 · 构建/监控机'), findsOneWidget);
+    expect(find.text('阿里云 · 主服务端'), findsWidgets);
+    expect(find.text('新增服务器'), findsOneWidget);
+    // 列表里没有明文口令输入框：口令只在"点进一台"的对话框里填。
+    expect(find.byType(TextField), findsNothing);
+
+    await tester.tap(find.widgetWithText(ListTile, '阿里云 · 主服务端'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // 名称/地址/用户名/口令/终端地址五个输入框，其中口令框必须是空的。
+    final fields = tester.widgetList<TextField>(find.byType(TextField)).toList();
+    expect(fields, hasLength(5));
+    final obscure = fields.where((f) => f.obscureText).toList();
     expect(obscure, hasLength(1));
     expect(obscure.single.controller?.text, isEmpty);
+  });
+
+  testWidgets('AppBar 的切换器显示当前机器，展开能看到两台', (tester) async {
+    await _pumpPage(tester);
+
+    expect(find.byKey(const ValueKey('ops-server-switcher')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('ops-server-switcher')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('阿里云 · 主服务端'), findsWidgets);
+    expect(find.text('腾讯云 · 构建/监控机'), findsOneWidget);
+    expect(find.text('https://box.hpa888.top/dav175'), findsOneWidget);
   });
 }

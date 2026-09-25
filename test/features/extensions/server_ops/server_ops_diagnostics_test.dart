@@ -15,12 +15,9 @@ import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.d
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _settings = ServerOpsSettings(
-  baseUrl: 'https://box.hpa888.top/dav',
-  user: 'boxops',
-  password: 'pw',
-  terminalUrl: 'https://box.hpa888.top/term/',
-);
+import 'ops_test_servers.dart';
+
+const _settings = testSettingsPrimary;
 
 RemoteStorageEntry _file(String name) => RemoteStorageEntry(
       name: name,
@@ -148,7 +145,11 @@ void main() {
   group('设置页「测试连接」', () {
     testWidgets('点一下把三项结果都显示出来（含失败项的原因）', (tester) async {
       debugSetServerOpsRuntime(
-        hostService: _Hosts(snapshot: const HostSnapshot(hosts: [HostEntry(id: 'hpa888', name: '阿里云')])),
+        hostService: _Hosts(
+          snapshot: const HostSnapshot(
+            hosts: [HostEntry(id: 'hpa888', name: '阿里云')],
+          ),
+        ),
         settings: _settings,
         filesService: _Files(entries: [_file('root.txt')]),
         terminalProbe: (url, user, password) async => const OpsProbeResult(
@@ -161,10 +162,17 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
+      // B1：诊断在一台服务器的对话框里 —— 先打开设置，再点进那一台。
       await tester.tap(find.byTooltip('设置'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.widgetWithText(ListTile, '阿里云 · 主服务端'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
 
+      // 对话框内容在小窗口里要滚一下才够得着（真机同款行为）。
+      await tester.ensureVisible(find.text('测试连接'));
+      await tester.pump();
       await tester.tap(find.text('测试连接'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
@@ -172,6 +180,80 @@ void main() {
       expect(find.textContaining('文件通道（WebDAV）：根目录 1 项'), findsOneWidget);
       expect(find.textContaining('终端（ttyd）：认证失败（401）'), findsOneWidget);
       expect(find.textContaining('主机状态快照：1 台机器'), findsOneWidget);
+    });
+  });
+
+  group('诊断跟着服务器走（B1）', () {
+    test('runOpsProbesForServer 用的是这台机器的地址 / 用户名 / 终端地址', () async {
+      final seen = <String>[];
+      final files = _Files(entries: [_file('a.txt')]);
+      final results = await runOpsProbesForServer(
+        server: testSecondaryServer,
+        password: 'pw-175',
+        files: files,
+        hosts: _Hosts(
+          snapshot: const HostSnapshot(hosts: [HostEntry(id: 'x', name: 'X')]),
+        ),
+        terminalProbe: (url, user, password) async {
+          seen.add('$url|$user|$password');
+          return const OpsProbeResult(
+            label: '终端（ttyd）',
+            ok: true,
+            detail: '页面可达（200）',
+          );
+        },
+      );
+
+      expect(results, hasLength(3));
+      expect(
+        seen.single,
+        'https://box.hpa888.top/term175/|boxops|pw-175',
+        reason: '体检必须打当前这台机器（175），不是主服务端',
+      );
+    });
+
+    testWidgets('点了另一台服务器：诊断显示的就是那台', (tester) async {
+      final probed = <String>[];
+      debugSetServerOpsRuntime(
+        hostService: _Hosts(
+          snapshot: const HostSnapshot(
+            hosts: [HostEntry(id: 'tencent175', name: '腾讯云')],
+          ),
+        ),
+        settings: testSettingsOnSecondary,
+        filesService: _Files(entries: [_file('root.txt')]),
+        terminalProbe: (url, user, password) async {
+          probed.add(url);
+          return const OpsProbeResult(
+            label: '终端（ttyd）',
+            ok: true,
+            detail: '页面可达（200）',
+          );
+        },
+      );
+      await tester.pumpWidget(const MaterialApp(home: ServerOpsPage()));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.tap(find.byTooltip('设置'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.widgetWithText(ListTile, '腾讯云 · 构建/监控机'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.ensureVisible(find.text('测试连接'));
+      await tester.pump();
+      await tester.tap(find.text('测试连接'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        probed.single,
+        'https://box.hpa888.top/term175/',
+        reason: '当前选的是 175，体检就不该去打主服务端的终端',
+      );
+      expect(find.textContaining('文件通道（WebDAV）：根目录 1 项'), findsOneWidget);
     });
   });
 }

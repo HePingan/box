@@ -9,16 +9,13 @@ import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.d
 import 'package:flutter_test/flutter_test.dart';
 
 import '../remote_storage/fakes.dart';
+import 'ops_test_servers.dart';
 
 const _base = 'https://box.hpa888.top/dav';
 
 ServerOpsFilesService serviceWith(FakeTransport transport) {
   return ServerOpsFilesService(
-    settings: const ServerOpsSettings(
-      baseUrl: _base,
-      user: 'boxops',
-      password: 'pw',
-    ),
+    settings: testSettingsPrimary,
     client: WebdavClient(
       baseUrl: _base,
       username: 'boxops',
@@ -70,9 +67,16 @@ void main() {
       );
       final service = ServerOpsFilesService(
         settings: const ServerOpsSettings(
-          baseUrl: _base,
-          user: 'someone',
-          password: 'secret',
+          servers: [
+            ServerOpsServer(
+              id: 's1',
+              label: '测试机',
+              baseUrl: _base,
+              user: 'someone',
+            ),
+          ],
+          selectedServerId: 's1',
+          passwords: {'s1': 'secret'},
         ),
         transportFactory: () => transport,
       );
@@ -83,11 +87,60 @@ void main() {
 
     test('没喊口令时仍然按设置建 client（由页面负责给引导）', () {
       final service = ServerOpsFilesService(
-        settings: const ServerOpsSettings(baseUrl: _base, user: 'boxops'),
+        settings: const ServerOpsSettings(
+          servers: [
+            ServerOpsServer(
+              id: 's1',
+              label: '测试机',
+              baseUrl: _base,
+              user: 'boxops',
+            ),
+          ],
+          selectedServerId: 's1',
+        ),
         transportFactory: () => FakeTransport(),
       );
       expect(service.client.baseUrl, _base);
       expect(service.client.username, 'boxops');
+    });
+
+    test('请求打到**当前选中服务器**的地址：切到 175 就换 /dav175', () async {
+      final transport = FakeTransport(
+        (request) async => xmlResponse(
+          propfindXml(const [DavItem('/dav/', isCollection: true)]),
+        ),
+      );
+      final urls = <String>[];
+      for (final settings in const [
+        testSettingsPrimary,
+        testSettingsOnSecondary,
+      ]) {
+        final service = ServerOpsFilesService(
+          settings: settings,
+          transportFactory: () => transport,
+        );
+        await service.list('');
+        urls.add(transport.lastRequest.uri.toString());
+      }
+
+      expect(urls[0], contains('box.hpa888.top/dav'));
+      expect(
+        urls[0],
+        isNot(contains('dav175')),
+        reason: '第一台不该被 175 的地址串上',
+      );
+      expect(
+        urls[1],
+        contains('dav175'),
+        reason: '切到第二台后必须打 /dav175（这正是 B1 的验收点）',
+      );
+      expect(
+        transport.requests
+            .where((r) => r.uri.toString().contains('dav175'))
+            .length,
+        1,
+        reason: '不该对 175 多发一次',
+      );
     });
   });
 
