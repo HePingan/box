@@ -56,6 +56,12 @@ fi
 OPS_DAV_BASE="${OPS_DAV_BASE:-https://box.hpa888.top/dav}"
 OPS_DAV_USER="${OPS_DAV_USER:-boxops}"
 OPS_TERM_URL="${OPS_TERM_URL:-https://box.hpa888.top/term/}"
+# 第二台机器（175 = 构建/监控机）：同一台边缘机的 /dav175//term175/，
+# 靠 hpa888 上的 box-ops175-tunnel.service 隧道 + 两个 nginx location 转过去。
+# 同样是"只有地址和用户名"，口令用户自己填。
+OPS_DAV175_BASE="${OPS_DAV175_BASE:-https://box.hpa888.top/dav175}"
+OPS_DAV175_USER="${OPS_DAV175_USER:-boxops}"
+OPS_TERM175_URL="${OPS_TERM175_URL:-https://box.hpa888.top/term175/}"
 
 # ---- 取密钥 ----------------------------------------------------------------
 SECRET="${UPDATE_SIGNATURE_SECRET:-}"
@@ -142,6 +148,9 @@ flutter build apk --release \
   --dart-define=OPS_DAV_BASE="$OPS_DAV_BASE" \
   --dart-define=OPS_DAV_USER="$OPS_DAV_USER" \
   --dart-define=OPS_TERM_URL="$OPS_TERM_URL" \
+  --dart-define=OPS_DAV175_BASE="$OPS_DAV175_BASE" \
+  --dart-define=OPS_DAV175_USER="$OPS_DAV175_USER" \
+  --dart-define=OPS_TERM175_URL="$OPS_TERM175_URL" \
   --dart-define=UPDATE_DOWNLOAD_ALLOWED_HOSTS="$ALLOWED_HOSTS" \
   --dart-define=REQUIRE_UPDATE_SHA256=true \
   --dart-define=APP_CHANNEL="$CHANNEL"

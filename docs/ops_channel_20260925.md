@@ -112,3 +112,49 @@ https://box.hpa888.top/hosts.json?token=...
 **轮换会让所有已发布 APK 里的旧口令立即失效**（这正是轮换的意义）：
 轮换后必须①把新口令同步到 175 的 `/root/.secrets/box-ops-webdav.password`，
 ②紧跟一次发版。否则 App 的文件/终端页会 401。
+
+## 八、第二台机器（175）接入 —— 服务端半边（2026-09-25）
+
+### 为什么是这个形状
+
+175 没有 443、也没有证书，但**两件东西都已经有了**：它自己的 nginx（宝塔）跑着别的站点，
+以及 hpa888 上一条既有隧道（`searxng-tunnel.service`，`ssh -L` 把 175 的回环端口拉到 hpa888 回环）。
+所以接入方式不是"给 175 申请证书/加域名"，而是**复用边缘机的证书与限速 zone**，
+照抄 Kuma 那条通路的形态 —— 与方案 B1 里写的判断一致。
+
+### 服务端落地了什么
+
+| 位置 | 组件 | 说明 |
+|---|---|---|
+| 175 | `box-ops175-dav.service` | `rclone serve webdav / --addr 127.0.0.1:8083 --baseurl /dav175 --dir-cache-time 0`，root，整盘为根 |
+| 175 | `box-ops175-term.service` | `ttyd -p 7683 -i 127.0.0.1 -b /term175 -W -t fontSize=14 /bin/bash -l`，root shell |
+| 175 | `/root/.secrets/box-ops175-webdav.password`（600） | 这台机器口令的事实源（**与 hpa888 的互相独立**） |
+| 175 | `/root/.secrets/box-ops175-rclone.env`（600） | `RCLONE_USER`/`RCLONE_PASS`，走 `EnvironmentFile` 不进 argv |
+| hpa888 | `box-ops175-tunnel.service` | `ssh -N -T … -L 127.0.0.1:8083:… -L 127.0.0.1:7683:… root@175`，**独立单元**（改它不会重启 Kuma/SearXNG 那条在用的隧道） |
+| hpa888 | `/www/server/nginx/conf/box-ops175.htpasswd`（root:www 640） | 只管 `/term175/`（ttyd 自身无凭据） |
+| hpa888 | vhost 两条 location | `^~ /dav175/` → `127.0.0.1:8083`（认证由 175 的 rclone 拦，与 `/dav/` 一致）；`^~ /term175/` → `127.0.0.1:7683`（认证由 nginx 拦，与 `/term/` 一致） |
+
+**口令两台互相独立是刻意的**：175 是构建机，放着发布密钥、GitHub 私钥、全部 `.secrets`，
+它的口令泄露的后果与 hpa888 不同，不该绑在一根绳上。轮换脚本
+`175:/usr/local/sbin/box-ops175-rotate-credentials.sh`（`--check` 只自检：期望
+`dav=207 term=200`，错口令 `dav=401 term=401`），一次改两层（175 的 rclone env + hpa888 的 htpasswd）
+并各自自检。
+
+### 实测（外网经 `box.hpa888.top`）
+
+```
+PROPFIND /dav175/ 口令对  207      口令错 401      用 hpa888 的口令打 /dav175/ 也 401（两层独立）
+判据：/opt/ops-monitor 只在 175 有 —— 经 /dav175/ 207，经 /dav/（hpa888）404   ← 证明是两台不同的盘
+下载 /dav175/opt/ops-monitor/hosts.json 与本机文件逐字节一致（1105 字节）
+PUT /dav175/tmp/*.txt → 201，读回一致，DELETE → 204
+GET /term175/ 200 / 口令错 401 / WS 握手 101（必须 HTTP/1.1）
+无回归：/dav/ 207、/term/ 200
+```
+
+### 注意
+
+- **ttyd 自身没有凭据**（两台机器都一样），所以"终端口令"实际只由 nginx 那一层拦；
+  直连回环时 ttyd 对任何口令都回 200 —— 这不是漏洞，但**别把它当成"认证通过了"**。
+- 175 的 DAV 根是 `/`：**整个构建机对 App 开放**，包括 `/root/.secrets/`（发布密钥、GitHub 私钥）。
+  这是用户明确要求的能力（"整个"），但换机/换人时必须先轮换口令，并把"175 口令 = 构建链"写进心里。
+- 客户端（多服务器模型）见 `docs/server_ops_plugin_next_steps_289.md` 的 B1。
