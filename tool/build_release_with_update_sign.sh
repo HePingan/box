@@ -50,6 +50,23 @@ if [[ -z "$MONITOR_TOKEN" ]]; then
   exit 1
 fi
 
+# ---- 取运维通道口令（「服务器运维」插件的文件/终端页共用）-----------------------
+# 与监控令牌同一套路：口令不进 git，只在构建时经 --dart-define 注入。
+# 缺了不阻断发版（插件会退化成让用户自己填密码），但必须显式告警。
+OPS_DAV_PASSWORD_FILE="${OPS_DAV_PASSWORD_FILE:-/root/.secrets/box-ops-webdav.password}"
+OPS_DAV_PASSWORD=""
+if [[ -r "$OPS_DAV_PASSWORD_FILE" ]]; then
+  OPS_DAV_PASSWORD="$(tr -d '\r\n' < "$OPS_DAV_PASSWORD_FILE")"
+fi
+if [[ -z "$OPS_DAV_PASSWORD" ]]; then
+  echo "[警告] 找不到运维通道口令：$OPS_DAV_PASSWORD_FILE" >&2
+  echo "       「服务器运维」插件的 文件/终端 页会退化成要用户手输密码。" >&2
+  echo "       服务端那份在 hpa888:/root/.secrets/box-ops-webdav.password，拷一份到本机即可（600）。" >&2
+fi
+OPS_DAV_BASE="${OPS_DAV_BASE:-https://box.hpa888.top/dav}"
+OPS_DAV_USER="${OPS_DAV_USER:-boxops}"
+OPS_TERM_URL="${OPS_TERM_URL:-https://box.hpa888.top/term/}"
+
 # ---- 取密钥 ----------------------------------------------------------------
 SECRET="${UPDATE_SIGNATURE_SECRET:-}"
 if [[ -z "$SECRET" && -r "$SECRET_FILE" ]]; then
@@ -132,6 +149,10 @@ flutter build apk --release \
   --dart-define=UPDATE_SIGNATURE_ALGORITHM="$SIG_ALGO" \
   --dart-define=UPDATE_SIGNATURE_SECRET="$SECRET" \
   --dart-define=MONITOR_SNAPSHOT_TOKEN="$MONITOR_TOKEN" \
+  --dart-define=OPS_DAV_BASE="$OPS_DAV_BASE" \
+  --dart-define=OPS_DAV_USER="$OPS_DAV_USER" \
+  --dart-define=OPS_DAV_PASSWORD="$OPS_DAV_PASSWORD" \
+  --dart-define=OPS_TERM_URL="$OPS_TERM_URL" \
   --dart-define=UPDATE_DOWNLOAD_ALLOWED_HOSTS="$ALLOWED_HOSTS" \
   --dart-define=REQUIRE_UPDATE_SHA256=true \
   --dart-define=APP_CHANNEL="$CHANNEL"
