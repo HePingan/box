@@ -14,11 +14,13 @@ import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../data/network_status_channel.dart';
 import '../data/playback_progress_store.dart';
 import '../data/remote_storage_store.dart';
 import '../data/remote_thumbnail_cache.dart';
 import '../data/video_frame_channel.dart';
 import '../domain/exif_thumbnail.dart';
+import '../domain/network_policy.dart';
 import '../domain/remote_storage_models.dart';
 import '../domain/transfer_throttle.dart';
 import '../domain/webdav_client.dart';
@@ -1444,6 +1446,54 @@ class RemoteStorageService {
     await _store.saveTransferRateLimit(_transferRateLimit);
   }
 
+  // ------------------------------------------------- 网络条件闸门（287 P1）
+
+  TransferNetworkPolicy _transferNetworkPolicy = TransferNetworkPolicy.wifiOnly;
+
+  NetworkStatusChannel? _networkStatus;
+  StreamSubscription<NetworkKind>? _networkSub;
+
+  /// 当前网络策略（仅 Wi-Fi / 先询问 / 不限）。
+  TransferNetworkPolicy get transferNetworkPolicy => _transferNetworkPolicy;
+
+  Future<void> loadTransferNetworkPolicy() async {
+    _transferNetworkPolicy = await _store.loadTransferNetworkPolicy();
+    transferQueue().setNetworkPolicy(_transferNetworkPolicy);
+  }
+
+  Future<void> setTransferNetworkPolicy(TransferNetworkPolicy policy) async {
+    _transferNetworkPolicy = policy;
+    await _store.saveTransferNetworkPolicy(policy);
+    transferQueue().setNetworkPolicy(policy);
+  }
+
+  /// 接上网络状态通道：问一次当前类型 + 听原生推送（287 P1）。
+  ///
+  /// 队列是惰性创建的，所以这里要**先确保它存在**再把状态灌进去；否则用户在
+  /// 传输面板之外入队的任务会拿不到网络判定。
+  Future<void> initTransferNetwork() async {
+    await loadTransferNetworkPolicy();
+    _networkStatus ??= NetworkStatusChannel();
+    _networkSub ??= _networkStatus!.changes.listen(
+      (kind) => transferQueue().setNetworkState(kind),
+    );
+    // current() 拿不到情报时返回 null：那就"没有情报"，队列按不拦处理，
+    // 不要用 unknown 去冒充一个读数。
+    final kind = await _networkStatus!.current();
+    if (kind != null) transferQueue().setNetworkState(kind);
+  }
+
+  /// 用户点了"移动网络上仍要传一次"。
+  void allowMobileTransferOnce() => transferQueue().allowMobileOnce();
+
+  /// 断开网络状态通道（不是 ChangeNotifier，没有 super.dispose）。
+  void disposeTransferNetwork() {
+    unawaited(_networkSub?.cancel());
+    _networkSub = null;
+    _networkStatus?.dispose();
+    _networkStatus = null;
+  }
+
   Future<bool> loadVideoThumbnailsEnabled() =>
       _store.loadVideoThumbnailsEnabled();
 
@@ -1617,7 +1667,14 @@ void debugSetRemoteStorageRuntime({
   TransferQueue? queue,
   Future<String?> Function()? pickDirectory,
 }) {
-  if (service != null) _runtimeService = service;
+  if (service != null) {
+    // 换运行时意味着旧实例不再被使用：把它挂着的网络状态通道收掉，
+    // 否则旧通道会继续往一个没人看的队列里推事件。
+    if (!identical(_runtimeService, service)) {
+      _runtimeService?.disposeTransferNetwork();
+    }
+    _runtimeService = service;
+  }
   if (queue != null) _runtimeQueue = queue;
   if (pickDirectory != null) _runtimePickDirectory = pickDirectory;
 }

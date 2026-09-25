@@ -12,6 +12,7 @@ import 'package:box/utils/local_secret_codec.dart';
 import 'package:box/utils/log_channels.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../domain/network_policy.dart';
 import '../domain/remote_storage_models.dart';
 
 /// 旧格式（固定盐 AES-CBC）的盐，仅用于迁移读取。
@@ -242,6 +243,37 @@ class RemoteStorageStore {
       AppLogger.instance.logTo(
         LogChannel.storage,
         '保存传输限速失败: $e',
+        level: LogLevel.debug,
+      );
+    }
+  }
+
+  /// 传输的网络条件策略（287 P1）。默认仅 Wi-Fi；坏值/缺值都回默认。
+  static const String transferNetworkPolicyKey =
+      'remoteStorage.transferNetworkPolicy';
+
+  Future<TransferNetworkPolicy> loadTransferNetworkPolicy() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return networkPolicyFromName(prefs.getString(transferNetworkPolicyKey));
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '读取传输网络策略失败: $e',
+        level: LogLevel.debug,
+      );
+      return TransferNetworkPolicy.wifiOnly;
+    }
+  }
+
+  Future<void> saveTransferNetworkPolicy(TransferNetworkPolicy policy) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(transferNetworkPolicyKey, networkPolicyName(policy));
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '保存传输网络策略失败: $e',
         level: LogLevel.debug,
       );
     }

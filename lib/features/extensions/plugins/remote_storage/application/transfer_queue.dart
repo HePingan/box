@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart';
 
 import '../data/transfer_keepalive.dart';
 import '../data/transfer_queue_store.dart';
+import '../domain/network_policy.dart';
 import '../domain/remote_storage_models.dart';
 
 enum TransferKind { download, upload }
@@ -202,6 +203,41 @@ class TransferQueue extends ChangeNotifier {
   /// 传输期间的前台保活（284 P1）。
   final TransferKeepAlive _keepAlive;
 
+  // ------------------------------------------------- 网络条件闸门（287 P1）
+
+  /// 网络策略，默认仅 Wi-Fi（见 [TransferNetworkPolicy]）。
+  TransferNetworkPolicy _networkPolicy = TransferNetworkPolicy.wifiOnly;
+
+  /// "移动网络上仍要传一次"的临时放行；**网络类型一变就清掉** ——
+  /// "这次"指的是当时那次网络，换了网络要重新问。
+  bool _mobileOverride = false;
+
+  /// 原生推来的当前网络类型。
+  ///
+  /// null = **完全没有情报**（通道不存在/读不出来）→ 队列不拦，否则没有这个通道的
+  /// 平台会被静默停死；一旦拿到真实读数（哪怕是不认识的类型）就按策略判定。
+  NetworkKind? _networkKind;
+
+  /// 界面展示用：没有情报时显示"未知网络"。
+  NetworkKind get currentNetworkKind => _networkKind ?? NetworkKind.other;
+
+  TransferNetworkPolicy get networkPolicy => _networkPolicy;
+
+  /// 现在是否因为网络条件被闸住（含"没网"）。
+  ///
+  /// 只在**有情报**时判定：[NetworkKind.none] 与不认识的类型都会被拦住，但"完全
+  /// 读不到"（[_networkKind] 为 null）不拦 —— 见 [_networkKind] 的说明。
+  bool get networkBlocked {
+    final kind = _networkKind;
+    if (kind == null) return false;
+    return !networkAllowsTransfer(_networkPolicy, kind) && !_mobileOverride;
+  }
+
+  /// 正在等网络的任务数（传输面板横幅用）。
+  int get waitingForNetworkCount => networkBlocked
+      ? _tasks.where((t) => t.status == TransferStatus.queued).length
+      : 0;
+
   final List<TransferTask> _tasks = [];
   int _running = 0;
   int _seq = 0;
@@ -359,6 +395,36 @@ class TransferQueue extends ChangeNotifier {
     return retryDelayFor(attempt, retryAfter: serverWait);
   }
 
+  // --------------------------------------------- 网络条件闸门（287 P1）
+
+  /// 设置网络策略。换档会清掉临时放行，并按新档位重新起跑。
+  void setNetworkPolicy(TransferNetworkPolicy policy) {
+    if (policy == _networkPolicy) return;
+    _networkPolicy = policy;
+    _mobileOverride = false;
+    notifyListeners();
+    _pump();
+  }
+
+  /// 原生推来的网络变化（Wi-Fi 连上/断开、移动网络开关）。
+  ///
+  /// 类型一变就清掉临时放行：用户当时点"仍要传"针对的是**那一次**网络。
+  void setNetworkState(NetworkKind kind) {
+    if (kind == _networkKind) return;
+    _networkKind = kind;
+    _mobileOverride = false;
+    notifyListeners();
+    _pump();
+  }
+
+  /// 用户在移动网络上点了"仍要传一次"。
+  void allowMobileOnce() {
+    if (_mobileOverride) return;
+    _mobileOverride = true;
+    notifyListeners();
+    _pump();
+  }
+
   /// 拉起能跑的任务，直到达到并发上限。
   ///
   /// 本方法**不含 await**（[TransferTask.runner] 的等待在 [_run] 里），所以不存在
@@ -366,6 +432,10 @@ class TransferQueue extends ChangeNotifier {
   /// pump"的开关（原来那个开关只能表达"串行"）。
   void _pump() {
     while (_running < maxConcurrent) {
+      // 网络条件不允许就整队停住：任务留在队列里（**不标 running、不挂保活**），
+      // 等 setNetworkState / allowMobileOnce / setNetworkPolicy 再 pump ——
+      // 这样面板上看到的是"等待 Wi-Fi"，而不是被标成在跑然后失败。
+      if (networkBlocked) return;
       final next = _nextQueued();
       if (next == null) return;
 

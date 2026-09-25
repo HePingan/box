@@ -173,6 +173,9 @@ class MainActivity : FlutterActivity() {
 
         overlayManager = QuizOverlayManager(this)
 
+        // 网络类型上报（287 P1）：传输队列的"仅 Wi-Fi"闸门靠它拿当前网络。
+        NetworkStatusProvider.attach(this, flutterEngine.dartExecutor.binaryMessenger)
+
         // 小窗诊断通道：logcat 之外再给 Dart 侧 AppLogger 一份，
         // 让拿不到 adb 的用户能直接在「调试日志」页复制现场。
         MethodChannel(

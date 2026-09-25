@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 
 import '../application/remote_storage_service.dart';
 import '../application/transfer_queue.dart';
+import '../domain/network_policy.dart';
 import '../domain/remote_storage_models.dart';
 import '../domain/webdav_client.dart';
 import 'remote_storage_browser_page.dart';
@@ -39,6 +40,8 @@ class _RemoteStoragePageState extends State<RemoteStoragePage> {
   Future<void> _restorePendingTransfers() async {
     try {
       await remoteStorageService().loadTransferRateLimit();
+      // 网络闸门：读策略 + 问一次当前网络类型 + 听原生推送（287 P1）。
+      await remoteStorageService().initTransferNetwork();
       final restored = await remoteStorageService().restoreTransfers();
       if (!mounted || restored == 0) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -773,6 +776,79 @@ class TransferQueueSheet extends StatelessWidget {
     );
   }
 
+  /// 网络条件档位（287 P1）。
+  static const List<TransferNetworkPolicy> networkPolicyOptions = [
+    TransferNetworkPolicy.wifiOnly,
+    TransferNetworkPolicy.askEachTime,
+    TransferNetworkPolicy.allowAll,
+  ];
+
+  static String networkPolicyHint(TransferNetworkPolicy policy) {
+    switch (policy) {
+      case TransferNetworkPolicy.wifiOnly:
+        return '移动网络上不自动开始，任务排队等 Wi-Fi';
+      case TransferNetworkPolicy.askEachTime:
+        return '移动网络上先问一次，确认后才传';
+      case TransferNetworkPolicy.allowAll:
+        return '任何网络都直接开始（可能消耗移动流量）';
+    }
+  }
+
+  /// 当前网络类型的中文名（面板上给用户看"现在是什么网"）。
+  static String networkKindLabel(NetworkKind kind) {
+    switch (kind) {
+      case NetworkKind.wifi:
+        return 'Wi-Fi';
+      case NetworkKind.mobile:
+        return '移动网络';
+      case NetworkKind.ethernet:
+        return '有线网络';
+      case NetworkKind.none:
+        return '无网络';
+      case NetworkKind.other:
+        return '未知网络';
+    }
+  }
+
+  Future<void> _pickNetworkPolicy(BuildContext context) async {
+    final service = remoteStorageService();
+    final current = service.transferNetworkPolicy;
+    final picked = await showModalBottomSheet<TransferNetworkPolicy>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(
+              dense: true,
+              title: Text('网络条件'),
+              subtitle: Text('对之后开始的传输生效'),
+            ),
+            for (final policy in networkPolicyOptions)
+              ListTile(
+                leading: Icon(
+                  policy == current
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  size: 20,
+                ),
+                title: Text(networkPolicyLabel(policy)),
+                subtitle: Text(networkPolicyHint(policy)),
+                onTap: () => Navigator.of(sheetContext).pop(policy),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked == null) return;
+    await service.setTransferNetworkPolicy(picked);
+    if (!context.mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text('网络条件：${networkPolicyLabel(picked)}')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -830,6 +906,11 @@ class TransferQueueSheet extends StatelessWidget {
                     onPressed: () => _pickRateLimit(context),
                     icon: const Icon(Icons.speed_rounded, size: 20),
                   ),
+                  IconButton(
+                    tooltip: '网络条件',
+                    onPressed: () => _pickNetworkPolicy(context),
+                    icon: const Icon(Icons.wifi_tethering_rounded, size: 20),
+                  ),
                   if (tasks.any((t) => !t.isActive))
                     TextButton(
                       onPressed: queue.clearFinished,
@@ -837,6 +918,52 @@ class TransferQueueSheet extends StatelessWidget {
                     ),
                 ],
               ),
+              // 网络闸门横幅（287 P1）：任务被拦在队列里时说清"为什么没动"，
+              // 并给一条改设置的近路（不问用户就静静停着，看起来像坏了）。
+              if (queue.waitingForNetworkCount > 0)
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.secondaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.wifi_off_rounded,
+                        size: 18,
+                        color: theme.colorScheme.onSecondaryContainer,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${queue.waitingForNetworkCount} 个任务'
+                          '${networkWaitLabel(queue.networkPolicy, queue.currentNetworkKind)}'
+                          '（当前：${networkKindLabel(queue.currentNetworkKind)}）',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSecondaryContainer,
+                          ),
+                        ),
+                      ),
+                      if (queue.networkPolicy ==
+                          TransferNetworkPolicy.askEachTime)
+                        TextButton(
+                          onPressed: () {
+                            remoteStorageService().allowMobileTransferOnce();
+                            ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                              const SnackBar(content: Text('本次已在移动网络上开始传输')),
+                            );
+                          },
+                          child: const Text('仍要传一次'),
+                        ),
+                    ],
+                  ),
+                ),
               if (tasks.isEmpty)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 32),
