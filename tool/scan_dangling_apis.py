@@ -21,7 +21,7 @@
 用法：
   python3 tool/scan_dangling_apis.py                    # 扫默认范围（见下方 SCOPE）
   python3 tool/scan_dangling_apis.py --warn-only        # 只打印，不改退出码
-  python3 tool/scan_dangling_apis.py --dir lib/foo      # 只扫某个目录
+  python3 tool/scan_dangling_apis.py --dir lib/foo      # 只扫某个目录（可重复）
 退出码：发现悬挂 API 为 1（CI 会红），否则 0。
 """
 
@@ -36,7 +36,11 @@ REPO = Path(__file__).resolve().parent.parent
 
 # 扫描范围：只扫"插件/功能自成一体的目录"最有效——全仓扫会把框架回调、
 # 路由注册这类"由外部按名字调用"的方法全部报出来，噪音大到没人看。
-SCOPE = ["lib/features/extensions/plugins/remote_storage"]
+SCOPE = [
+    "lib/features/extensions/plugins/remote_storage",
+    # 285 新增：服务监控插件（同样"自成一体的功能目录"）。
+    "lib/features/extensions/plugins/monitor",
+]
 
 # 搜索调用点的范围（定义文件本身除外都算）。
 SEARCH = ["lib", "test"]
