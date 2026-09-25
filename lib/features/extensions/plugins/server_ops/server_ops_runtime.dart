@@ -20,6 +20,10 @@ HostService _hostService = HostService();
 ServerOpsSettings? _settingsOverride;
 ServerOpsFilesService? _filesServiceOverride;
 
+/// 按设置**现建**文件服务的接缝（B1）：页面每换一台服务器都会重问一次，
+/// 用它就能断言"切完之后连的到底是哪台"（假实现里读 settings.effectiveBaseUrl）。
+ServerOpsFilesService Function(ServerOpsSettings settings)? _filesServiceFactory;
+
 /// 打开图片预览的接缝。默认实现就是弹远端存储的相册对话框（相册滑动、缩放、
 /// 20MB 上限、逐页失败不阻塞都在那里面）；widget 测试注入假实现即可，免得
 /// 单测真的联网拉图 —— 那是 live 测试该干的事。
@@ -97,7 +101,9 @@ ServerOpsDownloadCache get serverOpsDownloadCache => _downloadCache;
 
 /// 文件页用的服务：测试注入优先，否则按当前设置懒建。
 ServerOpsFilesService serverOpsFilesService(ServerOpsSettings settings) =>
-    _filesServiceOverride ?? ServerOpsFilesService(settings: settings);
+    _filesServiceFactory?.call(settings) ??
+    _filesServiceOverride ??
+    ServerOpsFilesService(settings: settings);
 
 /// 读设置：测试注入优先（避免 widget 测试依赖 SharedPreferences 的时序）。
 Future<ServerOpsSettings> loadServerOpsSettings() async =>
@@ -108,6 +114,7 @@ void debugSetServerOpsRuntime({
   HostService? hostService,
   ServerOpsSettings? settings,
   ServerOpsFilesService? filesService,
+  ServerOpsFilesService Function(ServerOpsSettings settings)? filesServiceFactory,
   OpsImagePreviewOpener? imagePreviewOpener,
   OpsTerminalProbe? terminalProbe,
   OpsFilePicker? filePicker,
@@ -116,6 +123,7 @@ void debugSetServerOpsRuntime({
   _hostService = hostService ?? HostService();
   _settingsOverride = settings;
   _filesServiceOverride = filesService;
+  _filesServiceFactory = filesServiceFactory;
   _imagePreviewOpener = imagePreviewOpener;
   _terminalProbe = terminalProbe;
   _filePicker = filePicker ?? _defaultPickFiles;
