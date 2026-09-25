@@ -1351,23 +1351,24 @@ class RemoteStorageService {
     final key = videoThumbnailCacheKey(account.id, entry);
     if (_videoFrameMisses.contains(key)) return null;
 
-    final plan = resolvePlayback(account, entry);
-    if (plan.needsRelay) {
-      _rememberVideoFrameMiss(key);
-      return null;
-    }
+    // 和图片一样过 ThumbnailLoader：磁盘+内存缓存、同键去重、并发上限、
+    // 删账户按作用域清理全都复用。否则滚过去再滚回来就要重新走一次网络。
+    return _thumbnails.load(key, scope: account.id, () async {
+      final plan = resolvePlayback(account, entry);
+      if (plan.needsRelay) {
+        _rememberVideoFrameMiss(key);
+        return null;
+      }
 
-    final bytes = await _videoFrames.frameAt(
-      url: plan.directUri.toString(),
-      headers: plan.headers,
-      positionMs: kVideoThumbnailPositionMs,
-      maxWidth: maxWidth,
-    );
-    if (bytes == null) {
-      _rememberVideoFrameMiss(key);
-      return null;
-    }
-    return bytes;
+      final bytes = await _videoFrames.frameAt(
+        url: plan.directUri.toString(),
+        headers: plan.headers,
+        positionMs: kVideoThumbnailPositionMs,
+        maxWidth: maxWidth,
+      );
+      if (bytes == null) _rememberVideoFrameMiss(key);
+      return bytes;
+    });
   }
 
   void _rememberVideoFrameMiss(String key) {

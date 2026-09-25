@@ -1816,6 +1816,20 @@ void main() {
       expect(calls, isEmpty, reason: '为一张缩略图开中继会话不划算');
     });
 
+    test('成功会落缓存：第二次不再走原生/网络（滚回去不该再抽一次）', () async {
+      mockChannel((call) async {
+        calls.add(call);
+        return Uint8List.fromList(<int>[7, 7]);
+      });
+      final service = withVideoChannel();
+      final entry = video('a.mp4');
+
+      expect(await service.videoThumbnailBytes(testAccount(), entry), isNotNull);
+      expect(await service.videoThumbnailBytes(testAccount(), entry), isNotNull);
+
+      expect(calls.length, 1, reason: '缩略图缓存命中：同键只抽一次');
+    });
+
     test('失败记一次：负缓存生效后不再重复走网络', () async {
       mockChannel((call) async {
         calls.add(call);
