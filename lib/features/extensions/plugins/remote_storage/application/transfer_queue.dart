@@ -182,7 +182,7 @@ class TransferQueue extends ChangeNotifier {
     int? maxConcurrent,
     TransferQueueStore? store,
     TransferKeepAlive? keepAlive,
-  })  : maxConcurrent = maxConcurrent ?? kMaxConcurrentTransfers,
+  })  : _maxConcurrent = maxConcurrent ?? kMaxConcurrentTransfers,
         _store = store ?? TransferQueueStore(),
         _keepAlive = keepAlive ?? TransferKeepAlive(),
         assert((maxConcurrent ?? kMaxConcurrentTransfers) >= 1,
@@ -195,7 +195,21 @@ class TransferQueue extends ChangeNotifier {
   final Duration? retryDelay;
 
   /// 同时最多在跑的任务数（见 [kMaxConcurrentTransfers]）。
-  final int maxConcurrent;
+  ///
+  /// 287 D2 起可在运行时调整（用户档位）：调**大**立刻多起几路，调**小**不打断已经
+  /// 在跑的任务 —— 半路掐掉别人只会白费已传的字节，等它们自己结束自然就降下来了。
+  int _maxConcurrent;
+
+  int get maxConcurrent => _maxConcurrent;
+
+  /// 改并发档位（夹到合法范围，见 [clampTransferConcurrency]）。
+  void setMaxConcurrent(int value) {
+    final next = clampTransferConcurrency(value);
+    if (next == _maxConcurrent) return;
+    _maxConcurrent = next;
+    notifyListeners();
+    _pump();
+  }
 
   /// 任务元数据落盘（284 P1）。
   final TransferQueueStore _store;

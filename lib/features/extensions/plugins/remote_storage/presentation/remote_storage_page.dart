@@ -40,6 +40,8 @@ class _RemoteStoragePageState extends State<RemoteStoragePage> {
   Future<void> _restorePendingTransfers() async {
     try {
       await remoteStorageService().loadTransferRateLimit();
+      // 并发档位（287 D2）：读偏好并灌进队列。
+      await remoteStorageService().loadTransferConcurrency();
       // 网络闸门：读策略 + 问一次当前网络类型 + 听原生推送（287 P1）。
       await remoteStorageService().initTransferNetwork();
       final restored = await remoteStorageService().restoreTransfers();
@@ -744,6 +746,9 @@ class TransferQueueSheet extends StatelessWidget {
     final picked = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
+      // 可超过默认的半屏高：档位多时（并发 7 项）靠后的项目会落在弹层可点区域之外，
+      // 点不到（287 D2 实撞：tap 的坐标 hit test 不到那个 tile）。
+      isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -773,6 +778,50 @@ class TransferQueueSheet extends StatelessWidget {
     if (!context.mounted) return;
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
       SnackBar(content: Text('传输限速：${rateLimitLabel(picked)}')),
+    );
+  }
+
+  /// 并发档位（287 D2）：弱网压到 1，快网拉到 6。
+  static String concurrencyLabel(int value) => '同时传 $value 个';
+
+  Future<void> _pickConcurrency(BuildContext context) async {
+    final service = remoteStorageService();
+    final current = service.transferConcurrency;
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      // 可超过默认的半屏高：档位多时（并发 7 项）靠后的项目会落在弹层可点区域之外，
+      // 点不到（287 D2 实撞：tap 的坐标 hit test 不到那个 tile）。
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(
+              dense: true,
+              title: Text('传输并发'),
+              subtitle: Text('调小不会打断正在传的任务'),
+            ),
+            for (final option in kTransferConcurrencyOptions)
+              ListTile(
+                leading: Icon(
+                  option == current
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  size: 20,
+                ),
+                title: Text(concurrencyLabel(option)),
+                onTap: () => Navigator.of(sheetContext).pop(option),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked == null) return;
+    await service.setTransferConcurrency(picked);
+    if (!context.mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text('传输并发：${concurrencyLabel(picked)}')),
     );
   }
 
@@ -816,6 +865,9 @@ class TransferQueueSheet extends StatelessWidget {
     final picked = await showModalBottomSheet<TransferNetworkPolicy>(
       context: context,
       showDragHandle: true,
+      // 可超过默认的半屏高：档位多时（并发 7 项）靠后的项目会落在弹层可点区域之外，
+      // 点不到（287 D2 实撞：tap 的坐标 hit test 不到那个 tile）。
+      isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -910,6 +962,11 @@ class TransferQueueSheet extends StatelessWidget {
                     tooltip: '网络条件',
                     onPressed: () => _pickNetworkPolicy(context),
                     icon: const Icon(Icons.wifi_tethering_rounded, size: 20),
+                  ),
+                  IconButton(
+                    tooltip: '传输并发',
+                    onPressed: () => _pickConcurrency(context),
+                    icon: const Icon(Icons.tune_rounded, size: 20),
                   ),
                   if (tasks.any((t) => !t.isActive))
                     TextButton(

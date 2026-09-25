@@ -1446,6 +1446,24 @@ class RemoteStorageService {
     await _store.saveTransferRateLimit(_transferRateLimit);
   }
 
+  // ------------------------------------------------- 并发档位（287 D2）
+
+  int _transferConcurrency = kMaxConcurrentTransfers;
+
+  /// 当前并发档位（1–6）。
+  int get transferConcurrency => _transferConcurrency;
+
+  Future<void> loadTransferConcurrency() async {
+    _transferConcurrency = await _store.loadTransferConcurrency();
+    transferQueue().setMaxConcurrent(_transferConcurrency);
+  }
+
+  Future<void> setTransferConcurrency(int value) async {
+    _transferConcurrency = clampTransferConcurrency(value);
+    await _store.saveTransferConcurrency(_transferConcurrency);
+    transferQueue().setMaxConcurrent(_transferConcurrency);
+  }
+
   // ------------------------------------------------- 网络条件闸门（287 P1）
 
   TransferNetworkPolicy _transferNetworkPolicy = TransferNetworkPolicy.wifiOnly;

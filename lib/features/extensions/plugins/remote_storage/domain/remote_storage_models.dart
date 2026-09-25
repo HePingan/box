@@ -363,6 +363,20 @@ const Duration kRelayIdleTimeout = Duration(minutes: 30);
 /// 而不是在别处偷偷并发。
 const int kMaxConcurrentTransfers = 3;
 
+/// 并发档位（287 D2）：弱网/弱 NAS 上用户往往想压到 1，快网想拉到 6。
+const List<int> kTransferConcurrencyOptions = <int>[1, 2, 3, 4, 5, 6];
+
+/// 把任意值夹到合法档位范围内（落盘/入口都可能拿到脏值）。
+int clampTransferConcurrency(int value) {
+  if (value < kTransferConcurrencyOptions.first) {
+    return kTransferConcurrencyOptions.first;
+  }
+  if (value > kTransferConcurrencyOptions.last) {
+    return kTransferConcurrencyOptions.last;
+  }
+  return value;
+}
+
 /// 失败自动重试次数（不含首次；调大→更稳但失败等待变长）。
 ///
 /// ⚠️ 不是所有失败都值得重试：401/403/404/405/409/507 这类"重试也是一样结果"

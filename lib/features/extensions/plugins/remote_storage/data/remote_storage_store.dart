@@ -279,6 +279,39 @@ class RemoteStorageStore {
     }
   }
 
+  /// 传输并发档位（287 D2）。默认 [kMaxConcurrentTransfers]；坏值夹到合法范围。
+  static const String transferConcurrencyKey =
+      'remoteStorage.transferConcurrency';
+
+  Future<int> loadTransferConcurrency() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final v = prefs.getInt(transferConcurrencyKey);
+      if (v == null) return kMaxConcurrentTransfers;
+      return clampTransferConcurrency(v);
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '读取传输并发失败: $e',
+        level: LogLevel.debug,
+      );
+      return kMaxConcurrentTransfers;
+    }
+  }
+
+  Future<void> saveTransferConcurrency(int value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(transferConcurrencyKey, clampTransferConcurrency(value));
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '保存传输并发失败: $e',
+        level: LogLevel.debug,
+      );
+    }
+  }
+
   Future<bool> loadVideoThumbnailsEnabled() async {
     try {
       final prefs = await SharedPreferences.getInstance();
