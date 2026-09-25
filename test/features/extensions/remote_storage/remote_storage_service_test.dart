@@ -15,7 +15,9 @@ import 'package:box/features/extensions/plugins/remote_storage/data/remote_thumb
 import 'package:box/features/extensions/plugins/remote_storage/data/playback_progress_store.dart';
 import 'package:box/features/extensions/plugins/remote_storage/data/remote_storage_store.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
+import 'package:box/features/extensions/plugins/remote_storage/data/video_frame_channel.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/webdav_client.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -1742,6 +1744,108 @@ void main() {
       expect(result.canceled, isTrue);
       expect(result.entries.map((e) => e.name).toList(), <String>['命中1.jpg']);
       expect(result.dirsScanned, 1, reason: '取消后不再往下走');
+    });
+  });
+
+  group('视频首帧（284 D8）', () {
+    const channel = MethodChannel(VideoFrameChannel.channelName);
+    final calls = <MethodCall>[];
+
+    void mockChannel(Future<Object?> Function(MethodCall call) handler) {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, handler);
+    }
+
+    RemoteStorageService withVideoChannel() => RemoteStorageService(
+          transportFactory: (_) => transport,
+          docsDirProvider: () async => docsDir,
+          // 同 setUp：缩略图缓存要注入临时目录，否则删账户清缓存会走平台通道。
+          thumbnailCache: RemoteThumbnailCache(root: thumbRoot),
+          videoFrames: VideoFrameChannel(channel: channel),
+        );
+
+    RemoteStorageEntry video(String path) => RemoteStorageEntry(
+          name: path.split('/').last,
+          path: path,
+          isDirectory: false,
+          size: 1024 * 1024,
+        );
+
+    setUp(() => calls.clear());
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    test('https + Basic：带上认证头走原生，拿到字节', () async {
+      final bytes = Uint8List.fromList(<int>[9, 9, 9]);
+      mockChannel((call) async {
+        calls.add(call);
+        return bytes;
+      });
+      final service = withVideoChannel();
+
+      final got = await service.videoThumbnailBytes(
+        testAccount(),
+        video('视频/a.mp4'),
+      );
+
+      expect(got, bytes);
+      final args = calls.single.arguments as Map<Object?, Object?>;
+      expect(args['url'], contains('/%E8%A7%86%E9%A2%91/a.mp4'), reason: '远端路径要编码');
+      expect(
+        (args['headers'] as Map)['authorization'],
+        startsWith('Basic '),
+        reason: '直连必须带认证，否则原生那边只会拿到 401',
+      );
+    });
+
+    test('需要中继的账户（http 明文）：直接跳过，不打原生', () async {
+      mockChannel((call) async {
+        calls.add(call);
+        return null;
+      });
+      final service = withVideoChannel();
+      // 需要中继的第二种情形：账户开了「允许不安全证书」（拍板7 里和 http 明文同路）。
+      final insecure = testAccount(allowBadCert: true);
+
+      expect(
+        await service.videoThumbnailBytes(insecure, video('a.mp4')),
+        isNull,
+      );
+      expect(calls, isEmpty, reason: '为一张缩略图开中继会话不划算');
+    });
+
+    test('失败记一次：负缓存生效后不再重复走网络', () async {
+      mockChannel((call) async {
+        calls.add(call);
+        return null;
+      });
+      final service = withVideoChannel();
+      final entry = video('a.mp4');
+
+      expect(await service.videoThumbnailBytes(testAccount(), entry), isNull);
+      expect(await service.videoThumbnailBytes(testAccount(), entry), isNull);
+      expect(await service.videoThumbnailBytes(testAccount(), entry), isNull);
+
+      expect(calls.length, 1, reason: '抽帧失败往往已经花掉一次往返，不能每次重建都再试');
+    });
+
+    test('删账户清掉负缓存：重新添加账户后会再试一次', () async {
+      mockChannel((call) async {
+        calls.add(call);
+        return null;
+      });
+      final account = testAccount();
+      final service = withVideoChannel();
+      await service.saveAccount(account);
+      await service.videoThumbnailBytes(account, video('a.mp4'));
+      expect(calls.length, 1);
+
+      await service.deleteAccount(account.id);
+      await service.videoThumbnailBytes(account, video('a.mp4'));
+
+      expect(calls.length, 2);
     });
   });
 }

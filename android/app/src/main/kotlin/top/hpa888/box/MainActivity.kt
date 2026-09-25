@@ -441,6 +441,12 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        // ── 远程存储：视频首帧抽取（284 D8）──
+        // 为什么在原生：Flutter 没有视频解码器，video_player 只能播不能抽帧；
+        // MediaMetadataRetriever 能对 http(s) URL 直接取关键帧（按需 Range），
+        // 远端视频不必先整段下载。非 Android / 失败时 Dart 侧回退通用图标。
+        VideoFrameExtractor.register(flutterEngine.dartExecutor.binaryMessenger)
+
         // ── 视频下载 MethodChannel（独立通道）──
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DOWNLOAD_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {

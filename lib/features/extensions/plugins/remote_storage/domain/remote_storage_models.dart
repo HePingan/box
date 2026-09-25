@@ -619,6 +619,36 @@ class RemoteStorageEntry {
   final String? etag;
 }
 
+/// 视频首帧缩略图（284 D8）。
+///
+/// 为什么必须走原生：Dart 侧没有视频解码器，`video_player` 只负责播、抽不出帧。
+/// Android 的 `MediaMetadataRetriever` 可以**不解码整段视频**就拿一帧
+/// （`OPTION_CLOSEST_SYNC` 只解关键帧），而且它能直接对 http(s) URL 工作，
+/// 内部按需发 Range 请求——所以远端视频不必先整段下载。
+///
+/// 也因此不看文件大小：抽帧的代价取决于 moov 在哪、关键帧离目标多近，
+/// 与文件总大小基本无关（服务端忽略 Range 时才会变贵）。
+const int kVideoThumbnailWidth = 256;
+
+/// 取首帧的位置：0ms（`OPTION_CLOSEST_SYNC` 会取到起点附近的关键帧）。
+const int kVideoThumbnailPositionMs = 0;
+
+/// "试过但没拿到"的记录上限（内存）：超了整表清空。
+///
+/// 抽帧失败往往要走过一次网络往返（服务端不支持 Range/认证不对/编码不支持），
+/// 不记的话列表每次重建都会再试一次——那是实打实的流量。
+const int kVideoFrameMissLimit = 200;
+
+/// 这个条目要不要走"视频首帧"这条路（纯判定，便于单测）。
+bool isVideoThumbnailCandidate(RemoteStorageEntry entry) {
+  if (entry.isDirectory) return false;
+  return remoteEntryKind(entry) == RemoteEntryKind.video;
+}
+
+/// 视频首帧的缓存键：在图片键后加标记，避免同路径的图片缓存与视频帧互相覆盖。
+String videoThumbnailCacheKey(String accountId, RemoteStorageEntry entry) =>
+    '${thumbnailCacheKey(accountId, entry)}|vframe';
+
 /// 跨目录搜索的上限（284 D10）。
 ///
 /// WebDAV 没有服务端搜索索引（`Depth: infinity` 在坚果云/群晖默认关闭），

@@ -140,6 +140,20 @@ class _FakeService extends RemoteStorageService {
 
   RemoteBatchResult batchResult = const RemoteBatchResult.empty();
 
+  /// 视频首帧请求记录与返回值（284 D8）。
+  final List<String> videoThumbnailRequests = <String>[];
+  Uint8List? videoFrameBytes;
+
+  @override
+  Future<Uint8List?> videoThumbnailBytes(
+    RemoteStorageAccount account,
+    RemoteStorageEntry entry, {
+    int maxWidth = kVideoThumbnailWidth,
+  }) async {
+    videoThumbnailRequests.add(entry.path);
+    return videoFrameBytes;
+  }
+
   /// 本地目录扫描（284 D9）：默认空清单，用例按需设置。
   LocalFolderScan folderScan = const LocalFolderScan(
     files: <LocalUploadFile>[],
@@ -646,6 +660,85 @@ void main() {
       );
       expect(find.textContaining('a.txt'), findsAtLeastNWidgets(1));
       expect(find.textContaining('docs'), findsAtLeastNWidgets(1));
+    });
+  });
+
+  group('视频首帧（284 D8）', () {
+    /// 1×1 透明 PNG：`Image.memory` 要能解码，否则测试会因为图片解码异常而红。
+    final onePixelPng = Uint8List.fromList(<int>[
+      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+      0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+      0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89,
+      0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54,
+      0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01,
+      0x0D, 0x0A, 0x2D, 0xB4,
+      0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
+      0xAE, 0x42, 0x60, 0x82,
+    ]);
+
+    const video = RemoteStorageEntry(
+      name: 'v.mp4',
+      path: 'v.mp4',
+      isDirectory: false,
+      size: 1024 * 1024,
+    );
+
+    testWidgets('默认开：视频行取首帧并显示出来', (tester) async {
+      final service = _FakeService(entries: const [video]);
+      service.videoFrameBytes = onePixelPng;
+      debugSetRemoteStorageRuntime(service: service, queue: TransferQueue());
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(service.videoThumbnailRequests, <String>['v.mp4']);
+      expect(find.byType(Image), findsOneWidget, reason: '拿到字节就显示，不再只是图标');
+    });
+
+    testWidgets('取不到：回退通用图标，不报错', (tester) async {
+      final service = _FakeService(entries: const [video]);
+      debugSetRemoteStorageRuntime(service: service, queue: TransferQueue());
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(service.videoThumbnailRequests, <String>['v.mp4']);
+      expect(find.byType(Image), findsNothing);
+      expect(find.byIcon(Icons.movie_outlined), findsOneWidget);
+    });
+
+    testWidgets('开关关掉（持久化偏好）：一个请求都不发', (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'remoteStorage.videoThumbnailsEnabled': false,
+      });
+      final service = _FakeService(entries: const [video]);
+      service.videoFrameBytes = onePixelPng;
+      debugSetRemoteStorageRuntime(service: service, queue: TransferQueue());
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(service.videoThumbnailRequests, isEmpty);
+      expect(find.byIcon(Icons.movie_outlined), findsOneWidget);
+    });
+
+    testWidgets('图片开关不影响视频首帧（两个开关独立）', (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'remoteStorage.thumbnailsEnabled': false,
+      });
+      final service = _FakeService(entries: const [video]);
+      service.videoFrameBytes = onePixelPng;
+      debugSetRemoteStorageRuntime(service: service, queue: TransferQueue());
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteStorageBrowserPage(account: testAccount())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(service.videoThumbnailRequests, <String>['v.mp4']);
     });
   });
 

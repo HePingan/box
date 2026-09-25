@@ -209,6 +209,37 @@ class RemoteStorageStore {
 
   static const String playbackSpeedKey = 'remoteStorage.playbackSpeed';
 
+  /// 列表里给视频显示首帧的开关（284 D8）。默认开：用户要的就是"视频也有图"。
+  static const String videoThumbnailsEnabledKey =
+      'remoteStorage.videoThumbnailsEnabled';
+
+  Future<bool> loadVideoThumbnailsEnabled() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(videoThumbnailsEnabledKey) ?? true;
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '读取视频首帧开关失败: $e',
+        level: LogLevel.debug,
+      );
+      return true;
+    }
+  }
+
+  Future<void> saveVideoThumbnailsEnabled(bool enabled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(videoThumbnailsEnabledKey, enabled);
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '保存视频首帧开关失败: $e',
+        level: LogLevel.debug,
+      );
+    }
+  }
+
   static const String browserSortFieldKey = 'remoteStorage.browserSortField';
   static const String browserScrollOffsetsKey =
       'remoteStorage.browserScrollOffsets';

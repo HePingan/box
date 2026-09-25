@@ -76,7 +76,12 @@ class _RecursiveFilePlan {
 }
 
 /// 顶栏「更多」里的动作（目前只有缩略图开关；后续视图选项都放这里）。
-enum _BrowserMenuAction { toggleThumbnails, thumbnailCache, uploadFolder }
+enum _BrowserMenuAction {
+  toggleThumbnails,
+  toggleVideoThumbnails,
+  thumbnailCache,
+  uploadFolder,
+}
 
 // ------------------------------------------------------------- 页面级排序
 
@@ -197,6 +202,12 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   /// 列表是否给图片显示缩略图（顶栏"更多"里可关；持久化，默认开）。
   bool _thumbnailsEnabled = true;
 
+  /// 列表是否给视频显示首帧（284 D8；顶栏"更多"里可关；持久化，默认开）。
+  ///
+  /// 与图片开关分开：拿视频首帧要走过一次网络（原生按需 Range），是"会花流量"的
+  /// 那一类，用户想省流量时应该能单独关掉它而保留图片缩略图。
+  bool _videoThumbnailsEnabled = true;
+
   /// 多选态（B1+）：按 [RemoteStorageEntry.path] 记录而不是按对象，
   /// 这样列表刷新（重新 fetch 出全新对象）后选中态不会丢。
   final Set<String> _selectedPaths = <String>{};
@@ -235,6 +246,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     super.initState();
     _scrollController.addListener(_rememberScrollOffset);
     _loadThumbnailPreference();
+    _loadVideoThumbnailPreference();
     _loadBrowserPrefs();
     _load();
   }
@@ -286,6 +298,19 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     final next = !_thumbnailsEnabled;
     setState(() => _thumbnailsEnabled = next);
     await remoteStorageService().saveThumbnailsEnabled(next);
+  }
+
+  /// 读视频首帧开关（284 D8，默认开）。
+  Future<void> _loadVideoThumbnailPreference() async {
+    final enabled = await remoteStorageService().loadVideoThumbnailsEnabled();
+    if (!mounted) return;
+    setState(() => _videoThumbnailsEnabled = enabled);
+  }
+
+  Future<void> _toggleVideoThumbnails() async {
+    final next = !_videoThumbnailsEnabled;
+    setState(() => _videoThumbnailsEnabled = next);
+    await remoteStorageService().saveVideoThumbnailsEnabled(next);
   }
 
   /// 缩略图缓存占用面板（283 D3）：看得到占了多少，也能一键回收。
@@ -1967,6 +1992,8 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
                 _showThumbnailCachePanel();
               case _BrowserMenuAction.uploadFolder:
                 _pickAndUploadFolder();
+              case _BrowserMenuAction.toggleVideoThumbnails:
+                _toggleVideoThumbnails();
             }
           },
           itemBuilder: (_) => [
@@ -1974,6 +2001,11 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
               value: _BrowserMenuAction.toggleThumbnails,
               checked: _thumbnailsEnabled,
               child: const Text('显示图片缩略图'),
+            ),
+            CheckedPopupMenuItem<_BrowserMenuAction>(
+              value: _BrowserMenuAction.toggleVideoThumbnails,
+              checked: _videoThumbnailsEnabled,
+              child: const Text('显示视频首帧（会消耗少量流量）'),
             ),
             const PopupMenuDivider(),
             const PopupMenuItem<_BrowserMenuAction>(
@@ -2258,13 +2290,23 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     );
   }
 
-  /// 行首图标：图片条目且开关打开时换成缩略图（取不到就回退通用图标）。
+  /// 行首图标：图片/视频且开关打开时换成缩略图（取不到就回退通用图标）。
   Widget _leadingFor(RemoteStorageEntry entry, RemoteEntryKind kind) {
     final icon = Icon(_iconFor(kind), color: _colorFor(kind, context));
+    final account = widget.account;
+
+    // 视频首帧（284 D8）：单独一个开关，因为它要走过网络。
+    if (_videoThumbnailsEnabled && isVideoThumbnailCandidate(entry)) {
+      return RemoteThumbnail(
+        key: ValueKey(videoThumbnailCacheKey(account.id, entry)),
+        load: () => remoteStorageService().videoThumbnailBytes(account, entry),
+        placeholder: icon,
+      );
+    }
+
     // 用 canHaveThumbnail（整取 + EXIF 两条路都算）：只按整取判定的话，
     // 超过 3MB 的图根本不会去问 service，EXIF 那条路等于没接上。
     if (!_thumbnailsEnabled || !canHaveThumbnail(entry)) return icon;
-    final account = widget.account;
     return RemoteThumbnail(
       // key 里带账户+路径+大小+修改时间：列表复用到别的图片时重建，不贴错图。
       key: ValueKey(thumbnailCacheKey(account.id, entry)),

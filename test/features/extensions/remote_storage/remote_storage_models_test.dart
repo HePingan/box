@@ -911,4 +911,28 @@ void main() {
       expect(matchesRemoteQuery('相册备份', '视频'), isFalse);
     });
   });
+
+  group('视频首帧判定（284 D8）', () {
+    RemoteStorageEntry item(String name, {bool dir = false}) =>
+        RemoteStorageEntry(name: name, path: name, isDirectory: dir, size: 1024);
+
+    test('视频扩展名才算候选；目录不算', () {
+      for (final name in ['a.mp4', 'b.MKV', 'c.mov', 'd.webm', 'e.avi']) {
+        expect(isVideoThumbnailCandidate(item(name)), isTrue, reason: name);
+      }
+      expect(isVideoThumbnailCandidate(item('a.jpg')), isFalse);
+      expect(isVideoThumbnailCandidate(item('a.mp3')), isFalse);
+      expect(isVideoThumbnailCandidate(item('视频', dir: true)), isFalse);
+    });
+
+    test('缓存键与图片键区分开（同一路径不能互相覆盖）', () {
+      final entry = item('a.mp4');
+      expect(
+        videoThumbnailCacheKey('acc', entry),
+        isNot(thumbnailCacheKey('acc', entry)),
+      );
+      expect(videoThumbnailCacheKey('acc', entry), contains('acc'));
+      expect(videoThumbnailCacheKey('acc', entry), contains('a.mp4'));
+    });
+  });
 }

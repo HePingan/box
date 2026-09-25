@@ -17,6 +17,7 @@ import 'package:path_provider/path_provider.dart';
 import '../data/playback_progress_store.dart';
 import '../data/remote_storage_store.dart';
 import '../data/remote_thumbnail_cache.dart';
+import '../data/video_frame_channel.dart';
 import '../domain/exif_thumbnail.dart';
 import '../domain/remote_storage_models.dart';
 import '../domain/webdav_client.dart';
@@ -249,8 +250,10 @@ class RemoteStorageService {
     WebdavTransport Function(RemoteStorageAccount account)? transportFactory,
     Future<Directory> Function()? docsDirProvider,
     RemoteThumbnailCache? thumbnailCache,
+    VideoFrameChannel? videoFrames,
     this.dirCacheTtl = kDirCacheTtl,
   })  : _store = store ?? RemoteStorageStore(),
+        _videoFrames = videoFrames ?? VideoFrameChannel(),
         _transportFactory = transportFactory,
         _docsDirProvider = docsDirProvider ?? getApplicationDocumentsDirectory,
         _thumbnails = ThumbnailLoader(
@@ -290,6 +293,13 @@ class RemoteStorageService {
 
   /// 探测成功、拿到内嵌缩略图的条目（284 P3，与 [_exifProbeMisses] 对称）。
   final Set<String> _exifProbeHits = {};
+
+  /// 试过但没拿到首帧的视频（负缓存，284 D8）：抽帧失败往往已经花掉一次网络往返，
+  /// 不记的话列表每次重建都会再试一次。上限 [kVideoFrameMissLimit]，超了整表清空。
+  final Set<String> _videoFrameMisses = {};
+
+  /// 视频首帧抽取通道（284 D8；可注入，便于测试里用假通道）。
+  final VideoFrameChannel _videoFrames;
 
   /// EXIF 探测统计（面板上显示"命中多少张"）。
   ExifThumbnailStats exifThumbnailStats() =>
@@ -331,6 +341,7 @@ class RemoteStorageService {
     final thumbs = await _thumbnails.cache.clearScope(id);
     _exifProbeMisses.removeWhere((key) => key.startsWith('$id|'));
     _exifProbeHits.removeWhere((key) => key.startsWith('$id|'));
+    _videoFrameMisses.removeWhere((key) => key.startsWith('$id|'));
     AppLogger.instance.logTo(
       LogChannel.storage,
       '已删除账户 $id 的本地残留：播放进度 $progress 条、'
@@ -1318,6 +1329,53 @@ class RemoteStorageService {
 
   /// 清空缩略图缓存（内存 + 磁盘）。
   Future<void> clearThumbnailCache() => _thumbnails.cache.clear();
+
+  /// 视频首帧开关（284 D8）。
+  Future<bool> loadVideoThumbnailsEnabled() =>
+      _store.loadVideoThumbnailsEnabled();
+
+  Future<void> saveVideoThumbnailsEnabled(bool enabled) =>
+      _store.saveVideoThumbnailsEnabled(enabled);
+
+  /// 视频首帧（284 D8）。拿不到一律返回 null（列表回退通用图标）。
+  ///
+  /// 两种情形**直接跳过、不试**：
+  /// - 需要本地中继的账户（http 明文/自签证书，拍板7）——为一张缩略图开一条中继会话
+  ///   不划算，中继是给播放用的；
+  /// - 摘要认证（C5）账户：原生只带 Basic 头，必然 401 → 记一次 miss 后不再重试。
+  Future<Uint8List?> videoThumbnailBytes(
+    RemoteStorageAccount account,
+    RemoteStorageEntry entry, {
+    int maxWidth = kVideoThumbnailWidth,
+  }) async {
+    final key = videoThumbnailCacheKey(account.id, entry);
+    if (_videoFrameMisses.contains(key)) return null;
+
+    final plan = resolvePlayback(account, entry);
+    if (plan.needsRelay) {
+      _rememberVideoFrameMiss(key);
+      return null;
+    }
+
+    final bytes = await _videoFrames.frameAt(
+      url: plan.directUri.toString(),
+      headers: plan.headers,
+      positionMs: kVideoThumbnailPositionMs,
+      maxWidth: maxWidth,
+    );
+    if (bytes == null) {
+      _rememberVideoFrameMiss(key);
+      return null;
+    }
+    return bytes;
+  }
+
+  void _rememberVideoFrameMiss(String key) {
+    if (_videoFrameMisses.length >= kVideoFrameMissLimit) {
+      _videoFrameMisses.clear();
+    }
+    _videoFrameMisses.add(key);
+  }
 
   /// 播放倍速偏好（284 P4）。
   Future<double> loadPlaybackSpeed() => _store.loadPlaybackSpeed();
