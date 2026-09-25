@@ -340,6 +340,35 @@ void main() {
       expect(encodeRemotePath(''), '');
     });
 
+    test('encodeRemotePath 把 A5 的坑字符都编掉（+ / # / % 各有各的坏法）', () {
+      // live 用例（ops_webdav_live_test.dart 的 A5）验证的是服务端存回原名；
+      // 这里验证**客户端发出去的路径本身**是对的。为什么两条都要有：live 在
+      // 缺凭据时整组 skip，而这条永远在 CI 里跑。
+      //   +  漏编码 → 服务端当空格处理，名字里多出一个空格；
+      //   #  漏编码 → URL 里被当 fragment 分隔符，路径被截断；
+      //   %  漏编码 → 服务端再编码一次，%25 变 %2525（双重编码）。
+      expect(
+        encodeRemotePath('运维 测试 +.txt'),
+        '%E8%BF%90%E7%BB%B4%20%E6%B5%8B%E8%AF%95%20%2B.txt',
+      );
+      expect(encodeRemotePath('a#b.txt'), 'a%23b.txt');
+      expect(encodeRemotePath('a%b.txt'), 'a%25b.txt');
+      expect(
+        encodeRemotePath('空格 在 中间.txt'),
+        '%E7%A9%BA%E6%A0%BC%20%E5%9C%A8%20%E4%B8%AD%E9%97%B4.txt',
+      );
+
+      // 编了还能原样解回来 = 没有双重编码。
+      for (final name in <String>[
+        '运维 测试 +.txt',
+        'a#b.txt',
+        'a%b.txt',
+        '空格 在 中间.txt',
+      ]) {
+        expect(Uri.decodeComponent(encodeRemotePath(name)), name, reason: name);
+      }
+    });
+
     test('joinRemotePath', () {
       expect(joinRemotePath('dir', 'a.txt'), 'dir/a.txt');
       expect(joinRemotePath('', 'a.txt'), 'a.txt');

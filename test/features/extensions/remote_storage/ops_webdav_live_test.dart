@@ -13,6 +13,7 @@ library;
 //   flutter test --tags live test/features/extensions/remote_storage/ops_webdav_live_test.dart
 //
 // 凭据不进仓库、不进 CI：没给 OPS_* 环境变量时整组 skip。
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:box/features/extensions/plugins/remote_storage/application/remote_storage_service.dart';
@@ -117,6 +118,66 @@ void main() {
       await dav.delete(verifyDir);
       expect(await dav.exists(verifyDir), isFalse);
     });
+
+    test('特殊字符文件名（A5）：中文 / 空格 / + / # / % 往返不丢真名', () async {
+      // 这几种字符漏编码时的真机表现最难自查：上传报 201、内容也对，但列表里
+      // 名字变了（%25 显示成 %2525 这类双重编码），或者干脆 400。
+      // 2026-09-25 的 curl 实测结论是"正确百分号编码后服务端存回原名"——
+      // 这条用例就是把那个结论固化下来，防止 encodeRemotePath 被改坏。
+      await dav.createDirectory(verifyDir);
+      final names = <String>[
+        '运维 测试 +.txt', // 中文 + 空格 + 加号
+        'a#b.txt', // 井号：URL 里是 fragment 分隔符，漏编码会被截断
+        'a%b.txt', // 百分号：漏编码 + 服务端再编码 = %25 变 %2525
+        '空格 在 中间.txt',
+      ];
+
+      for (final name in names) {
+        final text = 'content<$name>${DateTime.now().microsecondsSinceEpoch}';
+        final local = File('${scratch.path}/special-up.txt');
+        await local.writeAsString(text);
+        await dav.uploadFrom(local, '$verifyDir/$name');
+
+        // ① PROPFIND 列表里必须回读**原名**（不是编码后的形态）。
+        final entries = await dav.list(verifyDir);
+        final actual = entries.map((e) => e.name).toList();
+        expect(
+          actual.where((n) => n == name),
+          hasLength(1),
+          reason: '列表里应有原名「$name」，实际是 $actual',
+        );
+        expect(
+          entries.firstWhere((e) => e.name == name).size,
+          utf8.encode(text).length,
+          reason: '「$name」的大小必须与上传字节数一致',
+        );
+
+        // ② GET 取回内容逐字节一致。
+        final back = File('${scratch.path}/special-back.txt');
+        await dav.downloadTo('$verifyDir/$name', back);
+        expect(
+          await back.readAsString(),
+          text,
+          reason: '「$name」取回内容必须与上传一致',
+        );
+
+        // ③ DELETE 用原名删得掉。
+        await dav.delete('$verifyDir/$name');
+        expect(
+          await dav.exists('$verifyDir/$name'),
+          isFalse,
+          reason: '「$name」应当被删掉',
+        );
+      }
+
+      expect(
+        (await dav.list(verifyDir)).where((e) => e.name.endsWith('.txt')),
+        isEmpty,
+        reason: '每个名字都应删干净，不该留下编码后的残骸',
+      );
+      await dav.delete(verifyDir);
+      expect(await dav.exists(verifyDir), isFalse);
+    }, timeout: const Timeout(Duration(minutes: 3)));
 
     test('覆盖保护靠"先 exists() 预检"（服务端不一定实现 Overwrite:F）', () async {
       // 实测（rclone 后端）：MOVE 带 `Overwrite: F` 且目标已存在时仍返回 201 覆盖，
