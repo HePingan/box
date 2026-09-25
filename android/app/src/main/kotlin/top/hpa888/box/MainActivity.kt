@@ -446,6 +446,12 @@ class MainActivity : FlutterActivity() {
         // 通知 ID 与视频下载分开（1002 / 1001），两边状态机互不干扰。
         TransferKeepAliveChannel.register(flutterEngine.dartExecutor.binaryMessenger, this)
 
+        // ── 远程存储：接收系统分享（286 P3）──
+        // 冷启动：Intent 在 configureFlutterEngine 时已经就位，这里先收下来攒着
+        // （Dart 侧 handler 还没挂）；热启动走下面的 onNewIntent。
+        ShareInboxReceiver.register(flutterEngine.dartExecutor.binaryMessenger)
+        ShareInboxReceiver.handleIntent(intent, this)
+
         // ── 远程存储：视频首帧抽取（284 D8）──
         // 为什么在原生：Flutter 没有视频解码器，video_player 只能播不能抽帧；
         // MediaMetadataRetriever 能对 http(s) URL 直接取关键帧（按需 Range），
@@ -648,7 +654,17 @@ class MainActivity : FlutterActivity() {
         result.success(VideoDownloadService.snapshotList())
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // 热启动（App 已在后台/前台）：launchMode=singleTop 复用本 Activity，
+        // 分享进来的文件直接推给 Dart 侧弹面板。
+        setIntent(intent)
+        ShareInboxReceiver.handleIntent(intent, this)
+    }
+
     override fun onDestroy() {
+        // 分享接收通道绑在本次 engine 上，随 Activity 解绑（同 FlutterWindowDiagnostics）。
+        ShareInboxReceiver.detach()
         // 关键：只清掉 Activity 持有的普通悬浮窗/区域选择器。
         // 无障碍答案窗（TYPE_ACCESSIBILITY_OVERLAY）必须跨 Activity 存活——
         // 用户切到驾考/考试 App 时 MainActivity 常被 destroy，若这里 hide 全部，

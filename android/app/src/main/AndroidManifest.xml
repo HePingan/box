@@ -67,6 +67,33 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- 接收系统分享（286 P3）：只收图片与视频。
+                 为什么拆成四个 filter 而不是一个用 mimeType="*/*"：声明越具体，
+                 系统「分享到」列表里出现本应用的场景越可控；收文本/任意文件
+                 没有明确落点（不是要发到哪里、也不知道放哪个远端目录），
+                 只会让用户点进来发现用不了。
+                 SEND 单个 / SEND_MULTIPLE 多选都要声明：相册多选分享走的是后者。
+                 launchMode=singleTop（见上），热启动走 onNewIntent，不会重建 Activity。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="image/*"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="video/*"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="image/*"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="video/*"/>
+            </intent-filter>
         </activity>
 
         <!-- 答题插件：无障碍服务 -->
