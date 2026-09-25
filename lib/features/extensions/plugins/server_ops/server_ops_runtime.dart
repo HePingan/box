@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/image_preview_dialog.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_service.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_diagnostics.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 
@@ -28,6 +29,13 @@ typedef OpsImagePreviewOpener = Future<void> Function(
 );
 
 OpsImagePreviewOpener? _imagePreviewOpener;
+
+/// 终端探针的接缝：默认真发一次 HTTP；widget 测试注入假实现，避免单测联网。
+OpsTerminalProbe? _terminalProbe;
+
+/// 当前生效的终端探针。
+OpsTerminalProbe get serverOpsTerminalProbe =>
+    _terminalProbe ?? probeOpsTerminal;
 
 /// 当前生效的图片预览实现。
 OpsImagePreviewOpener get serverOpsImagePreviewOpener =>
@@ -66,9 +74,11 @@ void debugSetServerOpsRuntime({
   ServerOpsSettings? settings,
   ServerOpsFilesService? filesService,
   OpsImagePreviewOpener? imagePreviewOpener,
+  OpsTerminalProbe? terminalProbe,
 }) {
   _hostService = hostService ?? HostService();
   _settingsOverride = settings;
   _filesServiceOverride = filesService;
   _imagePreviewOpener = imagePreviewOpener;
+  _terminalProbe = terminalProbe;
 }

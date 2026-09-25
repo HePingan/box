@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 
 import 'package:box/features/extensions/plugins/server_ops/files_tab.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_tab.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_diagnostics.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 import 'package:box/features/extensions/plugins/server_ops/terminal_tab.dart';
@@ -109,7 +110,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   final TextEditingController _password = TextEditingController();
 
   bool _saving = false;
+  bool _testing = false;
   String? _error;
+
+  /// 体检结果（为空表示还没测过）。
+  List<OpsProbeResult> _probeResults = const [];
 
   @override
   void dispose() {
@@ -150,6 +155,45 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     }
   }
 
+  /// 跑三项体检。用的是**输入框里的当前值**（口令留空则用已生效的那份），
+  /// 所以可以先测通再保存 —— 否则"改了地址就得先保存才能测"很容易把好配置盖掉。
+  Future<void> _runProbes() async {
+    setState(() {
+      _testing = true;
+      _probeResults = const [];
+      _error = null;
+    });
+    final probeSettings = ServerOpsSettings(
+      baseUrl: _baseUrl.text,
+      user: _user.text,
+      password: _password.text.isEmpty ? widget.settings.password : _password.text,
+      terminalUrl: _terminalUrl.text,
+    );
+    late final List<OpsProbeResult> results;
+    try {
+      results = await runOpsProbes(
+        files: serverOpsFilesService(probeSettings),
+        hosts: serverOpsHostService,
+        terminalUrl: probeSettings.effectiveTerminalUrl,
+        user: probeSettings.effectiveUser,
+        password: probeSettings.effectivePassword,
+        terminalProbe: serverOpsTerminalProbe,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _testing = false;
+        _error = '体检没能跑完：$e';
+      });
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _testing = false;
+      _probeResults = results;
+    });
+  }
+
   Future<void> _clearPassword() async {
     await widget.settings.save(password: '');
     if (!mounted) return;
@@ -161,6 +205,30 @@ class _SettingsSheetState extends State<_SettingsSheet> {
             terminalUrl: widget.settings.terminalUrl,
           ));
   }
+
+  /// 一条体检结果：图标 + 名称 + 结论。结论必须带状态码/原因，不能只说"失败"。
+  List<Widget> _probeRow(ThemeData theme, OpsProbeResult r) => [
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                r.ok ? Icons.check_circle_outline : Icons.error_outline,
+                size: 16,
+                color: r.ok ? Colors.green : theme.colorScheme.error,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '${r.label}：${r.detail}',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ];
 
   @override
   Widget build(BuildContext context) {
@@ -246,6 +314,32 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                 border: OutlineInputBorder(),
               ),
             ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _testing ? null : _runProbes,
+                  icon: _testing
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.network_check, size: 16),
+                  label: const Text('测试连接'),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '分别测文件通道 / 终端 / 主机快照',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.outline,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            for (final r in _probeResults) ..._probeRow(theme, r),
             if (_error != null) ...[
               const SizedBox(height: 8),
               Text(
