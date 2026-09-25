@@ -193,7 +193,7 @@ print(f'  已写入/更新 {mid}')
 PY
   # 仓库副本一起改，避免部署副本与源码漂移（改完记得提交）。
   if [ -f "$REPO_COLLECTOR" ] && ! diff -q "$COLLECTOR" "$REPO_COLLECTOR" >/dev/null 2>&1; then
-    cp -p "$REPO_COLLECTOR" "$REPO_COLLECTOR.bak-monitor-add" 2>/dev/null || true
+    # 不在这里留 .bak：仓库有 git，多出来的备份文件只会变成工作区杂物（第一版留过）。
     cp -p "$COLLECTOR" "$REPO_COLLECTOR"
     log 同步 "已把采集器同步回仓库副本 $REPO_COLLECTOR（记得 git 提交）"
   fi
