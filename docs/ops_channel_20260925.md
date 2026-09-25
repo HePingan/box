@@ -158,3 +158,40 @@ GET /term175/ 200 / 口令错 401 / WS 握手 101（必须 HTTP/1.1）
 - 175 的 DAV 根是 `/`：**整个构建机对 App 开放**，包括 `/root/.secrets/`（发布密钥、GitHub 私钥）。
   这是用户明确要求的能力（"整个"），但换机/换人时必须先轮换口令，并把"175 口令 = 构建链"写进心里。
 - 客户端（多服务器模型）见 `docs/server_ops_plugin_next_steps_289.md` 的 B1。
+
+## 九、新机器一键接入：`box_ops_provision.sh`（2026-09-25）
+
+175 是手工接的（装 rclone/ttyd、写单元、建凭据、边缘加 location + 隧道、轮换脚本）。
+这一节把它脚本化：**目标机器上一条命令**，两侧全部到位并自检。
+
+```bash
+# 在新机器上（root，需要能免密 ssh 到边缘机 hpa888）
+scp tool/box_ops_provision.sh newhost:/tmp/            # 或者从仓库拉
+ssh newhost 'bash /tmp/box_ops_provision.sh --id 176'  # 标识 176 → 前缀 /dav176、/term176
+# 先看不写：--id 176 --dry-run
+# 拆除：    --id 176 --remove
+```
+
+脚本做的事（标识 `X`）：
+
+| 侧 | 动作 |
+|---|---|
+| 目标机 | 按架构装 rclone（v1.71.2，amd64/arm64）+ ttyd（1.7.7）；生成 40 位口令 → `/root/.secrets/box-opsX-webdav.password`（600）+ rclone env；写 `box-opsX-dav.service`（回环，`--baseurl /davX`）与 `box-opsX-term.service`（回环，`-b /termX`）；写 `/usr/local/sbin/box-opsX-rotate-credentials.sh` |
+| 边缘机 | 生成**每台机器一把**的隧道密钥 `id_target_X`，把公钥加到目标机 `authorized_keys`；写 htpasswd（640 root:www）；vhost 幂等插入 `/davX/` 与 `/termX/`（改前备份、`nginx -t` 不过自动回滚）；建**独立**隧道单元 `box-opsX-tunnel.service` 并启动 |
+| 自检 | 对=207/200、错=401/401、WS 握手=101，外加**内容判据**：在本机建一个标记文件，从外网经新前缀取回并与本地逐字节比对 —— 证明这条通道确实通向本机的盘（只看状态码分不出两台机器） |
+
+踩过并已修的四个坑（都在脚本里留了注释）：
+
+1. **`set -o pipefail` + `tr </dev/urandom | head -c N` = 脚本自杀**：`head` 读满就关管道，
+   `tr` 收到 SIGPIPE(141)，整条管道算失败。生成口令与 nonce 的行必须 `|| true`。
+   （同一个坑也埋在 175 的轮换脚本里，`--check` 不走那条路所以当时没暴露。）
+2. **端口幂等**：重跑时必须沿用既有单元里的端口，否则会重挑一个端口写进单元，
+   而边缘机那条已建好的隧道还指着老端口 —— 表现为"单元 active 但外网连不上"。
+3. **出网地址不等于公网地址**：腾讯云 VPC 里 `ip route get` 给的是 `10.1.0.15`，
+   边缘机 ssh 不过去。脚本改成多源探测公网 IP（ifconfig.me → ip.3322.net → ipify），
+   探到私网地址直接停并要求 `--target-host`。
+4. **`--remove` 要摘 `authorized_keys`**：否则边缘机的公钥行留在目标机上，
+   是一把悬空的授权密钥。
+
+另：`--remove` 会回滚 vhost（用插入前的备份）、删隧道单元/htpasswd/密钥/单元/轮换脚本，
+但**保留凭据文件**并提示手工删（避免手滑把别人那台的凭据带走）。
