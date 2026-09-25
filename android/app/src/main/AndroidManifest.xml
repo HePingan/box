@@ -88,6 +88,12 @@
             android:foregroundServiceType="dataSync"
             android:exported="false" />
 
+        <!-- 远端存储传输保活前台服务（284 P1）：传输入队期间挂着，防止后台被回收 -->
+        <service
+            android:name=".TransferKeepAliveService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

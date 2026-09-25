@@ -1775,6 +1775,40 @@ void main() {
     });
   });
 
+  group('传输面板：已恢复标（284 P1）', () {
+    testWidgets('从盘里恢复回来的任务带「已恢复」标；本机新点的任务没有', (tester) async {
+      final queue = TransferQueue(retryDelay: Duration.zero);
+      debugSetRemoteStorageRuntime(queue: queue);
+      final gate = Completer<void>();
+      final restored = queue.enqueue(
+        kind: TransferKind.download,
+        title: '上次没传完.mp4',
+        subtitle: '账户 · 下载',
+        runner: (cancel, onProgress) => gate.future,
+      )..restored = true;
+      queue.enqueue(
+        kind: TransferKind.download,
+        title: '刚点的.mp4',
+        subtitle: '账户 · 下载',
+        runner: (cancel, onProgress) => gate.future,
+      );
+
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: TransferQueueSheet())),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('已恢复'), findsOneWidget, reason: '只有恢复回来的那条该带标');
+      expect(restored.restored, isTrue);
+
+      // 收尾：让在跑的两个任务结束，避免留下未完成的异步任务
+      queue.tasks.toList().forEach((t) => t.requestCancel());
+      gate.complete();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 300));
+    });
+  });
+
   group('传输面板：全部重试与失败原因（284 P5）', () {
     Future<TransferQueue> pumpQueueSheet(
       WidgetTester tester, {

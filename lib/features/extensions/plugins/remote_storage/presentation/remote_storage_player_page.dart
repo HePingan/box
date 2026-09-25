@@ -407,6 +407,14 @@ class _RemoteStoragePlayerPageState extends State<RemoteStoragePlayerPage> {
         onProgress: onProgress,
         cancel: cancel,
       ),
+      spec: TransferRestoreSpec(
+        kind: TransferKind.download,
+        accountId: widget.account.id,
+        remotePath: widget.entry.path,
+        fileName: widget.entry.name,
+        title: widget.entry.name,
+        totalBytes: widget.entry.size ?? -1,
+      ),
       onFinished: (task) {
         if (!mounted) return;
         if (task.status == TransferStatus.done && task.result is String) {

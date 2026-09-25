@@ -15,6 +15,9 @@ import 'package:box/features/extensions/plugins/remote_storage/data/remote_thumb
 import 'package:box/features/extensions/plugins/remote_storage/data/playback_progress_store.dart';
 import 'package:box/features/extensions/plugins/remote_storage/data/remote_storage_store.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
+import 'package:box/features/extensions/plugins/remote_storage/application/transfer_queue.dart';
+import 'package:box/features/extensions/plugins/remote_storage/data/transfer_keepalive.dart';
+import 'package:box/features/extensions/plugins/remote_storage/data/transfer_queue_store.dart';
 import 'package:box/features/extensions/plugins/remote_storage/data/video_frame_channel.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/webdav_client.dart';
 import 'package:flutter/services.dart';
@@ -1862,4 +1865,156 @@ void main() {
       expect(calls.length, 2);
     });
   });
+
+  group('传输恢复（284 P1）', () {
+    late _MemQueueStore store;
+
+    TransferQueue queueWith(TransferQueueStore s) => TransferQueue(
+          retryDelay: Duration.zero,
+          store: s,
+          keepAlive: TransferKeepAlive(),
+        );
+
+    TransferRestoreSpec downloadSpec({String accountId = 'rs_test'}) =>
+        TransferRestoreSpec(
+          kind: TransferKind.download,
+          accountId: accountId,
+          remotePath: '/相册/a.jpg',
+          fileName: 'a.jpg',
+          title: 'a.jpg',
+          subtitle: '测试账户',
+          totalBytes: 4,
+        );
+
+    setUp(() => store = _MemQueueStore());
+
+    /// 等任务跑完（传输里有真实 IO 的 await，靠固定次数 yield 不稳）。
+    Future<void> waitDone(TransferTask task) async {
+      for (var i = 0; i < 100 && task.isActive; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+    }
+
+    test('恢复下载：factory 重建 runner 后真的能下下来', () async {
+      final account = testAccount();
+      await service.saveAccount(account);
+      final queue = queueWith(store);
+      final runner =
+          service.runnerForRestore(account, downloadSpec());
+
+      final task = queue.enqueue(
+        kind: TransferKind.download,
+        title: 'a.jpg',
+        subtitle: '测试账户',
+        spec: downloadSpec(),
+        runner: runner,
+      );
+      await waitDone(task);
+
+      expect(task.status, TransferStatus.done, reason: task.errorMessage);
+      expect(task.result, isA<String>());
+      expect(File(task.result! as String).existsSync(), isTrue);
+    });
+
+    test('恢复上传：沿用当时的覆盖选择与目标目录（不替用户改主意）', () async {
+      final account = testAccount();
+      final src = File('${docsDir.path}/src.bin');
+      await src.writeAsString('hello');
+      final spec = TransferRestoreSpec(
+        kind: TransferKind.upload,
+        accountId: account.id,
+        remotePath: '/目标目录',
+        localPath: src.path,
+        fileName: 'src.bin',
+        overwrite: true,
+        title: 'src.bin',
+        totalBytes: 5,
+      );
+
+      final task = TransferQueue(retryDelay: Duration.zero, store: store).enqueue(
+        kind: TransferKind.upload,
+        title: 'src.bin',
+        subtitle: '测试账户',
+        spec: spec,
+        runner: service.runnerForRestore(account, spec),
+      );
+      await waitDone(task);
+
+      expect(task.status, TransferStatus.done, reason: task.errorMessage);
+      final puts = transport.requests
+          .where((r) => r.method == 'PUT')
+          .map((r) => Uri.decodeComponent(r.uri.path))
+          .toList(growable: false);
+      expect(puts.any((p) => p.endsWith('/目标目录/src.bin')), isTrue,
+          reason: '目标目录要按恢复描述走，不能落到别处（实际: $puts）');
+    });
+
+    test('restoreTransfers：账户还在、源文件还在 → 恢复出来', () async {
+      final account = testAccount();
+      await service.saveAccount(account);
+      final src = File('${docsDir.path}/keep.bin');
+      await src.writeAsString('x');
+      await store.save([
+        downloadSpec().toJson(),
+        TransferRestoreSpec(
+          kind: TransferKind.upload,
+          accountId: account.id,
+          remotePath: '/d',
+          localPath: src.path,
+          fileName: 'keep.bin',
+          title: 'keep.bin',
+          totalBytes: 1,
+        ).toJson(),
+      ]);
+      final queue = queueWith(store);
+
+      final restored = await service.restoreTransfers(queue: queue);
+
+      expect(restored, 2);
+      expect(queue.tasks, hasLength(2));
+      expect(queue.tasks.every((t) => t.restored), isTrue);
+    });
+
+    test('restoreTransfers：账户已删 / 上传源文件不在了 → 丢弃且不留在盘里', () async {
+      final account = testAccount();
+      await service.saveAccount(account);
+      await store.save([
+        downloadSpec(accountId: '已删除的账户').toJson(),
+        TransferRestoreSpec(
+          kind: TransferKind.upload,
+          accountId: account.id,
+          remotePath: '/d',
+          localPath: '${docsDir.path}/不存在.bin',
+          fileName: '不存在.bin',
+          title: '不存在.bin',
+          totalBytes: 1,
+        ).toJson(),
+      ]);
+      final queue = queueWith(store);
+
+      final restored = await service.restoreTransfers(queue: queue);
+
+      expect(restored, 0);
+      expect(queue.tasks, isEmpty);
+      expect(await store.load(), isEmpty, reason: '丢掉的记录要一起从盘里清掉');
+    });
+  });
+}
+
+/// 内存里的落盘替身（service 测试不碰真实文件系统）。
+class _MemQueueStore extends TransferQueueStore {
+  _MemQueueStore() : super(dirProvider: () async => Directory.systemTemp);
+
+  List<Map<String, Object?>> _records = const [];
+
+  @override
+  Future<List<Map<String, Object?>>> load() async => List.of(_records);
+
+  @override
+  Future<void> save(List<Map<String, Object?>> records) async {
+    _records = List.of(records);
+  }
+
+  @override
+  Future<void> clear() async => _records = const [];
 }

@@ -441,6 +441,11 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        // ── 远程存储：传输保活（284 P1）──
+        // 传输入队期间挂一个前台服务，避免 app 退到后台被系统回收导致传输中断；
+        // 通知 ID 与视频下载分开（1002 / 1001），两边状态机互不干扰。
+        TransferKeepAliveChannel.register(flutterEngine.dartExecutor.binaryMessenger, this)
+
         // ── 远程存储：视频首帧抽取（284 D8）──
         // 为什么在原生：Flutter 没有视频解码器，video_player 只能播不能抽帧；
         // MediaMetadataRetriever 能对 http(s) URL 直接取关键帧（按需 Range），

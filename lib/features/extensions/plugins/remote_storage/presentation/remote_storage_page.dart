@@ -4,6 +4,8 @@
 // 拍板 1：命名「远程存储」；拍板 2：P0 仅上传（浏览/下载/预览/播放）；
 // 拍板 5：私网 http 默认放行（卡片仅提示徽标，不拦截）。
 
+import 'package:box/utils/app_logger.dart';
+import 'package:box/utils/log_channels.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -29,6 +31,25 @@ class _RemoteStoragePageState extends State<RemoteStoragePage> {
   void initState() {
     super.initState();
     _load();
+    _restorePendingTransfers();
+  }
+
+  /// 恢复上次未完成的传输（284 P1）：队列落了盘，这里是"应用重开后再接上"的入口。
+  /// 放在账户页（而不是浏览器页）：恢复不依赖用户当前在看哪个目录。
+  Future<void> _restorePendingTransfers() async {
+    try {
+      final restored = await remoteStorageService().restoreTransfers();
+      if (!mounted || restored == 0) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已恢复上次未完成的 $restored 项传输')),
+      );
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '恢复未完成传输失败: $e',
+        level: LogLevel.debug,
+      );
+    }
   }
 
   Future<void> _load() async {
@@ -824,6 +845,26 @@ class TransferQueueSheet extends StatelessWidget {
                   style: theme.textTheme.bodyMedium,
                 ),
               ),
+              // 从上次落盘恢复回来的任务（284 P1）：让用户知道这条不是刚点的，
+              // 而是"上次没传完，这次接着传"。
+              if (task.restored && task.isActive)
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      '已恢复',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSecondaryContainer,
+                      ),
+                    ),
+                  ),
+                ),
               if (task.isActive)
                 TextButton(
                   onPressed: task.requestCancel,

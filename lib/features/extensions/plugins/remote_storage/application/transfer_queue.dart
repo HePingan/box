@@ -9,9 +9,91 @@ import 'package:box/utils/app_logger.dart';
 import 'package:box/utils/log_channels.dart';
 import 'package:flutter/foundation.dart';
 
+import '../data/transfer_keepalive.dart';
+import '../data/transfer_queue_store.dart';
 import '../domain/remote_storage_models.dart';
 
 enum TransferKind { download, upload }
+
+/// 一个任务的**可恢复描述**（284 P1）。
+///
+/// 只放"重建 runner 需要的字段"：runner 闭包、`onFinished` 回调、UI 文案都不入库。
+/// 字段刻意与 service 的两条入口对齐：
+/// - 上传：[remotePath] = 远端目标目录，[localPath] = 本地源文件；
+/// - 下载：[remotePath] = 远端文件，[subDir] = 保留目录结构时用的子目录名
+///   （本地落点由 service 按账户/子目录重新解析，所以不入库 —— 下载断点是按
+///   "账户 + 远端路径"归属的，重算落点后 `.part` 照样能续）。
+class TransferRestoreSpec {
+  const TransferRestoreSpec({
+    required this.kind,
+    required this.accountId,
+    required this.remotePath,
+    this.localPath = '',
+    this.fileName = '',
+    this.subDir,
+    this.overwrite = false,
+    this.title = '',
+    this.subtitle = '',
+    this.totalBytes = -1,
+  });
+
+  final TransferKind kind;
+  final String accountId;
+  final String remotePath;
+  final String localPath;
+  final String fileName;
+  final String? subDir;
+
+  /// 上传用：目标已存在时是否覆盖（拍板3 的默认是跳过，必须原样恢复）。
+  final bool overwrite;
+
+  final String title;
+  final String subtitle;
+  final int totalBytes;
+
+  /// 去重键：恢复时若队列里已有同一件事，不重复入队。
+  String get dedupeKey => '${kind.name}|$accountId|$remotePath|$localPath';
+
+  Map<String, Object?> toJson() => {
+        'kind': kind.name,
+        'accountId': accountId,
+        'remotePath': remotePath,
+        'localPath': localPath,
+        'fileName': fileName,
+        if (subDir != null) 'subDir': subDir,
+        'overwrite': overwrite,
+        'title': title,
+        'subtitle': subtitle,
+        'totalBytes': totalBytes,
+      };
+
+  /// 坏记录返回 null（调用方跳过，不要让一条脏数据卡住整个恢复）。
+  static TransferRestoreSpec? tryParse(Map<String, Object?> json) {
+    final kindName = json['kind'];
+    final accountId = json['accountId'];
+    final remotePath = json['remotePath'];
+    if (kindName is! String || accountId is! String || remotePath is! String) {
+      return null;
+    }
+    final kind = TransferKind.values
+        .where((k) => k.name == kindName)
+        .cast<TransferKind?>()
+        .firstWhere((k) => true, orElse: () => null);
+    if (kind == null || accountId.isEmpty || remotePath.isEmpty) return null;
+    return TransferRestoreSpec(
+      kind: kind,
+      accountId: accountId,
+      remotePath: remotePath,
+      localPath: json['localPath'] is String ? json['localPath']! as String : '',
+      fileName: json['fileName'] is String ? json['fileName']! as String : '',
+      subDir: json['subDir'] is String ? json['subDir']! as String : null,
+      overwrite: json['overwrite'] == true,
+      title: json['title'] is String ? json['title']! as String : '',
+      subtitle: json['subtitle'] is String ? json['subtitle']! as String : '',
+      totalBytes: json['totalBytes'] is int ? json['totalBytes']! as int : -1,
+    );
+  }
+}
 
 enum TransferStatus { queued, running, done, failed, canceled }
 
@@ -23,6 +105,7 @@ class TransferTask {
     required this.title,
     required this.subtitle,
     required this.totalBytes,
+    this.spec,
   });
 
   final String id;
@@ -46,6 +129,12 @@ class TransferTask {
 
   /// 完成后产物：下载任务为本地文件路径（String）。
   Object? result;
+
+  /// 可恢复描述（284 P1）；为 null 的任务不入库（例如临时/一次性的传输）。
+  TransferRestoreSpec? spec;
+
+  /// 这一条是从上次落盘恢复回来的（UI 标「已恢复」）。
+  bool restored = false;
 
   final TransferCancelToken cancelToken = TransferCancelToken();
 
@@ -74,8 +163,14 @@ typedef TransferRunner = Future<Object?> Function(
 
 /// 有界并发的传输队列（默认 [kMaxConcurrentTransfers] 个任务同时在跑）。
 class TransferQueue extends ChangeNotifier {
-  TransferQueue({this.retryDelay, int? maxConcurrent})
-      : maxConcurrent = maxConcurrent ?? kMaxConcurrentTransfers,
+  TransferQueue({
+    this.retryDelay,
+    int? maxConcurrent,
+    TransferQueueStore? store,
+    TransferKeepAlive? keepAlive,
+  })  : maxConcurrent = maxConcurrent ?? kMaxConcurrentTransfers,
+        _store = store ?? TransferQueueStore(),
+        _keepAlive = keepAlive ?? TransferKeepAlive(),
         assert((maxConcurrent ?? kMaxConcurrentTransfers) >= 1,
             '并发数至少为 1');
 
@@ -88,10 +183,24 @@ class TransferQueue extends ChangeNotifier {
   /// 同时最多在跑的任务数（见 [kMaxConcurrentTransfers]）。
   final int maxConcurrent;
 
+  /// 任务元数据落盘（284 P1）。
+  final TransferQueueStore _store;
+
+  /// 传输期间的前台保活（284 P1）。
+  final TransferKeepAlive _keepAlive;
+
   final List<TransferTask> _tasks = [];
   int _running = 0;
   int _seq = 0;
   DateTime _lastProgressNotify = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 上一次更新通知的时间（进度类更新按 1s 节流，别每帧都写）。
+  DateTime _lastKeepAliveUpdate = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 前台保活是否已经起了（幂等，避免反复 start）。
+  bool _keepAliveRunning = false;
+
+  Future<void>? _persistInFlight;
 
   /// 新的在前。
   List<TransferTask> get tasks => List.unmodifiable(_tasks);
@@ -106,6 +215,7 @@ class TransferQueue extends ChangeNotifier {
     int totalBytes = -1,
     required TransferRunner runner,
     void Function(TransferTask task)? onFinished,
+    TransferRestoreSpec? spec,
   }) {
     _seq += 1;
     final task = TransferTask._(
@@ -114,11 +224,13 @@ class TransferQueue extends ChangeNotifier {
       title: title,
       subtitle: subtitle,
       totalBytes: totalBytes,
+      spec: spec,
     );
     task.runner = runner;
     task.onFinished = onFinished;
     _tasks.insert(0, task);
     notifyListeners();
+    _persist(); // 入队就落盘：紧接着被杀也不会丢这一条
     _pump();
     return task;
   }
@@ -126,6 +238,7 @@ class TransferQueue extends ChangeNotifier {
   void clearFinished() {
     _tasks.removeWhere((t) => !t.isActive);
     notifyListeners();
+    _persist();
   }
 
   /// 重跑一个**失败**的任务（283 D4）。
@@ -145,7 +258,9 @@ class TransferQueue extends ChangeNotifier {
     task.retryAttempt = 0;
     task.result = null;
     task.cancelToken.reset(); // token 一次性：不复位会被立刻判成取消
+    task.restored = false; // 用户主动重试：不再算"恢复回来的"
     notifyListeners();
+    _persist();
     _pump();
     return true;
   }
@@ -199,9 +314,12 @@ class TransferQueue extends ChangeNotifier {
       next.status = TransferStatus.running;
       _running += 1;
       notifyListeners();
+      // 开始跑就挂上前台服务：长任务期间进程不能被系统回收。
+      _syncKeepAlive();
       unawaited(
         _run(next).whenComplete(() {
           _running -= 1;
+          _syncKeepAlive();
           _pump();
         }),
       );
@@ -230,6 +348,7 @@ class TransferQueue extends ChangeNotifier {
                 150) {
               _lastProgressNotify = now;
               notifyListeners();
+              _syncKeepAlive(progressOnly: true);
             }
           },
         );
@@ -270,6 +389,167 @@ class TransferQueue extends ChangeNotifier {
       }
     }
     notifyListeners();
+    _persist();
+    _syncKeepAlive();
     current.onFinished?.call(current);
+  }
+
+  // ------------------------------------------------- 落盘与恢复（284 P1）
+
+  /// 当前该落盘的记录：只落"没结束"的（queued/running/failed）。
+  ///
+  /// 已完成的（结果有效）与已取消的（用户主动放弃）不落：下次启动看到它们
+  /// 既没用也容易让人误以为"还在跑"。失败的要连失败原因一起落 —— 否则恢复回来
+  /// 会显示成"上次未完成"，用户看不到真正的原因。
+  List<Map<String, Object?>> _pendingRecords() => [
+        for (final task in _tasks)
+          if (task.spec != null &&
+              task.status != TransferStatus.done &&
+              task.status != TransferStatus.canceled)
+            {
+              ...task.spec!.toJson(),
+              'failed': task.status == TransferStatus.failed,
+              if (task.errorMessage != null) 'errorMessage': task.errorMessage,
+            },
+      ];
+
+  /// 写盘：**不节流**。
+  ///
+  /// 曾经按 1s 节流，结果"任务已完成"这次状态变化也被吞掉 —— 盘里留着一条已经
+  /// 传完的记录，下次启动会当成未完成再跑一遍（测试逮到的真 bug）。落盘只在
+  /// 生命周期变化时发生（入队/结束/重试/清理），进度根本不入库，所以没有节流的必要。
+  void _persist() {
+    final records = _pendingRecords();
+    _persistInFlight = _store
+        .save(records)
+        .catchError((Object e) {
+      // 落盘失败不影响传输本身。
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '传输队列落盘失败: $e',
+        level: LogLevel.debug,
+      );
+    });
+  }
+
+  /// 测试用：等最后一次落盘写完（生产里是 fire-and-forget）。
+  @visibleForTesting
+  Future<void> debugAwaitPersistence() async => _persistInFlight;
+
+  /// 恢复上次未完成的传输（284 P1），返回恢复出几条。
+  ///
+  /// [factory] 用描述重建 runner（service 提供）；[canRestore] 用来过滤已经没法跑的
+  /// 记录（账户被删了、本地文件不在了……），返回 false 的直接丢弃。
+  ///
+  /// 恢复策略：
+  /// - 上次"排队中/在传"的 → 重新排队（并标 [TransferTask.restored]，UI 显示「已恢复」）；
+  /// - 上次"失败"的 → 恢复成失败态（让用户看到并可以「全部重试」），不自动重跑，
+  ///   免得一个必失败的任务每次启动都白跑一遍网络。
+  /// - 队列里已经有同一件事（同 dedupeKey）→ 跳过，不重复。
+  Future<int> restorePending({
+    required TransferRunner Function(TransferRestoreSpec spec) factory,
+    Future<bool> Function(TransferRestoreSpec spec)? canRestore,
+  }) async {
+    final records = await _store.load();
+    if (records.isEmpty) return 0;
+
+    final existing = {for (final t in _tasks) if (t.spec != null) t.spec!.dedupeKey};
+    var restored = 0;
+    // 落盘是"新的在前"，恢复时按同一顺序入队（保持用户看到的顺序）。
+    for (final record in records) {
+      final spec = TransferRestoreSpec.tryParse(record);
+      if (spec == null) continue;
+      if (existing.contains(spec.dedupeKey)) continue;
+      if (canRestore != null && !await canRestore(spec)) continue;
+
+      final failed = record['failed'] == true;
+      _seq += 1;
+      final task = TransferTask._(
+        id: 'r${DateTime.now().microsecondsSinceEpoch}_$_seq',
+        kind: spec.kind,
+        title: spec.title.isEmpty ? _baseName(spec) : spec.title,
+        subtitle: spec.subtitle,
+        totalBytes: spec.totalBytes,
+        spec: spec,
+      )..restored = true;
+      task.runner = factory(spec);
+      if (failed) {
+        task.status = TransferStatus.failed;
+        task.errorMessage = record['errorMessage'] is String
+            ? record['errorMessage']! as String
+            : '上次未完成';
+      }
+      _tasks.add(task);
+      existing.add(spec.dedupeKey);
+      restored += 1;
+    }
+    if (restored == 0) {
+      // 一条都没恢复出来也要重写一次：被 canRestore 过滤掉的记录（账户已删、
+      // 源文件已不在）不能永远躺在盘里，每次启动都被翻出来再丢一次。
+      _persist();
+      return 0;
+    }
+    notifyListeners();
+    _persist();
+    _pump();
+    return restored;
+  }
+
+  String _baseName(TransferRestoreSpec spec) {
+    final path = spec.kind == TransferKind.upload
+        ? spec.localPath
+        : spec.remotePath;
+    final idx = path.lastIndexOf('/');
+    final name = idx >= 0 ? path.substring(idx + 1) : path;
+    return name.isEmpty ? '未命名任务' : name;
+  }
+
+  // ------------------------------------------------- 前台保活（284 P1）
+
+  /// 有在跑的任务就起前台服务（并在进度变化时更新通知），跑完就撤。
+  ///
+  /// [progressOnly] 为 true 时只更新通知文案，不做 start/stop —— 进度回调很密，
+  /// 每一步都判断一次状态没有意义，而且 1s 节流后也够。
+  void _syncKeepAlive({bool progressOnly = false}) {
+    final active = activeCount;
+    if (!progressOnly) {
+      if (active > 0 && !_keepAliveRunning) {
+        _keepAliveRunning = true;
+        unawaited(
+          _keepAlive.start(title: 'Box 传输中', text: _keepAliveText()),
+        );
+        return;
+      }
+      if (active == 0 && _keepAliveRunning) {
+        _keepAliveRunning = false;
+        unawaited(_keepAlive.stop());
+        return;
+      }
+    }
+    if (active == 0 || !_keepAliveRunning) return;
+    final now = DateTime.now();
+    if (now.difference(_lastKeepAliveUpdate).inMilliseconds < 1000) return;
+    _lastKeepAliveUpdate = now;
+    unawaited(_keepAlive.update(text: _keepAliveText()));
+  }
+
+  String _keepAliveText() {
+    final active = _tasks.where((t) => t.isActive).toList(growable: false);
+    if (active.isEmpty) return '正在收尾…';
+    final done = _tasks.where((t) => t.status == TransferStatus.done).length;
+    final totalProgress = active
+        .map((t) => t.progress)
+        .fold<double>(0, (sum, p) => sum + p);
+    final percent = (totalProgress / active.length * 100).round();
+    return '正在传输 ${active.length} 项 · 已完成 $done 项 · $percent%';
+  }
+
+  @override
+  void dispose() {
+    if (_keepAliveRunning) {
+      _keepAliveRunning = false;
+      unawaited(_keepAlive.stop());
+    }
+    super.dispose();
   }
 }

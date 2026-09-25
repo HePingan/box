@@ -1330,6 +1330,72 @@ class RemoteStorageService {
   /// 清空缩略图缓存（内存 + 磁盘）。
   Future<void> clearThumbnailCache() => _thumbnails.cache.clear();
 
+  /// 用恢复描述重建 runner（284 P1）。
+  ///
+  /// 恢复时**不带任何 UI 回调**：下载照旧落盘（`.part` 续传认的是"账户 + 远端路径"，
+  /// 所以重算落点后仍能续上）；上传沿用当时的 `overwrite` 选择——默认改成覆盖会
+  /// 悄悄改变用户的决定（拍板3 是"默认跳过"）。
+  TransferRunner runnerForRestore(
+    RemoteStorageAccount account,
+    TransferRestoreSpec spec,
+  ) {
+    switch (spec.kind) {
+      case TransferKind.download:
+        return (cancel, onProgress) => download(
+              account,
+              remotePath: spec.remotePath,
+              fileName: spec.fileName.isEmpty
+                  ? _restoreBaseName(spec.remotePath)
+                  : spec.fileName,
+              subDir: spec.subDir,
+              onProgress: onProgress,
+              cancel: cancel,
+            );
+      case TransferKind.upload:
+        return (cancel, onProgress) => uploadFile(
+              account,
+              file: LocalUploadFile(
+                path: spec.localPath,
+                name: spec.fileName.isEmpty
+                    ? _restoreBaseName(spec.localPath)
+                    : spec.fileName,
+                size: spec.totalBytes < 0 ? 0 : spec.totalBytes,
+              ),
+              targetDir: spec.remotePath,
+              overwrite: spec.overwrite,
+              onProgress: onProgress,
+              cancel: cancel,
+            );
+    }
+  }
+
+  String _restoreBaseName(String path) {
+    final idx = path.lastIndexOf('/');
+    final name = idx >= 0 ? path.substring(idx + 1) : path;
+    return name.isEmpty ? 'restored.bin' : name;
+  }
+
+  /// 恢复上次未完成的传输（284 P1），返回恢复出几条。
+  ///
+  /// 过滤规则：
+  /// - 账户已经被删 → 丢掉（没有凭证可跑）；
+  /// - 上传任务的本地源文件不在了（相册清理过、目录被移走）→ 丢掉；
+  /// - 下载任务一律可恢复（远端还在就能下；`.part` 会按"账户 + 远端路径"续上）。
+  Future<int> restoreTransfers({TransferQueue? queue}) async {
+    final accounts = {
+      for (final account in await loadAccounts()) account.id: account,
+    };
+    return (queue ?? transferQueue()).restorePending(
+      factory: (spec) => runnerForRestore(accounts[spec.accountId]!, spec),
+      canRestore: (spec) async {
+        if (!accounts.containsKey(spec.accountId)) return false;
+        if (spec.kind != TransferKind.upload) return true;
+        if (spec.localPath.isEmpty) return false;
+        return File(spec.localPath).exists();
+      },
+    );
+  }
+
   /// 视频首帧开关（284 D8）。
   Future<bool> loadVideoThumbnailsEnabled() =>
       _store.loadVideoThumbnailsEnabled();

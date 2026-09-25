@@ -1499,6 +1499,18 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
           onProgress: onProgress,
           cancel: cancel,
         ),
+        // 落盘信息（284 P1）：应用被杀后能按原样重建这条上传。
+        spec: TransferRestoreSpec(
+          kind: TransferKind.upload,
+          accountId: widget.account.id,
+          remotePath: targetDir,
+          localPath: file.path,
+          fileName: file.name,
+          overwrite: overwrite,
+          title: file.name,
+          subtitle: '$_accountTitle · ${sub.isEmpty ? dirLabel : sub}',
+          totalBytes: file.size,
+        ),
         onFinished: (task) {
           if (!mounted) return;
           if (task.status == TransferStatus.done) {
@@ -1553,6 +1565,18 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
         subDir: subDir,
         onProgress: onProgress,
         cancel: cancel,
+      ),
+      spec: TransferRestoreSpec(
+        kind: TransferKind.download,
+        accountId: widget.account.id,
+        remotePath: entry.path,
+        fileName: entry.name,
+        subDir: subDir,
+        title: entry.name,
+        subtitle: subDir == null
+            ? '$_accountTitle · $dirLabel'
+            : '$_accountTitle · $subDir',
+        totalBytes: entry.size ?? -1,
       ),
       onFinished: (task) {
         if (!mounted) return;
