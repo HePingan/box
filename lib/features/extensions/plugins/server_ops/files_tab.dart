@@ -249,11 +249,70 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
     );
   }
 
-  Future<void> _preview(RemoteStorageEntry entry) async {
-    await showDialog<void>(
-      context: context,
-      builder: (_) => _TextPreviewDialog(service: _service, entry: entry),
+  /// 点文件：**按类型**决定怎么看。
+  ///
+  /// 以前一律走文本预览，图片/压缩包被当文本解码成一屏乱码方块（真机上打开
+  /// 截图就是这样）。二进制文件没有"文本预览"这回事，必须按 remoteEntryKind 分流：
+  /// 图片 → 相册式预览；文本 → 文本预览；其余 → 交给本机应用。
+  Future<void> _open(RemoteStorageEntry entry) async {
+    switch (remoteEntryKind(entry)) {
+      case RemoteEntryKind.folder:
+        return;
+      case RemoteEntryKind.image:
+        await _openImage(entry);
+      case RemoteEntryKind.text:
+        await showDialog<void>(
+          context: context,
+          builder: (_) => _TextPreviewDialog(service: _service, entry: entry),
+        );
+      case RemoteEntryKind.video:
+      case RemoteEntryKind.audio:
+      case RemoteEntryKind.other:
+        await _openExternal(entry);
+    }
+  }
+
+  /// 图片：复用远端存储插件的相册式预览（同目录图片左右翻 + 缩放）。
+  ///
+  /// 只把同目录的**图片**传进去：传整份列表会让"下一张"翻到 pdf 上。
+  Future<void> _openImage(RemoteStorageEntry entry) async {
+    final images = _entries
+        .where((e) => remoteEntryKind(e) == RemoteEntryKind.image)
+        .toList(growable: false);
+    if (images.isEmpty) return;
+    final index = images.indexWhere((e) => e.path == entry.path);
+    await serverOpsImagePreviewOpener(
+      context,
+      _service.account,
+      images,
+      index < 0 ? 0 : index,
     );
+  }
+
+  /// 视频/音频/其它二进制：不当文本看，交给本机应用（先下到临时目录）。
+  Future<void> _openExternal(RemoteStorageEntry entry) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(entry.name, maxLines: 2, overflow: TextOverflow.ellipsis),
+        content: const Text(
+          '这是二进制文件，用文本方式打开只会看到乱码。\n'
+          '可以下载后用本机应用打开（会先存到临时目录）。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('用其他应用打开'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _download(entry);
   }
 
   Future<String?> _promptText({
@@ -377,7 +436,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
             overflow: TextOverflow.ellipsis,
           ),
           subtitle: _subtitleFor(entry, theme),
-          onTap: entry.isDirectory ? () => _enter(entry) : () => _preview(entry),
+          onTap: entry.isDirectory ? () => _enter(entry) : () => _open(entry),
           trailing: PopupMenuButton<String>(
             tooltip: '更多',
             enabled: !_busy,

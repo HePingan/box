@@ -50,6 +50,19 @@ class ServerOpsFilesService {
   static WebdavTransport _defaultTransport() =>
       DioWebdavTransport(allowBadCert: false, badCertHost: '');
 
+  /// 复用 remote_storage 预览组件时用的账户视图。
+  ///
+  /// 图片预览（相册左右滑动、缩放、20MB 上限、逐页失败不阻塞）在远端存储插件里
+  /// 已经写细了，运维通道没必要再写一份：这里只把设置翻译成它要求的账户对象。
+  /// id 用固定常量 —— clientFor 按 id 缓存 client，借用真实账户的 id 会串味。
+  RemoteStorageAccount get account => RemoteStorageAccount(
+        id: 'server_ops_channel',
+        label: '服务器运维通道',
+        baseUrl: settings.effectiveBaseUrl,
+        username: settings.effectiveUser,
+        password: settings.effectivePassword,
+      );
+
   /// 列目录。
   Future<List<RemoteStorageEntry>> list(String path) => client.list(path);
 
