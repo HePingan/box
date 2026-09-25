@@ -417,6 +417,20 @@ class TransferQueue extends ChangeNotifier {
     _pump();
   }
 
+  /// 把一条**排队中**的任务提到最前（287 P4）。
+  ///
+  /// 队列顺序是"新的在前"（[_nextQueued] 从尾部往前找），所以提到最前 = 移到列表
+  /// 末尾。正在跑/已暂停/已完成的不接受插队（返回 false，界面据此提示）——
+  /// 尤其是**不碰暂停态**：用户暂停了它，就不该被"优先"顺手拉起来。
+  bool prioritize(TransferTask task) {
+    if (task.status != TransferStatus.queued) return false;
+    _tasks.remove(task);
+    _tasks.add(task);
+    notifyListeners();
+    _pump();
+    return true;
+  }
+
   /// 用户在移动网络上点了"仍要传一次"。
   void allowMobileOnce() {
     if (_mobileOverride) return;

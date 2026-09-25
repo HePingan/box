@@ -1073,6 +1073,22 @@ class TransferQueueSheet extends StatelessWidget {
                   ),
                 ),
               if (task.isActive) ...[
+                // 排队中可"优先"（287 P4）：长队里不必为了一个小文件等前面的大文件。
+                // 注意 queued 也算 isActive，所以这里再按状态筛一次（在跑的不给插队）。
+                if (task.status == TransferStatus.queued)
+                  TextButton(
+                    onPressed: () {
+                      final ok = transferQueue().prioritize(task);
+                      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            ok ? '已把「${task.title}」提到最前' : '这条不能插队（可能已在传或已暂停）',
+                          ),
+                        ),
+                      );
+                    },
+                    child: const Text('优先'),
+                  ),
                 TextButton(
                   onPressed: () => transferQueue().pause(task),
                   child: const Text('暂停'),
@@ -1095,6 +1111,7 @@ class TransferQueueSheet extends StatelessWidget {
                         : theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
+
                 // 失败任务一键重跑（283 D4）：偶发失败不用回列表重新操作一遍。
                 if (task.status == TransferStatus.failed)
                   TextButton(

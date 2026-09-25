@@ -1,0 +1,13 @@
+# 测试目录单独一份分析选项（287 P4）：
+#
+#   * `include` 继承仓库主配置，测试代码的规则与 lib/ 一致；
+#   * 只关掉 `avoid_print` 这一类"给生产代码看"的诊断 —— 203 条 info 全在 test/ 里，
+#     淹没了真警告（本轮的 lint 清理就差点漏掉一条 warning，见 286 记录的口径更正）。
+#     测试里用 print 输出诊断是正常做法，换成 debugPrint 只会更吵。
+#
+# 注意：只影响 test/ —— lib/ 里的 avoid_print 仍然会报（生产代码不该随手 print）。
+include: ../analysis_options.yaml
+
+analyzer:
+  errors:
+    avoid_print: ignore
