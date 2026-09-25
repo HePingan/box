@@ -122,12 +122,14 @@ void main() {
     });
 
     test('证书边界：正好 30 天不提醒，29 天提醒；没有天数但标了失效也提醒', () {
-      MonitorEntry parse(int? days, bool? valid) => MonitorEntry.tryParse({
-        'name': 'x',
-        'up': true,
-        ?'certDays': days,
-        ?'certValid': valid,
-      })!;
+      // 注意：不能写成 `?'certDays': days` —— map 的**键**不可能为 null，
+      // 那会触发 invalid_null_aware_operator（warning，会把 analyze 门禁打红）。
+      MonitorEntry parse(int? days, bool? valid) {
+        final raw = <String, Object?>{'name': 'x', 'up': true};
+        if (days != null) raw['certDays'] = days;
+        if (valid != null) raw['certValid'] = valid;
+        return MonitorEntry.tryParse(raw)!;
+      }
       expect(parse(30, true).certificateWarning, isFalse);
       expect(parse(29, true).certificateWarning, isTrue);
       expect(parse(-3, true).certificateLabel, '证书已到期');

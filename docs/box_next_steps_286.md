@@ -130,7 +130,7 @@
 | 项 | 结果 |
 |---|---|
 | 全量测试（CI 口径，排除 live） | **3217 通过 / 3 跳过 / 0 失败**（285 基线 3159；本轮 +58 条用例） |
-| analyze | **220 条**（长期基线；本轮新增 lint 已清零） |
+| analyze | **218 条 info / 0 warning / 0 error**（`flutter analyze --no-fatal-infos lib test` → 退出码 0）⚠️ **口径更正**：先前写的 “220 条 / ANALYZE_EXIT=0” 是错的——那次用 `flutter analyze … \| tail` 取 `$?` 拿到的是 `tail` 的退出码，且没加 `--no-fatal-infos`（仓里 CI 用的正是这个参数，见 `.github/workflows/ci.yml`）。按正确口径量才发现本轮 lint 清理里我把 map 键写成 `?'certDays': days`，触发 2 条 **warning**（`invalid_null_aware_operator`），会让 CI 红；已改为先建 map 再按需赋值（`0e1b3bf`）。 |
 | 悬挂 API 闸门 | **126 个公开方法 / 0 悬挂**（285 为 113） |
 | release 构建 | `BUILD_EXIT=0`，`app-release.apk` **27,099,696 字节**，sha256 `b314a8d53e624c5524d404816125bfdada7b3cc4250ce12cb141524cd41b31e9`；符号表归档 `/root/.box-symbols/286`（**285 的没被覆盖**）；验签密钥指纹 `fc9d22015158` 已注入 |
 | 包内核对（独立脚本 `verify286.py`，非脚本自述） | ① dex 字符串池含 `top.hpa888.box/share_inbox`、`takePending`、`onSharedFiles`（P3 原生代码进包）；② APK 清单 `.MainActivity` 子树含 **2×SEND + 2×SEND_MULTIPLE、image/video 各 2 个、无 `*/*`**；③ `libapp.so` 286 新增标记 11/11 出现、控制项 6/6 不变；④ 快照令牌已注入（只校验存在性，不打印） |
