@@ -1,4 +1,8 @@
 @Tags(['live'])
+
+// 真服务端用例的默认 30s 太紧：遍历 /root 全树、200KB 往返在机器忙时都会超。
+// 假红比没有用例更糟（会让人去查服务端），所以显式放宽。
+@Timeout(Duration(minutes: 3))
 library;
 
 // 运维通道（box-ops WebDAV）真服务端契约测试。
