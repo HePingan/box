@@ -218,6 +218,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     return widget.settings.hasPasswordFor(id);
   }
 
+  /// 除 [selfId] 之外、已知口令的机器：label → 口令（口令为空的机器不进表）。
+  Map<String, String> _otherPasswords(String selfId) => <String, String>{
+        for (final s in _draft)
+          if (s.id != selfId && _storedPassword(s.id).isNotEmpty)
+            s.label: _storedPassword(s.id),
+      };
+
   String _storedPassword(String id) {
     if (_pendingPasswords.containsKey(id)) return _pendingPasswords[id]!;
     return widget.settings.passwordFor(id);
@@ -230,6 +237,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       builder: (_) => _ServerEditDialog(
         server: server,
         storedPassword: storedPassword ?? _storedPassword(server.id),
+        otherPasswords: _otherPasswords(server.id),
       ),
     );
     if (result == null) return;
@@ -249,6 +257,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       builder: (_) => _ServerEditDialog(
         server: ServerOpsServer(id: id, label: '新服务器', baseUrl: ''),
         storedPassword: '',
+        otherPasswords: _otherPasswords(id),
       ),
     );
     if (result == null) return;
@@ -497,12 +506,20 @@ class _ServerEditResult {
 
 /// 编辑单台服务器（label / 地址 / 用户名 / 终端地址 / 口令）+ 三项目标机体检。
 class _ServerEditDialog extends StatefulWidget {
-  const _ServerEditDialog({required this.server, required this.storedPassword});
+  const _ServerEditDialog({
+    required this.server,
+    required this.storedPassword,
+    this.otherPasswords = const <String, String>{},
+  });
 
   final ServerOpsServer server;
 
   /// 这台机器当前保存的口令（空 = 没配）。只用来判"留空即不改"与体检。
   final String storedPassword;
+
+  /// 其它机器已知口令：label → 口令。**只在 401 时用来提示"这个口令是别台的"**，
+  /// 不参与任何比较以外的逻辑，也不显示口令本身。
+  final Map<String, String> otherPasswords;
 
   @override
   State<_ServerEditDialog> createState() => _ServerEditDialogState();
@@ -600,8 +617,34 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
     if (!mounted) return;
     setState(() {
       _testing = false;
-      _probeResults = results;
+      _probeResults = _annotateAuthFailures(results);
     });
+  }
+
+  /// 体检里凡是 401，都顺手对照一下"这个口令是不是另一台机器的"。
+  ///
+  /// 多服务器最容易犯的错就是把 A 台的口令填到 B 台的地址上 —— 表现是文件与终端一片
+  /// 401，屏幕上看不出是"口令打错了"还是"填错了机器"（真机反馈过）。这里拿会话里
+  /// 已知的其它机器口令比一遍，命中就直接点出来；**只提示，不改用户填的东西**。
+  List<OpsProbeResult> _annotateAuthFailures(List<OpsProbeResult> results) {
+    final typed = _probePassword;
+    if (typed.isEmpty) return results;
+    final others = widget.otherPasswords.entries
+        .where((e) => e.value == typed)
+        .map((e) => e.key)
+        .toList();
+    if (others.isEmpty) return results;
+    return [
+      for (final r in results)
+        if (!r.ok && r.detail.contains('401'))
+          OpsProbeResult(
+            label: r.label,
+            ok: false,
+            detail: '${r.detail}｜注意：这个口令是「${others.join('、')}」那台的',
+          )
+        else
+          r,
+    ];
   }
 
   /// 一条体检结果：图标 + 名称 + 结论。结论必须带状态码/原因，不能只说"失败"。

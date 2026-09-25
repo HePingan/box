@@ -193,6 +193,104 @@ void main() {
       expect(find.textContaining('终端（ttyd）：认证失败（401）'), findsOneWidget);
       expect(find.textContaining('主机状态快照：1 台机器'), findsOneWidget);
     });
+
+    testWidgets('口令填成另一台机器的：401 结论里直接点出是「腾讯云 · 构建/监控机」那台的', (tester) async {
+      debugSetServerOpsRuntime(
+        hostService: _Hosts(
+          snapshot: const HostSnapshot(
+            hosts: [HostEntry(id: 'hpa888', name: '阿里云')],
+          ),
+        ),
+        settings: const ServerOpsSettings(
+          servers: [testPrimaryServer, testSecondaryServer],
+          selectedServerId: 'hpa888',
+          passwords: {'hpa888': 'pw-hpa', 'tencent175': 'pw-175'},
+        ),
+        filesService: _Files(
+          fail: RemoteStorageException(RemoteStorageError.unauthorized, '口令不对'),
+        ),
+        terminalProbe: (url, user, password) async => const OpsProbeResult(
+          label: '终端（ttyd）',
+          ok: false,
+          detail: '认证失败（401）：这台机器的口令不对',
+        ),
+      );
+      await tester.pumpWidget(const MaterialApp(home: ServerOpsPage()));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.tap(find.byTooltip('设置'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.widgetWithText(ListTile, '阿里云 · 主服务端'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // 把另一台（175）的口令填到主服务端的条目上 —— 真机反馈过的最常见错法。
+      final fields = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(fields.at(3), 'pw-175');
+
+      await tester.ensureVisible(find.text('测试连接'));
+      await tester.pump();
+      await tester.tap(find.text('测试连接'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        find.textContaining('这个口令是「腾讯云 · 构建/监控机」那台的'),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('口令是这台自己的：不弹「别台的」那句（防呆不能误报）', (tester) async {
+      debugSetServerOpsRuntime(
+        hostService: _Hosts(
+          snapshot: const HostSnapshot(
+            hosts: [HostEntry(id: 'hpa888', name: '阿里云')],
+          ),
+        ),
+        settings: const ServerOpsSettings(
+          servers: [testPrimaryServer, testSecondaryServer],
+          selectedServerId: 'hpa888',
+          passwords: {'hpa888': 'pw-hpa', 'tencent175': 'pw-175'},
+        ),
+        filesService: _Files(
+          fail: RemoteStorageException(RemoteStorageError.unauthorized, '口令不对'),
+        ),
+        terminalProbe: (url, user, password) async => const OpsProbeResult(
+          label: '终端（ttyd）',
+          ok: false,
+          detail: '认证失败（401）：这台机器的口令不对',
+        ),
+      );
+      await tester.pumpWidget(const MaterialApp(home: ServerOpsPage()));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.tap(find.byTooltip('设置'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.widgetWithText(ListTile, '阿里云 · 主服务端'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final fields = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(fields.at(3), 'pw-hpa');
+
+      await tester.ensureVisible(find.text('测试连接'));
+      await tester.pump();
+      await tester.tap(find.text('测试连接'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.textContaining('那台的'), findsNothing);
+    });
   });
 
   group('诊断跟着服务器走（B1）', () {
