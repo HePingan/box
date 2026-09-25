@@ -119,6 +119,112 @@ class ServerOpsFilesService {
     await client.move(from, to);
   }
 
+  /// 移动到另一个目录（跨目录）：MOVE 由服务端一次完成，**目录整树一起走**。
+  ///
+  /// 与 [rename] 同为覆盖保护 + MOVE，只是语义上是"搬家"而不是"改名"。
+  Future<void> moveEntry(String from, String to) => rename(from, to);
+
+  /// 复制文件或目录到 [to]。
+  ///
+  /// **目录必须客户端递归逐文件 COPY**：实测（2026-09-25）对目录直接发 COPY
+  /// 只会得到一个**空的副本目录**（子文件不在里面），静默丢内容。所以：
+  ///   * 文件：`COPY` 一次搞定，服务端完成、不耗手机流量；
+  ///   * 目录：先 MKCOL，再按 `list` 递归逐个子目录 MKCOL、逐个文件 COPY。
+  ///
+  /// [isDirectory] 由调用方给（页面已经有条目类型，不必再探测一次）；
+  /// [onProgress] 报"已复制 done/total 个文件"；[cancel] 在每项前检查，
+  /// 取消后不再发起后续请求。
+  Future<void> copyEntry(
+    String from,
+    String to, {
+    required bool isDirectory,
+    void Function(int done, int total)? onProgress,
+    TransferCancelToken? cancel,
+  }) async {
+    if (await client.exists(to)) {
+      throw RemoteStorageException(
+        RemoteStorageError.conflict,
+        '目标已存在：${basename(to)}',
+      );
+    }
+    // 取消要归一成中文异常：传输层各处抛的是 TransferCanceledException，
+    // 直接漏到页面上会显示成英文的 "transfer canceled"。
+    try {
+      cancel?.throwIfCanceled();
+      if (!isDirectory) {
+        await client.copy(from, to);
+        onProgress?.call(1, 1);
+        return;
+      }
+      await _copyDirectory(
+        from,
+        to,
+        onProgress: onProgress,
+        cancel: cancel,
+      );
+    } on TransferCanceledException {
+      throw const RemoteStorageException(RemoteStorageError.canceled, '已取消');
+    }
+  }
+
+  /// 目录复制：客户端递归（见 [copyEntry] 的"空目录陷阱"）。
+  Future<void> _copyDirectory(
+    String from,
+    String to, {
+    void Function(int done, int total)? onProgress,
+    TransferCancelToken? cancel,
+  }) async {
+    // 先走一遍把要建的目录与要复制的文件都收齐，才能给出**有总数**的进度。
+    final plan = await _planDirectoryCopy(from, to, cancel: cancel);
+
+    await client.createDirectory(to);
+    for (final dir in plan.directories) {
+      cancel?.throwIfCanceled();
+      await client.createDirectory(dir);
+    }
+
+    var done = 0;
+    for (final file in plan.files) {
+      cancel?.throwIfCanceled();
+      await client.copy(file.$1, file.$2);
+      done += 1;
+      onProgress?.call(done, plan.files.length);
+    }
+  }
+
+  /// 收集目录复制计划：子目录（目标路径）与文件（源,目标）对。
+  Future<_OpsCopyPlan> _planDirectoryCopy(
+    String from,
+    String to, {
+    TransferCancelToken? cancel,
+  }) async {
+    final directories = <String>[];
+    final files = <(String, String)>[];
+    await _walkCopy(from, to, directories, files, cancel);
+    return _OpsCopyPlan(directories: directories, files: files);
+  }
+
+  Future<void> _walkCopy(
+    String dir,
+    String mapped,
+    List<String> directories,
+    List<(String, String)> files,
+    TransferCancelToken? cancel,
+  ) async {
+    cancel?.throwIfCanceled();
+    final entries = await client.list(dir);
+    for (final entry in entries) {
+      cancel?.throwIfCanceled();
+      final target = joinPath(mapped, entry.name);
+      if (entry.isDirectory) {
+        directories.add(target);
+        await _walkCopy(entry.path, target, directories, files, cancel);
+      } else {
+        files.add((entry.path, target));
+      }
+    }
+  }
+
   // ── 列表排序 / 过滤（A3，纯函数，用例直接调） ──────────────────
 
   /// 关键词过滤：按名称包含（大小写不敏感）；空关键词返回原列表。
@@ -215,6 +321,14 @@ class ServerOpsFilesService {
 
 /// 列表排序档位（A3）：名称 / 大小 / 时间。
 enum OpsSortMode { name, size, time }
+
+/// 目录复制计划：目标子目录清单 + 文件（源, 目标）对。
+class _OpsCopyPlan {
+  const _OpsCopyPlan({required this.directories, required this.files});
+
+  final List<String> directories;
+  final List<(String, String)> files;
+}
 
 /// 操作失败时给用户看的中文原因。
 ///

@@ -259,6 +259,99 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
     _cancelToken?.cancel();
   }
 
+  // ── A4：复制 / 移动到… ────────────────────────────────────────
+
+  Future<void> _copyTo(RemoteStorageEntry entry) async {
+    final target = await _pickTargetDir(entry, verb: '复制');
+    if (target == null) return;
+    await _runClipboard(entry, target, copy: true);
+  }
+
+  Future<void> _moveTo(RemoteStorageEntry entry) async {
+    final target = await _pickTargetDir(entry, verb: '移动');
+    if (target == null) return;
+    await _runClipboard(entry, target, copy: false);
+  }
+
+  /// 让用户选目标目录，返回"目标目录 + 原名"的完整路径；取消/非法返回 null。
+  Future<String?> _pickTargetDir(
+    RemoteStorageEntry entry, {
+    required String verb,
+  }) async {
+    final dir = await showDialog<String>(
+      context: context,
+      builder: (_) => _DirectoryPickerDialog(
+        service: _service,
+        title: '$verb「${entry.name}」到…',
+        initialPath: _path,
+      ),
+    );
+    if (!mounted) return null;
+    if (dir == null) return null;
+    final target = ServerOpsFilesService.joinPath(dir, entry.name);
+    if (target == entry.path) {
+      _toast('目标就是它自己，没有可做的');
+      return null;
+    }
+    // 目录不能塞进自己的子目录里：服务端递归 COPY 会无限展开（或直接报错）。
+    if (entry.isDirectory &&
+        (dir == entry.path || dir.startsWith('${entry.path}/'))) {
+      _toast('不能把目录放进它自己的子目录里', error: true);
+      return null;
+    }
+    return target;
+  }
+
+  Future<void> _runClipboard(
+    RemoteStorageEntry entry,
+    String target, {
+    required bool copy,
+  }) async {
+    final cancel = TransferCancelToken();
+    if (!mounted) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _cancelToken = cancel;
+      // 目录复制必须写清"逐文件进行、可取消"（服务端整目录 COPY 会丢子文件）。
+      _progressText =
+          copy && entry.isDirectory ? '复制中（逐文件进行，可取消）' : '';
+      _exitSelectingLocked();
+    });
+    try {
+      if (copy) {
+        await _service.copyEntry(
+          entry.path,
+          target,
+          isDirectory: entry.isDirectory,
+          cancel: cancel,
+          onProgress: (done, total) {
+            if (!mounted) return;
+            setState(() => _progressText = '复制中 $done/$total 个文件');
+          },
+        );
+        if (!mounted) return;
+        _toast('已复制到 /$target');
+      } else {
+        await _service.moveEntry(entry.path, target);
+        if (!mounted) return;
+        _toast('已移动到 /$target');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _toast(serverOpsErrorMessage(e), error: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _progressText = '';
+          _cancelToken = null;
+        });
+      }
+    }
+    await _load(silent: true);
+  }
+
   // ── A3：多选与批量删除 ────────────────────────────────────────
 
   void _startSelecting(RemoteStorageEntry entry) {
@@ -654,6 +747,10 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
                     switch (value) {
                       case 'download':
                         await _download(entry);
+                      case 'copy':
+                        await _copyTo(entry);
+                      case 'move':
+                        await _moveTo(entry);
                       case 'rename':
                         await _rename(entry);
                       case 'delete':
@@ -671,6 +768,24 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
                           title: Text('下载到本机'),
                         ),
                       ),
+                    const PopupMenuItem(
+                      value: 'copy',
+                      child: ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.copy_all_rounded),
+                        title: Text('复制到…'),
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'move',
+                      child: ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.drive_file_move_outline),
+                        title: Text('移动到…'),
+                      ),
+                    ),
                     const PopupMenuItem(
                       value: 'rename',
                       child: ListTile(
@@ -1062,6 +1177,160 @@ class _TextPromptDialogState extends State<_TextPromptDialog> {
         FilledButton(
           onPressed: () => Navigator.pop(context, _controller.text.trim()),
           child: Text(widget.confirm),
+        ),
+      ],
+    );
+  }
+}
+
+/// A4：目标目录选择器（只列子目录，能逐级进出；确认时返回当前目录）。
+class _DirectoryPickerDialog extends StatefulWidget {
+  const _DirectoryPickerDialog({
+    required this.service,
+    required this.title,
+    required this.initialPath,
+  });
+
+  final ServerOpsFilesService service;
+  final String title;
+  final String initialPath;
+
+  @override
+  State<_DirectoryPickerDialog> createState() => _DirectoryPickerDialogState();
+}
+
+class _DirectoryPickerDialogState extends State<_DirectoryPickerDialog> {
+  late String _path = widget.initialPath;
+  List<RemoteStorageEntry> _dirs = const [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final entries = await widget.service.list(_path);
+      if (!mounted) return;
+      setState(() {
+        _dirs = entries.where((e) => e.isDirectory).toList(growable: false);
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = serverOpsErrorMessage(e);
+        _loading = false;
+      });
+    }
+  }
+
+  void _enter(RemoteStorageEntry dir) {
+    setState(() {
+      _path = dir.path;
+      _dirs = const [];
+    });
+    _load();
+  }
+
+  void _up() {
+    final parent = ServerOpsFilesService.parentOf(_path);
+    if (parent == _path) return;
+    setState(() {
+      _path = parent;
+      _dirs = const [];
+    });
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: Text(widget.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 320,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  tooltip: '上一级',
+                  onPressed: _path.isEmpty ? null : _up,
+                  icon: const Icon(Icons.arrow_upward_rounded, size: 18),
+                ),
+                Expanded(
+                  child: Text(
+                    _path.isEmpty ? '/' : '/$_path',
+                    style: theme.textTheme.labelMedium,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
+                ),
+              ),
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _dirs.isEmpty
+                      ? Center(
+                          child: Text(
+                            '这里没有子目录，可直接选择此目录',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.outline,
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: _dirs.length,
+                          itemBuilder: (context, index) {
+                            final dir = _dirs[index];
+                            return ListTile(
+                              dense: true,
+                              leading: const Icon(
+                                Icons.folder_rounded,
+                                color: Color(0xFFF59E0B),
+                                size: 18,
+                              ),
+                              title: Text(
+                                dir.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              onTap: () => _enter(dir),
+                            );
+                          },
+                        ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _path),
+          child: const Text('选择此目录'),
         ),
       ],
     );
