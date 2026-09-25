@@ -40,6 +40,8 @@ SCOPE = [
     "lib/features/extensions/plugins/remote_storage",
     # 285 新增：服务监控插件（同样"自成一体的功能目录"）。
     "lib/features/extensions/plugins/monitor",
+    # 291 新增：服务器运维插件（3088 → 5976 行，涨得最快的一个，之前恰好在闸门之外）。
+    "lib/features/extensions/plugins/server_ops",
 ]
 
 # 搜索调用点的范围（定义文件本身除外都算）。

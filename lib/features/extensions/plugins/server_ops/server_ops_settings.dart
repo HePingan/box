@@ -247,14 +247,6 @@ class ServerOpsSettings {
   /// 生效的选中 id（把"没选 / 选了个不存在的"归一成实际那台）。
   String get effectiveSelectedServerId => currentServer.id;
 
-  /// 按 id 找一台服务器；找不到返回 null。
-  ServerOpsServer? serverById(String id) {
-    for (final server in effectiveServers) {
-      if (server.id == id) return server;
-    }
-    return null;
-  }
-
   /// 某台服务器保存的口令（原样返回，不 trim：尾随空格可能是口令的一部分）。
   String passwordFor(String serverId) => passwords[serverId] ?? '';
 
