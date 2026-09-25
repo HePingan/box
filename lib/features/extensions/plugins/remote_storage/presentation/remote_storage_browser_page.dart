@@ -444,6 +444,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
       labelOf: (v) => v.label,
     );
     if (picked == null) return;
+    if (!mounted) return;
     setState(() {
       _kindFilter = picked;
       _applyFilter();
@@ -458,6 +459,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
       labelOf: (v) => v.label,
     );
     if (picked == null) return;
+    if (!mounted) return;
     setState(() {
       _sizeFilter = picked;
       _applyFilter();
@@ -472,6 +474,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
       labelOf: (v) => v.label,
     );
     if (picked == null) return;
+    if (!mounted) return;
     setState(() {
       _timeFilter = picked;
       _applyFilter();
