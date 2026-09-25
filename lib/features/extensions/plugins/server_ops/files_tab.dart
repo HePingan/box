@@ -95,7 +95,9 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
         _entries = entries;
         _loading = false;
       });
-      _log('文件', true, '列举 $_path：${entries.length} 项', started);
+      // silent 是"操作成功后的自动刷新"，记下来只会把面板淹成一片"列举"；
+      // 失败的 silent 刷新要记（那正是"上传成功了但列表没刷新"这种怪现象的证据）。
+      if (!silent) _log('文件', true, '列举 $_path：${entries.length} 项', started);
     } catch (e) {
       if (!mounted) return;
       setState(() {
