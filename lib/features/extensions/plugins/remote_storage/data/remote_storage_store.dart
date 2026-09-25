@@ -213,6 +213,40 @@ class RemoteStorageStore {
   static const String videoThumbnailsEnabledKey =
       'remoteStorage.videoThumbnailsEnabled';
 
+  /// 传输限速（285 P2）：0 = 不限速。单位字节/秒。
+  static const String transferRateLimitKey = 'remoteStorage.transferRateLimit';
+
+  Future<int> loadTransferRateLimit() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final v = prefs.getInt(transferRateLimitKey) ?? 0;
+      return v < 0 ? 0 : v;
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '读取传输限速失败: $e',
+        level: LogLevel.debug,
+      );
+      return 0;
+    }
+  }
+
+  Future<void> saveTransferRateLimit(int bytesPerSecond) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(
+        transferRateLimitKey,
+        bytesPerSecond < 0 ? 0 : bytesPerSecond,
+      );
+    } catch (e) {
+      AppLogger.instance.logTo(
+        LogChannel.storage,
+        '保存传输限速失败: $e',
+        level: LogLevel.debug,
+      );
+    }
+  }
+
   Future<bool> loadVideoThumbnailsEnabled() async {
     try {
       final prefs = await SharedPreferences.getInstance();

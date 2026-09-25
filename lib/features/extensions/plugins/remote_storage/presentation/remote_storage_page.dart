@@ -38,6 +38,7 @@ class _RemoteStoragePageState extends State<RemoteStoragePage> {
   /// 放在账户页（而不是浏览器页）：恢复不依赖用户当前在看哪个目录。
   Future<void> _restorePendingTransfers() async {
     try {
+      await remoteStorageService().loadTransferRateLimit();
       final restored = await remoteStorageService().restoreTransfers();
       if (!mounted || restored == 0) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -716,7 +717,60 @@ class TransferQueueSheet extends StatelessWidget {
         return '失败';
       case TransferStatus.canceled:
         return '已取消';
+      case TransferStatus.paused:
+        return '已暂停';
     }
+  }
+
+  /// 限速档位（285 P2）：0 = 不限。
+  static const Map<int, String> rateLimitOptions = {
+    0: '不限速',
+    1048576: '限速 1 MB/s',
+    524288: '限速 512 KB/s',
+    262144: '限速 256 KB/s',
+  };
+
+  static String rateLimitLabel(int bytesPerSecond) =>
+      rateLimitOptions[bytesPerSecond] ?? '限速 ${bytesPerSecond ~/ 1024} KB/s';
+
+  /// 选限速档位。当前档位打勾；换档**不影响正在传的任务**（下一条生效），
+  /// 所以文案里说明"对之后的任务生效"，避免用户以为点了就该立刻变慢。
+  Future<void> _pickRateLimit(BuildContext context) async {
+    final service = remoteStorageService();
+    final current = service.transferRateLimitBytesPerSecond;
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(
+              dense: true,
+              title: Text('传输限速'),
+              subtitle: Text('对之后开始的传输生效'),
+            ),
+            for (final entry in rateLimitOptions.entries)
+              ListTile(
+                leading: Icon(
+                  entry.key == current
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  size: 20,
+                ),
+                title: Text(entry.value),
+                onTap: () => Navigator.of(sheetContext).pop(entry.key),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked == null) return;
+    await service.setTransferRateLimit(picked);
+    if (!context.mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text('传输限速：${rateLimitLabel(picked)}')),
+    );
   }
 
   @override
@@ -750,6 +804,32 @@ class TransferQueueSheet extends StatelessWidget {
                       },
                       child: const Text('全部重试'),
                     ),
+                  // 暂停/继续全部（285 P2）：一批任务在跑时不用一条条点。
+                  if (tasks.any((t) => t.isActive))
+                    TextButton(
+                      onPressed: () {
+                        final n = queue.pauseAll();
+                        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                          SnackBar(content: Text('已暂停 $n 个传输任务')),
+                        );
+                      },
+                      child: const Text('全部暂停'),
+                    ),
+                  if (queue.pausedCount > 0)
+                    TextButton(
+                      onPressed: () {
+                        final n = queue.resumeAll();
+                        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                          SnackBar(content: Text('已继续 $n 个传输任务')),
+                        );
+                      },
+                      child: const Text('全部继续'),
+                    ),
+                  IconButton(
+                    tooltip: '传输限速',
+                    onPressed: () => _pickRateLimit(context),
+                    icon: const Icon(Icons.speed_rounded, size: 20),
+                  ),
                   if (tasks.any((t) => !t.isActive))
                     TextButton(
                       onPressed: queue.clearFinished,
@@ -865,10 +945,19 @@ class TransferQueueSheet extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (task.isActive)
+              if (task.isActive) ...[
+                TextButton(
+                  onPressed: () => transferQueue().pause(task),
+                  child: const Text('暂停'),
+                ),
                 TextButton(
                   onPressed: task.requestCancel,
                   child: const Text('取消'),
+                ),
+              ] else if (task.status == TransferStatus.paused)
+                TextButton(
+                  onPressed: () => transferQueue().resume(task),
+                  child: const Text('继续'),
                 )
               else ...[
                 Text(
@@ -895,16 +984,23 @@ class TransferQueueSheet extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.labelSmall,
           ),
-          if (task.isActive) ...[
+          if (task.isActive || task.status == TransferStatus.paused) ...[
             const SizedBox(height: 4),
             LinearProgressIndicator(
               value: total > 0 ? task.progress : null,
               minHeight: 3,
+              // 暂停时进度条压暗：进度还看得见（"传到哪了"），但不再像在跑。
+              color: task.status == TransferStatus.paused
+                  ? theme.colorScheme.outlineVariant
+                  : null,
             ),
             if (info.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 2),
-                child: Text(info, style: theme.textTheme.labelSmall),
+                child: Text(
+                  task.status == TransferStatus.paused ? '$info · 已暂停' : info,
+                  style: theme.textTheme.labelSmall,
+                ),
               ),
           ],
           if (task.status == TransferStatus.failed &&

@@ -95,7 +95,17 @@ class TransferRestoreSpec {
   }
 }
 
-enum TransferStatus { queued, running, done, failed, canceled }
+enum TransferStatus {
+  queued,
+  running,
+  done,
+  failed,
+  canceled,
+
+  /// 用户主动暂停（285 P2）。与 [canceled] 的区别是**这条还在队列里**：
+  /// 断点/`.part` 保留、恢复时接着传，重启后也恢复成暂停态而不是自动开跑。
+  paused,
+}
 
 /// 单个传输任务。UI 直接监听 [TransferQueue] 的 ChangeNotifier 刷新。
 class TransferTask {
@@ -153,6 +163,9 @@ class TransferTask {
   void requestCancel() {
     if (isActive) cancelToken.cancel();
   }
+
+  /// 是否处于暂停（排队中都可能被暂停：还没开跑的直接不进 `running`）。
+  bool get isPaused => status == TransferStatus.paused;
 }
 
 /// 执行体：返回产物（下载为本地路径 String）；进度通过 onProgress 上报。
@@ -235,8 +248,60 @@ class TransferQueue extends ChangeNotifier {
     return task;
   }
 
+  /// 暂停：在跑的那次传输会被取消（断点保留），排队中的直接转暂停。
+  ///
+  /// 先改状态再取消 token —— 否则 [_run] 的取消分支会把它记成"已取消"。
+  bool pause(TransferTask task) {
+    if (task.status != TransferStatus.queued &&
+        task.status != TransferStatus.running) {
+      return false;
+    }
+    task.status = TransferStatus.paused;
+    task.cancelToken.cancel();
+    task.retryAttempt = 0;
+    notifyListeners();
+    _persist();
+    _syncKeepAlive();
+    return true;
+  }
+
+  /// 暂停所有能暂停的（在跑 + 排队中）。
+  int pauseAll() {
+    var n = 0;
+    for (final task in _tasks) {
+      if (pause(task)) n += 1;
+    }
+    return n;
+  }
+
+  /// 继续：把暂停的放回队列（token 一次性，必须复位，见 [retry] 的注释）。
+  bool resume(TransferTask task) {
+    if (task.status != TransferStatus.paused) return false;
+    task.cancelToken.reset();
+    task.status = TransferStatus.queued;
+    task.errorMessage = null;
+    notifyListeners();
+    _persist();
+    _pump();
+    return true;
+  }
+
+  int resumeAll() {
+    var n = 0;
+    for (final task in _tasks.reversed) {
+      if (resume(task)) n += 1;
+    }
+    return n;
+  }
+
+  int get pausedCount =>
+      _tasks.where((t) => t.status == TransferStatus.paused).length;
+
   void clearFinished() {
-    _tasks.removeWhere((t) => !t.isActive);
+    // 暂停的任务是"用户还留着、待会要继续"的，不属于"已结束"，不能一起清掉。
+    _tasks.removeWhere(
+      (t) => !t.isActive && t.status != TransferStatus.paused,
+    );
     notifyListeners();
     _persist();
   }
@@ -356,9 +421,13 @@ class TransferQueue extends ChangeNotifier {
         current.status = TransferStatus.done;
         break;
       } on TransferCanceledException {
-        current.status = TransferStatus.canceled;
+        // 暂停也走取消这条路（传输层只认取消），但状态要留在 paused。
+        if (current.status != TransferStatus.paused) {
+          current.status = TransferStatus.canceled;
+        }
         break;
       } catch (e) {
+        if (current.status == TransferStatus.paused) break;
         if (current.cancelToken.isCanceled) {
           current.status = TransferStatus.canceled;
           break;
@@ -409,6 +478,8 @@ class TransferQueue extends ChangeNotifier {
             {
               ...task.spec!.toJson(),
               'failed': task.status == TransferStatus.failed,
+              // 暂停态要单独标：恢复时不能自动开跑（否则用户暂停的东西一重启就跑）。
+              'paused': task.status == TransferStatus.paused,
               if (task.errorMessage != null) 'errorMessage': task.errorMessage,
             },
       ];
@@ -436,6 +507,10 @@ class TransferQueue extends ChangeNotifier {
   @visibleForTesting
   Future<void> debugAwaitPersistence() async => _persistInFlight;
 
+  /// 当前真正在跑的个数（测试用）：[pause] 会把状态立刻改成 paused，但那次传输
+  /// 还要等它自己抛取消才算收尾 —— 想断言"暂停已生效"就得看这个，不是看状态。
+  int get debugRunningCount => _running;
+
   /// 恢复上次未完成的传输（284 P1），返回恢复出几条。
   ///
   /// [factory] 用描述重建 runner（service 提供）；[canRestore] 用来过滤已经没法跑的
@@ -445,6 +520,7 @@ class TransferQueue extends ChangeNotifier {
   /// - 上次"排队中/在传"的 → 重新排队（并标 [TransferTask.restored]，UI 显示「已恢复」）；
   /// - 上次"失败"的 → 恢复成失败态（让用户看到并可以「全部重试」），不自动重跑，
   ///   免得一个必失败的任务每次启动都白跑一遍网络。
+  /// - 上次"暂停"的 → 恢复成暂停态（285 P2），等用户点继续。
   /// - 队列里已经有同一件事（同 dedupeKey）→ 跳过，不重复。
   Future<int> restorePending({
     required TransferRunner Function(TransferRestoreSpec spec) factory,
@@ -463,6 +539,7 @@ class TransferQueue extends ChangeNotifier {
       if (canRestore != null && !await canRestore(spec)) continue;
 
       final failed = record['failed'] == true;
+      final paused = record['paused'] == true;
       _seq += 1;
       final task = TransferTask._(
         id: 'r${DateTime.now().microsecondsSinceEpoch}_$_seq',
@@ -473,7 +550,10 @@ class TransferQueue extends ChangeNotifier {
         spec: spec,
       )..restored = true;
       task.runner = factory(spec);
-      if (failed) {
+      if (paused) {
+        // 用户暂停过的：恢复成暂停态，等他自己点继续（不自动开跑）。
+        task.status = TransferStatus.paused;
+      } else if (failed) {
         task.status = TransferStatus.failed;
         task.errorMessage = record['errorMessage'] is String
             ? record['errorMessage']! as String

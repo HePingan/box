@@ -17,6 +17,7 @@ import 'package:xml/xml.dart';
 
 import 'digest_auth.dart';
 import 'remote_storage_models.dart';
+import 'transfer_throttle.dart';
 
 /// 超过这个字符数才把 PROPFIND 解析丢到后台 isolate（见
 /// [WebdavClient.parseListingMaybeIsolated]）。
@@ -373,6 +374,7 @@ class WebdavClient {
     void Function(int received, int total)? onProgress,
     TransferCancelToken? cancel,
     int resumeFrom = 0,
+    TransferThrottle? throttle,
   }) async {
     var canResume =
         resumeFrom > 0 &&
@@ -403,6 +405,7 @@ class WebdavClient {
         : (resp.contentLength ?? -1);
 
     var received = startAt;
+    final startedAt = DateTime.now();
     IOSink? sink;
     try {
       sink = appending
@@ -415,6 +418,11 @@ class WebdavClient {
           sink.add(chunk);
           received += chunk.length;
           onProgress?.call(received, total);
+          // 限速：按"已传字节 vs 已用时间"补等，不是每块睡固定时长（见 TransferThrottle）。
+          final t = throttle;
+          if (t != null) {
+            await t.limit(received, DateTime.now().difference(startedAt));
+          }
         }
       } else if (resp.bodyText != null) {
         final bytes = utf8.encode(resp.bodyText!);
@@ -444,15 +452,23 @@ class WebdavClient {
     String relativePath, {
     void Function(int sent, int total)? onProgress,
     TransferCancelToken? cancel,
+    TransferThrottle? throttle,
   }) async {
     final length = await srcFile.length();
 
     Stream<List<int>> body() {
       var sent = 0;
-      return srcFile.openRead().map((chunk) {
+      final startedAt = DateTime.now();
+      // asyncMap（不是 map）：限速要 await，而 map 的回调是同步的。
+      // 仍然是顺序处理，不会打乱分块顺序。
+      return srcFile.openRead().asyncMap((chunk) async {
         cancel?.throwIfCanceled();
         sent += chunk.length;
         onProgress?.call(sent, length);
+        final t = throttle;
+        if (t != null) {
+          await t.limit(sent, DateTime.now().difference(startedAt));
+        }
         return chunk;
       });
     }

@@ -20,6 +20,7 @@ import '../data/remote_thumbnail_cache.dart';
 import '../data/video_frame_channel.dart';
 import '../domain/exif_thumbnail.dart';
 import '../domain/remote_storage_models.dart';
+import '../domain/transfer_throttle.dart';
 import '../domain/webdav_client.dart';
 import 'playback_relay.dart';
 import 'thumbnail_loader.dart';
@@ -767,6 +768,7 @@ class RemoteStorageService {
         onProgress: onProgress,
         cancel: cancel,
         resumeFrom: resumeFrom,
+        throttle: _throttle,
       );
       await temp.rename(target.path);
       await _deleteQuietly(metaFile);
@@ -1000,6 +1002,7 @@ class RemoteStorageService {
         remotePath,
         onProgress: onProgress,
         cancel: cancel,
+        throttle: _throttle,
       );
     } finally {
       _inFlightUploads.remove(remotePath);
@@ -1397,6 +1400,27 @@ class RemoteStorageService {
   }
 
   /// 视频首帧开关（284 D8）。
+  // ------------------------------------------------- 传输限速（285 P2）
+
+  int _transferRateLimit = 0;
+
+  /// 当前限速（字节/秒）；0 = 不限速。
+  int get transferRateLimitBytesPerSecond => _transferRateLimit;
+
+  /// 每次传输现建一个限速器：它按"已传字节 vs 已用时间"补等（见 [TransferThrottle]），
+  /// 每个任务各算一份时间账，共用一份反而会互相顶账。
+  TransferThrottle? get _throttle =>
+      _transferRateLimit > 0 ? TransferThrottle(_transferRateLimit) : null;
+
+  Future<void> loadTransferRateLimit() async {
+    _transferRateLimit = await _store.loadTransferRateLimit();
+  }
+
+  Future<void> setTransferRateLimit(int bytesPerSecond) async {
+    _transferRateLimit = bytesPerSecond < 0 ? 0 : bytesPerSecond;
+    await _store.saveTransferRateLimit(_transferRateLimit);
+  }
+
   Future<bool> loadVideoThumbnailsEnabled() =>
       _store.loadVideoThumbnailsEnabled();
 
