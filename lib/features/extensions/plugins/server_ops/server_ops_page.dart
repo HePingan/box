@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:box/features/extensions/plugins/server_ops/files_tab.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_tab.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_diagnostics.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 import 'package:box/features/extensions/plugins/server_ops/terminal_tab.dart';
@@ -615,9 +616,29 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
       return;
     }
     if (!mounted) return;
+    final finalResults = _annotateAuthFailures(results);
+    // A9：体检是"人主动跑的一次真实请求"，最该留在日志里 —— 截图时它就在面板上。
+    //
+    // 先记录再 setState：记录在 setState 之后的话，这一帧不会带上新日志，
+    // 面板要等下一次重建才出现刚跑的结果（真机上体验就是"点了没反应"）。
+    // 详情的形状是 `[标签] 人话结论`：与体检行自己的 `标签：结论` 区分开，
+    // 免得同一句话在面板上出现两遍。
+    for (final r in finalResults) {
+      serverOpsRequestLog.record(
+        OpsRequestRecord(
+          entry: '体检',
+          serverId: widget.server.id,
+          serverLabel: widget.server.label,
+          ok: r.ok,
+          detail: '[${r.label}] ${r.detail}',
+          duration: r.duration ?? Duration.zero,
+          at: DateTime.now(),
+        ),
+      );
+    }
     setState(() {
       _testing = false;
-      _probeResults = _annotateAuthFailures(results);
+      _probeResults = finalResults;
     });
   }
 
@@ -648,6 +669,46 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
   }
 
   /// 一条体检结果：图标 + 名称 + 结论。结论必须带状态码/原因，不能只说"失败"。
+  /// A9：最近请求（只记元数据，不记口令 —— 见 OpsRequestRecord 的约定）。
+  ///
+  /// 为什么放这儿：真机出问题时用户会截这一屏，以前截图里只有一句报错，
+  /// 现在自带"哪台机器 / 哪个入口 / 成不成 / 花了多久"。
+  List<Widget> _recentRequests(ThemeData theme) {
+    final items = serverOpsRequestLog.items;
+    if (items.isEmpty) return const [];
+    const shown = 8;
+    final visible = items.take(shown).toList(growable: false);
+    return [
+      const SizedBox(height: 10),
+      Row(
+        children: [
+          Text(
+            '最近请求（共 ${items.length} 条，只记元数据）',
+            style: theme.textTheme.labelMedium,
+          ),
+        ],
+      ),
+      const SizedBox(height: 4),
+      for (final r in visible)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 2),
+          child: Text(
+            '${r.at.hour.toString().padLeft(2, '0')}:'
+            '${r.at.minute.toString().padLeft(2, '0')}:'
+            '${r.at.second.toString().padLeft(2, '0')} · '
+            '${r.entry} · ${r.serverLabel} · ${r.ok ? 'OK' : '失败'} · '
+            '${r.duration.inMilliseconds} ms · ${r.detail}',
+            key: ValueKey('ops-recent-${r.entry}-${r.at.microsecondsSinceEpoch}'),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: r.ok
+                  ? theme.colorScheme.outline
+                  : theme.colorScheme.error,
+            ),
+          ),
+        ),
+    ];
+  }
+
   List<Widget> _probeRow(ThemeData theme, OpsProbeResult r) => [
         Padding(
           padding: const EdgeInsets.only(top: 6),
@@ -791,6 +852,7 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
                 ],
               ),
               for (final r in _probeResults) ..._probeRow(theme, r),
+              ..._recentRequests(theme),
               if (_error != null) ...[
                 const SizedBox(height: 8),
                 Text(

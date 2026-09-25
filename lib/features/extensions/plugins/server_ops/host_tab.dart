@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_models.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_sparkline.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 
@@ -62,9 +63,26 @@ class _ServerOpsHostTabState extends State<ServerOpsHostTab> {
   }
 
   /// 刷新一次（下拉刷新与右上角按钮都走它）。
+  /// A9：快照那个端点**两台机器共用**（边缘机上的静态文件），所以记录里如实写成
+  /// "快照端点"而不是当前这台 —— 否则面板上会出现"175 的快照成功了"这种误导。
+  void _logSnapshot(bool ok, String detail, DateTime started) {
+    serverOpsRequestLog.record(
+      OpsRequestRecord(
+        entry: '快照',
+        serverId: 'snapshot',
+        serverLabel: '快照端点（两台共用）',
+        ok: ok,
+        detail: detail,
+        duration: DateTime.now().difference(started),
+        at: started,
+      ),
+    );
+  }
+
   Future<void> refresh() async {
     if (!mounted) return;
     setState(() => _loading = true);
+    final started = DateTime.now();
     try {
       final snapshot = await serverOpsHostService.fetch();
       final histories = await serverOpsHostService.recordSample(snapshot);
@@ -76,18 +94,21 @@ class _ServerOpsHostTabState extends State<ServerOpsHostTab> {
         _loading = false;
         _histories = histories;
       });
+      _logSnapshot(true, '${snapshot.hosts.length} 台机器', started);
     } on HostFetchException catch (e) {
       if (!mounted) return;
       setState(() {
         _error = e.message;
         _loading = false;
       });
+      _logSnapshot(false, e.message, started);
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _error = '$e';
         _loading = false;
       });
+      _logSnapshot(false, '$e', started);
     }
   }
 

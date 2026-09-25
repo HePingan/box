@@ -23,10 +23,14 @@ class OpsProbeResult {
     required this.label,
     required this.ok,
     required this.detail,
+    this.duration,
   });
 
   final String label;
   final bool ok;
+
+  /// 这一项花了多久（A9：面板上要能看到"是哪一项慢"，而不是只有一个总数）。
+  final Duration? duration;
   final String detail;
 }
 
@@ -48,10 +52,23 @@ Future<List<OpsProbeResult>> runOpsProbes({
 }) async {
   final probe = terminalProbe ?? probeOpsTerminal;
   return <OpsProbeResult>[
-    await probeOpsFiles(files),
-    await probe(terminalUrl, user, password),
-    await probeOpsSnapshot(hosts),
+    await _timed(() => probeOpsFiles(files)),
+    await _timed(() => probe(terminalUrl, user, password)),
+    await _timed(() => probeOpsSnapshot(hosts)),
   ];
+}
+
+/// 给探针结果补上耗时（探针函数本身不关心计时）。
+Future<OpsProbeResult> _timed(Future<OpsProbeResult> Function() run) async {
+  final sw = Stopwatch()..start();
+  final r = await run();
+  sw.stop();
+  return OpsProbeResult(
+    label: r.label,
+    ok: r.ok,
+    detail: r.detail,
+    duration: sw.elapsed,
+  );
 }
 
 /// 按**一台服务器**跑三项体检（B1：诊断跟着当前选中的机器走）。

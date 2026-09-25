@@ -10,6 +10,7 @@ import 'package:box/features/extensions/plugins/server_ops/host_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_diagnostics.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_page.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 import 'package:flutter/material.dart';
@@ -67,7 +68,10 @@ class _Hosts extends HostService {
 }
 
 void main() {
-  tearDown(() => debugSetServerOpsRuntime());
+  tearDown(() {
+    debugSetServerOpsRuntime();
+    debugSetOpsRequestLog();
+  });
 
   group('三项体检', () {
     test('文件通道：列出根目录就算通，结论报条数', () async {
@@ -290,6 +294,112 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(find.textContaining('那台的'), findsNothing);
+    });
+  });
+
+  group('最近请求（A9）', () {
+    testWidgets('跑完体检，面板上留下"哪台机器 / 哪个入口 / 成不成 / 多久"', (tester) async {
+      debugSetServerOpsRuntime(
+        hostService: _Hosts(
+          snapshot: const HostSnapshot(
+            hosts: [HostEntry(id: 'hpa888', name: '阿里云')],
+          ),
+        ),
+        settings: _settings,
+        filesService: _Files(entries: [_file('root.txt')]),
+        terminalProbe: (url, user, password) async => const OpsProbeResult(
+          label: '终端（ttyd）',
+          ok: false,
+          detail: '认证失败（401）：口令不对',
+        ),
+      );
+      await tester.pumpWidget(const MaterialApp(home: ServerOpsPage()));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byTooltip('设置'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.widgetWithText(ListTile, '阿里云 · 主服务端'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.ensureVisible(find.text('测试连接'));
+      await tester.pump();
+      await tester.tap(find.text('测试连接'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // 条数不写死：页面加载时"快照"那项也会记一条，写死就是脆用例。
+      expect(
+        serverOpsRequestLog.items.where((r) => r.entry == '体检'),
+        hasLength(3),
+      );
+      expect(find.textContaining('最近请求（共'), findsOneWidget);
+      expect(find.textContaining('体检 · 阿里云 · 主服务端 · OK'), findsWidgets);
+      expect(find.textContaining('体检 · 阿里云 · 主服务端 · 失败'), findsOneWidget);
+      // 面板要能说清是哪一项失败的（[标签] 人话结论）。
+      expect(find.textContaining('[终端（ttyd）]'), findsWidgets);
+    });
+
+    testWidgets('口令绝不出现在面板上（会被截图/共享屏幕）', (tester) async {
+      debugSetServerOpsRuntime(
+        hostService: _Hosts(
+          snapshot: const HostSnapshot(
+            hosts: [HostEntry(id: 'hpa888', name: '阿里云')],
+          ),
+        ),
+        settings: _settings,
+        filesService: _Files(entries: [_file('root.txt')]),
+        terminalProbe: (url, user, password) async => const OpsProbeResult(
+          label: '终端（ttyd）',
+          ok: false,
+          detail: '认证失败（401）：口令不对',
+        ),
+      );
+      await tester.pumpWidget(const MaterialApp(home: ServerOpsPage()));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byTooltip('设置'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.widgetWithText(ListTile, '阿里云 · 主服务端'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final fields = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      );
+      // 用例里的那把口令是 'pw'（见 ops_test_servers.dart）；填进去、跑一遍体检，
+      // 面板与日志里都不该出现它。
+      await tester.enterText(fields.at(3), 'sekrit-pw-please-hide');
+
+      await tester.ensureVisible(find.text('测试连接'));
+      await tester.pump();
+      await tester.tap(find.text('测试连接'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.textContaining('最近请求（共'), findsOneWidget);
+      // 只看面板**渲染出来的那些行**：输入框里当然有用户刚打的字（那是他自己输入的，
+      // 不是我们记下来的），要守的是"记录与面板里不出现它"。
+      final rows = tester
+          .widgetList<Text>(find.byWidgetPredicate((w) =>
+              w is Text &&
+              w.key is ValueKey<String> &&
+              (w.key! as ValueKey<String>).value.startsWith('ops-recent-')))
+          .map((t) => t.data ?? '')
+          .toList();
+      expect(rows, isNotEmpty, reason: '面板本身要渲染出来，否则这条守卫是空的');
+      for (final line in rows) {
+        expect(line, isNot(contains('sekrit-pw-please-hide')), reason: line);
+      }
+      final probes =
+          serverOpsRequestLog.items.where((r) => r.entry == '体检').toList();
+      expect(probes, hasLength(3), reason: '口令那条不能挡住记录本身');
+      for (final r in serverOpsRequestLog.items) {
+        expect(r.summary, isNot(contains('sekrit-pw-please-hide')));
+      }
     });
   });
 

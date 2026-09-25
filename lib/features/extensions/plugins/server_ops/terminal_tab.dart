@@ -26,6 +26,7 @@ import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
 import 'package:box/features/extensions/plugins/server_ops/terminal_controls.dart';
 
 /// 终端页要用的 Basic 凭据；**没口令时返回 null**，界面改走"先去设置里填"的引导。
@@ -70,6 +71,9 @@ class _ServerOpsTerminalTabState extends State<ServerOpsTerminalTab> {
   bool _ctrlArmed = false;
 
   Timer? _watchdog;
+
+  /// A9：本次加载的开始时刻（算耗时用）。
+  DateTime? _loadStarted;
 
   @override
   void initState() {
@@ -118,6 +122,7 @@ class _ServerOpsTerminalTabState extends State<ServerOpsTerminalTab> {
     }
     _error = null;
     _loading = true;
+    _loadStarted = DateTime.now();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF111111))
@@ -148,6 +153,7 @@ class _ServerOpsTerminalTabState extends State<ServerOpsTerminalTab> {
               // 页面活了就撤掉断线提示：上一次的失败不该挂在新页面上。
               _error = null;
             });
+            _logTerminal(true, '页面已加载');
             _applyFontSize();
           },
           onWebResourceError: (error) {
@@ -159,6 +165,7 @@ class _ServerOpsTerminalTabState extends State<ServerOpsTerminalTab> {
               _loading = false;
               _error = terminalErrorHint(error);
             });
+            _logTerminal(false, terminalErrorHint(error));
           },
         ),
       )
@@ -172,7 +179,29 @@ class _ServerOpsTerminalTabState extends State<ServerOpsTerminalTab> {
         _loading = false;
         _error = terminalWatchdogHint;
       });
+      _logTerminal(false, terminalWatchdogHint);
     });
+  }
+
+  /// A9：终端页的结果也进请求日志。
+  ///
+  /// 终端是 WebView，**拿不到状态码**（除了 401 那种由 WebView 内部握手的），
+  /// 所以这里记的是"页面已加载 / 失败原因 / 20 秒超时"这三种人话结论 —— 正是真机
+  /// 反馈里最缺的那一格。
+  void _logTerminal(bool ok, String detail) {
+    final s = widget.settings.currentServer;
+    final started = _loadStarted ?? DateTime.now();
+    serverOpsRequestLog.record(
+      OpsRequestRecord(
+        entry: '终端',
+        serverId: s.id,
+        serverLabel: s.label,
+        ok: ok,
+        detail: detail,
+        duration: DateTime.now().difference(started),
+        at: started,
+      ),
+    );
   }
 
   void _reload() {

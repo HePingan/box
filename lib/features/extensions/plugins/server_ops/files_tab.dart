@@ -20,6 +20,7 @@ import 'package:open_filex/open_filex.dart';
 
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_transfer_queue.dart';
@@ -86,6 +87,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
       if (!silent) _loading = true;
       _error = null;
     });
+    final started = DateTime.now();
     try {
       final entries = await _service.list(_path);
       if (!mounted) return;
@@ -93,13 +95,34 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
         _entries = entries;
         _loading = false;
       });
+      _log('文件', true, '列举 $_path：${entries.length} 项', started);
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _error = serverOpsErrorMessage(e);
         _loading = false;
       });
+      _log('文件', false, serverOpsErrorMessage(e), started);
     }
+  }
+
+  /// A9：把一次操作的元数据记进共享请求日志。
+  ///
+  /// **只记 入口 / 机器 / 行不行 / 人话结论 / 耗时** —— 口令不进这里（面板会被截图、
+  /// 会被共享屏幕，口令出现一次就等于泄露一次；`OpsRequestRecord` 的约定有用例守着）。
+  void _log(String entry, bool ok, String detail, DateTime started) {
+    final s = widget.settings.currentServer;
+    serverOpsRequestLog.record(
+      OpsRequestRecord(
+        entry: entry,
+        serverId: s.id,
+        serverLabel: s.label,
+        ok: ok,
+        detail: detail,
+        duration: DateTime.now().difference(started),
+        at: started,
+      ),
+    );
   }
 
   void _enter(RemoteStorageEntry entry) {
@@ -139,15 +162,18 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
   Future<void> _runTask(
     Future<void> Function() action, {
     String? success,
+    String op = '文件操作',
   }) async {
     if (!mounted) return;
     setState(() {
       _busy = true;
       _error = null;
     });
+    final started = DateTime.now();
     try {
       await action();
       if (!mounted) return;
+      _log(op, true, success ?? '已完成', started);
       _toast(success ?? '已完成');
       setState(() {
         _busy = false;
@@ -156,6 +182,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
       await _load(silent: true);
     } catch (e) {
       if (!mounted) return;
+      _log(op, false, serverOpsErrorMessage(e), started);
       setState(() {
         _busy = false;
         _progressText = '';
@@ -186,6 +213,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
     await _runTask(
       () => _service.createDirectory(target),
       success: '已创建 $name',
+      op: '新建文件夹',
     );
   }
 
@@ -210,6 +238,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
 
   /// 串行上传：一次一个（并发=1），每项可取消，中间失败继续下一项。
   Future<void> _runUploadQueue(List<OpsPickedFile> files) async {
+    final started = DateTime.now();
     final cancel = TransferCancelToken();
     if (!mounted) return;
     setState(() {
@@ -250,6 +279,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
       _progressText = '';
       _cancelToken = null;
     });
+    _log('上传', result.allSucceeded, result.summary('上传'), started);
     _toast(result.summary('上传'), error: !result.allSucceeded);
     await _load(silent: true);
   }
@@ -306,6 +336,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
     String target, {
     required bool copy,
   }) async {
+    final started = DateTime.now();
     final cancel = TransferCancelToken();
     if (!mounted) return;
     setState(() {
@@ -330,10 +361,12 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
           },
         );
         if (!mounted) return;
+        _log('复制', true, '已复制到 /$target', started);
         _toast('已复制到 /$target');
       } else {
         await _service.moveEntry(entry.path, target);
         if (!mounted) return;
+        _log('移动', true, '已移动到 /$target', started);
         _toast('已移动到 /$target');
       }
     } catch (e) {
@@ -409,6 +442,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
       _progressText = '';
     });
 
+    final started = DateTime.now();
     final cancel = TransferCancelToken();
     final result = await runOpsSerialQueue(
       total: targets.length,
@@ -426,6 +460,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
       _progressText = '';
       _exitSelectingLocked();
     });
+    _log('批量删除', result.allSucceeded, result.summary('删除'), started);
     _toast(result.summary('删除'), error: !result.allSucceeded);
     await _load(silent: true);
   }
@@ -455,6 +490,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
         }
       },
       success: '已下载 ${entry.name}',
+      op: '下载',
     );
   }
 
@@ -493,6 +529,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
     await _runTask(
       () => _service.rename(entry.path, target),
       success: '已重命名为 $name',
+      op: '重命名',
     );
   }
 
@@ -509,6 +546,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
     await _runTask(
       () => _service.delete(entry.path),
       success: '已删除 ${entry.name}',
+      op: '删除',
     );
   }
 
