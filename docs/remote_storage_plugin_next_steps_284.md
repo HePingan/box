@@ -229,3 +229,51 @@ D6 与 D7 落在**同一个提交**：两者改的是同一批文件（models/se
    `exists()` 会返回 false，表现为"目录明明在却又被创建了一次"。
 5. 假服务器匹配路径一律用**已解码的** `uri.pathSegments`（中文名用 `uri.path` 比不了，
    第 4 条与这条一起把 D9 的两个用例卡了两轮）。
+
+---
+
+## 13. D8 执行记录（视频首帧缩略图，拍板「自写 Android 原生抽帧」）
+
+| 项 | 提交 | 实施要点与偏差 |
+|---|---|---|
+| D8 视频首帧 | `deeae7e` | 原生：`VideoFrameExtractor.kt`（`MediaMetadataRetriever` + MethodChannel `top.hpa888.box/remote_storage_video_frame`），`MainActivity.configureFlutterEngine` 注册；Dart：`data/video_frame_channel.dart`（可注入通道、失败一律 null）；判定与键：`isVideoThumbnailCandidate` / `videoThumbnailCacheKey`；`service.videoThumbnailBytes` 带负缓存与账户清理；列表视频行改用首帧 + 独立开关 |
+
+### 三个决定与理由
+
+1. **走原生，不引第三方包**（你拍的板）：`MediaMetadataRetriever` 是系统自带、AGP/compileSdk
+   升级不会甩下我们；`video_thumbnail` 那类包更新停在 2023，和 AGP 8.11 / compileSdk 36 组合
+   有构建风险。代价是自己维护约 110 行 Kotlin。
+2. **不看文件大小**：抽帧的代价取决于 moov 在哪、关键帧离目标多近，与文件总大小基本无关
+   ——`OPTION_CLOSEST_SYNC` 只解关键帧，原生还能直接对 http(s) URL 工作（内部按需 Range），
+   所以远端视频不必先整段下载。这一条与图片缩略图（≤3MB 才取）的判断逻辑不同。
+3. **需要中继的账户直接跳过**：中继是给播放用的长连接（拍板7），为一张缩略图开一条会话不
+   划算；摘要认证（C5）账户同理——原生只带 Basic 头，必然 401，记一次负缓存就不再重试。
+
+### 四条硬约束（写在原生代码注释里）
+
+- **绝不让调用方失败**：非 Android / 服务端不支持 Range / 编码不认识 / 认证不对 —— 这些都是
+  "这张图没有"，不是错误，一律回 `null`，列表回退通用图标。
+- **不许卡主线程**：抽取放单线程池，抽完 `Handler(Looper.getMainLooper())` 回 result。
+- **一定要 `release()`**：retriever 持有解码器与 fd，不释放会随滚动累积成"打不开更多文件"。
+- **空 url 不打原生**：`setDataSource("")` 会抛 `IllegalArgumentException`，Dart 侧先挡掉。
+
+### 与图片缩略图分开的两个开关
+
+视频首帧要走过一次网络，属于"会花流量"的那类，所以单独一个偏好
+（`remoteStorage.videoThumbnailsEnabled`，默认开，菜单项写明"会消耗少量流量"），
+用户想省流量时能单独关掉它而保留图片缩略图。测试里专门有一条断言"关掉图片开关不影响视频首帧"。
+
+### 测试（+15，插件目录 453 → 468）
+
+- 判定/缓存键 2：视频扩展名才算候选、目录不算；缓存键与图片键区分（同路径不能互相覆盖）。
+- 通道 5：拿到字节且参数按约定传下去、空字节/null 都当拿不到、`PlatformException` 吞掉、
+  通道不存在静默降级（非 Android）、空 url 不打原生。
+- service 4：https+Basic 带上认证头走原生、需要中继的账户不打原生、失败负缓存只打一次、
+  删账户清负缓存后重新会再试。
+- widget 4：默认开显示首帧、取不到回退图标、开关关掉一个请求都不发、图片开关不影响它。
+
+### 这一项没法在机器上"看效果"
+
+原生抽帧的效果只能在真机上看（跟 EXIF 命中率同理）。机器上能验的是：
+Kotlin 编译过、MethodChannel 传参/降级路径正确、列表接线正确。**装上 284 包后**在「更多」
+里确认：视频行有首帧、关掉开关后变回图标。
