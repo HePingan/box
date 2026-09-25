@@ -169,6 +169,10 @@ class _ServiceMonitorPageState extends State<ServiceMonitorPage> {
             loading: _loading,
             error: _error,
             ageText: monitorAgeText(_shownAt),
+            // 快照太旧（287 D4）：看**服务端的采样时刻**，不是本地拉取时刻 ——
+            // 拉取成功但内容两天没变，那正是"采样链断了"的样子。
+            stale: isMonitorSnapshotStale(snapshot.generatedAt),
+            snapshotAgeText: monitorAgeText(snapshot.generatedAt),
           ),
           const SizedBox(height: 12),
           _SummaryCard(
@@ -261,22 +265,30 @@ class _StatusBanner extends StatelessWidget {
     required this.loading,
     required this.error,
     required this.ageText,
+    this.stale = false,
+    this.snapshotAgeText,
   });
 
   final bool loading;
   final String? error;
   final String? ageText;
 
+  /// 快照比阈值还旧（287 D4）。刷新中/失败另有横幅，那两种优先。
+  final bool stale;
+
+  /// 服务端采样时刻的"多久之前"（陈旧横幅里用这个，别用本地拉取时刻）。
+  final String? snapshotAgeText;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final age = ageText;
     if (error != null) {
-      final stale = age == null ? '' : ' · 显示的是上次的内容（$age）';
+      final suffix = age == null ? '' : ' · 显示的是上次的内容（$age）';
       return _Banner(
         color: theme.colorScheme.errorContainer,
         icon: Icons.warning_amber_rounded,
-        text: '刷新失败：$error$stale',
+        text: '刷新失败：$error$suffix',
       );
     }
     if (loading) {
@@ -285,6 +297,15 @@ class _StatusBanner extends StatelessWidget {
         color: theme.colorScheme.surfaceContainerHighest,
         icon: Icons.sync_rounded,
         text: '正在刷新…$suffix',
+      );
+    }
+    if (stale) {
+      final sampled = snapshotAgeText;
+      final suffix = sampled == null ? '' : '：内容是 $sampled 采样的';
+      return _Banner(
+        color: const Color(0xFFFFF3CD),
+        icon: Icons.schedule_rounded,
+        text: '快照已经很久没更新了$suffix。采样可能断了（服务端每 2 分钟一次）。',
       );
     }
     return const SizedBox.shrink();

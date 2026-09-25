@@ -231,6 +231,26 @@ String? monitorAgeText(DateTime? generatedAt, {DateTime? now}) {
   return '${delta.inDays} 天前';
 }
 
+/// 快照"太旧"的阈值（287 D4）。
+///
+/// 采样链是 cron 每 2 分钟一次，所以 10 分钟 = **连续 5 次没动静**才提醒：
+/// 偶发抖动不当故障，真断了也不会静默 —— 静态快照最大的风险就是没人发现它不再更新。
+const Duration kSnapshotStaleAfter = Duration(minutes: 10);
+
+/// 快照是否已经陈旧到"采样可能断了"。
+///
+/// 时间未知（null）时**不下结论**返回 false：界面在那里另有"时间未知"要说，
+/// 不能把"不知道"显示成"断了"。
+bool isMonitorSnapshotStale(
+  DateTime? generatedAt, {
+  DateTime? now,
+  Duration staleAfter = kSnapshotStaleAfter,
+}) {
+  if (generatedAt == null) return false;
+  final delta = (now ?? DateTime.now()).difference(generatedAt.toLocal());
+  return delta > staleAfter;
+}
+
 String monitorPingText(int? pingMs) => pingMs == null ? '—' : '$pingMs ms';
 
 /// 可用率文案：保留两位以内的小数，整数不写小数点（100% 而不是 100.00%）。
