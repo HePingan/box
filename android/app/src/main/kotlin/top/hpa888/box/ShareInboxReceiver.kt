@@ -16,7 +16,7 @@ import java.io.File
  * 应用缓存目录，Dart 侧就能复用已有的"本地文件上传"通路（含队列/续传/落盘），
  * 不需要为分享单独写一套流式上传。
  *
- * 只收图片与视频（`image/*`、`video/*`，见 AndroidManifest 的 intent-filter）：
+ * 只收图片与视频（mime 前缀 image/ 与 video/，见 AndroidManifest 的 intent-filter）：
  * 分享文本/任意文件没有明确落点，出现在候选里只会让用户困惑。
  *
  * 生命周期：冷启动时 Intent 在 Dart 就绪前就到了（此时 Dart 侧 handler 还没挂），
