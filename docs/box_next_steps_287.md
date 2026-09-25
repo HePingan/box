@@ -101,3 +101,43 @@
 `flutter analyze --no-fatal-infos`（`flutter analyze` 只要有 info 就退出非零）。本轮按正确口径复量时
 才发现 286 的 lint 清理里把 map 键写成 `?key`（`invalid_null_aware_operator`，warning，会让 CI 红），
 已修（`776d48f`）。**以后报 analyze 必须用 CI 同款命令 + `set -o pipefail`，并分开报 info/warning/error 三个数。**
+
+## 8. 宿主侧 H2 / H3 执行记录
+
+### H2 安全巡检（已上线）
+
+- 脚本 `/usr/local/sbin/security-patrol.py`（cron `30 8 * * *`，日志 `/var/log/security-patrol.log`）。
+  检查项：sshd 失败登录（24h）、监听端口变化（本机 + hpa888）、磁盘/内存/swap、
+  待安装更新（本机 + hpa888）、证书剩余天数（读采样快照）、边缘机 nginx 配置哈希。
+- **只在异常时报，且"同一件事不天天重复"**：每条检查记住上次状态（`/var/lib/security-patrol/state.json`），
+  只有"档位变化/明显增长"才发飞书。`--dry-run` **不落状态**（否则试跑一次就把当天告警自己吃掉了），
+  `--test` 强制发一条自检。
+- 第一次真跑就抓到两件真事：**24 小时内 2553 次 ssh 失败登录**（主要来源 51.89.42.211 一家 2233 次）、
+  **本机 52 个待安装更新**。已按设计发出。
+- 过程中修掉两个自己的 bug：① 远程检查用 `ssh host bash -lc "a b"` 传参会被拆散 →
+  一律改走 `ssh host 'bash -s' < 脚本`；② 见上，dry-run 不该消费状态。
+
+### H3 Kuma 告警入口（已切换到 Hermes 排查）
+
+现状链路：`Kuma → 边缘 nginx（随机路径即密钥，路径不变）→ ssh 隧道 127.0.0.1:3013 → 175 的
+kuma 中继 → 起一次 agent 排查（hermes chat -Q -q，带 host-monitoring-and-alerting 技能）→ 结论发飞书`。
+中继只监听回环、**一次只跑一个排查**（忙时原样转达，不丢消息、不并发起一堆 agent）、
+排查失败就如实说"本次没能起排查"而不是假装成功。
+
+为什么没走"网关内的原生 webhook 路由"：Hermes 的 webhook 路由要求每个 POST 带 HMAC 签名
+（Kuma 不会算），而让网关加载 webhook 平台**必须重启网关** —— 从 agent 自己的会话里重启会把
+发起命令的自己杀掉（有护栏拦着，这是对的）。kuma-alert 路由已经配好（`hermes webhook list` 可见），
+等网关下次重启/重启机器后可直接使用，两条路不冲突。cron 的"监控脚本变化检测"模式也试过：
+派发停在 pending（只有 claim 没有执行），所以没采用。
+
+过程中的三件如实说明：
+1. `hermes webhook subscribe` **会把密钥打到屏幕上**，我照做了 → 那次的密钥当场轮换作废
+   （共轮换两次，第二次是我自己 `print` 原文导致的）。现在密钥只存 `/root/.secrets/kuma-webhook-secret`（600）。
+2. 顺带修了一个环境问题：venv 里 `prompt_toolkit` 是残缺安装（缺 `formatted_text/__init__.py`），
+   导致 `hermes chat` 直接报 ModuleNotFoundError → 重装为 3.0.53 后正常。
+3. 旧的 `kuma-relay.service`（hpa888:3011，直接 `hermes send` 裸转发）已 **stop + disable**，
+   单元文件与配置备份都留着，回滚只需 `systemctl enable --now kuma-relay`。
+
+验证：向公网随机路径 POST 真实形状的 Kuma 告警 → HTTP 200、边缘访问日志有记录、
+告警落盘 `/var/lib/kuma-alert/last.json`、中继起排查并投递飞书（自检消息若干条，
+都是这次联调发出来的）。
