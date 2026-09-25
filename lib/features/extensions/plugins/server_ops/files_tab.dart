@@ -46,8 +46,23 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
   String? _error;
   String _progressText = '';
 
+  // ── A3：排序 / 过滤 / 多选 ──────────────────────────────────────
+  OpsSortMode _sortMode = OpsSortMode.name;
+  bool _sortDescending = false;
+  String _filter = '';
+  bool _selecting = false;
+  final Set<String> _selected = <String>{};
+
   /// A2/A4：当前可取消的传输（null = 当前操作不可取消）。
   TransferCancelToken? _cancelToken;
+
+  /// 过滤 + 排序后的可见列表（`_entries` 始终是服务端返回的本地全量）。
+  List<RemoteStorageEntry> get _visibleEntries =>
+      ServerOpsFilesService.sortEntries(
+        ServerOpsFilesService.filterEntries(_entries, _filter),
+        _sortMode,
+        descending: _sortDescending,
+      );
 
   @override
   void initState() {
@@ -93,6 +108,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
       _path = entry.path;
       _entries = const [];
       _error = null;
+      _exitSelectingLocked();
     });
     _load();
   }
@@ -104,6 +120,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
       _path = parent;
       _entries = const [];
       _error = null;
+      _exitSelectingLocked();
     });
     _load();
   }
@@ -114,6 +131,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
       _path = path;
       _entries = const [];
       _error = null;
+      _exitSelectingLocked();
     });
     _load();
   }
@@ -239,6 +257,85 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
 
   void _cancelCurrent() {
     _cancelToken?.cancel();
+  }
+
+  // ── A3：多选与批量删除 ────────────────────────────────────────
+
+  void _startSelecting(RemoteStorageEntry entry) {
+    setState(() {
+      _selecting = true;
+      _selected.add(entry.path);
+    });
+  }
+
+  void _toggleSelected(RemoteStorageEntry entry) {
+    setState(() {
+      if (!_selected.remove(entry.path)) {
+        _selected.add(entry.path);
+      }
+      if (_selected.isEmpty) _selecting = false;
+    });
+  }
+
+  void _exitSelecting() {
+    setState(_exitSelectingLocked);
+  }
+
+  /// 供 setState 内复用（已持有 setState 时不能嵌套调用 setState）。
+  void _exitSelectingLocked() {
+    _selecting = false;
+    _selected.clear();
+  }
+
+  void _selectAllVisible() {
+    setState(() {
+      _selected
+        ..clear()
+        ..addAll(_visibleEntries.map((e) => e.path));
+    });
+  }
+
+  /// 批量删除：保留二次确认（文案写明不可恢复），串行执行、失败不打断整批。
+  Future<void> _deleteSelected() async {
+    final targets = _entries
+        .where((e) => _selected.contains(e.path))
+        .toList(growable: false);
+    if (targets.isEmpty) return;
+    final hasDirectory = targets.any((e) => e.isDirectory);
+    final ok = await _confirm(
+      title: '删除 ${targets.length} 项',
+      message: hasDirectory
+          ? '选中的 ${targets.length} 项（目录内所有内容将一并删除）将被删除，'
+              '且无法恢复。'
+          : '选中的 ${targets.length} 项将被删除，且无法恢复。',
+    );
+    if (ok != true) return;
+    if (!mounted) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _progressText = '';
+    });
+
+    final cancel = TransferCancelToken();
+    final result = await runOpsSerialQueue(
+      total: targets.length,
+      cancel: cancel,
+      onStart: (i) {
+        if (!mounted) return;
+        setState(() => _progressText = '删除中 第 ${i + 1}/${targets.length} 项');
+      },
+      task: (i) => _service.delete(targets[i].path),
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _progressText = '';
+      _exitSelectingLocked();
+    });
+    _toast(result.summary('删除'), error: !result.allSucceeded);
+    await _load(silent: true);
   }
 
   // ── A8：下载与下载缓存 ────────────────────────────────────────
@@ -428,6 +525,23 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
           onUp: _goUp,
           onRefresh: () => _load(),
         ),
+        if (_selecting)
+          _SelectionBar(
+            count: _selected.length,
+            total: _visibleEntries.length,
+            onExit: _exitSelecting,
+            onSelectAll: _selectAllVisible,
+            onDelete: _selected.isEmpty ? null : _deleteSelected,
+          )
+        else
+          _SortFilterBar(
+            mode: _sortMode,
+            descending: _sortDescending,
+            onMode: (mode) => setState(() => _sortMode = mode),
+            onToggleDirection: () =>
+                setState(() => _sortDescending = !_sortDescending),
+            onFilter: (value) => setState(() => _filter = value),
+          ),
         if (_error != null)
           _ErrorBanner(message: _error!, onRetry: () => _load()),
         Expanded(
@@ -476,7 +590,8 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
   }
 
   Widget _buildList(ThemeData theme) {
-    if (_entries.isEmpty) {
+    final visible = _visibleEntries;
+    if (visible.isEmpty) {
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
@@ -484,7 +599,11 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
             padding: const EdgeInsets.symmetric(vertical: 48),
             child: Center(
               child: Text(
-                _error == null ? '这个目录是空的' : '这里没列出内容',
+                _error != null
+                    ? '这里没列出内容'
+                    : _filter.trim().isEmpty
+                        ? '这个目录是空的'
+                        : '没有名称匹配「${_filter.trim()}」的条目',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.outline,
                 ),
@@ -496,71 +615,82 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
     }
     return ListView.separated(
       physics: const AlwaysScrollableScrollPhysics(),
-      itemCount: _entries.length,
+      itemCount: visible.length,
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (context, index) {
-        final entry = _entries[index];
+        final entry = visible[index];
         return ListTile(
           dense: true,
-          leading: Icon(
-            entry.isDirectory
-                ? Icons.folder_rounded
-                : Icons.insert_drive_file_outlined,
-            color: entry.isDirectory
-                ? const Color(0xFFF59E0B)
-                : theme.colorScheme.outline,
-          ),
+          selected: _selecting && _selected.contains(entry.path),
+          leading: _selecting
+              ? Checkbox(
+                  value: _selected.contains(entry.path),
+                  onChanged: (_) => _toggleSelected(entry),
+                )
+              : Icon(
+                  entry.isDirectory
+                      ? Icons.folder_rounded
+                      : Icons.insert_drive_file_outlined,
+                  color: entry.isDirectory
+                      ? const Color(0xFFF59E0B)
+                      : theme.colorScheme.outline,
+                ),
           title: Text(
             entry.name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
           subtitle: _subtitleFor(entry, theme),
-          onTap: entry.isDirectory ? () => _enter(entry) : () => _open(entry),
-          trailing: PopupMenuButton<String>(
-            tooltip: '更多',
-            enabled: !_busy,
-            onSelected: (value) async {
-              switch (value) {
-                case 'download':
-                  await _download(entry);
-                case 'rename':
-                  await _rename(entry);
-                case 'delete':
-                  await _delete(entry);
-              }
-            },
-            itemBuilder: (context) => [
-              if (!entry.isDirectory)
-                const PopupMenuItem(
-                  value: 'download',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.download_rounded),
-                    title: Text('下载到本机'),
-                  ),
+          onTap: _selecting
+              ? () => _toggleSelected(entry)
+              : (entry.isDirectory ? () => _enter(entry) : () => _open(entry)),
+          onLongPress: _selecting ? null : () => _startSelecting(entry),
+          trailing: _selecting
+              ? null
+              : PopupMenuButton<String>(
+                  tooltip: '更多',
+                  enabled: !_busy,
+                  onSelected: (value) async {
+                    switch (value) {
+                      case 'download':
+                        await _download(entry);
+                      case 'rename':
+                        await _rename(entry);
+                      case 'delete':
+                        await _delete(entry);
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    if (!entry.isDirectory)
+                      const PopupMenuItem(
+                        value: 'download',
+                        child: ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.download_rounded),
+                          title: Text('下载到本机'),
+                        ),
+                      ),
+                    const PopupMenuItem(
+                      value: 'rename',
+                      child: ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.drive_file_rename_outline_rounded),
+                        title: Text('重命名'),
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'delete',
+                      child: ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.delete_outline_rounded),
+                        title: Text('删除'),
+                      ),
+                    ),
+                  ],
                 ),
-              const PopupMenuItem(
-                value: 'rename',
-                child: ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.drive_file_rename_outline_rounded),
-                  title: Text('重命名'),
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'delete',
-                child: ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.delete_outline_rounded),
-                  title: Text('删除'),
-                ),
-              ),
-            ],
-          ),
         );
       },
     );
@@ -648,6 +778,138 @@ class _BreadcrumbBar extends StatelessWidget {
             icon: const Icon(Icons.refresh_rounded, size: 18),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A3：排序档位 + 方向 + 名称过滤。
+class _SortFilterBar extends StatelessWidget {
+  const _SortFilterBar({
+    required this.mode,
+    required this.descending,
+    required this.onMode,
+    required this.onToggleDirection,
+    required this.onFilter,
+  });
+
+  final OpsSortMode mode;
+  final bool descending;
+  final ValueChanged<OpsSortMode> onMode;
+  final VoidCallback onToggleDirection;
+  final ValueChanged<String> onFilter;
+
+  static String _label(OpsSortMode mode) {
+    switch (mode) {
+      case OpsSortMode.name:
+        return '名称';
+      case OpsSortMode.size:
+        return '大小';
+      case OpsSortMode.time:
+        return '时间';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 4, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              key: const ValueKey('ops-file-filter'),
+              style: theme.textTheme.bodySmall,
+              decoration: const InputDecoration(
+                isDense: true,
+                hintText: '按名称过滤',
+                prefixIcon: Icon(Icons.search_rounded, size: 18),
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(
+                  vertical: 8,
+                  horizontal: 8,
+                ),
+              ),
+              onChanged: onFilter,
+            ),
+          ),
+          PopupMenuButton<OpsSortMode>(
+            tooltip: '排序',
+            onSelected: onMode,
+            icon: const Icon(Icons.sort_rounded, size: 18),
+            itemBuilder: (_) => [
+              for (final option in OpsSortMode.values)
+                CheckedPopupMenuItem<OpsSortMode>(
+                  value: option,
+                  checked: option == mode,
+                  child: Text(_label(option)),
+                ),
+            ],
+          ),
+          IconButton(
+            tooltip: descending ? '降序' : '升序',
+            onPressed: onToggleDirection,
+            icon: Icon(
+              descending
+                  ? Icons.arrow_downward_rounded
+                  : Icons.arrow_upward_rounded,
+              size: 18,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A3：多选态顶栏（已选计数 / 全选 / 批量删除 / 退出）。
+class _SelectionBar extends StatelessWidget {
+  const _SelectionBar({
+    required this.count,
+    required this.total,
+    required this.onExit,
+    required this.onSelectAll,
+    required this.onDelete,
+  });
+
+  final int count;
+  final int total;
+  final VoidCallback onExit;
+  final VoidCallback onSelectAll;
+  final VoidCallback? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.secondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: '退出多选',
+              onPressed: onExit,
+              icon: const Icon(Icons.close_rounded, size: 18),
+            ),
+            Expanded(
+              child: Text(
+                '已选 $count 项',
+                style: theme.textTheme.labelLarge,
+              ),
+            ),
+            TextButton(
+              onPressed: total > 0 && count < total ? onSelectAll : null,
+              child: const Text('全选'),
+            ),
+            FilledButton.icon(
+              onPressed: onDelete,
+              icon: const Icon(Icons.delete_outline_rounded, size: 16),
+              label: const Text('删除'),
+            ),
+          ],
+        ),
       ),
     );
   }

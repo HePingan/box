@@ -119,6 +119,58 @@ class ServerOpsFilesService {
     await client.move(from, to);
   }
 
+  // ── 列表排序 / 过滤（A3，纯函数，用例直接调） ──────────────────
+
+  /// 关键词过滤：按名称包含（大小写不敏感）；空关键词返回原列表。
+  static List<RemoteStorageEntry> filterEntries(
+    List<RemoteStorageEntry> entries,
+    String keyword,
+  ) {
+    final needle = keyword.trim().toLowerCase();
+    if (needle.isEmpty) return entries;
+    return entries
+        .where((e) => e.name.toLowerCase().contains(needle))
+        .toList(growable: false);
+  }
+
+  /// 排序：**目录恒在前**，同组内按 [mode] 排；[descending] 只反转组内顺序
+  /// （目录永远排在最前面 —— 把目录混到文件里排会让人找不回"上层入口"）。
+  static List<RemoteStorageEntry> sortEntries(
+    List<RemoteStorageEntry> entries,
+    OpsSortMode mode, {
+    bool descending = false,
+  }) {
+    final list = List<RemoteStorageEntry>.from(entries);
+    list.sort((a, b) {
+      if (a.isDirectory != b.isDirectory) {
+        return a.isDirectory ? -1 : 1;
+      }
+      var cmp = _compareBy(a, b, mode);
+      if (cmp == 0) {
+        cmp = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      }
+      return descending ? -cmp : cmp;
+    });
+    return list;
+  }
+
+  static int _compareBy(
+    RemoteStorageEntry a,
+    RemoteStorageEntry b,
+    OpsSortMode mode,
+  ) {
+    switch (mode) {
+      case OpsSortMode.name:
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      case OpsSortMode.size:
+        return (a.size ?? 0).compareTo(b.size ?? 0);
+      case OpsSortMode.time:
+        final at = a.modifiedAt?.millisecondsSinceEpoch ?? 0;
+        final bt = b.modifiedAt?.millisecondsSinceEpoch ?? 0;
+        return at.compareTo(bt);
+    }
+  }
+
   // ── 路径工具（纯函数，用例直接调） ──────────────────────────────
 
   /// 拼账户内相对路径，顺手把多余斜杠归一（目录页传进来的都是相对路径）。
@@ -160,6 +212,9 @@ class ServerOpsFilesService {
     return idx < 0 ? normalized : normalized.substring(idx + 1);
   }
 }
+
+/// 列表排序档位（A3）：名称 / 大小 / 时间。
+enum OpsSortMode { name, size, time }
 
 /// 操作失败时给用户看的中文原因。
 ///

@@ -158,7 +158,13 @@ void main() {
     await tester.tap(find.text('新建文件夹'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    await tester.enterText(find.byType(TextField), 'newdir');
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'newdir',
+    );
     await tester.tap(find.text('创建'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
@@ -261,7 +267,13 @@ void main() {
     await tester.tap(find.text('重命名'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    await tester.enterText(find.byType(TextField), 'etc2');
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'etc2',
+    );
     await tester.tap(find.text('重命名').last);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
