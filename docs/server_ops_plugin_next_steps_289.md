@@ -188,7 +188,10 @@
 | A8 下载残留清理 | 已完成 | `9e51ef6` |
 | C1 立即档 | 已完成（轮换脚本 + 风险告知 + 文档；轮换在发版前执行） | `849517e` |
 | C1 中期档 | 已完成（新增 `flutter_secure_storage`，包里不再有口令） | `7f961ef` |
-| B1 / B2 / C2 / C3 | 未做（下一轮） | — |
+| B1 多服务器 + 175 接入（服务端） | 已完成并实测 | `4b8b3c2` |
+| B1 多服务器（客户端） | 已完成 | `106b9fe` / `b4ae93c` / `83d0c3f` |
+| 新机器一键接入脚本（B1 的延伸） | 已完成并实测 | `60a4c28` |
+| B2 / C2 / C3 | 未做（下一轮） | — |
 
 **验证（全量口径，不是定向）**：`flutter test --exclude-tags live` → **3481 通过 / 0 失败 / 3 skip**；
 `flutter analyze --no-fatal-infos` → **0 error 0 warning**；`tool/scan_dangling_apis.py` → **悬挂 API 0**。
