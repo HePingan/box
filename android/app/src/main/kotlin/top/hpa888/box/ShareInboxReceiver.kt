@@ -16,7 +16,7 @@ import java.io.File
  * 应用缓存目录，Dart 侧就能复用已有的"本地文件上传"通路（含队列/续传/落盘），
  * 不需要为分享单独写一套流式上传。
  *
- * 只收图片与视频（mime 前缀 image/ 与 video/，见 AndroidManifest 的 intent-filter）：
+ * 收图片、视频，以及"分享文本/链接"（287 D3，见 AndroidManifest 的 intent-filter）：
  * 分享文本/任意文件没有明确落点，出现在候选里只会让用户困惑。
  *
  * 生命周期：冷启动时 Intent 在 Dart 就绪前就到了（此时 Dart 侧 handler 还没挂），
@@ -41,6 +41,17 @@ object ShareInboxReceiver {
 
     /** 单个文件复制上限：超过就不收（进缓存再传本来就只是中转，别把存储撑爆）。 */
     private const val MAX_FILE_BYTES = 512L * 1024 * 1024
+
+    /**
+     * 分享文本的字数上限（287 D3）。
+     *
+     * 分享的文本通常是链接或一段话，十万字符足够；设上限只是防有人往分享里塞
+     * 一整本书 —— 那是上传队列的事，不该从这里进来。
+     */
+    private const val MAX_TEXT_CHARS = 200_000
+
+    /** 文本文件名主干的上限（免得第一行是一整段话当文件名）。 */
+    private const val MAX_TEXT_STEM = 60
 
     /** 缓存里的中转文件保留多久：上传成功会删；失败/中途退出的靠这里兜底清理。 */
     private const val INBOX_TTL_MS = 24L * 60 * 60 * 1000
@@ -98,7 +109,13 @@ object ShareInboxReceiver {
     fun handleIntent(intent: Intent?, activity: Activity) {
         if (intent == null) return
         val uris = extractUris(intent)
-        if (uris.isEmpty()) return
+        if (uris.isEmpty()) {
+            // 没有文件流：可能是"分享文本/链接"（287 D3）。系统对纯文本分享只给
+            // EXTRA_TEXT，不给 EXTRA_STREAM —— 不处理的话，用户看到 box 出现在
+            // 分享列表里，点完却什么都没发生。
+            handleSharedText(intent, activity)
+            return
+        }
 
         pruneInbox(activity)
 
@@ -129,6 +146,99 @@ object ShareInboxReceiver {
 
         pending.addAll(copied)
         if (dartReady) pushToDart()
+    }
+
+    /** 分享文本/链接：落成缓存里的一个 .txt，之后与分享文件走**同一条**上传队列。 */
+    private fun handleSharedText(intent: Intent, activity: Activity) {
+        if (intent.action != Intent.ACTION_SEND) return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
+        if (text.isEmpty()) return
+
+        pruneInbox(activity)
+        reportTotal += 1
+
+        val name = textFileName(text)
+        val outcome = try {
+            writeTextToInbox(activity, text, name)
+        } catch (_: Throwable) {
+            CopyOutcome(null, REASON_UNREADABLE)
+        }
+        val entry = outcome.entry
+        if (entry != null) {
+            pending.add(entry)
+        } else {
+            // 收不到也要如实报（与文件一样：宁可说"没收到"，也不假装成功）。
+            reportSkipped.add(
+                mapOf(
+                    "name" to name,
+                    "reason" to (outcome.reason ?: REASON_UNREADABLE),
+                ),
+            )
+        }
+        // 与文件那条路径一致：**只要报了（收到或跳过）就要推给 Dart** ——
+        // 只有跳过记录时不推的话，用户又回到"点了分享什么都没发生"的老问题。
+        if (dartReady) pushToDart()
+    }
+
+    private fun writeTextToInbox(
+        activity: Activity,
+        raw: String,
+        name: String,
+    ): CopyOutcome {
+        val text = if (raw.length > MAX_TEXT_CHARS) raw.take(MAX_TEXT_CHARS) else raw
+        val target = File(inboxDir(activity), "${System.currentTimeMillis()}_$name")
+        try {
+            target.writeText(text, Charsets.UTF_8)
+        } catch (e: Throwable) {
+            target.delete()
+            throw e
+        }
+        val written = target.length()
+        if (written <= 0L) {
+            target.delete()
+            return CopyOutcome(null, REASON_UNREADABLE)
+        }
+        if (written > MAX_FILE_BYTES) {
+            target.delete()
+            return CopyOutcome(null, REASON_TOO_LARGE)
+        }
+        return CopyOutcome(
+            mapOf(
+                "path" to target.absolutePath,
+                "name" to name,
+                "sizeBytes" to written,
+                "mimeType" to "text/plain",
+            ),
+            null,
+        )
+    }
+
+    /**
+     * 文本文件名：取第一行能看的内容当名字，清洗成合法的纯文件名。
+     *
+     * 链接分享时第一行就是 URL —— 直接当文件名会带 `://`、问号、斜杠，既是非法
+     * 文件名，也是路径穿越的形状，所以按白名单式清洗（只留可读字符）而不是
+     * 逐字符拉黑名单。
+     */
+    private fun textFileName(raw: String): String {
+        val firstLine = raw.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty()
+        // 去掉控制字符、路径分隔符与文件名的非法字符，空白折叠成一个空格。
+        val cleaned = firstLine
+            .replace(Regex("[\\u0000-\\u001f]"), " ")
+            .replace(Regex("[/\\:*?\"<>|]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .trimStart('.')
+            .trimEnd('.', ' ')
+            .take(MAX_TEXT_STEM)
+            .trim()
+        val stem = if (cleaned.isEmpty()) {
+            // 不引 SimpleDateFormat/Locale：文件名只是个兜底标识，毫秒足够了。
+            "分享文本-${System.currentTimeMillis()}"
+        } else {
+            cleaned
+        }
+        return if (stem.lowercase().endsWith(".txt")) stem else "$stem.txt"
     }
 
     private fun extractUris(intent: Intent): List<Uri> = when (intent.action) {

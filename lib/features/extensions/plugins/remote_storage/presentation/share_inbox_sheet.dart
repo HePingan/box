@@ -211,9 +211,13 @@ class _ShareInboxSheetState extends State<ShareInboxSheet> {
                     dense: true,
                     contentPadding: EdgeInsets.zero,
                     leading: Icon(
+                      // 三分类而不是"视频 else 图片"：文本/链接分享（287 D3）
+                      // 拿图片图标会让人以为传错了东西。
                       file.isVideo
                           ? Icons.videocam_outlined
-                          : Icons.image_outlined,
+                          : file.isImage
+                              ? Icons.image_outlined
+                              : Icons.description_outlined,
                     ),
                     title: Text(file.name, maxLines: 1,
                         overflow: TextOverflow.ellipsis),

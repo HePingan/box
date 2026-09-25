@@ -57,6 +57,12 @@ class SharedInboxFile {
   /// 是否视频（决定界面上用哪种图标/是否提示"大文件建议 Wi-Fi"）。
   bool get isVideo => mimeType.startsWith('video/');
 
+  /// 是否图片。
+  bool get isImage => mimeType.startsWith('image/');
+
+  /// 是否分享来的纯文本/链接（287 D3：原生把它落成了 .txt）。
+  bool get isText => mimeType.startsWith('text/');
+
   @override
   String toString() => 'SharedInboxFile($name, $sizeBytes, $mimeType)';
 }

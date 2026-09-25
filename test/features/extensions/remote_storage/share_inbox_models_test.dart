@@ -176,6 +176,19 @@ void _honestCounts() {
       expect(ShareInboxBatch.parse(<String, Object?>{}).isEmpty, isTrue);
     });
 
+    test('文本/链接分享（287 D3）：归到 text，既不姓图也不姓视频', () {
+      final text = SharedInboxFile(
+        name: '分享文本-https-example.com-x.txt',
+        path: '/cache/inbox/1_分享文本-https-example.com-x.txt',
+        sizeBytes: 42,
+        mimeType: 'text/plain',
+      );
+      expect(text.isText, isTrue);
+      expect(text.isImage, isFalse);
+      expect(text.isVideo, isFalse,
+          reason: '界面靠这两个判定选图标：文本拿图片图标会让人以为传错了东西');
+    });
+
     test('summaryLabel：没丢就说收到几个；丢了就说清总/收/原因分布', () {
       expect(
         ShareInboxBatch.parse(<Object?>[file('a.jpg')]).summaryLabel,

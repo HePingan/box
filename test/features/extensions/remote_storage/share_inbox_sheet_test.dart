@@ -297,6 +297,30 @@ void main() {
     expect(find.textContaining('读不出来'), findsWidgets);
   });
 
+  testWidgets('分享文本/链接（287 D3）：列得出、看得懂，不冒充图片', (tester) async {
+    final file = SharedInboxFile(
+      name: '分享文本-https-example.com-x.txt',
+      path: '/cache/inbox/1_分享文本-https-example.com-x.txt',
+      sizeBytes: 42,
+      mimeType: 'text/plain',
+    );
+    await pumpSheet(
+      tester,
+      service: _FakeService(),
+      queue: TransferQueue(),
+      files: <SharedInboxFile>[file],
+    );
+
+    expect(find.text('分享文本-https-example.com-x.txt'), findsOneWidget);
+    expect(find.text('收到 1 个分享文件'), findsOneWidget);
+    expect(find.byIcon(Icons.description_outlined), findsOneWidget,
+        reason: '文本用文档图标');
+    expect(find.byIcon(Icons.image_outlined), findsNothing,
+        reason: '别把文本显示成图片');
+
+    await boundedPump(tester);
+  });
+
   testWidgets('没有丢失时：不显示"丢了什么"，只说收到几个（不给无谓疑虑）', (tester) async {
     final service = _FakeService(accounts: [_account('a1')]);
     final queue = TransferQueue();
