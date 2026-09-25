@@ -11,6 +11,8 @@
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:box/features/extensions/plugins/server_ops/server_ops_secret_store.dart';
+
 class ServerOpsSettings {
   const ServerOpsSettings({
     this.baseUrl,
@@ -25,10 +27,10 @@ class ServerOpsSettings {
   /// 用户在设置里填的用户名；null / 空 = 没填。
   final String? user;
 
-  /// 用户在设置里填的口令；null / 空 = 没填。
+  /// 本机保存的口令；null / 空 = 没配。
   ///
-  /// **口令不进仓库**：默认值来自构建注入（OPS_DAV_PASSWORD），
-  /// 仓库里只有键名与读取逻辑，没有任何真实口令。
+  /// **口令既不进仓库也不进安装包**（C1 中期档）：只由用户首次输入、只存本机
+  /// 加密存储（见 [OpsSecretStore]）。这里只有值本身，来源由 [hasPassword] 表达。
   final String? password;
 
   /// 用户在设置里填的终端地址；null / 空 = 没填。
@@ -45,10 +47,6 @@ class ServerOpsSettings {
     'OPS_DAV_USER',
     defaultValue: 'boxops',
   );
-
-  /// 运维通道口令（WebDAV 与终端 Basic 认证共用）。默认空 = 没注入。
-  static const String defaultPassword =
-      String.fromEnvironment('OPS_DAV_PASSWORD');
 
   static const String defaultTerminalUrl = String.fromEnvironment(
     'OPS_TERM_URL',
@@ -68,36 +66,48 @@ class ServerOpsSettings {
 
   String get effectiveUser => _nonEmpty(user) ?? defaultUser;
 
-  /// 生效口令；用户没填时用构建注入的那个（可能仍为空 = 完全没配）。
-  String get effectivePassword => _nonEmpty(password) ?? defaultPassword;
+  /// 生效口令。没有就是空串（文件页/终端页据此给"先去设置里填"的引导）。
+  String get effectivePassword => _nonEmpty(password) ?? '';
 
   /// 生效终端地址。
   String get effectiveTerminalUrl => _nonEmpty(terminalUrl) ?? defaultTerminalUrl;
-
-  /// 口令从哪来（设置页用来解释"为什么不用填也能连"）。
-  bool get passwordFromBuild => _nonEmpty(password) == null;
 
   /// 有没有可用口令；没有时文件页/终端页要给"先去设置里填"的引导。
   bool get hasPassword => effectivePassword.isNotEmpty;
 
   bool get usedBuildDefaults =>
-      _nonEmpty(baseUrl) == null ||
-      _nonEmpty(user) == null ||
-      passwordFromBuild;
+      _nonEmpty(baseUrl) == null || _nonEmpty(user) == null;
 
-  /// 从本地读；读不出来就是"全都没填"（默认值照旧生效）。
+  /// 从本地读；读不出来就是"全都没填"（地址/用户名的构建默认值照旧生效）。
   static Future<ServerOpsSettings> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       return ServerOpsSettings(
         baseUrl: prefs.getString(baseUrlKey),
         user: prefs.getString(userKey),
-        password: prefs.getString(passwordKey),
+        password: await _readPassword(prefs),
         terminalUrl: prefs.getString(terminalUrlKey),
       );
     } catch (_) {
       return const ServerOpsSettings();
     }
+  }
+
+  /// 口令来源：本机加密存储。
+  ///
+  /// 289 及以前把口令明文写在 SharedPreferences 里，这里做**一次性迁移**：
+  /// 读到老键就搬进加密存储并删掉明文键 —— 不迁移等于老用户升级后要重新输一遍，
+  /// 留着明文键则等于"改了但没改干净"。
+  static Future<String?> _readPassword(SharedPreferences prefs) async {
+    final secure = await serverOpsSecretStore.readPassword();
+    if (_nonEmpty(secure) != null) return secure;
+    final legacy = prefs.getString(passwordKey);
+    if (legacy == null) return null;
+    if (legacy.isNotEmpty) {
+      await serverOpsSecretStore.writePassword(legacy);
+    }
+    await prefs.remove(passwordKey);
+    return legacy;
   }
 
   /// 覆盖保存（只写非 null 的项）。空串表示"清掉这一项，回到构建默认"。
@@ -120,10 +130,12 @@ class ServerOpsSettings {
     if (password != null) {
       // 口令不做 trim：尾随空格可能是口令的一部分（粘贴场景很常见）。
       if (password.isEmpty) {
-        await prefs.remove(passwordKey);
+        await serverOpsSecretStore.clearPassword();
       } else {
-        await prefs.setString(passwordKey, password);
+        await serverOpsSecretStore.writePassword(password);
       }
+      // 老版本的明文键必须一并清掉：留着它就是"明文还在 prefs 里"，白改。
+      await prefs.remove(passwordKey);
     }
   }
 

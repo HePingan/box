@@ -40,6 +40,9 @@ dependencies:
   path_provider: ^2.1.5
   encrypt: ^5.0.3
   shared_preferences: ^2.5.5
+  # C1 中期档：运维通道口令只存本机（Android 侧 Keystore 支持的 AES-GCM + RSA-OAEP），
+  # 安装包里不再带任何口令字节。
+  flutter_secure_storage: ^11.2.0
   sqflite: ^2.4.2
   video_player: ^2.11.1
   crypto: ^3.0.7

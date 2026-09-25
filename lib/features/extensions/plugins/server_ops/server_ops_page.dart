@@ -233,7 +233,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final fromBuild = widget.settings.passwordFromBuild;
+    final hasPassword = widget.settings.hasPassword;
     return Padding(
       padding: EdgeInsets.only(
         left: 16,
@@ -249,7 +249,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
             Text('运维通道设置', style: theme.textTheme.titleLarge),
             const SizedBox(height: 4),
             Text(
-              '口令等运行期秘密优先由构建注入（OPS_DAV_*）；这里填过的会覆盖注入值。',
+              '地址与用户名可留空用构建默认值；口令只存本机加密存储，安装包里不带。',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.outline,
               ),
@@ -291,7 +291,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               enableSuggestions: false,
               decoration: InputDecoration(
                 labelText: '口令',
-                hintText: fromBuild ? '已由构建注入，留空即不改' : '留空即不改',
+                hintText: hasPassword ? '留空即不改' : '首次使用请填服务端运维通道口令',
                 border: const OutlineInputBorder(),
               ),
             ),
@@ -300,13 +300,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               children: [
                 Expanded(
                   child: Text(
-                    fromBuild ? '当前口令来自构建注入' : '当前口令来自设置',
+                    hasPassword ? '口令已在本机加密保存（不随安装包分发）' : '还没配置口令',
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: theme.colorScheme.outline,
                     ),
                   ),
                 ),
-                if (!fromBuild)
+                if (hasPassword)
                   TextButton(
                     onPressed: _saving ? null : _clearPassword,
                     child: const Text('清除已保存口令'),
