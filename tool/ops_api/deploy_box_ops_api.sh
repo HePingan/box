@@ -9,7 +9,8 @@
 #   deploy_box_ops_api.sh --host 175        # 装/更新 175 上的服务
 #   deploy_box_ops_api.sh --host hpa888     # 装/更新 hpa888 上的服务（sftp 过去）
 #   deploy_box_ops_api.sh --edge            # 边缘机 nginx 两条 location + 175 隧道加一路转发
-#   deploy_box_ops_api.sh --token 175|hpa888 # 签发/轮换设备令牌（写到 .secrets，只打印哈希与长度）
+#   deploy_box_ops_api.sh --token 175|hpa888 [--write]
+#                                            # 签发/轮换设备令牌（--write = 允许写动作）
 #   deploy_box_ops_api.sh --verify          # 端到端：两条公网入口 + 拒绝路径
 set -euo pipefail
 
@@ -140,18 +141,19 @@ REMOTE
   ok "边缘机：两条 location + 隧道转发就位"
 }
 
-issue_token() {  # $1 = 175|hpa888
-  local host="$1" label out
+# $1 = 175|hpa888；$2 = 额外作用域（如 --write）
+issue_token() {
+  local host="$1" flags="${2:-}" label out
   label="box-app-$( [ "$host" = 175 ] && echo 175 || echo hpa888 )"
   if [ "$host" = 175 ]; then
-    out=$(python3 "$REMOTE_SRC" token issue --label "$label" --admin | tail -1)
+    out=$(python3 "$REMOTE_SRC" token issue --label "$label" --admin $flags | tail -1)
     printf '%s' "$out" > "$SECRETS/box-ops-api-token-$host"
   else
-    out=$(ssh "$HPA888_SSH" "python3 /usr/local/sbin/box-ops-api.py token issue --label $label --admin | tail -1")
+    out=$(ssh "$HPA888_SSH" "python3 /usr/local/sbin/box-ops-api.py token issue --label $label --admin $flags | tail -1")
     printf '%s' "$out" | ssh "$HPA888_SSH" "cat > $SECRETS/box-ops-api-token-hpa888"
   fi
   chmod 600 "$SECRETS/box-ops-api-token-$host" 2>/dev/null || true
-  ok "$host 令牌已签发：label=$label 长度=$(printf '%s' "$out" | wc -c) 哈希=$(printf '%s' "$out" | sha256sum | cut -c1-16)…"
+  ok "$host 令牌已签发：label=$label $flags 长度=$(printf '%s' "$out" | wc -c) 哈希=$(printf '%s' "$out" | sha256sum | cut -c1-16)…"
 }
 
 verify() {
@@ -186,7 +188,7 @@ case "${1:-}" in
       *) die "用法：--host 175|hpa888" ;;
     esac ;;
   --edge) install_edge ;;
-  --token) issue_token "${2:?用法：--token 175|hpa888}" ;;
+  --token) issue_token "${2:?用法：--token 175|hpa888 [--write]}" "${3:-}" ;;
   --verify) verify ;;
   *) sed -n '2,20p' "$0" ;;
 esac

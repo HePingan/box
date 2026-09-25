@@ -7,7 +7,12 @@ App 不再拿"等同 root 的通道口令"去访问一个万能接口，而是�
 一组**白名单只读动作**，每次调用都进审计。
 
 设计约束（每一条都对应一个真实风险）：
-  * **只读**：本档不含任何写动作（服务启停/解压/chmod 在写档，等审计与令牌先落地）；
+  * **两级动作、两个作用域**：只读动作（进程/服务/日志/端口/…）与**写动作**
+    （服务启停/建目录/改权限/改属主/解压）。写动作要求令牌带 `write` 作用域 ——
+    手机上那把默认只有读+admin，想写就得显式签发 `--write`（撤销写权限不必连读一起收回）；
+  * **写动作有"自杀黑名单"**：停 sshd、停本服务、停隧道/NetworkManager、禁用 systemd 自身
+    这些动作直接拒绝 —— 从手机上做这些等于把自己锁在门外（尤其本服务：停了它，
+    App 就再也没法把它启回来）；
   * **没有 shell**：所有命令都是固定 argv 模板 + 校验过的参数，绝不拼字符串；
   * **白名单优先**：单位名走正则 + 必须在 systemctl 里真实存在；日志/目录走前缀白名单，
     并显式拒绝 .. 与密钥类路径（/root/.secrets、/root/.ssh、/root/.hermes 等）；
@@ -64,6 +69,34 @@ DISK_ROOTS = ("/",)
 DISK_DENY = ("/root/.secrets", "/root/.ssh", "/root/.hermes", "/proc", "/sys", "/dev")
 
 UNIT_RE = re.compile(r"^[A-Za-z0-9@._:+-]{1,128}$")
+MODE_RE = re.compile(r"^[0-7]{3,4}$")
+
+# 写动作**一律拒绝**的路径前缀（口令/密钥/审计/本服务自身）。
+# 用 resolve() 之后的真实路径比对，防止"用软链接绕过去"。
+WRITE_DENY_PREFIXES = (
+    "/proc", "/sys", "/dev", "/boot",
+    "/root/.secrets", "/root/.ssh", "/root/.hermes",
+    "/var/log/box-ops-api",
+    "/usr/local/sbin/box-ops-api.py",
+    "/etc/systemd/system/box-ops-api.service",
+    "/etc/systemd/system/box-ops175-tunnel.service",
+)
+
+# 停/禁用这些单元 = 把自己锁在门外（从手机上尤其明显）。
+# start/restart/reload 不拦（那是在救人），只拦 stop/disable。
+SELF_DESTRUCTIVE_UNITS = (
+    "sshd.service", "ssh.service",
+    "box-ops-api.service", "box-ops175-tunnel.service",
+    "systemd-logind.service", "systemd-journald.service", "systemd-udevd.service",
+    "dbus.service", "dbus-broker.service",
+    "network.service", "networking.service", "NetworkManager.service",
+)
+
+# 解压上限：拒绝膨胀炸弹/巨包（真在手机上解一个 5G 的包也不是场景）
+EXTRACT_MAX_TOTAL = 2 * 1024 * 1024 * 1024
+EXTRACT_TIMEOUT = 180
+ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2",
+                    ".tar.xz", ".txz", ".gz")
 
 
 def now_iso() -> str:
@@ -99,13 +132,15 @@ def save_tokens(tokens: list[dict]) -> None:
     os.replace(tmp, TOKENS_FILE)
 
 
-def issue_token(label: str, admin: bool = False) -> str:
+def issue_token(label: str, admin: bool = False, write: bool = False) -> str:
     raw = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
     tokens = [t for t in load_tokens() if t.get("label") != label]
     tokens.append({
         "label": label,
         "hash": _token_hash(raw),
         "admin": bool(admin),
+        # 写作用域是**单独一个开关**：这样"收回写权限"不必连读一起收回。
+        "write": bool(write),
         "createdAt": now_iso(),
     })
     save_tokens(tokens)
@@ -485,6 +520,8 @@ def act_audit(q: dict, _label: str) -> tuple[int, dict]:
 
 ACTIONS = {
     "health": lambda q, l: (0, {"ok": True, "version": VERSION, "time": now_iso()}),
+    # capabilities 是"读元数据"，GET 就能问（客户端据此决定写按钮显不显示）
+    "capabilities": lambda q, l: act_capabilities(q, l),
     "overview": act_overview,
     "processes": act_processes,
     "services": act_services,
@@ -585,11 +622,83 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             status, payload = fn(query, label)
+        except WriteError as e:
+            status, payload = e.status, {"error": e.message}
         except Exception as e:  # noqa: BLE001 - 单个动作炸了不该带走进程
             status, payload = 500, {"error": f"{type(e).__name__}: {e}"}
         ms = int((time.time() - started) * 1000)
         audit(action, {k: v[:1] for k, v in query.items()}, label, ip, status if status else 200, ms)
         self._json(status if status else 200, payload)
+
+
+    MAX_BODY = 8192
+
+    def do_POST(self) -> None:  # noqa: N802
+        started = time.time()
+        action, _query = self._action_and_query()
+        entry = match_token(self._token_raw())
+        ip = self.client_address[0]
+        label = entry.get("label", "-") if entry else "-"
+
+        if entry is None:
+            audit(action, {}, label, ip, 401, 0, "令牌无效或缺失（写请求）")
+            self._json(401, {"error": "令牌无效或缺失"})
+            return
+        if not rate_ok(label or ip):
+            audit(action, {}, label, ip, 429, 0, "限流")
+            self._json(429, {"error": "请求太频繁（10 秒内 60 次上限）"})
+            return
+
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > self.MAX_BODY:
+            audit(action, {}, label, ip, 413, 0, f"body 太大（{length}）")
+            self._json(413, {"error": f"请求体太大（上限 {self.MAX_BODY} 字节）"})
+            return
+        raw_body = self.rfile.read(length) if length else b""
+        try:
+            payload = json.loads(raw_body.decode("utf-8") or "{}")
+        except Exception:  # noqa: BLE001
+            audit(action, {}, label, ip, 400, 0, "JSON 解析失败")
+            self._json(400, {"error": "请求体不是合法 JSON"})
+            return
+        if not isinstance(payload, dict):
+            audit(action, {}, label, ip, 400, 0, "JSON 不是对象")
+            self._json(400, {"error": "请求体要是 JSON 对象"})
+            return
+
+        fn = WRITE_ACTIONS.get(action)
+        if fn is None:
+            fn = ACTIONS.get(action)
+            is_write = False
+        else:
+            is_write = action != "capabilities"
+        if fn is None:
+            audit(action, {}, label, ip, 404, 0, "未知动作")
+            self._json(404, {"error": f"未知动作：{action}",
+                             "readActions": sorted(ACTIONS),
+                             "writeActions": sorted(WRITE_ACTIONS)})
+            return
+        # **写动作要 write 作用域**：手机上那把默认只读+admin，想写要显式签发 --write。
+        if is_write and not entry.get("write"):
+            audit(action, {"_denied": ["write 作用域"]}, label, ip, 403,
+                  int((time.time() - started) * 1000), "令牌没有 write 作用域")
+            self._json(403, {"error": "这个令牌没有写权限（要 write 作用域）："
+                                      "服务端用 box-ops-api.py token issue --label <名字> --write 重新签发"})
+            return
+
+        params = {
+            k: [("true" if v is True else "false" if v is False else str(v))]
+            for k, v in payload.items()
+        }
+        try:
+            status, out = fn(params, label)
+        except WriteError as e:
+            status, out = e.status, {"error": e.message}
+        except Exception as e:  # noqa: BLE001
+            status, out = 500, {"error": f"{type(e).__name__}: {e}"}
+        ms = int((time.time() - started) * 1000)
+        audit(action, params, label, ip, status or 200, ms, "写动作" if is_write else "")
+        self._json(status or 200, out)
 
 
 def make_server(port: int, baseurl: str = "", verbose: bool = True) -> ThreadingHTTPServer:
@@ -622,25 +731,29 @@ def main(argv: list[str]) -> int:
         if sub == "issue":
             label = ""
             admin = False
+            write = False
             for i, a in enumerate(argv):
                 if a == "--label" and i + 1 < len(argv):
                     label = argv[i + 1]
                 if a == "--admin":
                     admin = True
+                if a == "--write":
+                    write = True
             if not label:
-                print("用法：box_ops_api.py token issue --label <名字> [--admin]")
+                print("用法：box_ops_api.py token issue --label <名字> [--admin] [--write]")
                 return 2
-            raw = issue_token(label, admin)
+            raw = issue_token(label, admin, write)
             # 令牌必须是**最后一行**：部署脚本 tail -1 取它。
             # 第一版把说明与令牌打成一行（取到 116 字节的整行 → 401），
             # 第二版把说明放到令牌后面（tail -1 取到说明 → 两台令牌哈希还一样了）。
-            print(f"已签发：label={label} admin={admin}")
+            print(f"已签发：label={label} admin={admin} write={write}")
             print("（只显示这一次，请立刻存进 App / 口令管理器）")
             print(raw)
             return 0
         if sub == "list":
             for t in load_tokens():
-                print(f"  {t.get('label'):<24} admin={str(t.get('admin')):<5} 建于 {t.get('createdAt')}")
+                print(f"  {t.get('label'):<24} admin={str(t.get('admin')):<5} "
+                      f"write={str(bool(t.get('write'))):<5} 建于 {t.get('createdAt')}")
             return 0
         if sub == "revoke":
             # 与 issue 一样**按 --label 取值**：第一版写成 argv[3] 位置参数，于是
@@ -670,8 +783,9 @@ def main(argv: list[str]) -> int:
 def selftest() -> int:
     """起一个临时实例打一圈：正常动作 + 各类拒绝 + 审计留痕。不碰线上文件。"""
     import tempfile
-    import urllib.request
     import urllib.error
+    import urllib.request
+    import zipfile
 
     global TOKENS_FILE, AUDIT_FILE, LOG_ROOTS
     # 显式用 /tmp：TMPDIR 可能指向 /root/.hermes（那是被 du 拒绝的密钥类路径），
@@ -690,8 +804,13 @@ def selftest() -> int:
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{port}"
 
-    def call(path: str, token: str | None) -> tuple[int, dict]:
-        req = urllib.request.Request(base + path)
+    def call(path: str, token: str | None, payload: dict | None = None) -> tuple[int, dict]:
+        data = None if payload is None else json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            base + path, data=data, method="GET" if payload is None else "POST"
+        )
+        if payload is not None:
+            req.add_header("Content-Type", "application/json")
         if token:
             req.add_header("Authorization", "Bearer " + token)
         try:
@@ -748,6 +867,74 @@ def selftest() -> int:
     st, _ = call("/rm-rf", tok)
     check("未知动作 404", st == 404)
 
+    print("== 写档：作用域闸门 ==")
+    write_tok = issue_token("selftest-write", admin=False, write=True)
+    st, d = call("/capabilities", tok)
+    check("capabilities：只读令牌 write=false、admin=false",
+          st == 200 and d.get("write") is False and d.get("admin") is False, str(d)[:120])
+    st, d = call("/capabilities", write_tok)
+    check("capabilities：写令牌 write=true 且列出写动作",
+          st == 200 and d.get("write") is True and "extract" in (d.get("writeActions") or []))
+    st, d = call("/mkdir", tok, {"path": str(tmp / "nope")})
+    check("只读令牌调写动作 → 403（并提示要 --write 重签）",
+          st == 403 and "write" in d.get("error", ""))
+
+    print("== 写档：路径保护 ==")
+    st, d = call("/chmod", write_tok, {"path": "/root/.secrets", "mode": "700"})
+    check("受保护路径（/root/.secrets）→ 403", st == 403)
+    st, d = call("/chmod", write_tok, {"path": str(tmp / ".." / "etc"), "mode": "700"})
+    check("路径里带 .. → 400", st == 400)
+    st, d = call("/chmod", write_tok, {"path": str(tmp), "mode": "000"})
+    check("权限设成 000 → 400（那是把自己锁在外面）", st == 400)
+    st, d = call("/chmod", write_tok, {"path": str(tmp), "mode": "abc"})
+    check("非法权限写法 → 400", st == 400)
+    st, d = call("/chown", write_tok, {"path": str(tmp), "owner": "没有这个用户"})
+    check("不存在的用户 → 400", st == 400)
+
+    print("== 写档：正常路径 ==")
+    target = tmp / "made-by-api"
+    st, d = call("/mkdir", write_tok, {"path": str(target)})
+    check("mkdir 建成（权限 755）",
+          st == 200 and target.is_dir() and oct(target.stat().st_mode & 0o777) == "0o755", str(d)[:120])
+    st, d = call("/mkdir", write_tok, {"path": str(target)})
+    check("重复 mkdir → 400", st == 400)
+    st, d = call("/chmod", write_tok, {"path": str(target), "mode": "700"})
+    check("chmod 成 700", st == 200 and oct(target.stat().st_mode & 0o777) == "0o700", str(d)[:120])
+
+    print("== 写档：解压（含 zip 穿越）==")
+    good = tmp / "good.zip"
+    with zipfile.ZipFile(good, "w") as zf:
+        zf.writestr("a.txt", "hello")
+        zf.writestr("sub/b.txt", "world")
+    st, d = call("/extract", write_tok, {"path": str(good), "dest": str(tmp)})
+    check("正常 zip 解压出 2 个条目",
+          st == 200 and d.get("count") == 2 and (tmp / "sub" / "b.txt").is_file(), str(d)[:160])
+    bad = tmp / "evil.zip"
+    with zipfile.ZipFile(bad, "w") as zf:
+        zf.writestr("../escaped.txt", "bad")
+    st, d = call("/extract", write_tok, {"path": str(bad), "dest": str(tmp)})
+    check("zip 穿越（../escaped.txt）→ 403",
+          st == 403 and "穿越" in d.get("error", "") and not (tmp.parent / "escaped.txt").exists())
+    st, d = call("/extract", write_tok, {"path": str(tmp / "sample.log"), "dest": str(tmp)})
+    check("不是压缩包 → 400", st == 400)
+
+    print("== 写档：服务启停 ==")
+    st, d = call("/service", write_tok, {"unit": "sshd.service", "op": "stop"})
+    check("停 sshd → 403（自杀动作）", st == 403 and "停掉/禁用" in d.get("error", ""), str(d)[:140])
+    st, d = call("/service", write_tok, {"unit": "../../etc/passwd", "op": "restart"})
+    check("非法 unit → 400", st == 400)
+    st, d = call("/service", write_tok, {"unit": "no-such-unit-xyz.service", "op": "restart"})
+    check("不存在的服务 → 404", st == 404)
+    st, d = call("/service", write_tok, {"unit": "box-ops-api.service", "op": "selfdestruct"})
+    check("不支持的操作名 → 400", st == 400)
+
+    print("== 写档：审计留痕 ==")
+    items = read_audit(300)
+    check("审计里有写动作（note=写动作）",
+          any(i.get("note") == "写动作" for i in items))
+    check("审计里有被拒的写动作（403）",
+          any(i["status"] == 403 and i.get("note") == "写动作" for i in items))
+
     print("== 撤销（函数级）==")
     revoke_token("selftest")
     st, _ = call("/overview", tok)
@@ -788,6 +975,275 @@ def _free_port() -> int:
     port = s.getsockname()[1]
     s.close()
     return port
+
+
+
+
+# ── 写动作（白名单；要 write 作用域）────────────────────────────────────
+#
+# 设计口径（每一条都对应一个真实的"从手机上把自己搞死"的方式）：
+#   * 没有 shell、没有任意命令：动作是固定的几个，参数逐个校验；
+#   * 路径先 resolve() 再比对保护名单（软链接绕不过去）；
+#   * 停/禁用"自杀单元"直接拒（sshd、本服务、隧道、NetworkManager、systemd 自身）；
+#   * 解压必须防 zip 穿越（条目路径跑到目标目录之外）与膨胀炸弹（总量上限）。
+
+class WriteError(Exception):
+    """写动作的参数/权限问题（带 HTTP 状态）。"""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+def _safe_write_path(raw: str, *, must_exist: bool, must_be_dir: bool = False) -> Path:
+    if not raw or "\x00" in raw:
+        raise WriteError(400, "路径为空或不合法")
+    if not raw.startswith("/"):
+        raise WriteError(400, f"路径必须是绝对路径：{raw}")
+    if ".." in Path(raw).parts:
+        raise WriteError(400, f"路径里不允许 ..：{raw}")
+    p = Path(raw)
+    if must_exist and not p.exists():
+        raise WriteError(404, f"路径不存在：{raw}")
+    if must_be_dir and not p.is_dir():
+        raise WriteError(400, f"不是目录：{raw}")
+    # 解析软链接之后再看保护名单（否则 ln -s 一下就能绕过）
+    try:
+        real = p.resolve()
+    except Exception:  # noqa: BLE001
+        raise WriteError(400, f"路径解析失败：{raw}") from None
+    for deny in WRITE_DENY_PREFIXES:
+        if str(real) == deny or str(real).startswith(deny.rstrip("/") + "/"):
+            raise WriteError(403, f"这个路径受保护，写动作一律拒绝：{deny}")
+    return real
+
+
+def _unit_exists(unit: str) -> bool:
+    code, out, _ = run(["systemctl", "list-unit-files", "--type=service",
+                        "--no-legend", "--no-pager", "--plain", unit])
+    if code != 0 or not (out or "").strip():
+        code2, out2, _ = run(["systemctl", "show", unit, "-p", "LoadState"])
+        return code2 == 0 and "LoadState=loaded" in (out2 or "")
+    return True
+
+
+def act_capabilities(_q: dict, label: str) -> tuple[int, dict]:
+    entry = match_token_by_label(label)
+    return 0, {
+        "hostname": socket.gethostname(),
+        "version": VERSION,
+        "admin": bool(entry.get("admin")) if entry else False,
+        "write": bool(entry.get("write")) if entry else False,
+        "readActions": sorted(ACTIONS),
+        "writeActions": sorted(WRITE_ACTIONS),
+        "selfDestructiveUnits": list(SELF_DESTRUCTIVE_UNITS),
+        "protectedPaths": list(WRITE_DENY_PREFIXES),
+        "note": "写作用域要令牌带 write；不带的令牌调写动作一律 403",
+        "generatedAt": now_iso(),
+    }
+
+
+def match_token_by_label(label: str) -> dict:
+    for t in load_tokens():
+        if t.get("label") == label:
+            return t
+    return {}
+
+
+def act_service_op(q: dict, _label: str) -> tuple[int, dict]:
+    unit = (q.get("unit") or [""])[0]
+    op = (q.get("op") or [""])[0]
+    if not _valid_unit(unit):
+        raise WriteError(400, "unit 不合法（形如 xxx.service，只含字母数字 @._:+-）")
+    if op not in ("start", "stop", "restart", "reload", "enable", "disable"):
+        raise WriteError(400, f"不支持的操作：{op}（只允许 start/stop/restart/reload/enable/disable）")
+    if op in ("stop", "disable") and unit in SELF_DESTRUCTIVE_UNITS:
+        raise WriteError(
+            403,
+            f"拒绝把 {unit} 停掉/禁用：它是「能让你再连上来」的那一层"
+            f"（本服务被停之后，App 就再也没法从手机上把它启回来）",
+        )
+    if not _unit_exists(unit):
+        raise WriteError(404, f"没有这个服务：{unit}")
+    code, out, err = run(["systemctl", op, unit], timeout=30)
+    if code != 0:
+        raise WriteError(502, f"systemctl {op} 失败：{(err or out).strip()[:300]}")
+    time.sleep(0.4)
+    code2, out2, _ = run(["systemctl", "show", unit, "-p", "ActiveState,SubState,UnitFileState"])
+    props = dict(line.split("=", 1) for line in (out2 or "").splitlines() if "=" in line)
+    return 0, {
+        "unit": unit,
+        "op": op,
+        "activeState": props.get("ActiveState"),
+        "subState": props.get("SubState"),
+        "unitFileState": props.get("UnitFileState"),
+        "generatedAt": now_iso(),
+    }
+
+
+def act_mkdir(q: dict, _label: str) -> tuple[int, dict]:
+    path = _safe_write_path((q.get("path") or [""])[0], must_exist=False)
+    if path.exists():
+        raise WriteError(400, f"已经存在：{path}")
+    if not path.parent.exists():
+        raise WriteError(400, f"上一级目录不存在（不做递归创建）：{path.parent}")
+    try:
+        path.mkdir()
+        os.chmod(path, 0o755)
+    except OSError as e:
+        raise WriteError(502, f"建目录失败：{e}") from None
+    return 0, {"path": str(path), "created": True, "generatedAt": now_iso()}
+
+
+def act_chmod(q: dict, _label: str) -> tuple[int, dict]:
+    path = _safe_write_path((q.get("path") or [""])[0], must_exist=True)
+    mode = (q.get("mode") or [""])[0]
+    recursive = (q.get("recursive") or ["0"])[0] in ("1", "true", "yes")
+    if not MODE_RE.match(mode):
+        raise WriteError(400, f"权限要写成八进制三位或四位：{mode}")
+    if mode in ("0000", "000"):  # 0000 是"把自己关在门外"的经典做法
+        raise WriteError(400, "拒绝把权限设成 000：那等于把自己锁在外面")
+    args = ["chmod"]
+    if recursive:
+        if path.parent == path:  # 根目录
+            raise WriteError(403, "拒绝在 / 上递归改权限")
+        args.append("-R")
+    args += [mode, str(path)]
+    code, out, err = run(args, timeout=60)
+    if code != 0:
+        raise WriteError(502, f"chmod 失败：{(err or out).strip()[:300]}")
+    return 0, {"path": str(path), "mode": oct(path.stat().st_mode & 0o7777)[2:],
+               "recursive": recursive, "generatedAt": now_iso()}
+
+
+def act_chown(q: dict, _label: str) -> tuple[int, dict]:
+    import grp
+    import pwd
+
+    path = _safe_write_path((q.get("path") or [""])[0], must_exist=True)
+    owner = (q.get("owner") or [""])[0].strip()
+    group = (q.get("group") or [""])[0].strip()
+    recursive = (q.get("recursive") or ["0"])[0] in ("1", "true", "yes")
+    if not owner and not group:
+        raise WriteError(400, "要给 owner 或 group 之一")
+    # 名字必须在 /etc/passwd、/etc/group 里真实存在（不猜 uid/gid）
+    for name, lookup, what in ((owner, pwd.getpwnam, "用户"), (group, grp.getgrnam, "组")):
+        if not name:
+            continue
+        try:
+            lookup(name)
+        except KeyError:
+            raise WriteError(400, f"没有这个{what}：{name}") from None
+    args = ["chown"]
+    if recursive:
+        if path.parent == path:
+            raise WriteError(403, "拒绝在 / 上递归改属主")
+        args.append("-R")
+    args += [f"{owner}:{group}" if group else owner, str(path)]
+    code, out, err = run(args, timeout=60)
+    if code != 0:
+        raise WriteError(502, f"chown 失败：{(err or out).strip()[:300]}")
+    return 0, {"path": str(path), "owner": owner or "(不改)", "group": group or "(不改)",
+               "recursive": recursive, "generatedAt": now_iso()}
+
+
+def _archive_kind(p: Path) -> str:
+    name = p.name.lower()
+    for suf in sorted(ARCHIVE_SUFFIXES, key=len, reverse=True):
+        if name.endswith(suf):
+            if suf == ".zip":
+                return "zip"
+            if suf in (".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz"):
+                return "tar"
+            if suf == ".gz":
+                return "gz"
+    return ""
+
+
+def act_extract(q: dict, _label: str) -> tuple[int, dict]:
+    import tarfile
+    import zipfile
+
+    src = _safe_write_path((q.get("path") or [""])[0], must_exist=True)
+    dest_raw = (q.get("dest") or [""])[0].strip()
+    dest = _safe_write_path(dest_raw, must_exist=True, must_be_dir=True) if dest_raw else src.parent
+    if not src.is_file():
+        raise WriteError(400, f"不是文件：{src}")
+    kind = _archive_kind(src)
+    if not kind:
+        raise WriteError(400, f"不认的压缩格式（支持 {', '.join(ARCHIVE_SUFFIXES)}）：{src.name}")
+
+    dest_str = str(dest)
+    extracted: list[str] = []
+    total = 0
+
+    def check_target(name: str) -> Path:
+        """条目落到哪儿；越界（zip 穿越）一律拒。"""
+        candidate = (dest / name).resolve()
+        if not (str(candidate) == dest_str or str(candidate).startswith(dest_str.rstrip("/") + "/")):
+            raise WriteError(403, f"压缩包里有越界条目（zip 穿越），拒绝解压：{name}")
+        for deny in WRITE_DENY_PREFIXES:
+            if str(candidate) == deny or str(candidate).startswith(deny.rstrip("/") + "/"):
+                raise WriteError(403, f"压缩包里有指向受保护路径的条目：{name}")
+        return candidate
+
+    try:
+        if kind == "zip":
+            with zipfile.ZipFile(src) as zf:
+                for info in zf.infolist():
+                    total += info.file_size
+                    if total > EXTRACT_MAX_TOTAL:
+                        break  # 停止解压，下面按"被截断"报回来
+                    check_target(info.filename)
+                    zf.extract(info, dest_str)
+                    extracted.append(info.filename)
+            truncated = total > EXTRACT_MAX_TOTAL
+        elif kind == "tar":
+            mode = "r:*"
+            with tarfile.open(src, mode) as tf:
+                for member in tf:
+                    total += member.size
+                    if total > EXTRACT_MAX_TOTAL:
+                        break
+                    check_target(member.name)
+                    tf.extract(member, dest_str)
+                    extracted.append(member.name)
+            truncated = total > EXTRACT_MAX_TOTAL
+        else:  # 单文件 .gz
+            import gzip
+            import shutil as _sh
+
+            target = check_target(src.name[:-3] if src.name.lower().endswith(".gz") else src.name + ".out")
+            with gzip.open(src, "rb") as fin, target.open("wb") as fout:
+                _sh.copyfileobj(fin, fout, 1024 * 1024)
+            extracted.append(target.name)
+            truncated = False
+    except WriteError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise WriteError(502, f"解压失败：{type(e).__name__}: {e}") from None
+
+    return 0, {
+        "archive": str(src),
+        "kind": kind,
+        "dest": dest_str,
+        "count": len(extracted),
+        "totalBytesUncompressed": total,
+        "truncated": truncated,
+        "sample": extracted[:20],
+        "generatedAt": now_iso(),
+    }
+
+
+WRITE_ACTIONS = {
+    "capabilities": act_capabilities,
+    "service": act_service_op,
+    "mkdir": act_mkdir,
+    "chmod": act_chmod,
+    "chown": act_chown,
+    "extract": act_extract,
+}
 
 
 if __name__ == "__main__":
