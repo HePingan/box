@@ -24,6 +24,14 @@ abstract class OpsSecretStore {
   Future<void> clearPassword(String serverId);
 
   /// 读**老键**（单服务器时代的 `serverOps.dav.password`）：只在迁移时用一次。
+  /// 这台机器的只读 API 设备令牌（C2）。与口令同理：只在加密存储里，
+  /// 不进安装包、不进 SharedPreferences、不进日志。
+  Future<String?> readApiToken(String serverId);
+
+  Future<void> writeApiToken(String serverId, String token);
+
+  Future<void> clearApiToken(String serverId);
+
   Future<String?> readLegacyPassword();
 
   /// 删掉老键；迁移完成后必须调，否则老口令会一直留在加密存储里。
@@ -42,6 +50,11 @@ class KeystoreOpsSecretStore implements OpsSecretStore {
   /// 某台服务器的口令键：`serverOps.dav.password.<id>`。
   static String keyFor(String serverId) => '$legacyKey.$serverId';
 
+  /// 设备令牌的键前缀（与口令分开命名：两者的生命周期不同，撤销令牌不该动口令）。
+  static const String apiTokenPrefix = 'serverOps.api.token';
+
+  static String apiTokenKeyFor(String serverId) => '$apiTokenPrefix.$serverId';
+
   final FlutterSecureStorage _storage;
 
   @override
@@ -57,8 +70,22 @@ class KeystoreOpsSecretStore implements OpsSecretStore {
       _storage.delete(key: keyFor(serverId));
 
   @override
+  @override
+  Future<String?> readApiToken(String serverId) =>
+      _storage.read(key: apiTokenKeyFor(serverId));
+
+  @override
+  Future<void> writeApiToken(String serverId, String token) =>
+      _storage.write(key: apiTokenKeyFor(serverId), value: token);
+
+  @override
+  Future<void> clearApiToken(String serverId) =>
+      _storage.delete(key: apiTokenKeyFor(serverId));
+
+  @override
   Future<String?> readLegacyPassword() => _storage.read(key: legacyKey);
 
+  @override
   @override
   Future<void> clearLegacyPassword() => _storage.delete(key: legacyKey);
 }

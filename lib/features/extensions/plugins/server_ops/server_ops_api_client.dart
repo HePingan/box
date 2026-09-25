@@ -1,0 +1,535 @@
+// 服务器运维插件：只读运维 API 的客户端（C2 只读档）。
+//
+// 它替的是"文件通道什么都做不了"的那半：进程、服务状态、日志 tail、端口监听、
+// 目录占用、登录记录 —— WebDAV 拿不到这些，因为 rclone 只讲文件。
+//
+// 与文件页的关键差别是**身份模型**：文件页用的是"等同整盘读写"的通道口令，
+// 这里用的是**设备令牌**（服务端只存哈希、可按 label 撤销、每次调用进审计），
+// 所以令牌泄了可以单独撤，不必牵动整条通道。
+//
+// 口径：
+//   * 令牌只从加密存储读、只进请求头，**绝不进日志/绝不进错误文案**（面板会被截屏）；
+//   * 一切非 2xx 都翻成中文的 [OpsApiException]（含 401/403/429 的分别处置）；
+//   * 解析容错：服务端字段缺了就给默认值，不让一个字段把整页打黑。
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
+
+/// 失败的类别。UI 按类别给不同的引导（401 去填令牌、429 别连点、network 看网络）。
+enum OpsApiErrorKind {
+  unauthorized,
+  forbidden,
+  rateLimited,
+  notFound,
+  badRequest,
+  server,
+  network,
+  timeout,
+  decode,
+}
+
+class OpsApiException implements Exception {
+  const OpsApiException(this.kind, this.message, {this.status});
+
+  final OpsApiErrorKind kind;
+  final String message;
+  final int? status;
+
+  /// 这台机器的令牌不对 → 界面直接引导"去设置里重填这台的令牌"。
+  bool get isAuth => kind == OpsApiErrorKind.unauthorized;
+
+  @override
+  String toString() => message;
+}
+
+/// 只读 API 客户端。一个实例对应**一台机器**。
+class OpsApiClient {
+  OpsApiClient({
+    required String baseUrl,
+    required String token,
+    http.Client? client,
+    this.timeout = const Duration(seconds: 20),
+  })  : _baseUrl = baseUrl.trim().replaceAll(RegExp(r'/+$'), ''),
+        _token = token.trim(),
+        _client = client ?? http.Client(),
+        _ownsClient = client == null;
+
+  final String _baseUrl;
+  final String _token;
+  final http.Client _client;
+  final bool _ownsClient;
+  final Duration timeout;
+
+  bool get hasToken => _token.isNotEmpty;
+
+  void close() {
+    if (_ownsClient) _client.close();
+  }
+
+  /// 发一次动作请求。这是唯一的出口 —— 别的都走它，好让错误翻译只有一份。
+  Future<Map<String, dynamic>> call(
+    String action, {
+    Map<String, String>? query,
+  }) async {
+    if (_baseUrl.isEmpty) {
+      throw const OpsApiException(
+        OpsApiErrorKind.badRequest,
+        '这台机器还没填只读接口地址（设置 → 服务器 → 只读接口）',
+      );
+    }
+    if (_token.isEmpty) {
+      throw const OpsApiException(
+        OpsApiErrorKind.unauthorized,
+        '这台机器还没填设备令牌（设置 → 服务器 → 设备令牌）',
+      );
+    }
+    final uri = Uri.parse('$_baseUrl/$action').replace(
+      queryParameters: (query == null || query.isEmpty) ? null : query,
+    );
+    http.Response res;
+    try {
+      res = await _client.get(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $_token',
+          'Accept': 'application/json',
+        },
+      ).timeout(timeout);
+    } on TimeoutException {
+      throw OpsApiException(
+        OpsApiErrorKind.timeout,
+        '请求超时（${timeout.inSeconds} 秒）：这台机器可能正忙，稍后再试',
+      );
+    } catch (e) {
+      // 不要把 e 直接拼进去：某些 IO 异常的文本里会带完整 URL（不含令牌，但没必要）
+      throw const OpsApiException(
+        OpsApiErrorKind.network,
+        '连不上这台机器的只读接口（网络或地址不对）',
+      );
+    }
+    return _decode(res, action);
+  }
+
+  Map<String, dynamic> _decode(http.Response res, String action) {
+    Map<String, dynamic> body = const {};
+    final text = res.body;
+    if (text.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(text);
+        if (decoded is Map<String, dynamic>) body = decoded;
+      } catch (_) {
+        body = const {};
+      }
+    }
+    final serverMessage = (body['error'] as String?)?.trim();
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      if (body.isEmpty && text.trim().isNotEmpty) {
+        throw const OpsApiException(
+          OpsApiErrorKind.decode,
+          '这台机器的只读接口返回了看不懂的内容（版本不匹配？）',
+        );
+      }
+      return body;
+    }
+    switch (res.statusCode) {
+      case 400:
+        throw OpsApiException(OpsApiErrorKind.badRequest,
+            serverMessage ?? '请求参数不对', status: 400);
+      case 401:
+        throw OpsApiException(
+          OpsApiErrorKind.unauthorized,
+          '设备令牌无效或已被撤销 —— 口令与令牌不是一回事：'
+          '口令给文件/终端用，令牌给这台机器的只读接口用，两台机器的都不同',
+          status: 401,
+        );
+      case 403:
+        throw OpsApiException(OpsApiErrorKind.forbidden,
+            serverMessage ?? '这台机器的令牌权限不够（这一步要 admin 令牌）', status: 403);
+      case 404:
+        throw OpsApiException(OpsApiErrorKind.notFound,
+            serverMessage ?? '接口地址不对（404）', status: 404);
+      case 429:
+        throw OpsApiException(OpsApiErrorKind.rateLimited,
+            '请求太频繁，等十几秒再来（服务端限流）', status: 429);
+      default:
+        throw OpsApiException(OpsApiErrorKind.server,
+            serverMessage ?? '服务端出错（${res.statusCode}）', status: res.statusCode);
+    }
+  }
+
+  // ── 动作封装 ────────────────────────────────────────────────────
+
+  Future<OpsOverview> overview() async =>
+      OpsOverview.fromJson(await call('overview'));
+
+  Future<List<OpsProcess>> processes({String sort = 'cpu', int limit = 20}) async {
+    final d = await call('processes', query: {'sort': sort, 'limit': '$limit'});
+    return _listOf(d['processes'], OpsProcess.fromJson);
+  }
+
+  Future<List<OpsServiceUnit>> services({String? filter, int limit = 200}) async {
+    final d = await call('services', query: {
+      if (filter != null && filter.trim().isNotEmpty) 'q': filter.trim(),
+      'limit': '$limit',
+    });
+    return _listOf(d['units'], OpsServiceUnit.fromJson);
+  }
+
+  Future<OpsServiceDetail> service(String unit, {int lines = 20}) async =>
+      OpsServiceDetail.fromJson(
+          await call('service', query: {'unit': unit, 'lines': '$lines'}));
+
+  Future<OpsLogTail> logs(String path, {int lines = 100}) async =>
+      OpsLogTail.fromJson(
+          await call('logs', query: {'path': path, 'lines': '$lines'}));
+
+  Future<List<OpsPort>> ports() async {
+    final d = await call('ports');
+    return _listOf(d['listeners'], OpsPort.fromJson);
+  }
+
+  Future<List<OpsDiskRow>> diskUsage(String path) async {
+    final d = await call('diskusage', query: {'path': path});
+    return _listOf(d['rows'], OpsDiskRow.fromJson);
+  }
+
+  Future<OpsSessions> sessions() async =>
+      OpsSessions.fromJson(await call('sessions'));
+
+  Future<List<OpsAuditEntry>> audit({int limit = 50}) async {
+    final d = await call('audit', query: {'limit': '$limit'});
+    return _listOf(d['items'], OpsAuditEntry.fromJson);
+  }
+}
+
+List<T> _listOf<T>(Object? raw, T Function(Map<String, dynamic>) build) {
+  if (raw is! List) return <T>[];
+  final out = <T>[];
+  for (final item in raw) {
+    if (item is Map<String, dynamic>) out.add(build(item));
+    else if (item is Map) out.add(build(item.cast<String, dynamic>()));
+  }
+  return out;
+}
+
+String _s(Object? v) => v == null ? '' : '$v';
+int _i(Object? v) => v is num ? v.toInt() : int.tryParse(_s(v)) ?? 0;
+double _d(Object? v) => v is num ? v.toDouble() : double.tryParse(_s(v)) ?? 0;
+
+// ── 模型（字段缺失一律给默认值：服务端加字段不该把旧包打黑）──
+
+class OpsOverview {
+  const OpsOverview({
+    required this.hostname,
+    required this.osPretty,
+    required this.kernel,
+    required this.uptimeSeconds,
+    required this.load1,
+    required this.load5,
+    required this.load15,
+    required this.cpuModel,
+    required this.cores,
+    required this.memTotal,
+    required this.memUsed,
+    required this.swapTotal,
+    required this.swapUsed,
+    required this.disks,
+  });
+
+  final String hostname;
+  final String osPretty;
+  final String kernel;
+  final int uptimeSeconds;
+  final double load1;
+  final double load5;
+  final double load15;
+  final String cpuModel;
+  final int cores;
+  final int memTotal;
+  final int memUsed;
+  final int swapTotal;
+  final int swapUsed;
+  final List<OpsDisk> disks;
+
+  double get memUsedPercent => memTotal <= 0 ? 0 : memUsed * 100.0 / memTotal;
+  double get swapUsedPercent => swapTotal <= 0 ? 0 : swapUsed * 100.0 / swapTotal;
+  double get loadPerCore => cores <= 0 ? load1 : load1 / cores;
+
+  static OpsOverview fromJson(Map<String, dynamic> j) {
+    final os = (j['os'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final load = (j['load'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final cpu = (j['cpu'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final mem = (j['memory'] as Map?)?.cast<String, dynamic>() ?? const {};
+    return OpsOverview(
+      hostname: _s(j['hostname']),
+      osPretty: _s(os['pretty']),
+      kernel: _s(os['kernel']),
+      uptimeSeconds: _i(j['uptimeSeconds']),
+      load1: _d(load['load1']),
+      load5: _d(load['load5']),
+      load15: _d(load['load15']),
+      cpuModel: _s(cpu['model']),
+      cores: _i(cpu['cores']),
+      memTotal: _i(mem['memTotal']),
+      memUsed: _i(mem['memUsed']),
+      swapTotal: _i(mem['swapTotal']),
+      swapUsed: _i(mem['swapUsed']),
+      disks: _listOf(j['disks'], OpsDisk.fromJson),
+    );
+  }
+}
+
+class OpsDisk {
+  const OpsDisk({
+    required this.mount,
+    required this.size,
+    required this.used,
+    required this.avail,
+    required this.usePercent,
+  });
+
+  final String mount;
+  final String size;
+  final String used;
+  final String avail;
+  final String usePercent;
+
+  static OpsDisk fromJson(Map<String, dynamic> j) => OpsDisk(
+        mount: _s(j['mount']),
+        size: _s(j['size']),
+        used: _s(j['used']),
+        avail: _s(j['avail']),
+        usePercent: _s(j['usePercent']),
+      );
+}
+
+class OpsProcess {
+  const OpsProcess({
+    required this.pid,
+    required this.user,
+    required this.cpuPercent,
+    required this.memPercent,
+    required this.rssKb,
+    required this.elapsed,
+    required this.name,
+    required this.args,
+  });
+
+  final int pid;
+  final String user;
+  final double cpuPercent;
+  final double memPercent;
+  final int rssKb;
+  final String elapsed;
+  final String name;
+  final String args;
+
+  static OpsProcess fromJson(Map<String, dynamic> j) => OpsProcess(
+        pid: _i(j['pid']),
+        user: _s(j['user']),
+        cpuPercent: _d(j['cpuPercent']),
+        memPercent: _d(j['memPercent']),
+        rssKb: _i(j['rssKb']),
+        elapsed: _s(j['elapsed']),
+        name: _s(j['name']),
+        args: _s(j['args']),
+      );
+}
+
+class OpsServiceUnit {
+  const OpsServiceUnit({
+    required this.unit,
+    required this.active,
+    required this.sub,
+    required this.enabled,
+    required this.description,
+  });
+
+  final String unit;
+  final String active;
+  final String sub;
+  final String enabled;
+  final String description;
+
+  bool get isFailed => active == 'failed';
+
+  static OpsServiceUnit fromJson(Map<String, dynamic> j) => OpsServiceUnit(
+        unit: _s(j['unit']),
+        active: _s(j['active']),
+        sub: _s(j['sub']),
+        enabled: _s(j['enabled']),
+        description: _s(j['description']),
+      );
+}
+
+class OpsServiceDetail {
+  const OpsServiceDetail({
+    required this.unit,
+    required this.activeState,
+    required this.subState,
+    required this.unitFileState,
+    required this.mainPid,
+    required this.memoryBytes,
+    required this.restarts,
+    required this.since,
+    required this.journal,
+  });
+
+  final String unit;
+  final String activeState;
+  final String subState;
+  final String unitFileState;
+  final String mainPid;
+  final int? memoryBytes;
+  final String restarts;
+  final String since;
+  final String journal;
+
+  static OpsServiceDetail fromJson(Map<String, dynamic> j) => OpsServiceDetail(
+        unit: _s(j['unit']),
+        activeState: _s(j['activeState']),
+        subState: _s(j['subState']),
+        unitFileState: _s(j['unitFileState']),
+        mainPid: _s(j['mainPid']),
+        memoryBytes: j['memoryBytes'] is num ? (j['memoryBytes'] as num).toInt() : null,
+        restarts: _s(j['restarts']),
+        since: _s(j['since']),
+        journal: _s(j['journal']),
+      );
+}
+
+class OpsLogTail {
+  const OpsLogTail({
+    required this.path,
+    required this.lines,
+    required this.truncated,
+    required this.content,
+  });
+
+  final String path;
+  final int lines;
+  final bool truncated;
+  final String content;
+
+  static OpsLogTail fromJson(Map<String, dynamic> j) => OpsLogTail(
+        path: _s(j['path']),
+        lines: _i(j['lines']),
+        truncated: j['truncated'] == true,
+        content: _s(j['content']),
+      );
+}
+
+class OpsPort {
+  const OpsPort({
+    required this.proto,
+    required this.state,
+    required this.local,
+    required this.process,
+  });
+
+  final String proto;
+  final String state;
+  final String local;
+  final String process;
+
+  static OpsPort fromJson(Map<String, dynamic> j) => OpsPort(
+        proto: _s(j['proto']),
+        state: _s(j['state']),
+        local: _s(j['local']),
+        process: _s(j['process']),
+      );
+}
+
+class OpsDiskRow {
+  const OpsDiskRow({required this.size, required this.path});
+
+  final String size;
+  final String path;
+
+  static OpsDiskRow fromJson(Map<String, dynamic> j) =>
+      OpsDiskRow(size: _s(j['size']), path: _s(j['path']));
+}
+
+class OpsSessions {
+  const OpsSessions({required this.logins, required this.failedLogins});
+
+  final List<Map<String, dynamic>> logins;
+  final List<Map<String, dynamic>> failedLogins;
+
+  static OpsSessions fromJson(Map<String, dynamic> j) => OpsSessions(
+        logins: _rawList(j['logins']),
+        failedLogins: _rawList(j['failedLogins']),
+      );
+}
+
+List<Map<String, dynamic>> _rawList(Object? raw) {
+  if (raw is! List) return const [];
+  final out = <Map<String, dynamic>>[];
+  for (final item in raw) {
+    if (item is Map<String, dynamic>) out.add(item);
+    else if (item is Map) out.add(item.cast<String, dynamic>());
+  }
+  return out;
+}
+
+class OpsAuditEntry {
+  const OpsAuditEntry({
+    required this.at,
+    required this.action,
+    required this.tokenLabel,
+    required this.ip,
+    required this.status,
+    required this.ms,
+    required this.note,
+  });
+
+  final String at;
+  final String action;
+  final String tokenLabel;
+  final String ip;
+  final int status;
+  final int ms;
+  final String note;
+
+  bool get isOk => status >= 200 && status < 300;
+
+  static OpsAuditEntry fromJson(Map<String, dynamic> j) => OpsAuditEntry(
+        at: _s(j['at']),
+        action: _s(j['action']),
+        tokenLabel: _s(j['token']),
+        ip: _s(j['ip']),
+        status: _i(j['status']),
+        ms: _i(j['ms']),
+        note: _s(j['note']),
+      );
+}
+
+// ── 展示用格式化（放这儿是为了能单测）────────────────────────────
+
+/// 字节 → 人能读的大小（1.5 GB / 512 MB / 12 KB）。
+String formatBytes(int bytes) {
+  if (bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var value = bytes.toDouble();
+  var unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  final digits = value >= 100 || unit == 0 ? 0 : 1;
+  return '${value.toStringAsFixed(digits)} ${units[unit]}';
+}
+
+/// 秒 → 「3 天 4 小时」这种口语时长（最细到分钟）。
+String formatUptime(int seconds) {
+  if (seconds <= 0) return '刚起';
+  final days = seconds ~/ 86400;
+  final hours = (seconds % 86400) ~/ 3600;
+  final minutes = (seconds % 3600) ~/ 60;
+  final parts = <String>[];
+  if (days > 0) parts.add('$days 天');
+  if (hours > 0) parts.add('$hours 小时');
+  if (parts.isEmpty || (minutes > 0 && days == 0)) parts.add('$minutes 分钟');
+  return parts.join(' ');
+}

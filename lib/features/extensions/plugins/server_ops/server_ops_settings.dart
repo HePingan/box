@@ -26,6 +26,7 @@ class ServerOpsServer {
     this.baseUrl = '',
     this.user = '',
     this.terminalUrl = '',
+    this.apiUrl = '',
     this.snapshotId = '',
   });
 
@@ -44,6 +45,9 @@ class ServerOpsServer {
   /// 这台机器的终端（ttyd）地址；空 = 用构建注入的默认值。
   final String terminalUrl;
 
+  /// 这台机器的**只读运维 API** 地址（C2）；空 = 按 id 取内置默认，用户自己加的机器没有默认。
+  final String apiUrl;
+
   /// 对应服务器页快照 hosts.json 里那台机器的 id（用来标「当前」）；空 = 就用 [id]。
   final String snapshotId;
 
@@ -58,6 +62,10 @@ class ServerOpsServer {
   String get effectiveTerminalUrl =>
       _nonEmpty(terminalUrl) ?? ServerOpsSettings.defaultTerminalUrl;
 
+  /// 生效的只读 API 地址；用户自己加的机器没填就是空串（界面据此提示"这台的系统页还没接"）。
+  String get effectiveApiUrl =>
+      _nonEmpty(apiUrl) ?? ServerOpsSettings.defaultApiUrlFor(id);
+
   /// 地址或用户名还是构建默认值（没被用户覆盖过）。
   bool get usedBuildDefaults =>
       _nonEmpty(baseUrl) == null || _nonEmpty(user) == null;
@@ -68,6 +76,7 @@ class ServerOpsServer {
     String? baseUrl,
     String? user,
     String? terminalUrl,
+    String? apiUrl,
     String? snapshotId,
   }) =>
       ServerOpsServer(
@@ -76,6 +85,7 @@ class ServerOpsServer {
         baseUrl: baseUrl ?? this.baseUrl,
         user: user ?? this.user,
         terminalUrl: terminalUrl ?? this.terminalUrl,
+        apiUrl: apiUrl ?? this.apiUrl,
         snapshotId: snapshotId ?? this.snapshotId,
       );
 
@@ -85,6 +95,7 @@ class ServerOpsServer {
         'baseUrl': baseUrl,
         'user': user,
         'terminalUrl': terminalUrl,
+        'apiUrl': apiUrl,
         'snapshotId': snapshotId,
       };
 
@@ -99,6 +110,7 @@ class ServerOpsServer {
       baseUrl: _nonEmpty(raw['baseUrl'] as String?) ?? '',
       user: _nonEmpty(raw['user'] as String?) ?? '',
       terminalUrl: _nonEmpty(raw['terminalUrl'] as String?) ?? '',
+      apiUrl: _nonEmpty(raw['apiUrl'] as String?) ?? '',
       snapshotId: _nonEmpty(raw['snapshotId'] as String?) ?? '',
     );
   }
@@ -111,15 +123,16 @@ class ServerOpsServer {
       other.baseUrl == baseUrl &&
       other.user == user &&
       other.terminalUrl == terminalUrl &&
+      other.apiUrl == apiUrl &&
       other.snapshotId == snapshotId;
 
   @override
   int get hashCode =>
-      Object.hash(id, label, baseUrl, user, terminalUrl, snapshotId);
+      Object.hash(id, label, baseUrl, user, terminalUrl, apiUrl, snapshotId);
 
   @override
   String toString() =>
-      'ServerOpsServer($id, $label, $baseUrl, $user, $terminalUrl, $snapshotId)';
+      'ServerOpsServer($id, $label, $baseUrl, $user, $terminalUrl, $apiUrl, $snapshotId)';
 }
 
 /// 整套运维通道配置：服务器列表 + 当前选中的那台（口令按服务器分键存）。
@@ -128,6 +141,7 @@ class ServerOpsSettings {
     this.servers = const <ServerOpsServer>[],
     this.selectedServerId,
     this.passwords = const <String, String>{},
+    this.apiTokens = const <String, String>{},
   });
 
   /// 用户保存过的服务器列表；空 = 用户从没保存过 → 用 [builtInServers]（开箱即用两台）。
@@ -142,6 +156,21 @@ class ServerOpsSettings {
   /// 留这一份只是为了界面能同步回答"这台配了口令没有"（每块 UI 都异步读一次
   /// 加密存储既慢又难测）。
   final Map<String, String> passwords;
+
+  /// 本次会话内从加密存储读出的**只读 API 设备令牌**，键是服务器 id。
+  /// 与 [passwords] 同样的规矩：绝不落盘、绝不进 JSON、绝不进日志（面板会被截屏）。
+  final Map<String, String> apiTokens;
+
+  /// 内置两台的只读 API 地址。地址不是秘密，随包内置；**令牌**要用户填一次。
+  static const String defaultApiUrl = 'https://box.hpa888.top/opsapi';
+  static const String defaultApiUrl175 = 'https://box.hpa888.top/opsapi175';
+
+  /// 按机器 id 给只读 API 的默认地址；用户自己加的机器没有默认（返回空串）。
+  static String defaultApiUrlFor(String id) {
+    if (id == builtInHpa888Id) return defaultApiUrl;
+    if (id == builtInTencent175Id) return defaultApiUrl175;
+    return '';
+  }
 
   // ── 构建注入的默认值（两台机器各一套；名字与
   //    tool/build_release_with_update_sign.sh 里注入的 --dart-define 对得上） ──
@@ -191,6 +220,7 @@ class ServerOpsSettings {
     baseUrl: defaultBaseUrl,
     user: defaultUser,
     terminalUrl: defaultTerminalUrl,
+    apiUrl: defaultApiUrl,
     snapshotId: builtInHpa888Id,
   );
 
@@ -201,6 +231,7 @@ class ServerOpsSettings {
     baseUrl: defaultBaseUrl175,
     user: defaultUser175,
     terminalUrl: defaultTerminalUrl175,
+    apiUrl: defaultApiUrl175,
     snapshotId: builtInTencent175Id,
   );
 
@@ -263,6 +294,18 @@ class ServerOpsSettings {
   /// 生效终端地址。
   String get effectiveTerminalUrl => currentServer.effectiveTerminalUrl;
 
+  /// 生效的只读 API 地址（空 = 这台没接系统页）。
+  String get effectiveApiUrl => currentServer.effectiveApiUrl;
+
+  String apiTokenFor(String serverId) => apiTokens[serverId] ?? '';
+
+  bool hasApiTokenFor(String serverId) => _nonEmpty(apiTokenFor(serverId)) != null;
+
+  /// 生效的设备令牌；空 = 没配（系统页要给"先去设置里填"的引导）。
+  String get effectiveApiToken => _nonEmpty(apiTokenFor(currentServer.id)) ?? '';
+
+  bool get hasApiToken => effectiveApiToken.isNotEmpty;
+
   /// 有没有可用口令；没有时文件页/终端页要给"先去设置里填"的引导。
   bool get hasPassword => effectivePassword.isNotEmpty;
 
@@ -297,12 +340,14 @@ class ServerOpsSettings {
           servers: persisted,
           selectedServerId: _nonEmpty(prefs.getString(selectedKey)),
           passwords: await _readPasswords(persisted.map((s) => s.id)),
+          apiTokens: await _readApiTokens(persisted.map((s) => s.id)),
         );
       }
       final migrated = await _migrateLegacy(prefs);
       if (migrated != null) return migrated;
       return ServerOpsSettings(
         passwords: await _readPasswords(builtInServers.map((s) => s.id)),
+        apiTokens: await _readApiTokens(builtInServers.map((s) => s.id)),
       );
     } catch (_) {
       return const ServerOpsSettings();
@@ -379,6 +424,16 @@ class ServerOpsSettings {
     return out;
   }
 
+  /// 读某几台服务器的设备令牌（读不出来/没存过就跳过）。
+  static Future<Map<String, String>> _readApiTokens(Iterable<String> ids) async {
+    final out = <String, String>{};
+    for (final id in ids) {
+      final value = await serverOpsSecretStore.readApiToken(id);
+      if (_nonEmpty(value) != null) out[id] = value!;
+    }
+    return out;
+  }
+
   static List<ServerOpsServer>? _decodeServers(String? raw) {
     if (raw == null || raw.trim().isEmpty) return null;
     final decoded = jsonDecode(raw);
@@ -403,9 +458,24 @@ class ServerOpsSettings {
     List<ServerOpsServer>? servers,
     String? selectedServerId,
     Map<String, String>? passwords,
+    Map<String, String>? apiTokens,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final nextPasswords = <String, String>{...this.passwords};
+    final nextTokens = <String, String>{...this.apiTokens};
+
+    if (apiTokens != null) {
+      for (final entry in apiTokens.entries) {
+        if (entry.value.isEmpty) {
+          await serverOpsSecretStore.clearApiToken(entry.key);
+          nextTokens.remove(entry.key);
+        } else {
+          // 令牌同样不 trim：粘贴时常带首尾空白，但宁可原样存，读的时候再 trim。
+          await serverOpsSecretStore.writeApiToken(entry.key, entry.value);
+          nextTokens[entry.key] = entry.value;
+        }
+      }
+    }
 
     if (passwords != null) {
       for (final entry in passwords.entries) {
@@ -426,6 +496,8 @@ class ServerOpsSettings {
         if (kept.contains(gone.id)) continue;
         await serverOpsSecretStore.clearPassword(gone.id);
         nextPasswords.remove(gone.id);
+        await serverOpsSecretStore.clearApiToken(gone.id);
+        nextTokens.remove(gone.id);
       }
       await prefs.setString(
         serversKey,
@@ -441,6 +513,7 @@ class ServerOpsSettings {
       servers: servers ?? this.servers,
       selectedServerId: selectedServerId ?? this.selectedServerId,
       passwords: nextPasswords,
+      apiTokens: nextTokens,
     );
   }
 
@@ -449,13 +522,15 @@ class ServerOpsSettings {
       other is ServerOpsSettings &&
       other.selectedServerId == selectedServerId &&
       _sameServers(other.servers, servers) &&
-      _samePasswords(other.passwords, passwords);
+      _samePasswords(other.passwords, passwords) &&
+      _samePasswords(other.apiTokens, apiTokens);
 
   @override
   int get hashCode => Object.hash(
         Object.hashAll(servers),
         selectedServerId,
         Object.hashAll(passwords.entries.map((e) => Object.hash(e.key, e.value))),
+        Object.hashAll(apiTokens.entries.map((e) => Object.hash(e.key, e.value))),
       );
 
   static bool _sameServers(
