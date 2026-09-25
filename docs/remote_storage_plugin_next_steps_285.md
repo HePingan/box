@@ -230,4 +230,14 @@ PathNotFoundException ... rs_service_test_XXX/one.txt   ← 断言先炸 → 测
   `TransferKeepAliveService`、`remote_storage_transfer_channel`；
   APK manifest 里声明了 `top.hpa888.box.TransferKeepAliveService`
   （`exported=false`、`foregroundServiceType=dataSync`）
-- 未发版：本轮只做到"可发布"，发不发由你定
+- **已发版**：release **id=127 / 1.20.28 / versionCode 285 / published**
+  （27,033,752 字节，sha256 `a9f3e57d1ecc776b7117a68cf82f7d36e8b32d62e5d4202644a342011b0e620e`，
+  manifest HMAC `a40f833b…`，284 已归档）
+- 发布后独立复核（不信发布脚本自述）：公开 URL 下载字节 == 本机构建；
+  自己按 version.json 的 19 个签名字段重算 HMAC 与服务端一致；
+  仓库自带 `tool/verify_live_manifest_signature.dart` → `passed=true`；
+  客户端两端（284 提示更新 / 285 不提示）；服务端记录 id=127 published、id=126 archived
+- 线上包（不是本机构建）里核对：dex 有 `top.hpa888.box/remote_storage_transfer_service`、
+  APK manifest 声明 `TransferKeepAliveService`（`foregroundServiceType=dataSync`）；
+  libapp.so 里 284→285 的标记 `定位到该文件所在版本` 0→1、`tag 固定地址` 0→2、
+  `已恢复上次未完成的` 0→1
