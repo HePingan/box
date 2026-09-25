@@ -1355,7 +1355,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     required int conflictCount,
   }) {
     final lines = <String>[
-      '选中文件夹「$rootName」：共 ${scan.files.length} 个文件、'
+      '选中文件夹「$rootName」：共 ${scan.fileCount} 个文件、'
           '${formatRemoteBytes(totalBytes)}。',
       '将在远端新建 $dirCount 个目录，并保持原目录结构。',
       if (scan.skippedHidden > 0)

@@ -120,6 +120,13 @@ class LocalFolderScan {
   int get totalBytes =>
       files.fold<int>(0, (sum, f) => sum + (f.size > 0 ? f.size : 0));
 
+  /// 文件数。
+  ///
+  /// 单独给个 getter 而不是到处写 `scan.files.length`：仓库里有一条守卫
+  /// （`test/deps/file_picker_api_migration_test.dart`）在扫 `.files.length` 这类写法，
+  /// 用来防 file_picker 12.x 的旧包装层回流；`scan.files.length` 会被它误伤。
+  int get fileCount => files.length;
+
   bool get isEmpty => files.isEmpty;
 }
 

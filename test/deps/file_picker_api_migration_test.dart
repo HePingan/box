@@ -85,12 +85,61 @@ void main() {
 
     test('FilePicker 调用点不许再用 .files 取值', () {
       final offenders = <String>[];
-      // 命中形如 `picked?.files.first` / `pick.files.isEmpty` / `result?.files.single`
-      final pattern = RegExp(r'\??\.files\s*\.\s*(first|single|isEmpty|isNotEmpty|length)');
+      // 命中形如 `picked?.files.first` / `pick.files.isEmpty` / `result?.files.single`。
+      //
+      // 限定接收者名字里带 pick/picked/result：早先的宽松写法（只要 `.files.length`）
+      // 会把别的模型误伤——`scan.files.length`（远程存储的目录扫描结果）就被它判成违规，
+      // 而那条守卫本该只盯 file_picker 的返回值。
+      // 收窄后自带自检（见下），保证"该拦的还是拦得住"。
+      // 两种命中形态：
+      //  1. 先接住再取值：`final r = await FilePicker.pickFiles(); r.files.length;`
+      //     —— 接收者名字由赋值语句本身推出来，不靠命名约定；
+      //  2. 链式直接取值：`FilePicker.pickFiles().files.isEmpty`。
+      // 不写成"只要 `.files.length`"是因为那样会误伤别的模型：远程存储的
+      // `scan.files.length`（本地目录扫描结果）就被误判过一次。
+      final valuePattern =
+          r'\??\.files\s*\.\s*(first|single|isEmpty|isNotEmpty|length)';
+      final assignedFromPicker =
+          RegExp(r'\b(\w+)\s*=\s*(?:await\s+)?FilePicker\.[\w]+\(');
+      final chained = RegExp(
+        'FilePicker\\.[\\w]+\\([^;]*\\)\\s*\\??\\.files\\s*\\.\\s*'
+        '(first|single|isEmpty|isNotEmpty|length)',
+      );
+
+      List<String> hitsIn(String code) {
+        final found = <String>[];
+        found.addAll(chained.allMatches(code).map((m) => m.group(0)!));
+        for (final name in assignedFromPicker
+            .allMatches(code)
+            .map((m) => m.group(1)!)
+            .toSet()) {
+          final re = RegExp('\\b' + name + valuePattern);
+          found.addAll(re.allMatches(code).map((m) => m.group(0)!));
+        }
+        return found;
+      }
+
+      // 自检：该拦的拦住、无关模型的 .files 用法不误伤。
+      expect(
+        hitsIn('final r = await FilePicker.pickFiles(); r.files.length;'),
+        isNotEmpty,
+        reason: '守卫漏了"先接住再取值"的写法',
+      );
+      expect(
+        hitsIn('final picked = FilePicker.pickFiles(); picked?.files.first;'),
+        isNotEmpty,
+      );
+      expect(
+        hitsIn('if (FilePicker.pickFiles().files.isEmpty) return;'),
+        isNotEmpty,
+        reason: '守卫漏了链式写法',
+      );
+      expect(hitsIn('final n = scan.files.length;'), isEmpty, reason: '误伤了别的模型');
+      expect(hitsIn('final size = entries.files.length;'), isEmpty);
       _libSources().forEach((path, code) {
         if (!code.contains('FilePicker.')) return;
-        for (final m in pattern.allMatches(code)) {
-          offenders.add('$path → ${m.group(0)}');
+        for (final hit in hitsIn(code)) {
+          offenders.add('$path → $hit');
         }
       });
 
