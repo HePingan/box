@@ -64,6 +64,23 @@ class _FakeStore implements OpsSecretStore {
     values.remove(serverId);
   }
 
+  /// 令牌与口令**分表**：两者的生命周期不同（撤销令牌不该动口令），
+  /// 用例里也据此断言"改一个不动另一个"。
+  final Map<String, String> tokens = <String, String>{};
+
+  @override
+  Future<String?> readApiToken(String serverId) async => tokens[serverId];
+
+  @override
+  Future<void> writeApiToken(String serverId, String token) async {
+    tokens[serverId] = token;
+  }
+
+  @override
+  Future<void> clearApiToken(String serverId) async {
+    tokens.remove(serverId);
+  }
+
   @override
   Future<String?> readLegacyPassword() async => legacy;
 

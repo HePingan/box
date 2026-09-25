@@ -14,6 +14,7 @@ import 'dart:io';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_models.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_service.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_api_client.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 
@@ -41,13 +42,19 @@ typedef OpsTerminalProbe = Future<OpsProbeResult> Function(
   String password,
 );
 
-/// 三项体检，顺序固定（文件 → 终端 → 快照），失败不中断后面两项。
+/// 四项体检，顺序固定（文件 → 终端 → 快照 → 只读接口），失败不中断后面几项。
+///
+/// 第 4 项是 C2 的只读接口：**它的凭据与前三项不同**（设备令牌 vs 通道口令），
+/// 所以它必须单独出现在体检里 —— 少了它就会重演 291 那个坑：
+/// "文件通了"被当成"全通了"，而系统页其实一节都拉不出来。
 Future<List<OpsProbeResult>> runOpsProbes({
   required ServerOpsFilesService files,
   required HostService hosts,
   required String terminalUrl,
   required String user,
   required String password,
+  String apiUrl = '',
+  String apiToken = '',
   OpsTerminalProbe? terminalProbe,
 }) async {
   final probe = terminalProbe ?? probeOpsTerminal;
@@ -55,6 +62,7 @@ Future<List<OpsProbeResult>> runOpsProbes({
     await _timed(() => probeOpsFiles(files)),
     await _timed(() => probe(terminalUrl, user, password)),
     await _timed(() => probeOpsSnapshot(hosts)),
+    await _timed(() => probeOpsApi(apiUrl, apiToken)),
   ];
 }
 
@@ -81,6 +89,7 @@ Future<List<OpsProbeResult>> runOpsProbesForServer({
   required String password,
   required ServerOpsFilesService files,
   required HostService hosts,
+  String apiToken = '',
   OpsTerminalProbe? terminalProbe,
 }) =>
     runOpsProbes(
@@ -89,8 +98,44 @@ Future<List<OpsProbeResult>> runOpsProbesForServer({
       terminalUrl: server.effectiveTerminalUrl,
       user: server.effectiveUser,
       password: password,
+      apiUrl: server.effectiveApiUrl,
+      apiToken: apiToken,
       terminalProbe: terminalProbe,
     );
+
+/// 只读接口（C2）：取一次 /health。地址或令牌没填就给**可操作的**结论，
+/// 而不是一句"失败"—— 这台机器的令牌要用户自己去设置里填一次。
+Future<OpsProbeResult> probeOpsApi(String apiUrl, String apiToken) async {
+  const label = '只读接口（C2）';
+  if (apiUrl.isEmpty) {
+    return const OpsProbeResult(
+      label: label,
+      ok: false,
+      detail: '这台没有只读接口地址：设置 → 服务器 → 填「只读接口地址」',
+    );
+  }
+  if (apiToken.isEmpty) {
+    return const OpsProbeResult(
+      label: label,
+      ok: false,
+      detail: '没填设备令牌：设置 → 服务器 → 「设备令牌」'
+          '（**与文件页的口令不是同一个凭据**，两台机器各一个）',
+    );
+  }
+  final client = OpsApiClient(baseUrl: apiUrl, token: apiToken);
+  try {
+    final d = await client.call('health');
+    return OpsProbeResult(
+      label: label,
+      ok: true,
+      detail: '接口在跑（v${d['version'] ?? '?'}）',
+    );
+  } on OpsApiException catch (e) {
+    return OpsProbeResult(label: label, ok: false, detail: e.message);
+  } finally {
+    client.close();
+  }
+}
 
 /// 401 的统一提示。这个插件的口令**每台机器不同**，最常见的错法就是把 A 台的口令
 /// 填到 B 台的地址上 —— 实测：用 175 的口令打 /dav 必然 401，用主服务端的口令打

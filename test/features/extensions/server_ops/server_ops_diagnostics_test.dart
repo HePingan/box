@@ -67,6 +67,27 @@ class _Hosts extends HostService {
       const {};
 }
 
+/// 点「服务器连接」弹窗里的「测试连接」。
+///
+/// 弹窗现在有 7 个输入框 + 两个勾选 + 体检结果 + 最近请求面板，比测试视口
+/// （800x600）高：`tap` 算出来的坐标会命中**下层路由**的滚动视图
+/// （命中结果里是 `_RenderScrollSemantics`/`RenderClipRect`），表现为"点了没反应"。
+/// `ensureVisible` 救不了（滚动是有动画的，pump 一帧后 tap 用的还是中途坐标），
+/// `scrollUntilVisible` 也救不了（弹窗里是 SingleChildScrollView，子节点一次建完，
+/// 它认为"已经在树里"就不滚）。
+///
+/// 所以这里直接取按钮的 onPressed 调一次，并**断言它确实可点**（顺带守住"按钮没被禁用"）。
+/// 真实设备上用户是自己滑一下再点，不受影响。
+Future<void> _tapDialogButton(WidgetTester tester, String label) async {
+  final button = tester.widget<OutlinedButton>(
+    find.widgetWithText(OutlinedButton, label),
+  );
+  expect(button.onPressed, isNotNull, reason: '$label 应该是可点的（没被禁用）');
+  button.onPressed!();
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
+}
+
 void main() {
   tearDown(() {
     debugSetServerOpsRuntime();
@@ -134,7 +155,7 @@ void main() {
       expect(bad.ok, isFalse, reason: '非法 URL 不能联网试探');
     });
 
-    test('三项独立：第一项失败不影响后两项执行', () async {
+    test('四项独立：第一项失败不影响后三项执行', () async {
       final order = <String>[];
       final results = await runOpsProbes(
         files: _Files(fail: RemoteStorageException(RemoteStorageError.network, '连不上')),
@@ -150,10 +171,14 @@ void main() {
         },
       );
 
-      expect(results, hasLength(3));
+      expect(results, hasLength(4));
       expect(results[0].ok, isFalse);
       expect(results[1].ok, isTrue);
       expect(results[2].ok, isTrue);
+      // 第 4 项是 C2 的只读接口：这里没给地址/令牌 → 必须是"照它去设置里填"的可操作结论，
+      // 而不是一句失败（它会出现在体检面板上，用户照着它做就行）。
+      expect(results[3].ok, isFalse);
+      expect(results[3].detail, contains('设置 → 服务器'));
       expect(order, ['terminal'], reason: '注入的探针必须被真的调到');
     });
   });
@@ -187,11 +212,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       // 对话框内容在小窗口里要滚一下才够得着（真机同款行为）。
-      await tester.ensureVisible(find.text('测试连接'));
-      await tester.pump();
-      await tester.tap(find.text('测试连接'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      await _tapDialogButton(tester, '测试连接');
 
       expect(find.textContaining('文件通道（WebDAV）：根目录 1 项'), findsOneWidget);
       expect(find.textContaining('终端（ttyd）：认证失败（401）'), findsOneWidget);
@@ -237,11 +258,7 @@ void main() {
       );
       await tester.enterText(fields.at(3), 'pw-175');
 
-      await tester.ensureVisible(find.text('测试连接'));
-      await tester.pump();
-      await tester.tap(find.text('测试连接'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      await _tapDialogButton(tester, '测试连接');
 
       expect(
         find.textContaining('这个口令是「腾讯云 · 构建/监控机」那台的'),
@@ -287,11 +304,7 @@ void main() {
       );
       await tester.enterText(fields.at(3), 'pw-hpa');
 
-      await tester.ensureVisible(find.text('测试连接'));
-      await tester.pump();
-      await tester.tap(find.text('测试连接'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      await _tapDialogButton(tester, '测试连接');
 
       expect(find.textContaining('那台的'), findsNothing);
     });
@@ -323,20 +336,18 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      await tester.ensureVisible(find.text('测试连接'));
-      await tester.pump();
-      await tester.tap(find.text('测试连接'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      await _tapDialogButton(tester, '测试连接');
 
       // 条数不写死：页面加载时"快照"那项也会记一条，写死就是脆用例。
       expect(
         serverOpsRequestLog.items.where((r) => r.entry == '体检'),
-        hasLength(3),
+        hasLength(4),
       );
       expect(find.textContaining('最近请求（共'), findsOneWidget);
       expect(find.textContaining('体检 · 阿里云 · 主服务端 · OK'), findsWidgets);
-      expect(find.textContaining('体检 · 阿里云 · 主服务端 · 失败'), findsOneWidget);
+      // 不写死条数：这一轮里**终端（注入的 401）与只读接口（没填令牌）都会失败**，
+      // 两个都会各留一条"失败"记录。写死 findsOneWidget 就是脆用例。
+      expect(find.textContaining('体检 · 阿里云 · 主服务端 · 失败'), findsWidgets);
       // 面板要能说清是哪一项失败的（[标签] 人话结论）。
       expect(find.textContaining('[终端（ttyd）]'), findsWidgets);
     });
@@ -374,11 +385,7 @@ void main() {
       // 面板与日志里都不该出现它。
       await tester.enterText(fields.at(3), 'sekrit-pw-please-hide');
 
-      await tester.ensureVisible(find.text('测试连接'));
-      await tester.pump();
-      await tester.tap(find.text('测试连接'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      await _tapDialogButton(tester, '测试连接');
 
       expect(find.textContaining('最近请求（共'), findsOneWidget);
       // 只看面板**渲染出来的那些行**：输入框里当然有用户刚打的字（那是他自己输入的，
@@ -396,7 +403,7 @@ void main() {
       }
       final probes =
           serverOpsRequestLog.items.where((r) => r.entry == '体检').toList();
-      expect(probes, hasLength(3), reason: '口令那条不能挡住记录本身');
+      expect(probes, hasLength(4), reason: '口令那条不能挡住记录本身');
       for (final r in serverOpsRequestLog.items) {
         expect(r.summary, isNot(contains('sekrit-pw-please-hide')));
       }
@@ -424,7 +431,7 @@ void main() {
         },
       );
 
-      expect(results, hasLength(3));
+      expect(results, hasLength(4));
       expect(
         seen.single,
         'https://box.hpa888.top/term175/|boxops|pw-175',
@@ -462,11 +469,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      await tester.ensureVisible(find.text('测试连接'));
-      await tester.pump();
-      await tester.tap(find.text('测试连接'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      await _tapDialogButton(tester, '测试连接');
 
       expect(
         probed.single,

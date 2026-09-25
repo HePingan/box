@@ -96,12 +96,21 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    // 名称/地址/用户名/口令/终端地址五个输入框，其中口令框必须是空的。
+    // 名称/地址/用户名/口令/终端地址/只读接口地址/设备令牌 共 7 个输入框。
     final fields = tester.widgetList<TextField>(find.byType(TextField)).toList();
-    expect(fields, hasLength(5));
+    expect(fields, hasLength(7));
+    // 两个秘密框（口令 + 设备令牌）都必须空的：不预填、不回显。
     final obscure = fields.where((f) => f.obscureText).toList();
-    expect(obscure, hasLength(1));
-    expect(obscure.single.controller?.text, isEmpty);
+    expect(obscure, hasLength(2), reason: '口令与设备令牌都是秘密');
+    for (final f in obscure) {
+      expect(f.controller?.text, isEmpty);
+    }
+    // 只读接口地址**不是**秘密：内置两台各有一个默认值（用户只差填令牌）。
+    expect(
+      fields.any((f) => (f.controller?.text ?? '').contains('/opsapi')),
+      isTrue,
+      reason: '内置机器要带默认的只读接口地址',
+    );
   });
 
   testWidgets('AppBar 的切换器显示当前机器，展开能看到两台', (tester) async {

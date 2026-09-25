@@ -37,6 +37,22 @@ class _FakeStore implements OpsSecretStore {
     clears++;
   }
 
+  /// 令牌表（与 [values] 分开：撤销令牌不该动口令）。
+  final Map<String, String> tokens = <String, String>{};
+
+  @override
+  Future<String?> readApiToken(String serverId) async => tokens[serverId];
+
+  @override
+  Future<void> writeApiToken(String serverId, String token) async {
+    tokens[serverId] = token;
+  }
+
+  @override
+  Future<void> clearApiToken(String serverId) async {
+    tokens.remove(serverId);
+  }
+
   @override
   Future<String?> readLegacyPassword() async => legacy;
 
@@ -321,6 +337,87 @@ void main() {
       expect(updated.hasPasswordFor('a'), isFalse);
       expect(updated.hasPasswordFor('b'), isTrue);
       expect(store.clears, greaterThan(0));
+    });
+
+    test('设备令牌与口令分表：撤销令牌不动口令，改口令不动令牌', () async {
+      await const ServerOpsSettings().save(
+        servers: [_a, _b],
+        passwords: {'a': 'pw-a'},
+        apiTokens: {'a': 'tok-a'},
+      );
+      expect(store.tokens['a'], 'tok-a');
+      expect(store.values['a'], 'pw-a');
+
+      // 只清令牌
+      final afterClearToken =
+          await (await ServerOpsSettings.load()).save(apiTokens: {'a': ''});
+      expect(store.tokens.containsKey('a'), isFalse);
+      expect(store.values['a'], 'pw-a', reason: '撤销令牌不该动口令');
+      expect(afterClearToken.hasApiTokenFor('a'), isFalse);
+      expect(afterClearToken.hasPasswordFor('a'), isTrue);
+
+      // 只清口令
+      final afterClearPw =
+          await (await ServerOpsSettings.load()).save(passwords: {'a': ''});
+      expect(store.tokens['a'], isNull, reason: '令牌刚被清掉了，保持清掉');
+      expect(store.values.containsKey('a'), isFalse);
+      expect(afterClearPw.hasPasswordFor('a'), isFalse);
+    });
+
+    test('令牌按服务器分键，且不进 SharedPreferences（令牌是秘密）', () async {
+      await const ServerOpsSettings().save(
+        servers: [_a, _b],
+        apiTokens: {'a': 'tok-a', 'b': 'tok-b'},
+      );
+      final loaded = await ServerOpsSettings.load();
+      expect(loaded.apiTokenFor('a'), 'tok-a');
+      expect(loaded.apiTokenFor('b'), 'tok-b');
+      expect(loaded.effectiveApiToken, 'tok-a', reason: '当前这台是 a');
+
+      final prefs = await SharedPreferences.getInstance();
+      final dump = prefs.getKeys().map((k) => '$k=${prefs.get(k)}').join('\n');
+      expect(dump.contains('tok-a'), isFalse, reason: '令牌只能进加密存储');
+      expect(dump.contains('tok-b'), isFalse);
+      expect(KeystoreOpsSecretStore.apiTokenKeyFor('a'),
+          'serverOps.api.token.a');
+    });
+
+    test('删掉的服务器，它的令牌键一起清掉', () async {
+      await const ServerOpsSettings().save(
+        servers: [_a, _b],
+        apiTokens: {'a': 'tok-a', 'b': 'tok-b'},
+      );
+      final updated = await (await ServerOpsSettings.load()).save(servers: [_a]);
+
+      expect(store.tokens.containsKey('b'), isFalse, reason: '不留没人认领的令牌');
+      expect(store.tokens['a'], 'tok-a');
+      expect(updated.hasApiTokenFor('b'), isFalse);
+    });
+
+    test('内置两台各有一套默认只读接口地址；用户自己加的机器没有默认', () {
+      expect(ServerOpsSettings.builtInHpa888.effectiveApiUrl,
+          'https://box.hpa888.top/opsapi');
+      expect(ServerOpsSettings.builtInTencent175.effectiveApiUrl,
+          'https://box.hpa888.top/opsapi175');
+      expect(
+        const ServerOpsServer(id: 'srv1', label: '自建').effectiveApiUrl,
+        isEmpty,
+        reason: '自建机器没有默认地址：系统页要提示"这台还没接"',
+      );
+      // 用户填了就以用户的为准。
+      expect(
+        ServerOpsSettings.builtInTencent175
+            .copyWith(apiUrl: 'https://mine.test/opsapi')
+            .effectiveApiUrl,
+        'https://mine.test/opsapi',
+      );
+    });
+
+    test('服务器 JSON 往返带上只读接口地址', () {
+      final s = _a.copyWith(apiUrl: 'https://x.test/opsapi175');
+      final back = ServerOpsServer.fromJson(s.toJson());
+      expect(back!.apiUrl, 'https://x.test/opsapi175');
+      expect(back, s, reason: '含 apiUrl 的相等性也要对');
     });
 
     test('删掉的服务器，它的口令键一起清掉', () async {

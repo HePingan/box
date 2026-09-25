@@ -137,7 +137,7 @@ class OpsApiClient {
         throw OpsApiException(OpsApiErrorKind.badRequest,
             serverMessage ?? '请求参数不对', status: 400);
       case 401:
-        throw OpsApiException(
+        throw const OpsApiException(
           OpsApiErrorKind.unauthorized,
           '设备令牌无效或已被撤销 —— 口令与令牌不是一回事：'
           '口令给文件/终端用，令牌给这台机器的只读接口用，两台机器的都不同',
@@ -150,7 +150,7 @@ class OpsApiClient {
         throw OpsApiException(OpsApiErrorKind.notFound,
             serverMessage ?? '接口地址不对（404）', status: 404);
       case 429:
-        throw OpsApiException(OpsApiErrorKind.rateLimited,
+        throw const OpsApiException(OpsApiErrorKind.rateLimited,
             '请求太频繁，等十几秒再来（服务端限流）', status: 429);
       default:
         throw OpsApiException(OpsApiErrorKind.server,
@@ -207,8 +207,11 @@ List<T> _listOf<T>(Object? raw, T Function(Map<String, dynamic>) build) {
   if (raw is! List) return <T>[];
   final out = <T>[];
   for (final item in raw) {
-    if (item is Map<String, dynamic>) out.add(build(item));
-    else if (item is Map) out.add(build(item.cast<String, dynamic>()));
+    if (item is Map<String, dynamic>) {
+      out.add(build(item));
+    } else if (item is Map) {
+      out.add(build(item.cast<String, dynamic>()));
+    }
   }
   return out;
 }
@@ -467,8 +470,11 @@ List<Map<String, dynamic>> _rawList(Object? raw) {
   if (raw is! List) return const [];
   final out = <Map<String, dynamic>>[];
   for (final item in raw) {
-    if (item is Map<String, dynamic>) out.add(item);
-    else if (item is Map) out.add(item.cast<String, dynamic>());
+    if (item is Map<String, dynamic>) {
+      out.add(item);
+    } else if (item is Map) {
+      out.add(item.cast<String, dynamic>());
+    }
   }
   return out;
 }

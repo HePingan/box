@@ -17,6 +17,7 @@ import 'package:box/features/extensions/plugins/server_ops/server_ops_diagnostic
 import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
+import 'package:box/features/extensions/plugins/server_ops/system_tab.dart';
 import 'package:box/features/extensions/plugins/server_ops/terminal_tab.dart';
 
 class ServerOpsPage extends StatefulWidget {
@@ -83,7 +84,7 @@ class _ServerOpsPageState extends State<ServerOpsPage> {
   Widget build(BuildContext context) {
     final settings = _settings;
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('服务器运维'),
@@ -104,6 +105,7 @@ class _ServerOpsPageState extends State<ServerOpsPage> {
               Tab(icon: Icon(Icons.dns_outlined), text: '服务器'),
               Tab(icon: Icon(Icons.folder_outlined), text: '文件'),
               Tab(icon: Icon(Icons.terminal_rounded), text: '终端'),
+              Tab(icon: Icon(Icons.memory_outlined), text: '系统'),
             ],
           ),
         ),
@@ -117,6 +119,7 @@ class _ServerOpsPageState extends State<ServerOpsPage> {
                     settings: settings,
                     onOpenSettings: _openSettings,
                   ),
+                  ServerOpsSystemTab(settings: settings),
                 ],
               ),
       ),
@@ -209,6 +212,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   /// 待写入加密存储的口令：id → 新口令（空串 = 清掉这一台）。没出现的保持原样。
   final Map<String, String> _pendingPasswords = <String, String>{};
 
+  /// 待写入的只读 API 设备令牌：同一套规矩（空串 = 清掉这一台）。
+  final Map<String, String> _pendingApiTokens = <String, String>{};
+
   bool _saving = false;
   String? _error;
 
@@ -217,6 +223,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       return _pendingPasswords[id]!.isNotEmpty;
     }
     return widget.settings.hasPasswordFor(id);
+  }
+
+  bool _apiTokenPresent(String id) {
+    if (_pendingApiTokens.containsKey(id)) {
+      return _pendingApiTokens[id]!.isNotEmpty;
+    }
+    return widget.settings.hasApiTokenFor(id);
   }
 
   /// 除 [selfId] 之外、已知口令的机器：label → 口令（口令为空的机器不进表）。
@@ -231,6 +244,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     return widget.settings.passwordFor(id);
   }
 
+  String _storedApiToken(String id) {
+    if (_pendingApiTokens.containsKey(id)) return _pendingApiTokens[id]!;
+    return widget.settings.apiTokenFor(id);
+  }
+
   Future<void> _edit(int index, {String? storedPassword}) async {
     final server = _draft[index];
     final result = await showDialog<_ServerEditResult>(
@@ -238,6 +256,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       builder: (_) => _ServerEditDialog(
         server: server,
         storedPassword: storedPassword ?? _storedPassword(server.id),
+        storedApiToken: _storedApiToken(server.id),
         otherPasswords: _otherPasswords(server.id),
       ),
     );
@@ -247,6 +266,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       _draft[index] = result.server;
       if (result.newPassword != null) {
         _pendingPasswords[result.server.id] = result.newPassword!;
+      }
+      if (result.newApiToken != null) {
+        _pendingApiTokens[result.server.id] = result.newApiToken!;
       }
     });
   }
@@ -258,6 +280,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       builder: (_) => _ServerEditDialog(
         server: ServerOpsServer(id: id, label: '新服务器', baseUrl: ''),
         storedPassword: '',
+        storedApiToken: '',
         otherPasswords: _otherPasswords(id),
       ),
     );
@@ -267,6 +290,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       _draft.add(result.server);
       if (result.newPassword != null && result.newPassword!.isNotEmpty) {
         _pendingPasswords[result.server.id] = result.newPassword!;
+      }
+      if (result.newApiToken != null && result.newApiToken!.isNotEmpty) {
+        _pendingApiTokens[result.server.id] = result.newApiToken!;
       }
     });
   }
@@ -305,6 +331,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     setState(() {
       _draft.removeWhere((s) => s.id == server.id);
       _pendingPasswords[server.id] = '';
+      _pendingApiTokens[server.id] = '';
       if (_selectedId == server.id) _selectedId = _draft.first.id;
     });
   }
@@ -319,6 +346,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
         servers: _draft,
         selectedServerId: _selectedId,
         passwords: _pendingPasswords.isEmpty ? null : _pendingPasswords,
+        apiTokens: _pendingApiTokens.isEmpty ? null : _pendingApiTokens,
       );
       if (!mounted) return;
       Navigator.pop(context, updated);
@@ -375,6 +403,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                 server: _draft[i],
                 selected: _draft[i].id == _selectedId,
                 passwordPresent: _passwordPresent(_draft[i].id),
+                apiTokenPresent: _apiTokenPresent(_draft[i].id),
                 onTap: () => _edit(i),
                 onSelect: () => setState(() => _selectedId = _draft[i].id),
                 onDelete: () => _delete(_draft[i]),
@@ -420,6 +449,7 @@ class _ServerRow extends StatelessWidget {
     required this.server,
     required this.selected,
     required this.passwordPresent,
+    required this.apiTokenPresent,
     required this.onTap,
     required this.onSelect,
     required this.onDelete,
@@ -428,6 +458,7 @@ class _ServerRow extends StatelessWidget {
   final ServerOpsServer server;
   final bool selected;
   final bool passwordPresent;
+  final bool apiTokenPresent;
   final VoidCallback onTap;
   final VoidCallback onSelect;
   final VoidCallback onDelete;
@@ -467,7 +498,8 @@ class _ServerRow extends StatelessWidget {
       ),
       subtitle: Text(
         '${server.effectiveBaseUrl}\n'
-        '口令：${passwordPresent ? '已在本机加密保存' : '还没配置'}',
+        '口令：${passwordPresent ? '已在本机加密保存' : '还没配置'}'
+        ' · 系统页：${apiTokenPresent ? '已配令牌' : '没配令牌'}',
         style: theme.textTheme.labelSmall?.copyWith(
           color: theme.colorScheme.outline,
         ),
@@ -497,12 +529,19 @@ class _ServerRow extends StatelessWidget {
 
 /// 编辑一台服务器后的结果。
 class _ServerEditResult {
-  const _ServerEditResult({required this.server, this.newPassword});
+  const _ServerEditResult({
+    required this.server,
+    this.newPassword,
+    this.newApiToken,
+  });
 
   final ServerOpsServer server;
 
   /// null = 不改口令；空串 = 清掉已保存口令；其它 = 新口令。
   final String? newPassword;
+
+  /// 只读 API 设备令牌（null = 不改；空串 = 清掉）。
+  final String? newApiToken;
 }
 
 /// 编辑单台服务器（label / 地址 / 用户名 / 终端地址 / 口令）+ 三项目标机体检。
@@ -510,6 +549,7 @@ class _ServerEditDialog extends StatefulWidget {
   const _ServerEditDialog({
     required this.server,
     required this.storedPassword,
+    this.storedApiToken = '',
     this.otherPasswords = const <String, String>{},
   });
 
@@ -517,6 +557,9 @@ class _ServerEditDialog extends StatefulWidget {
 
   /// 这台机器当前保存的口令（空 = 没配）。只用来判"留空即不改"与体检。
   final String storedPassword;
+
+  /// 这台机器当前保存的设备令牌（空 = 没配）。与口令同理，只判"留空即不改"。
+  final String storedApiToken;
 
   /// 其它机器已知口令：label → 口令。**只在 401 时用来提示"这个口令是别台的"**，
   /// 不参与任何比较以外的逻辑，也不显示口令本身。
@@ -536,9 +579,15 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
   late final TextEditingController _terminalUrl =
       TextEditingController(text: widget.server.effectiveTerminalUrl);
   final TextEditingController _password = TextEditingController();
+  late final TextEditingController _apiUrl =
+      TextEditingController(text: widget.server.effectiveApiUrl);
+  final TextEditingController _apiToken = TextEditingController();
 
   /// 标记"清掉这台上已保存的口令"。
   bool _clearPassword = false;
+
+  /// 标记"清掉这台上已保存的设备令牌"。
+  bool _clearApiToken = false;
   bool _testing = false;
   String? _error;
 
@@ -546,6 +595,7 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
   List<OpsProbeResult> _probeResults = const [];
 
   bool get _hasStoredPassword => widget.storedPassword.isNotEmpty;
+  bool get _hasStoredApiToken => widget.storedApiToken.isNotEmpty;
 
   @override
   void dispose() {
@@ -554,6 +604,8 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
     _user.dispose();
     _terminalUrl.dispose();
     _password.dispose();
+    _apiUrl.dispose();
+    _apiToken.dispose();
     super.dispose();
   }
 
@@ -563,7 +615,15 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
         baseUrl: _baseUrl.text,
         user: _user.text,
         terminalUrl: _terminalUrl.text,
+        apiUrl: _apiUrl.text,
       );
+
+  /// 体检要用的设备令牌：输入框填了就用新的，否则用已保存的那份。
+  String get _probeApiToken {
+    if (_clearApiToken) return '';
+    if (_apiToken.text.isNotEmpty) return _apiToken.text;
+    return widget.storedApiToken;
+  }
 
   /// 体检要用的口令：输入框填了就用新的，否则用已保存的那份。
   String get _probePassword {
@@ -576,9 +636,16 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
     final newPassword = _clearPassword
         ? ''
         : (_password.text.isEmpty ? null : _password.text);
+    final newApiToken = _clearApiToken
+        ? ''
+        : (_apiToken.text.isEmpty ? null : _apiToken.text);
     Navigator.pop(
       context,
-      _ServerEditResult(server: _draftServer, newPassword: newPassword),
+      _ServerEditResult(
+        server: _draftServer,
+        newPassword: newPassword,
+        newApiToken: newApiToken,
+      ),
     );
   }
 
@@ -603,6 +670,7 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
       results = await runOpsProbesForServer(
         server: server,
         password: password,
+        apiToken: _probeApiToken,
         files: serverOpsFilesService(probeSettings),
         hosts: serverOpsHostService,
         terminalProbe: serverOpsTerminalProbe,
@@ -826,6 +894,42 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
                   border: OutlineInputBorder(),
                 ),
               ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _apiUrl,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(
+                  labelText: '只读接口地址（C2）',
+                  hintText: 'https://box.hpa888.top/opsapi175',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _apiToken,
+                obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText: '设备令牌（只读接口用）',
+                  hintText: _clearApiToken
+                      ? '已标记清除，保存后失效'
+                      : (_hasStoredApiToken ? '留空即不改' : '与服务端口令不是一回事'),
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Checkbox(
+                    value: _clearApiToken,
+                    onChanged: (v) => setState(() => _clearApiToken = v ?? false),
+                  ),
+                  const Expanded(
+                    child: Text('清掉这台上已保存的令牌', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -843,7 +947,7 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      '分别测这台机器的文件通道 / 终端 / 主机快照',
+                      '分别测：文件通道 / 终端 / 主机快照 / 只读接口',
                       style: theme.textTheme.labelSmall?.copyWith(
                         color: theme.colorScheme.outline,
                       ),
