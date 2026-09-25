@@ -14,6 +14,7 @@ import 'dart:io';
 import 'package:box/features/extensions/plugins/server_ops/host_models.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 
 /// 单项体检结果。detail 一律是给人看的中文。
 class OpsProbeResult {
@@ -51,6 +52,27 @@ Future<List<OpsProbeResult>> runOpsProbes({
     await probeOpsSnapshot(hosts),
   ];
 }
+
+/// 按**一台服务器**跑三项体检（B1：诊断跟着当前选中的机器走）。
+///
+/// 地址 / 用户名 / 终端地址全部取自这台服务器，口令由调用方给（它只在会话内存与
+/// 本机加密存储里，不在模型里）。[files] 也必须是按同一台服务器的设置建出来的，
+/// 否则会出现"测的是 A 机、连的是 B 机"的假结论。
+Future<List<OpsProbeResult>> runOpsProbesForServer({
+  required ServerOpsServer server,
+  required String password,
+  required ServerOpsFilesService files,
+  required HostService hosts,
+  OpsTerminalProbe? terminalProbe,
+}) =>
+    runOpsProbes(
+      files: files,
+      hosts: hosts,
+      terminalUrl: server.effectiveTerminalUrl,
+      user: server.effectiveUser,
+      password: password,
+      terminalProbe: terminalProbe,
+    );
 
 /// 文件通道：列一次根目录。这是"口令对不对、服务起没起"最小的一次真实请求。
 Future<OpsProbeResult> probeOpsFiles(ServerOpsFilesService files) async {

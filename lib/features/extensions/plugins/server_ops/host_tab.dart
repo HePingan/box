@@ -14,6 +14,7 @@ import 'package:box/features/extensions/plugins/server_ops/host_models.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_sparkline.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 
 /// 指标高到这个值就换告警色（阈值是给"看一眼有没有事"用的，不是告警系统）。
 const double kHostCpuWarnPercent = 85;
@@ -21,7 +22,12 @@ const double kHostMemWarnPercent = 90;
 const double kHostDiskWarnPercent = 90;
 
 class ServerOpsHostTab extends StatefulWidget {
-  const ServerOpsHostTab({super.key});
+  const ServerOpsHostTab({super.key, this.settings = const ServerOpsSettings()});
+
+  /// 当前选中的服务器：用它给对应那一行打上「当前」标记（B1）。
+  ///
+  /// 默认值只是给"单独挂这个页签"的用例一个可用的形状（= 开箱即用的第一台）。
+  final ServerOpsSettings settings;
 
   @override
   State<ServerOpsHostTab> createState() => _ServerOpsHostTabState();
@@ -134,6 +140,10 @@ class _ServerOpsHostTabState extends State<ServerOpsHostTab> {
               host: host,
               history: _histories[host.id] ?? const HostHistory(),
               stepSec: kHostSampleStepSec,
+              // 与当前选中服务器对齐的那一行打「当前」：否则切了机器也不知道
+              // 文件/终端打的是哪台（三处得能对上）。
+              isCurrent:
+                  host.id == widget.settings.currentServer.effectiveSnapshotId,
             ),
           if (snapshot.hosts.isEmpty)
             Padding(
@@ -278,6 +288,7 @@ class _HostCard extends StatelessWidget {
     required this.host,
     required this.history,
     required this.stepSec,
+    this.isCurrent = false,
   });
 
   final HostEntry host;
@@ -285,6 +296,9 @@ class _HostCard extends StatelessWidget {
 
   /// 相邻历史点的间隔（秒）；文案里用它说明"这段线有多长"。
   final int stepSec;
+
+  /// 是不是当前选中的那台（决定要不要打「当前」标记）。
+  final bool isCurrent;
 
   @override
   Widget build(BuildContext context) {
@@ -318,6 +332,26 @@ class _HostCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              if (isCurrent)
+                Container(
+                  key: ValueKey('ops-host-current-${host.id}'),
+                  margin: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.secondaryContainer,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '当前',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
               Text(
                 host.online ? '在线' : '离线',
                 style: TextStyle(

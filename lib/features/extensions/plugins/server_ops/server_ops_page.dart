@@ -1,11 +1,13 @@
-// 服务器运维插件（box 内置插件）：一个入口，三个页签。
+// 服务器运维插件（box 内置插件）：一个入口，三个页签 + 多服务器切换（B1）。
 //
 //   服务器（默认）：各主机 CPU / 内存 / 磁盘 / 负载 / 网络 + 迷你折线；
 //   文件：直连运维通道（整盘 WebDAV）的目录浏览 / 上传 / 下载 / 重命名 / 删除；
 //   终端：webview 打开运维终端（Basic 认证在 onHttpAuthRequest 里应答）。
 //
-// 设置（地址 / 用户名 / 口令 / 终端地址）都在这里：三个页签共用同一份，
-// 改完后页签重建（见各页签的 didUpdateWidget）——否则用户填了口令还得退出重进。
+// 多服务器模型：AppBar 上有**当前机器切换器**（显示当前 label，可切到另一台），
+// 文件页 / 终端页 / 诊断都按当前选中的那台工作；设置弹层是「服务器列表 + 每台一条
+// 连接」，支持新增 / 编辑 / 删除（最后一台不许删）。选择与列表都持久化
+// （见 ServerOpsSettings 的 servers / selectedServerId）。
 
 import 'package:flutter/material.dart';
 
@@ -38,6 +40,32 @@ class _ServerOpsPageState extends State<ServerOpsPage> {
     setState(() => _settings = settings);
   }
 
+  /// 切换当前服务器：落盘（`serverOps.dav.selected`）+ 立即换页签用的那份设置。
+  Future<void> _selectServer(String id) async {
+    final current = _settings;
+    if (current == null || id == current.effectiveSelectedServerId) return;
+    late final ServerOpsSettings updated;
+    try {
+      updated = await current.save(selectedServerId: id);
+    } catch (e) {
+      // 落盘失败也得让用户能切：这次先用内存里的选择，下次进设置再存。
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text('切换没存住（$e），本次仍按新选的机器工作')),
+      );
+      setState(() {
+        _settings = ServerOpsSettings(
+          servers: current.servers,
+          selectedServerId: id,
+          passwords: current.passwords,
+        );
+      });
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _settings = updated);
+  }
+
   Future<void> _openSettings() async {
     final current = _settings ?? const ServerOpsSettings();
     final updated = await showModalBottomSheet<ServerOpsSettings>(
@@ -59,6 +87,11 @@ class _ServerOpsPageState extends State<ServerOpsPage> {
         appBar: AppBar(
           title: const Text('服务器运维'),
           actions: [
+            if (settings != null)
+              _ServerSwitcher(
+                settings: settings,
+                onSelected: _selectServer,
+              ),
             IconButton(
               tooltip: '设置',
               onPressed: _openSettings,
@@ -77,7 +110,7 @@ class _ServerOpsPageState extends State<ServerOpsPage> {
             ? const Center(child: CircularProgressIndicator())
             : TabBarView(
                 children: [
-                  const ServerOpsHostTab(),
+                  ServerOpsHostTab(settings: settings),
                   ServerOpsFilesTab(settings: settings),
                   ServerOpsTerminalTab(
                     settings: settings,
@@ -90,7 +123,73 @@ class _ServerOpsPageState extends State<ServerOpsPage> {
   }
 }
 
-/// 连接设置。口令**默认留空**：留空 = 不改，构建注入过的就不用管这一项。
+/// AppBar 上的当前机器切换器：显示当前 label，展开可切到另一台。
+///
+/// 放在 AppBar 而不是各页签里：切换是**整页**的事 —— 文件 / 终端 / 诊断三处都跟着换，
+/// 摆在一个页签里会让人以为只切了那一个页签。
+class _ServerSwitcher extends StatelessWidget {
+  const _ServerSwitcher({required this.settings, required this.onSelected});
+
+  final ServerOpsSettings settings;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final current = settings.currentServer;
+    return PopupMenuButton<String>(
+      key: const ValueKey('ops-server-switcher'),
+      tooltip: '切换服务器',
+      onSelected: onSelected,
+      itemBuilder: (_) => [
+        for (final server in settings.effectiveServers)
+          PopupMenuItem<String>(
+            value: server.id,
+            child: ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                server.id == current.id
+                    ? Icons.check_circle_rounded
+                    : Icons.circle_outlined,
+                size: 18,
+              ),
+              title: Text(server.label),
+              subtitle: Text(
+                server.effectiveBaseUrl,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.dns_outlined, size: 16),
+            const SizedBox(width: 4),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 108),
+              child: Text(
+                current.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelLarge,
+              ),
+            ),
+            const Icon(Icons.arrow_drop_down_rounded, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 设置弹层：服务器列表 + 每台一条连接（新增 / 编辑 / 删除 / 选为当前）。
+///
+/// 口令只在编辑对话框里输入，且**不进列表**：只在保存时按服务器写进本机加密存储。
 class _SettingsSheet extends StatefulWidget {
   const _SettingsSheet({required this.settings});
 
@@ -101,28 +200,103 @@ class _SettingsSheet extends StatefulWidget {
 }
 
 class _SettingsSheetState extends State<_SettingsSheet> {
-  late final TextEditingController _baseUrl =
-      TextEditingController(text: widget.settings.effectiveBaseUrl);
-  late final TextEditingController _user =
-      TextEditingController(text: widget.settings.effectiveUser);
-  late final TextEditingController _terminalUrl =
-      TextEditingController(text: widget.settings.effectiveTerminalUrl);
-  final TextEditingController _password = TextEditingController();
+  late final List<ServerOpsServer> _draft = List<ServerOpsServer>.of(
+    widget.settings.effectiveServers,
+  );
+  late String _selectedId = widget.settings.currentServer.id;
+
+  /// 待写入加密存储的口令：id → 新口令（空串 = 清掉这一台）。没出现的保持原样。
+  final Map<String, String> _pendingPasswords = <String, String>{};
 
   bool _saving = false;
-  bool _testing = false;
   String? _error;
 
-  /// 体检结果（为空表示还没测过）。
-  List<OpsProbeResult> _probeResults = const [];
+  bool _passwordPresent(String id) {
+    if (_pendingPasswords.containsKey(id)) {
+      return _pendingPasswords[id]!.isNotEmpty;
+    }
+    return widget.settings.hasPasswordFor(id);
+  }
 
-  @override
-  void dispose() {
-    _baseUrl.dispose();
-    _user.dispose();
-    _terminalUrl.dispose();
-    _password.dispose();
-    super.dispose();
+  String _storedPassword(String id) {
+    if (_pendingPasswords.containsKey(id)) return _pendingPasswords[id]!;
+    return widget.settings.passwordFor(id);
+  }
+
+  Future<void> _edit(int index, {String? storedPassword}) async {
+    final server = _draft[index];
+    final result = await showDialog<_ServerEditResult>(
+      context: context,
+      builder: (_) => _ServerEditDialog(
+        server: server,
+        storedPassword: storedPassword ?? _storedPassword(server.id),
+      ),
+    );
+    if (result == null) return;
+    if (!mounted) return;
+    setState(() {
+      _draft[index] = result.server;
+      if (result.newPassword != null) {
+        _pendingPasswords[result.server.id] = result.newPassword!;
+      }
+    });
+  }
+
+  Future<void> _add() async {
+    final id = ServerOpsSettings.nextServerId(_draft.map((s) => s.id));
+    final result = await showDialog<_ServerEditResult>(
+      context: context,
+      builder: (_) => _ServerEditDialog(
+        server: ServerOpsServer(id: id, label: '新服务器', baseUrl: ''),
+        storedPassword: '',
+      ),
+    );
+    if (result == null) return;
+    if (!mounted) return;
+    setState(() {
+      _draft.add(result.server);
+      if (result.newPassword != null && result.newPassword!.isNotEmpty) {
+        _pendingPasswords[result.server.id] = result.newPassword!;
+      }
+    });
+  }
+
+  Future<void> _delete(ServerOpsServer server) async {
+    // 一台都不剩就没得连了：删到最后一台必须拦住。
+    if (_draft.length <= 1) {
+      _toast('最后一台服务器不能删');
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('删除「${server.label}」'),
+        content: const Text(
+          '只会从本机设置里移掉这一台；它保存的口令也会一并清掉。\n'
+          '服务端上的东西不受影响。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if (!mounted) return;
+    setState(() {
+      _draft.removeWhere((s) => s.id == server.id);
+      _pendingPasswords[server.id] = '';
+      if (_selectedId == server.id) _selectedId = _draft.first.id;
+    });
   }
 
   Future<void> _save() async {
@@ -130,19 +304,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       _saving = true;
       _error = null;
     });
-    final updated = ServerOpsSettings(
-      baseUrl: _baseUrl.text,
-      user: _user.text,
-      // 口令留空 = 不改（避免"打开设置按保存"把已注入的口令清掉）。
-      password: _password.text.isEmpty ? widget.settings.password : _password.text,
-      terminalUrl: _terminalUrl.text,
-    );
     try {
-      await updated.save(
-        baseUrl: _baseUrl.text,
-        user: _user.text,
-        password: _password.text.isEmpty ? null : _password.text,
-        terminalUrl: _terminalUrl.text,
+      final updated = await widget.settings.save(
+        servers: _draft,
+        selectedServerId: _selectedId,
+        passwords: _pendingPasswords.isEmpty ? null : _pendingPasswords,
       );
       if (!mounted) return;
       Navigator.pop(context, updated);
@@ -155,7 +321,250 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     }
   }
 
-  /// 跑三项体检。用的是**输入框里的当前值**（口令留空则用已生效的那份），
+  void _toast(String text) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(text)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 16,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('运维通道设置', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Text(
+              '每台服务器一条连接。地址与用户名可留空用构建默认值；'
+              '口令只存本机加密存储，安装包里不带。',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '注意：这个口令等同服务器 root（整盘读写 + root shell）。'
+              '服务端一旦轮换口令，旧安装包会立即失效（需要紧跟一次发版）。',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
+            const SizedBox(height: 10),
+            for (var i = 0; i < _draft.length; i++)
+              _ServerRow(
+                server: _draft[i],
+                selected: _draft[i].id == _selectedId,
+                passwordPresent: _passwordPresent(_draft[i].id),
+                onTap: () => _edit(i),
+                onSelect: () => setState(() => _selectedId = _draft[i].id),
+                onDelete: () => _delete(_draft[i]),
+              ),
+            const SizedBox(height: 6),
+            OutlinedButton.icon(
+              onPressed: _saving ? null : _add,
+              icon: const Icon(Icons.add_rounded, size: 16),
+              label: const Text('新增服务器'),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                onPressed: _saving ? null : _save,
+                icon: _saving
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_outlined, size: 16),
+                label: const Text('保存'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 设置列表里的一台服务器。
+class _ServerRow extends StatelessWidget {
+  const _ServerRow({
+    required this.server,
+    required this.selected,
+    required this.passwordPresent,
+    required this.onTap,
+    required this.onSelect,
+    required this.onDelete,
+  });
+
+  final ServerOpsServer server;
+  final bool selected;
+  final bool passwordPresent;
+  final VoidCallback onTap;
+  final VoidCallback onSelect;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        selected ? Icons.check_circle_rounded : Icons.dns_outlined,
+        size: 20,
+        color: selected ? theme.colorScheme.primary : null,
+      ),
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(
+              server.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (selected)
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Text(
+                '当前',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+        ],
+      ),
+      subtitle: Text(
+        '${server.effectiveBaseUrl}\n'
+        '口令：${passwordPresent ? '已在本机加密保存' : '还没配置'}',
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.outline,
+        ),
+      ),
+      isThreeLine: true,
+      onTap: onTap,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: '设为当前',
+            visualDensity: VisualDensity.compact,
+            onPressed: onSelect,
+            icon: const Icon(Icons.radio_button_unchecked, size: 18),
+          ),
+          IconButton(
+            tooltip: '删除',
+            visualDensity: VisualDensity.compact,
+            onPressed: onDelete,
+            icon: const Icon(Icons.delete_outline_rounded, size: 18),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 编辑一台服务器后的结果。
+class _ServerEditResult {
+  const _ServerEditResult({required this.server, this.newPassword});
+
+  final ServerOpsServer server;
+
+  /// null = 不改口令；空串 = 清掉已保存口令；其它 = 新口令。
+  final String? newPassword;
+}
+
+/// 编辑单台服务器（label / 地址 / 用户名 / 终端地址 / 口令）+ 三项目标机体检。
+class _ServerEditDialog extends StatefulWidget {
+  const _ServerEditDialog({required this.server, required this.storedPassword});
+
+  final ServerOpsServer server;
+
+  /// 这台机器当前保存的口令（空 = 没配）。只用来判"留空即不改"与体检。
+  final String storedPassword;
+
+  @override
+  State<_ServerEditDialog> createState() => _ServerEditDialogState();
+}
+
+class _ServerEditDialogState extends State<_ServerEditDialog> {
+  late final TextEditingController _label =
+      TextEditingController(text: widget.server.label);
+  late final TextEditingController _baseUrl =
+      TextEditingController(text: widget.server.effectiveBaseUrl);
+  late final TextEditingController _user =
+      TextEditingController(text: widget.server.effectiveUser);
+  late final TextEditingController _terminalUrl =
+      TextEditingController(text: widget.server.effectiveTerminalUrl);
+  final TextEditingController _password = TextEditingController();
+
+  /// 标记"清掉这台上已保存的口令"。
+  bool _clearPassword = false;
+  bool _testing = false;
+  String? _error;
+
+  /// 体检结果（为空表示还没测过）。
+  List<OpsProbeResult> _probeResults = const [];
+
+  bool get _hasStoredPassword => widget.storedPassword.isNotEmpty;
+
+  @override
+  void dispose() {
+    _label.dispose();
+    _baseUrl.dispose();
+    _user.dispose();
+    _terminalUrl.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  /// 输入框里的当前值折成一台服务器（体检与保存都用它，口径一致）。
+  ServerOpsServer get _draftServer => widget.server.copyWith(
+        label: _label.text,
+        baseUrl: _baseUrl.text,
+        user: _user.text,
+        terminalUrl: _terminalUrl.text,
+      );
+
+  /// 体检要用的口令：输入框填了就用新的，否则用已保存的那份。
+  String get _probePassword {
+    if (_clearPassword) return '';
+    if (_password.text.isNotEmpty) return _password.text;
+    return widget.storedPassword;
+  }
+
+  void _submit() {
+    final newPassword = _clearPassword
+        ? ''
+        : (_password.text.isEmpty ? null : _password.text);
+    Navigator.pop(
+      context,
+      _ServerEditResult(server: _draftServer, newPassword: newPassword),
+    );
+  }
+
+  /// 跑三项体检。用的是**输入框里的当前值**（口令留空则用已保存的那份），
   /// 所以可以先测通再保存 —— 否则"改了地址就得先保存才能测"很容易把好配置盖掉。
   Future<void> _runProbes() async {
     setState(() {
@@ -163,20 +572,21 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       _probeResults = const [];
       _error = null;
     });
+    final server = _draftServer;
+    final password = _probePassword;
+    // 体检也必须打这台机器的地址：临时折一份"只有它"的设置交给同一个接缝。
     final probeSettings = ServerOpsSettings(
-      baseUrl: _baseUrl.text,
-      user: _user.text,
-      password: _password.text.isEmpty ? widget.settings.password : _password.text,
-      terminalUrl: _terminalUrl.text,
+      servers: [server],
+      selectedServerId: server.id,
+      passwords: {server.id: password},
     );
     late final List<OpsProbeResult> results;
     try {
-      results = await runOpsProbes(
+      results = await runOpsProbesForServer(
+        server: server,
+        password: password,
         files: serverOpsFilesService(probeSettings),
         hosts: serverOpsHostService,
-        terminalUrl: probeSettings.effectiveTerminalUrl,
-        user: probeSettings.effectiveUser,
-        password: probeSettings.effectivePassword,
         terminalProbe: serverOpsTerminalProbe,
       );
     } catch (e) {
@@ -192,18 +602,6 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       _testing = false;
       _probeResults = results;
     });
-  }
-
-  Future<void> _clearPassword() async {
-    await widget.settings.save(password: '');
-    if (!mounted) return;
-    Navigator.pop(context, widget.settings.password == null
-        ? const ServerOpsSettings()
-        : ServerOpsSettings(
-            baseUrl: widget.settings.baseUrl,
-            user: widget.settings.user,
-            terminalUrl: widget.settings.terminalUrl,
-          ));
   }
 
   /// 一条体检结果：图标 + 名称 + 结论。结论必须带状态码/原因，不能只说"失败"。
@@ -233,147 +631,141 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final hasPassword = widget.settings.hasPassword;
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
-        top: 16,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('运维通道设置', style: theme.textTheme.titleLarge),
-            const SizedBox(height: 4),
-            Text(
-              '地址与用户名可留空用构建默认值；口令只存本机加密存储，安装包里不带。',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.outline,
+    final passwordPresent = _clearPassword ? false : _hasStoredPassword;
+    return AlertDialog(
+      title: const Text('服务器连接'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: _label,
+                decoration: const InputDecoration(
+                  labelText: '名称',
+                  hintText: '阿里云 · 主服务端',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '注意：这个口令等同服务器 root（整盘读写 + root shell）。'
-              '带在安装包里的口令能被反编译取出，所以别把安装包外传；'
-              '服务端一旦轮换口令，旧安装包会立即失效（需要紧跟一次发版）。',
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.error,
+              const SizedBox(height: 10),
+              TextField(
+                controller: _baseUrl,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(
+                  labelText: 'WebDAV 根地址',
+                  hintText: ServerOpsSettings.defaultBaseUrl,
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _baseUrl,
-              keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
-                labelText: 'WebDAV 根地址',
-                hintText: 'https://box.hpa888.top/dav',
-                border: OutlineInputBorder(),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _user,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: const InputDecoration(
+                  labelText: '用户名',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _user,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: const InputDecoration(
-                labelText: '用户名',
-                border: OutlineInputBorder(),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _password,
+                obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText: '口令',
+                  hintText: passwordPresent
+                      ? '留空即不改'
+                      : '首次使用请填服务端运维通道口令',
+                  border: const OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _password,
-              obscureText: true,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: InputDecoration(
-                labelText: '口令',
-                hintText: hasPassword ? '留空即不改' : '首次使用请填服务端运维通道口令',
-                border: const OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    hasPassword ? '口令已在本机加密保存（不随安装包分发）' : '还没配置口令',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.outline,
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _clearPassword
+                          ? '保存后会清掉这台机器已保存的口令'
+                          : passwordPresent
+                              ? '口令已在本机加密保存（不随安装包分发）'
+                              : '还没配置口令',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.outline,
+                      ),
                     ),
                   ),
-                ),
-                if (hasPassword)
-                  TextButton(
-                    onPressed: _saving ? null : _clearPassword,
-                    child: const Text('清除已保存口令'),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            TextField(
-              controller: _terminalUrl,
-              keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
-                labelText: '终端地址',
-                hintText: 'https://box.hpa888.top/term/',
-                border: OutlineInputBorder(),
+                  if (passwordPresent && !_clearPassword)
+                    TextButton(
+                      onPressed: _testing
+                          ? null
+                          : () => setState(() => _clearPassword = true),
+                      child: const Text('清除已保存口令'),
+                    )
+                  else if (_clearPassword)
+                    TextButton(
+                      onPressed: () => setState(() => _clearPassword = false),
+                      child: const Text('撤销清除'),
+                    ),
+                ],
               ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                OutlinedButton.icon(
-                  onPressed: _testing ? null : _runProbes,
-                  icon: _testing
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.network_check, size: 16),
-                  label: const Text('测试连接'),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _terminalUrl,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(
+                  labelText: '终端地址',
+                  hintText: ServerOpsSettings.defaultTerminalUrl,
+                  border: OutlineInputBorder(),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    '分别测文件通道 / 终端 / 主机快照',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.outline,
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _testing ? null : _runProbes,
+                    icon: _testing
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.network_check, size: 16),
+                    label: const Text('测试连接'),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '分别测这台机器的文件通道 / 终端 / 主机快照',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.outline,
+                      ),
                     ),
                   ),
+                ],
+              ),
+              for (final r in _probeResults) ..._probeRow(theme, r),
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _error!,
+                  style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
                 ),
               ],
-            ),
-            for (final r in _probeResults) ..._probeRow(theme, r),
-            if (_error != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                _error!,
-                style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
-              ),
             ],
-            const SizedBox(height: 14),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton.icon(
-                onPressed: _saving ? null : _save,
-                icon: _saving
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.save_outlined, size: 16),
-                label: const Text('保存'),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('确定')),
+      ],
     );
   }
 }
