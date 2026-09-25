@@ -27,6 +27,13 @@ import 'remote_thumbnail.dart';
 ///
 /// 单独成组件而不是写在页面里：弹窗是另一条 route，用页面的 setState 推不动它，
 /// 必须让弹窗自己监听进度（`ValueListenableBuilder`）。
+/// "重新搜索（不用缓存）"的哨兵：和用户点的条目共用 dialog 的返回值。
+const Object _reSearch = _ReSearchRequest();
+
+class _ReSearchRequest {
+  const _ReSearchRequest();
+}
+
 class _SubtreeSearchProgressDialog extends StatelessWidget {
   const _SubtreeSearchProgressDialog({
     required this.baseLabel,
@@ -1148,7 +1155,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   ///
   /// 界面必须诚实：WebDAV 没有服务端搜索，这里是**客户端逐目录遍历**，
   /// 所以范围有界、可随时取消，结果里也写清"扫描了 N 个目录 / 只搜了当前目录树"。
-  Future<void> _searchSubtree() async {
+  Future<void> _searchSubtree({bool useSnapshot = true}) async {
     final query = _query.trim();
     if (query.isEmpty) return;
     final basePath = _path;
@@ -1178,6 +1185,9 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
         rootPath: basePath,
         query: query,
         cancel: cancel,
+        // 默认复用本地快照（286 P4）：跨目录搜索最怕逐目录等网络。
+        // 结果里写明哪部分来自缓存，并给一个"重新搜索（不用缓存）"。
+        useSnapshot: useSnapshot,
         onProgress: (dirs, hits) {
           progress.value = '已扫描 $dirs 个目录、找到 $hits 个';
         },
@@ -1198,13 +1208,16 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     String query,
     String baseLabel,
   ) async {
+    final cacheNote = result.snapshotNote(DateTime.now());
     final notes = <String>[
       '在「$baseLabel」下扫描 ${result.dirsScanned} 个目录，命中 ${result.entries.length} 个「$query」。',
+      ?cacheNote,
       if (result.truncated) '目录或结果太多，本次只搜了一部分。',
       if (result.canceled) '你取消了搜索，下面是取消前的结果。',
       if (result.entries.isEmpty) '换个关键词，或到上层目录再搜一次。',
     ];
-    final picked = await showDialog<RemoteStorageEntry>(
+    // 返回类型放宽成 Object：既要能带回用户点的条目，也要能带回"重新搜索"这个动作。
+    final picked = await showDialog<Object>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('搜索结果'),
@@ -1247,6 +1260,11 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
           ),
         ),
         actions: [
+          if (cacheNote != null)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, _reSearch),
+              child: const Text('重新搜索'),
+            ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text('关闭'),
@@ -1255,6 +1273,12 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
       ),
     );
     if (picked == null || !mounted) return;
+    if (identical(picked, _reSearch)) {
+      // 用户不信缓存：重搜一次，这次每个目录都现场列。
+      await _searchSubtree(useSnapshot: false);
+      return;
+    }
+    if (picked is! RemoteStorageEntry) return;
     // 跳到它所在的目录：搜索的意义就是"找到它在哪"，看见了却过不去等于没找到。
     final parent = parentRemotePath(picked.path);
     Navigator.push(

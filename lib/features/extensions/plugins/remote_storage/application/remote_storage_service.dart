@@ -481,6 +481,7 @@ class RemoteStorageService {
     required String query,
     void Function(int scannedDirs, int found)? onProgress,
     TransferCancelToken? cancel,
+    bool useSnapshot = true,
   }) async {
     final results = <RemoteStorageEntry>[];
     final pending = <String>[rootPath];
@@ -491,6 +492,8 @@ class RemoteStorageService {
     var dirs = 0;
     var truncated = false;
     var canceled = false;
+    var snapshotDirs = 0;
+    DateTime? oldestSnapshotAt;
 
     while (pending.isNotEmpty) {
       if (cancel?.isCanceled ?? false) {
@@ -507,14 +510,32 @@ class RemoteStorageService {
       // 表现为"扫了 100 多个目录、结果里全是同一批文件的重复项"。
       if (!visited.add(current)) continue;
       dirs += 1;
-      final List<RemoteStorageEntry> entries;
-      try {
-        entries = await list(account, current);
-      } catch (_) {
-        // 某个子目录读不出来（403 等）→ 跳过它继续搜别的，不因为一个目录失败
-        // 把整次搜索变成错误。
-        onProgress?.call(dirs, results.length);
-        continue;
+      // 先用本地快照（286 P4）：超龄的不采信（宁可慢也不给过时目录）。
+      var entries = const <RemoteStorageEntry>[];
+      var usedSnapshot = false;
+      if (useSnapshot) {
+        final snapshot = await _store.loadDirSnapshot(account.id, current);
+        if (snapshot != null) {
+          final age = DateTime.now().difference(snapshot.at);
+          if (!age.isNegative && age <= kSubtreeSearchSnapshotMaxAge) {
+            entries = snapshot.entries;
+            usedSnapshot = true;
+            snapshotDirs += 1;
+            if (oldestSnapshotAt == null || snapshot.at.isBefore(oldestSnapshotAt)) {
+              oldestSnapshotAt = snapshot.at;
+            }
+          }
+        }
+      }
+      if (!usedSnapshot) {
+        try {
+          entries = await list(account, current);
+        } catch (_) {
+          // 某个子目录读不出来（403 等）→ 跳过它继续搜别的，不因为一个目录失败
+          // 把整次搜索变成错误。
+          onProgress?.call(dirs, results.length);
+          continue;
+        }
       }
       for (final entry in entries) {
         if (matchesRemoteQuery(entry.name, query) && seen.add(entry.path)) {
@@ -536,6 +557,8 @@ class RemoteStorageService {
     return SubtreeSearchResult(
       entries: results,
       dirsScanned: dirs,
+      snapshotDirs: snapshotDirs,
+      oldestSnapshotAt: oldestSnapshotAt,
       truncated: truncated,
       canceled: canceled,
     );

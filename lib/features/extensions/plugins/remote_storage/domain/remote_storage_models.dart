@@ -669,12 +669,21 @@ bool matchesRemoteQuery(String name, String query) {
 }
 
 /// 子树搜索结果（284 D10）。
+/// 跨目录搜索复用目录快照的上限（286 P4）。
+///
+/// 搜索最怕"每进一个目录都要等一次网络"。D7 的目录快照本来就是上次列过的结果，
+/// 直接拿来用能让二次搜索几乎瞬时完成；代价是可能少几个刚新增的文件。
+/// 超过这个年龄的快照不再采信（宁可慢，也不给用户看过时的目录）。
+const Duration kSubtreeSearchSnapshotMaxAge = Duration(hours: 1);
+
 class SubtreeSearchResult {
   const SubtreeSearchResult({
     required this.entries,
     required this.dirsScanned,
     required this.truncated,
     required this.canceled,
+    this.snapshotDirs = 0,
+    this.oldestSnapshotAt,
   });
 
   final List<RemoteStorageEntry> entries;
@@ -688,7 +697,40 @@ class SubtreeSearchResult {
   /// 用户中途取消——结果仍是有效的部分结果，不是错误。
   final bool canceled;
 
+  /// 这次搜索有多少个目录是**用本地快照**答的（不是现场列的）。
+  ///
+  /// 界面要写出来：用户看到"扫了 30 个目录、秒回"时，有权知道其中一部分是
+  /// 上次列过的旧内容。
+  final int snapshotDirs;
+
+  /// 用到的快照里最旧的那个时刻；没用快照则为 null。
+  final DateTime? oldestSnapshotAt;
+
   bool get isEmpty => entries.isEmpty;
+
+  /// 是否用到了快照。
+  bool get fromSnapshot => snapshotDirs > 0;
+
+  /// 给界面用的缓存说明；没用快照/时间未知时返回 null（界面就什么都不显示）。
+  ///
+  /// [now] 由调用方传入：纯函数好测，也不依赖 DateTime.now() 的隐式行为。
+  String? snapshotNote(DateTime now) {
+    final at = oldestSnapshotAt;
+    if (!fromSnapshot || at == null) return null;
+    final age = now.difference(at);
+    final String label;
+    if (age.inMinutes < 1) {
+      label = '刚刚';
+    } else if (age.inHours < 1) {
+      label = '${age.inMinutes} 分钟前';
+    } else if (age.inHours < 24) {
+      label = '${age.inHours} 小时前';
+    } else {
+      label = '${age.inDays} 天前';
+    }
+    return '其中 $snapshotDirs 个目录用了本地缓存（最旧 $label），'
+        '刚新增的文件可能还没出现。';
+  }
 }
 
 /// 目录快照：上次列出的结果 + 时间（284 D7）。
