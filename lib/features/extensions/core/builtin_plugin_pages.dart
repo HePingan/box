@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:box/daily_news_page.dart';
 import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/extensions/plugins/github_accel/github_accel_sheet.dart';
+import 'package:box/features/extensions/plugins/monitor/monitor_page.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_page.dart';
 import 'package:box/features/image_generator/presentation/image_generator_page.dart';
 import 'package:box/novel/pages/novel_list_page.dart';
@@ -56,6 +57,14 @@ void registerBuiltinRouteDefaults() {
   HomePluginRouteRegistry.register(
     'openRemoteStorage',
     (_) => const RemoteStoragePage(),
+  );
+  HomePluginRouteRegistry.register(
+    'service_monitor',
+    (_) => const ServiceMonitorPage(),
+  );
+  HomePluginRouteRegistry.register(
+    'openServiceMonitor',
+    (_) => const ServiceMonitorPage(),
   );
 }
 

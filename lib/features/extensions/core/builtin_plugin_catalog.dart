@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 
 import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/extensions/plugins/plugin_toolbox.dart';
+import 'package:box/features/extensions/plugins/monitor/monitor_page.dart';
 import 'package:box/features/image_generator/presentation/image_generator_page.dart';
 import 'package:box/features/policy/plugin_policy.dart';
 import 'package:box/features/quiz_plugin/presentation/quiz_bank_view_page.dart';
@@ -285,6 +286,22 @@ List<HomePlugin> buildDefaultPlugins() {
         await Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const ImageGeneratorPage()),
+        );
+      },
+    ),
+    HomePlugin(
+      id: 'builtin_service_monitor',
+      title: '服务监控',
+      subtitle: '各站点探针状态、延迟与可用率',
+      icon: Icons.monitor_heart_outlined,
+      color: const Color(0xFF0EA5E9),
+      area: HomePluginArea.center,
+      builtIn: true,
+      sort: 60,
+      onTap: (context) async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const ServiceMonitorPage()),
         );
       },
     ),
