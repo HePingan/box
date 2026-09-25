@@ -1334,6 +1334,181 @@ List<RemoteStorageEntry> filterRemoteEntries(
   ];
 }
 
+/// 本目录筛选（287 D1）：名称 + 类型 + 大小 + 时间。
+///
+/// 与旧版（[filterRemoteEntries]）的差别，只有一条但很要紧：
+/// **类型/大小/时间这类结构化条件只作用于文件，目录一律保留** —— 否则你筛"图片"
+/// 时连目录都看不见，等于把往下走的路堵死了。名称条件仍同时作用于目录名。
+List<RemoteStorageEntry> filterRemoteEntriesAdvanced(
+  List<RemoteStorageEntry> entries,
+  RemoteEntryFilter filter, {
+  DateTime? now,
+}) {
+  if (filter.isIdle) return entries;
+  final at = now ?? DateTime.now();
+  final tokens = <String>[
+    for (final token in filter.query.trim().toLowerCase().split(RegExp(r'\s+')))
+      if (token.isNotEmpty) token,
+  ];
+  final result = <RemoteStorageEntry>[];
+  for (final entry in entries) {
+    if (tokens.isNotEmpty &&
+        !_nameMatchesAll(entry.name.toLowerCase(), tokens)) {
+      continue;
+    }
+    if (!filter.hasStructured || entry.isDirectory) {
+      result.add(entry);
+      continue;
+    }
+    if (filter.kind.kind != null && remoteEntryKind(entry) != filter.kind.kind) {
+      continue;
+    }
+    if (!filter.size.matches(entry.size)) continue;
+    if (!filter.time.matches(entry.modifiedAt, at)) continue;
+    result.add(entry);
+  }
+  return result;
+}
+
+/// 类型筛选（287 D1）。取值直接复用已有的 [remoteEntryKind] 分类
+/// （folder/image/video/audio/text/other），**不另造一套判定** ——
+/// 两套分类迟早会不一致，那种 bug 又最难解释。
+enum RemoteEntryKindFilter {
+  all('全部类型', null),
+  image('图片', RemoteEntryKind.image),
+  video('视频', RemoteEntryKind.video),
+  audio('音频', RemoteEntryKind.audio),
+  // 标签就叫"文本"：底下的分类是真·文本（可预览），pdf/doc 归"其它"。
+  // 与其把标签写成"文档"再让人发现 pdf 不在里面，不如标签就说实话。
+  text('文本', RemoteEntryKind.text),
+  other('其它', RemoteEntryKind.other);
+
+  const RemoteEntryKindFilter(this.label, this.kind);
+
+  final String label;
+
+  /// 对应的实际分类；[all] 为 null（不过滤）。
+  final RemoteEntryKind? kind;
+}
+
+/// 大小筛选（287 D1）。边界取**左闭右开**，相邻档不重叠（写完用例逐档验过）。
+enum RemoteEntrySizeFilter {
+  all('全部大小'),
+  under1m('小于 1 MB'),
+  from1to10m('1–10 MB'),
+  from10to100m('10–100 MB'),
+  over100m('大于 100 MB');
+
+  const RemoteEntrySizeFilter(this.label);
+
+  final String label;
+
+  bool matches(int? size) {
+    if (this == RemoteEntrySizeFilter.all) return true;
+    // 大小未知的条目不放进任何具体档位：与其猜，不如让它只在"全部"里出现。
+    if (size == null) return false;
+    const mb = 1024 * 1024;
+    switch (this) {
+      case RemoteEntrySizeFilter.under1m:
+        return size < mb;
+      case RemoteEntrySizeFilter.from1to10m:
+        return size >= mb && size < 10 * mb;
+      case RemoteEntrySizeFilter.from10to100m:
+        return size >= 10 * mb && size < 100 * mb;
+      case RemoteEntrySizeFilter.over100m:
+        return size >= 100 * mb;
+      case RemoteEntrySizeFilter.all:
+        return true;
+    }
+  }
+}
+
+/// 修改时间筛选（287 D1）。
+enum RemoteEntryTimeFilter {
+  all('全部时间'),
+  today('今天'),
+  last7days('最近 7 天'),
+  last30days('最近 30 天');
+
+  const RemoteEntryTimeFilter(this.label);
+
+  final String label;
+
+  bool matches(DateTime? modifiedAt, DateTime now) {
+    if (this == RemoteEntryTimeFilter.all) return true;
+    // 改时间未知的条目不放进具体档位（"不知道"不当作"是"）。
+    if (modifiedAt == null) return false;
+    final local = modifiedAt.toLocal();
+    switch (this) {
+      case RemoteEntryTimeFilter.today:
+        final start = DateTime(now.year, now.month, now.day);
+        return !local.isBefore(start);
+      case RemoteEntryTimeFilter.last7days:
+        return !local.isBefore(now.subtract(const Duration(days: 7)));
+      case RemoteEntryTimeFilter.last30days:
+        return !local.isBefore(now.subtract(const Duration(days: 30)));
+      case RemoteEntryTimeFilter.all:
+        return true;
+    }
+  }
+}
+
+/// 本目录筛选条件（287 D1）：名称 + 类型 + 大小 + 时间，**全在本地判定**。
+class RemoteEntryFilter {
+  const RemoteEntryFilter({
+    this.query = '',
+    this.kind = RemoteEntryKindFilter.all,
+    this.size = RemoteEntrySizeFilter.all,
+    this.time = RemoteEntryTimeFilter.all,
+  });
+
+  final String query;
+  final RemoteEntryKindFilter kind;
+  final RemoteEntrySizeFilter size;
+  final RemoteEntryTimeFilter time;
+
+  /// 是否什么都没筛（此时列表原样显示）。
+  bool get isIdle =>
+      query.trim().isEmpty &&
+      kind == RemoteEntryKindFilter.all &&
+      size == RemoteEntrySizeFilter.all &&
+      time == RemoteEntryTimeFilter.all;
+
+  /// 是否有"类型/大小/时间"这类结构化条件（名称之外的条件）。
+  bool get hasStructured =>
+      kind != RemoteEntryKindFilter.all ||
+      size != RemoteEntrySizeFilter.all ||
+      time != RemoteEntryTimeFilter.all;
+
+  /// 生效中的条件个数（0 表示没筛）。
+  int get activeCount =>
+      (query.trim().isEmpty ? 0 : 1) +
+      (kind == RemoteEntryKindFilter.all ? 0 : 1) +
+      (size == RemoteEntrySizeFilter.all ? 0 : 1) +
+      (time == RemoteEntryTimeFilter.all ? 0 : 1);
+
+  /// 结构化条件的一句话摘要（界面横幅用）。
+  String get structuredLabel => <String>[
+        if (kind != RemoteEntryKindFilter.all) kind.label,
+        if (size != RemoteEntrySizeFilter.all) size.label,
+        if (time != RemoteEntryTimeFilter.all) time.label,
+      ].join(' · ');
+
+  RemoteEntryFilter copyWith({
+    String? query,
+    RemoteEntryKindFilter? kind,
+    RemoteEntrySizeFilter? size,
+    RemoteEntryTimeFilter? time,
+  }) {
+    return RemoteEntryFilter(
+      query: query ?? this.query,
+      kind: kind ?? this.kind,
+      size: size ?? this.size,
+      time: time ?? this.time,
+    );
+  }
+}
+
 bool _nameMatchesAll(String lowerName, List<String> tokens) {
   for (final token in tokens) {
     if (!lowerName.contains(token)) return false;

@@ -226,7 +226,19 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   /// 本地搜索（C3）：纯前端过滤，不发请求。
   final TextEditingController _searchController = TextEditingController();
   String _query = '';
+
+  /// 结构化筛选（287 D1）：与名称条件一起在本地判定，不发请求。
+  RemoteEntryKindFilter _kindFilter = RemoteEntryKindFilter.all;
+  RemoteEntrySizeFilter _sizeFilter = RemoteEntrySizeFilter.all;
+  RemoteEntryTimeFilter _timeFilter = RemoteEntryTimeFilter.all;
   bool _searching = false;
+
+  RemoteEntryFilter get _filter => RemoteEntryFilter(
+        query: _query,
+        kind: _kindFilter,
+        size: _sizeFilter,
+        time: _timeFilter,
+      );
 
   bool get _selectionMode => _selectedPaths.isNotEmpty;
 
@@ -407,9 +419,100 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     super.dispose();
   }
 
-  /// 应用本地搜索：只重算可见列表，不动 [_allEntries]（C3）。
+  /// 应用本地筛选：只重算可见列表，不动 [_allEntries]（C3 / 287 D1）。
   void _applyFilter() {
-    _entries = filterRemoteEntries(_allEntries, _query);
+    _entries = filterRemoteEntriesAdvanced(_allEntries, _filter);
+  }
+
+  /// 清掉全部筛选条件（名称 + 类型/大小/时间）。
+  void _clearAllFilters() {
+    setState(() {
+      _query = '';
+      _searchController.clear();
+      _kindFilter = RemoteEntryKindFilter.all;
+      _sizeFilter = RemoteEntrySizeFilter.all;
+      _timeFilter = RemoteEntryTimeFilter.all;
+      _applyFilter();
+    });
+  }
+
+  Future<void> _pickKindFilter() async {
+    final picked = await _pickFilterOption<RemoteEntryKindFilter>(
+      title: '按类型筛选',
+      options: RemoteEntryKindFilter.values,
+      current: _kindFilter,
+      labelOf: (v) => v.label,
+    );
+    if (picked == null) return;
+    setState(() {
+      _kindFilter = picked;
+      _applyFilter();
+    });
+  }
+
+  Future<void> _pickSizeFilter() async {
+    final picked = await _pickFilterOption<RemoteEntrySizeFilter>(
+      title: '按大小筛选',
+      options: RemoteEntrySizeFilter.values,
+      current: _sizeFilter,
+      labelOf: (v) => v.label,
+    );
+    if (picked == null) return;
+    setState(() {
+      _sizeFilter = picked;
+      _applyFilter();
+    });
+  }
+
+  Future<void> _pickTimeFilter() async {
+    final picked = await _pickFilterOption<RemoteEntryTimeFilter>(
+      title: '按修改时间筛选',
+      options: RemoteEntryTimeFilter.values,
+      current: _timeFilter,
+      labelOf: (v) => v.label,
+    );
+    if (picked == null) return;
+    setState(() {
+      _timeFilter = picked;
+      _applyFilter();
+    });
+  }
+
+  Future<T?> _pickFilterOption<T>({
+    required String title,
+    required List<T> options,
+    required T current,
+    required String Function(T) labelOf,
+  }) {
+    return showModalBottomSheet<T>(
+      context: context,
+      showDragHandle: true,
+      // 选项多的时候靠后的会落在默认弹层的可点区域之外（287 D2 的教训）。
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              dense: true,
+              title: Text(title),
+              subtitle: const Text('只影响本目录显示，不改动文件'),
+            ),
+            for (final option in options)
+              ListTile(
+                leading: Icon(
+                  option == current
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  size: 20,
+                ),
+                title: Text(labelOf(option)),
+                onTap: () => Navigator.of(sheetContext).pop(option),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _onQueryChanged(String value) {
@@ -423,6 +526,8 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     setState(() {
       _searching = !_searching;
       if (!_searching) {
+        // 关掉筛选栏 ≠ 清掉条件：结构化筛选（类型/大小/时间）继续生效，
+        // 否则用户关个搜索框回来发现筛选没了会更迷惑。名称条件随输入框一起收起。
         _query = '';
         _searchController.clear();
         _applyFilter();
@@ -548,6 +653,22 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   }
 
   /// "上次的内容 · N 分钟前"横幅（284 D7）：快照必须看得见是旧的。
+  /// 一个筛选条件的小胶囊（287 D1）：生效中的条件用主色，一眼能看出"我在筛"。
+  Widget _buildFilterChip({
+    required String label,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return ActionChip(
+      onPressed: onTap,
+      label: Text(label),
+      visualDensity: VisualDensity.compact,
+      backgroundColor: active ? scheme.primaryContainer : null,
+      labelStyle: Theme.of(context).textTheme.labelSmall,
+    );
+  }
+
   Widget _buildSnapshotBanner() {
     final at = _snapshotAt;
     if (at == null) return const SizedBox.shrink();
@@ -1956,10 +2077,14 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
       title: Text(_accountTitle),
       bottom: _searching
           ? PreferredSize(
-              preferredSize: const Size.fromHeight(56),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                child: TextField(
+              // 一行名称输入 + 一行类型/大小/时间的筛选条（287 D1）。
+              preferredSize: const Size.fromHeight(108),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    child: TextField(
                   controller: _searchController,
                   autofocus: true,
                   onChanged: _onQueryChanged,
@@ -1978,9 +2103,46 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
                               _onQueryChanged('');
                             },
                           ),
-                    border: const OutlineInputBorder(),
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
                   ),
-                ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          _buildFilterChip(
+                            label: '类型：${_kindFilter.label}',
+                            active: _kindFilter != RemoteEntryKindFilter.all,
+                            onTap: _pickKindFilter,
+                          ),
+                          const SizedBox(width: 8),
+                          _buildFilterChip(
+                            label: '大小：${_sizeFilter.label}',
+                            active: _sizeFilter != RemoteEntrySizeFilter.all,
+                            onTap: _pickSizeFilter,
+                          ),
+                          const SizedBox(width: 8),
+                          _buildFilterChip(
+                            label: '时间：${_timeFilter.label}',
+                            active: _timeFilter != RemoteEntryTimeFilter.all,
+                            onTap: _pickTimeFilter,
+                          ),
+                          if (!_filter.isIdle) ...[
+                            const SizedBox(width: 8),
+                            _buildFilterChip(
+                              label: '清除筛选',
+                              active: false,
+                              onTap: _clearAllFilters,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             )
           : null,
@@ -2226,15 +2388,20 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
               size: 56,
             ),
             const SizedBox(height: 8),
-            Center(child: Text(filtered ? '本目录没有匹配「$_query」的条目' : '空目录')),
+            Center(
+              child: Text(
+                !filtered
+                    ? '空目录'
+                    : _filter.hasStructured
+                        ? '本目录没有符合「${_filter.structuredLabel}」的条目'
+                        : '本目录没有匹配「$_query」的条目',
+              ),
+            ),
             if (filtered) ...[
               const SizedBox(height: 12),
               Center(
                 child: TextButton(
-                  onPressed: () {
-                    _searchController.clear();
-                    _onQueryChanged('');
-                  },
+                  onPressed: _clearAllFilters,
                   child: const Text('清空筛选'),
                 ),
               ),
@@ -2257,7 +2424,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
       child: Column(
         children: [
           _buildSnapshotBanner(),
-          if (_query.trim().isNotEmpty)
+          if (!_filter.isIdle)
             Container(
               width: double.infinity,
               color: Theme.of(
@@ -2268,9 +2435,16 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
                 children: [
                   Expanded(
                     child: Text(
-                      '筛选出 ${_entries.length} / ${_allEntries.length} 项',
+                      _filter.hasStructured
+                          ? '筛选出 ${_entries.length} / ${_allEntries.length} 项'
+                              '（${_filter.structuredLabel}）'
+                          : '筛选出 ${_entries.length} / ${_allEntries.length} 项',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
+                  ),
+                  TextButton(
+                    onPressed: _clearAllFilters,
+                    child: const Text('清除'),
                   ),
                   // 本目录筛不到时最容易想到的就是"别的目录里有没有"（284 D10）。
                   TextButton.icon(
