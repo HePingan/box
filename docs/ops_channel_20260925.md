@@ -88,3 +88,27 @@ https://box.hpa888.top/hosts.json?token=...
 3. **插件 `server_ops`**：首页一个入口，页签「服务器（状态）/ 文件 / 终端」——
    文件页直接复用「远端存储」，状态页读主机指标快照，终端页用 `webview_flutter` 打开 `/term/`
    （`onHttpAuthRequest` 处理 Basic 认证）。
+
+## 七、凭据轮换（C1 立即档）
+
+口令分散在**两个认证层**，漏改一处就会出现「文件通了、终端 401」这种半失效状态：
+
+| 位置 | 谁在用它 | 作用 |
+|---|---|---|
+| `/root/.secrets/box-ops-rclone.env`（`RCLONE_USER` / `RCLONE_PASS`） | rclone 守护 `box-ops-dav` | 外网 `/dav/` 的 Basic 认证（nginx 的 `/dav/` location 本身**不做认证**） |
+| `/www/server/nginx/conf/box-ops.htpasswd` | nginx | `/term/` 的 Basic 认证（ttyd 以 `-W` 启动，自身没有凭据） |
+| `/root/.secrets/box-ops-webdav.password` | 构建机 175 | **单一事实源**：构建从它读口令注入 APK |
+
+一次改三处 + 重启 + 自检的脚本：`/usr/local/sbin/box-ops-rotate-credentials.sh`
+
+```bash
+/usr/local/sbin/box-ops-rotate-credentials.sh --check   # 只自检当前口令（期望 dav=207 term=200）
+/usr/local/sbin/box-ops-rotate-credentials.sh           # 轮换：生成新口令 → 改写三处 → 重启 → 自检
+```
+
+脚本末尾会自己打新旧口令的双通道状态码（新：`dav=207 term=200`；旧：`401/401`），
+旧口令仍可用就直接以退出码 2 报警 —— 不要靠"看起来成功了"。
+
+**轮换会让所有已发布 APK 里的旧口令立即失效**（这正是轮换的意义）：
+轮换后必须①把新口令同步到 175 的 `/root/.secrets/box-ops-webdav.password`，
+②紧跟一次发版。否则 App 的文件/终端页会 401。

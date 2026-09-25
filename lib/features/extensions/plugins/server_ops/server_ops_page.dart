@@ -254,6 +254,15 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                 color: theme.colorScheme.outline,
               ),
             ),
+            const SizedBox(height: 6),
+            Text(
+              '注意：这个口令等同服务器 root（整盘读写 + root shell）。'
+              '带在安装包里的口令能被反编译取出，所以别把安装包外传；'
+              '服务端一旦轮换口令，旧安装包会立即失效（需要紧跟一次发版）。',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
             const SizedBox(height: 14),
             TextField(
               controller: _baseUrl,
