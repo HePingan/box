@@ -643,7 +643,15 @@ def main(argv: list[str]) -> int:
                 print(f"  {t.get('label'):<24} admin={str(t.get('admin')):<5} 建于 {t.get('createdAt')}")
             return 0
         if sub == "revoke":
-            label = argv[3] if len(argv) > 3 else ""
+            # 与 issue 一样**按 --label 取值**：第一版写成 argv[3] 位置参数，于是
+            # `token revoke --label x` 把字面量 "--label" 当成了名字 —— 命令"成功"返回，
+            # 令牌其实没被撤（真机上实测到的：撤销后照样 200）。
+            label = ""
+            for i, a in enumerate(argv):
+                if a == "--label" and i + 1 < len(argv):
+                    label = argv[i + 1]
+            if not label and len(argv) > 3 and not argv[3].startswith("--"):
+                label = argv[3]
             if not label:
                 print("用法：box_ops_api.py token revoke --label <名字>")
                 return 2
@@ -740,7 +748,7 @@ def selftest() -> int:
     st, _ = call("/rm-rf", tok)
     check("未知动作 404", st == 404)
 
-    print("== 撤销 ==")
+    print("== 撤销（函数级）==")
     revoke_token("selftest")
     st, _ = call("/overview", tok)
     check("撤销后 401", st == 401)
@@ -751,6 +759,22 @@ def selftest() -> int:
           any(i["status"] == 401 for i in items) and any(i["status"] == 403 for i in items)
           and any(i["status"] == 404 for i in items))
     check("审计不记令牌本身", all("hash" not in json.dumps(i) for i in items))
+
+    print("== 撤销（走 CLI，含 --label 解析）==")
+    # 为什么多这一步：直接调 revoke_token() 会漏掉 CLI 的参数解析。
+    # 上一版就是这么漏的 —— `token revoke --label x` 把字面量 "--label" 当成了名字，
+    # 命令"成功"返回、令牌其实还在（真机上撤销后照样 200，是审计流水把它戳穿的）。
+    cli_tok = issue_token("selftest-cli", admin=False)
+    proc = subprocess.run(
+        [sys.executable, __file__, "token", "revoke", "--label", "selftest-cli"],
+        capture_output=True, text=True,
+        env={**os.environ, "BOX_OPS_TOKENS": str(TOKENS_FILE),
+             "BOX_OPS_AUDIT": str(AUDIT_FILE)},
+    )
+    st_after_cli, _ = call("/overview", cli_tok)
+    check("CLI `token revoke --label` 真的撤掉了（撤销后 401）",
+          st_after_cli == 401 and "已撤销" in proc.stdout,
+          f"stdout={proc.stdout.strip()!r} stderr={proc.stderr.strip()[:120]!r}")
 
     srv.shutdown()
     shutil.rmtree(tmp, ignore_errors=True)
