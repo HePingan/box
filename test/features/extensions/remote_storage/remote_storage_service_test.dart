@@ -524,14 +524,27 @@ void main() {
     test('并发同名上传：第二个视为已存在，不静默覆盖（C7）', () async {
       // 队列现在会同时跑多个任务。`exists()` 在另一个同名上传写完之前返回 404，
       // 两个文件都会通过检查 → 后写的静默覆盖先写的。在途占位必须堵住这条路。
+      //
+      // 285 P4：同步点改成**等信号**，不再用 `pumpEventQueue()` 数轮数。
+      // 真实失败日志（全量并发时）证明"20 轮"根本同步不住：
+      //   Expected: <1> Actual: <0>   （第一个还没发出 PUT）
+      //   PathNotFoundException ... rs_service_test_XXX/one.txt（测试提前结束、
+      //   目录被 tearDown 删掉后，在途的那个上传才去取文件长度）
+      // 根因：`srcFile.length()` 是 IO 线程池的活，机器忙时 20 个事件循环轮次
+      // 早就跑完了而它还没返回 —— 轮数同步点在负载下失效。
       final gate = Completer<void>();
+      final putStarted = Completer<void>();
       var puts = 0;
       transport.handler = (request) async {
         if (request.method == 'HEAD') {
+          // 故意慢一点：模拟机器忙时 IO 排队。用轮数同步的写法在这里必红，
+          // 用信号同步的写法不受影响 —— 这条用例从此对负载不敏感。
+          await Future<void>.delayed(const Duration(milliseconds: 20));
           return const WebdavResponse(statusCode: 404, headers: {});
         }
         if (request.method == 'PUT') {
           puts += 1;
+          if (!putStarted.isCompleted) putStarted.complete();
           await gate.future;
           return const WebdavResponse(statusCode: 201, headers: {});
         }
@@ -546,7 +559,9 @@ void main() {
         targetDir: '',
         overwrite: false,
       );
-      await pumpEventQueue(); // 让第一个走到 PUT 并占住在途名额
+      // 等到第一个真的进了 PUT（在途名额已占住）；有界等待，真出问题会快速失败
+      // 而不是把整个测试挂住。
+      await putStarted.future.timeout(const Duration(seconds: 10));
 
       final second = await service.uploadFile(
         testAccount(),
