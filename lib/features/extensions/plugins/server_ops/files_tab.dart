@@ -17,7 +17,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
@@ -436,8 +435,8 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
   Future<void> _download(RemoteStorageEntry entry) async {
     await _runTask(
       () async {
-        final dir = await getTemporaryDirectory();
-        final dest = File('${dir.path}/${entry.name}');
+        // 下载前清掉临时目录里的同名旧文件（A8：避免半截旧文件被当成新下载）。
+        final dest = await serverOpsDownloadCache.prepare(entry.name);
         await _service.download(
           entry.path,
           dest,
@@ -457,6 +456,26 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
       },
       success: '已下载 ${entry.name}',
     );
+  }
+
+  /// 清空下载缓存（只删本机下载的临时文件；与 host 页清"快照与历史"是两码事）。
+  Future<void> _clearDownloadCache() async {
+    final ok = await _confirm(
+      title: '清空下载缓存',
+      message: '将删除本机临时目录里所有已下载的文件；'
+          '不影响远端文件，也不影响快照与历史。',
+      confirm: '清空',
+    );
+    if (ok != true) return;
+    if (!mounted) return;
+    try {
+      final bytes = await serverOpsDownloadCache.clear();
+      if (!mounted) return;
+      _toast(bytes > 0 ? '已清空下载缓存，释放 ${_prettySize(bytes)}' : '下载缓存本来就是空的');
+    } catch (e) {
+      if (!mounted) return;
+      _toast(serverOpsErrorMessage(e), error: true);
+    }
   }
 
   Future<void> _rename(RemoteStorageEntry entry) async {
@@ -677,6 +696,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
           path: _path,
           onNewFolder: _newFolder,
           onUpload: _upload,
+          onClearDownloads: _clearDownloadCache,
         ),
       ],
     );
@@ -1036,12 +1056,15 @@ class _ActionBar extends StatelessWidget {
     required this.path,
     required this.onNewFolder,
     required this.onUpload,
+    required this.onClearDownloads,
   });
 
   final bool busy;
   final String path;
   final VoidCallback onNewFolder;
   final VoidCallback onUpload;
+  final VoidCallback onClearDownloads;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -1060,6 +1083,11 @@ class _ActionBar extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
+            ),
+            IconButton(
+              tooltip: '清空下载缓存',
+              onPressed: busy ? null : onClearDownloads,
+              icon: const Icon(Icons.cleaning_services_outlined, size: 18),
             ),
             OutlinedButton.icon(
               onPressed: busy ? null : onNewFolder,

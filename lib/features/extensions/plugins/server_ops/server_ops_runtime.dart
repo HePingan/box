@@ -12,6 +12,7 @@ import 'package:box/features/extensions/plugins/remote_storage/domain/remote_sto
 import 'package:box/features/extensions/plugins/remote_storage/presentation/image_preview_dialog.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_diagnostics.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_download_cache.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 
@@ -88,6 +89,12 @@ OpsFilePicker _filePicker = _defaultPickFiles;
 /// 当前生效的文件选择器。
 OpsFilePicker get serverOpsPickFiles => _filePicker;
 
+/// 下载缓存（A8）：默认落 path_provider 的临时目录；widget 测试注入假实现，
+/// 免得单测碰到平台通道。
+ServerOpsDownloadCache _downloadCache = ServerOpsDownloadCache();
+
+ServerOpsDownloadCache get serverOpsDownloadCache => _downloadCache;
+
 /// 文件页用的服务：测试注入优先，否则按当前设置懒建。
 ServerOpsFilesService serverOpsFilesService(ServerOpsSettings settings) =>
     _filesServiceOverride ?? ServerOpsFilesService(settings: settings);
@@ -104,6 +111,7 @@ void debugSetServerOpsRuntime({
   OpsImagePreviewOpener? imagePreviewOpener,
   OpsTerminalProbe? terminalProbe,
   OpsFilePicker? filePicker,
+  ServerOpsDownloadCache? downloadCache,
 }) {
   _hostService = hostService ?? HostService();
   _settingsOverride = settings;
@@ -111,4 +119,5 @@ void debugSetServerOpsRuntime({
   _imagePreviewOpener = imagePreviewOpener;
   _terminalProbe = terminalProbe;
   _filePicker = filePicker ?? _defaultPickFiles;
+  _downloadCache = downloadCache ?? ServerOpsDownloadCache();
 }
