@@ -26,7 +26,7 @@ import sys
 import time
 from datetime import datetime, timezone, timedelta
 
-LOCAL_OUT = "/opt/ops-monitor/hosts.json"
+LOCAL_OUT = os.environ.get("BOX_OPS_HOSTS_OUT", "/opt/ops-monitor/hosts.json")
 EDGE_HOST = "hpa888"
 EDGE_PATH = "/home/update-server/public/hosts.json"
 PUBLIC_URL = "https://box.hpa888.top/hosts.json"
@@ -40,6 +40,16 @@ HOSTS = [
     {"id": "tencent175", "name": "腾讯云 · 构建/监控机", "ip": "175.178.248.237",
      "ssh": None},
 ]
+
+# 新机器由 `tool/box_ops_monitor_add.sh` 追加到这里（不要再手工编辑上面那份手写清单：
+# 脚本按 id 幂等增删，标记之间整段由它维护）。ssh 别名形如 boxmon-<id>，指向目标机的
+# 公网地址、用监控机自己的专用密钥 —— 与运维通道的隧道密钥分开，互不影响。
+EXTRA_HOSTS: list[dict] = [
+    # >>> extra machines (managed by tool/box_ops_monitor_add.sh)
+    # <<< extra machines
+]
+
+HOSTS = HOSTS + EXTRA_HOSTS
 
 
 def _read(path: str) -> str:
@@ -278,18 +288,22 @@ def main() -> int:
     with open(tmp, "wb") as f:
         f.write(payload)
     os.replace(tmp, LOCAL_OUT)
-    try:
-        push_to_edge(payload)
-        pushed = "ok"
-    except Exception as e:  # noqa: BLE001 - 推不动时边缘机继续提供上一份
-        pushed = f"FAILED: {e}"
+    if "--no-push" in sys.argv:
+        # 接入脚本自测用：只写本地，不动边缘机上的线上快照。
+        pushed = "skipped"
+    else:
+        try:
+            push_to_edge(payload)
+            pushed = "ok"
+        except Exception as e:  # noqa: BLE001 - 推不动时边缘机继续提供上一份
+            pushed = f"FAILED: {e}"
 
     online = [h["id"] for h in doc["hosts"] if h["online"]]
     offline = [h["id"] for h in doc["hosts"] if not h["online"]]
     print(f"[ok] {len(doc['hosts'])} 台 / 在线 {online} / 离线 {offline} / "
           f"{len(payload)}B / push={pushed} / {PUBLIC_URL}")
     # 离线不返回非 0：一台关机是常态，不该让 cron 日志天天报错（页面自己会显示离线）。
-    return 0 if pushed == "ok" else 1
+    return 0 if pushed in ("ok", "skipped") else 1
 
 
 if __name__ == "__main__":
