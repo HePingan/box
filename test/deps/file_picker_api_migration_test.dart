@@ -162,6 +162,9 @@ void main() {
         // 不是历史写法遗留，因此显式登记为多选。
         'lib/features/extensions/plugins/remote_storage/presentation/'
             'remote_storage_browser_page.dart',
+        // 服务器运维插件的文件页：上传入口一次选多个文件后**串行**入队
+        // （290 A2，手机上行带宽有限，并发恒为 1），本身就是批量上传。
+        'lib/features/extensions/plugins/server_ops/server_ops_runtime.dart',
       };
 
       final offenders = <String>[];
