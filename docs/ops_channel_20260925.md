@@ -97,7 +97,7 @@ https://box.hpa888.top/hosts.json?token=...
 |---|---|---|
 | `/root/.secrets/box-ops-rclone.env`（`RCLONE_USER` / `RCLONE_PASS`） | rclone 守护 `box-ops-dav` | 外网 `/dav/` 的 Basic 认证（nginx 的 `/dav/` location 本身**不做认证**） |
 | `/www/server/nginx/conf/box-ops.htpasswd` | nginx | `/term/` 的 Basic 认证（ttyd 以 `-W` 启动，自身没有凭据） |
-| `/root/.secrets/box-ops-webdav.password` | 构建机 175 | **单一事实源**：构建从它读口令注入 APK |
+| `/root/.secrets/box-ops-webdav.password` | 运维记录（hpa888 与本机 175 各一份） | **手输时的来源**；290 起安装包不再注入任何口令（C1 中期档），所以它只用于轮换后告知/手工核对 |
 
 一次改三处 + 重启 + 自检的脚本：`/usr/local/sbin/box-ops-rotate-credentials.sh`
 
