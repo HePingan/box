@@ -2,18 +2,19 @@
 //
 // 为什么直连而不用「远端存储」插件：那个插件是给**用户自己的网盘**用的
 // （多账户、限速、传输队列、断点续传），运维通道要的是"打开就能翻盘"的
-// 最小可用集：目录浏览 / 新建文件夹 / 上传 / 下载 / 重命名 / 删除。
+// 最小可用集：目录浏览 / 新建文件夹 / 上传 / 下载 / 重命名 / 删除 / 复制移动。
 //
 // 规矩：
 //   * 错误一律翻译成中文人话（serverOpsErrorMessage，复用远端存储的映射表）；
 //   * 传输中给**有界进度**（底部一条进度条），不做整页 spinner：翻目录时
 //     用户还要能继续点，整页转圈会让人以为卡死了；
-//   * 删除目录的确认文案必须写清"目录内所有内容一并删除"（服务端递归删）。
+//   * 删除目录的确认文案必须写清"目录内所有内容一并删除"（服务端递归删）；
+//   * 批量/目录级操作走**串行队列**（并发恒为 1，见 server_ops_transfer_queue.dart），
+//     进度显示"第 i/n"，可取消，单项失败不打断整批。
 
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
@@ -22,6 +23,7 @@ import 'package:box/features/extensions/plugins/remote_storage/domain/remote_sto
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_transfer_queue.dart';
 
 /// 文本预览最多读这么多字节（够看配置/日志片段，又不会把大文件拖下来）。
 const int kOpsPreviewMaxBytes = 64 * 1024;
@@ -43,6 +45,9 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
   bool _busy = false;
   String? _error;
   String _progressText = '';
+
+  /// A2/A4：当前可取消的传输（null = 当前操作不可取消）。
+  TransferCancelToken? _cancelToken;
 
   @override
   void initState() {
@@ -167,29 +172,76 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
     );
   }
 
+  // ── A2：上传（多选 + 串行队列 + 可取消） ─────────────────────────
+
   Future<void> _upload() async {
-    final picked = await FilePicker.pickFile();
-    if (picked == null) return;
-    final localPath = picked.path;
-    if (localPath == null) {
-      _toast('选中的文件在本机没有可直接读取的路径', error: true);
+    final picked = await serverOpsPickFiles();
+    if (!mounted) return;
+    if (picked.isEmpty) return;
+    final usable =
+        picked.where((p) => p.path.isNotEmpty).toList(growable: false);
+    final skipped = picked.length - usable.length;
+    if (usable.isEmpty) {
+      _toast('选中的文件在本机都没有可直接读取的路径', error: true);
       return;
     }
-    if (!mounted) return;
-    final target = ServerOpsFilesService.joinPath(_path, picked.name);
-    await _runTask(
-      () => _service.upload(
-        File(localPath),
-        target,
-        onProgress: (sent, total) {
-          if (!mounted) return;
-          final pct = total <= 0 ? 0 : (sent * 100 ~/ total);
-          setState(() => _progressText = '上传中 $pct%');
-        },
-      ),
-      success: '已上传 ${picked.name}',
-    );
+    if (skipped > 0) {
+      _toast('有 $skipped 个文件本机没有可直接读取的路径，已跳过');
+    }
+    await _runUploadQueue(usable);
   }
+
+  /// 串行上传：一次一个（并发=1），每项可取消，中间失败继续下一项。
+  Future<void> _runUploadQueue(List<OpsPickedFile> files) async {
+    final cancel = TransferCancelToken();
+    if (!mounted) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _cancelToken = cancel;
+      _progressText = '';
+    });
+
+    final result = await runOpsSerialQueue(
+      total: files.length,
+      cancel: cancel,
+      onStart: (i) {
+        if (!mounted) return;
+        setState(() => _progressText = '上传中 第 ${i + 1}/${files.length} 项');
+      },
+      task: (i) {
+        final picked = files[i];
+        return _service.upload(
+          File(picked.path),
+          ServerOpsFilesService.joinPath(_path, picked.name),
+          cancel: cancel,
+          onProgress: (sent, total) {
+            if (!mounted) return;
+            final pct = total <= 0 ? 0 : sent * 100 ~/ total;
+            setState(
+              () => _progressText =
+                  '上传中 第 ${i + 1}/${files.length} 项 $pct%',
+            );
+          },
+        );
+      },
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _progressText = '';
+      _cancelToken = null;
+    });
+    _toast(result.summary('上传'), error: !result.allSucceeded);
+    await _load(silent: true);
+  }
+
+  void _cancelCurrent() {
+    _cancelToken?.cancel();
+  }
+
+  // ── A8：下载与下载缓存 ────────────────────────────────────────
 
   Future<void> _download(RemoteStorageEntry entry) async {
     await _runTask(
@@ -201,7 +253,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
           dest,
           onProgress: (received, total) {
             if (!mounted) return;
-            final pct = total <= 0 ? 0 : (received * 100 ~/ total);
+            final pct = total <= 0 ? 0 : received * 100 ~/ total;
             setState(() => _progressText = '下载中 $pct%');
           },
         );
@@ -225,8 +277,10 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
       confirm: '重命名',
     );
     if (name == null || name == entry.name) return;
-    final target =
-        ServerOpsFilesService.joinPath(ServerOpsFilesService.parentOf(entry.path), name);
+    final target = ServerOpsFilesService.joinPath(
+      ServerOpsFilesService.parentOf(entry.path),
+      name,
+    );
     await _runTask(
       () => _service.rename(entry.path, target),
       success: '已重命名为 $name',
@@ -334,7 +388,11 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
     return result.trim();
   }
 
-  Future<bool?> _confirm({required String title, required String message}) {
+  Future<bool?> _confirm({
+    required String title,
+    required String message,
+    String confirm = '删除',
+  }) {
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -350,7 +408,7 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
               backgroundColor: Theme.of(ctx).colorScheme.error,
             ),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('删除'),
+            child: Text(confirm),
           ),
         ],
       ),
@@ -380,11 +438,33 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
                 : _buildList(theme),
           ),
         ),
-        if (_progressText.isNotEmpty)
+        if (_progressText.isNotEmpty) ...[
           LinearProgressIndicator(
             minHeight: 2,
             semanticsLabel: _progressText,
           ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _progressText,
+                    style: theme.textTheme.labelSmall,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                // 只有批量/目录级操作才是可取消的（单文件操作太快，给取消没意义）。
+                if (_cancelToken != null)
+                  TextButton(
+                    onPressed: _cancelCurrent,
+                    child: const Text('取消'),
+                  ),
+              ],
+            ),
+          ),
+        ],
         _ActionBar(
           busy: _busy,
           path: _path,
@@ -585,7 +665,6 @@ class _ActionBar extends StatelessWidget {
   final String path;
   final VoidCallback onNewFolder;
   final VoidCallback onUpload;
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);

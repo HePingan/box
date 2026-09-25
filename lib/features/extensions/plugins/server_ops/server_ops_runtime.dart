@@ -5,6 +5,7 @@
 // widget 测试就没法一次把三处都换成假实现。集中在这里，与仓库既有插件
 // （debugSetServiceMonitorRuntime / debugSetRemoteStorageRuntime）同一形状。
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
@@ -60,6 +61,33 @@ Future<void> showOpsImagePreviewDialog(
 /// 主机快照服务（页面用它拉快照 / 读缓存与历史）。
 HostService get serverOpsHostService => _hostService;
 
+/// 选中的本地文件（把 file_picker 的 PlatformFile 折成插件自己的最小视图：
+/// 页面只用到名字与路径，用例也不必依赖 file_picker 的平台实现——它是 abstract）。
+class OpsPickedFile {
+  const OpsPickedFile({required this.name, required this.path});
+
+  final String name;
+
+  /// 本机绝对路径；为空串表示"这个文件本机没有可直接读取的路径"。
+  final String path;
+}
+
+/// 「多选本地文件」的接缝：默认真调系统文件选择器（多选）；widget 测试注入假实现。
+typedef OpsFilePicker = Future<List<OpsPickedFile>> Function();
+
+Future<List<OpsPickedFile>> _defaultPickFiles() async {
+  final picked = await FilePicker.pickFiles();
+  return [
+    for (final file in picked)
+      OpsPickedFile(name: file.name, path: file.path ?? ''),
+  ];
+}
+
+OpsFilePicker _filePicker = _defaultPickFiles;
+
+/// 当前生效的文件选择器。
+OpsFilePicker get serverOpsPickFiles => _filePicker;
+
 /// 文件页用的服务：测试注入优先，否则按当前设置懒建。
 ServerOpsFilesService serverOpsFilesService(ServerOpsSettings settings) =>
     _filesServiceOverride ?? ServerOpsFilesService(settings: settings);
@@ -75,10 +103,12 @@ void debugSetServerOpsRuntime({
   ServerOpsFilesService? filesService,
   OpsImagePreviewOpener? imagePreviewOpener,
   OpsTerminalProbe? terminalProbe,
+  OpsFilePicker? filePicker,
 }) {
   _hostService = hostService ?? HostService();
   _settingsOverride = settings;
   _filesServiceOverride = filesService;
   _imagePreviewOpener = imagePreviewOpener;
   _terminalProbe = terminalProbe;
+  _filePicker = filePicker ?? _defaultPickFiles;
 }
