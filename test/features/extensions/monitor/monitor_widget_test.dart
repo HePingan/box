@@ -227,6 +227,36 @@ void main() {
     expect(find.text('新拉到的'), findsOneWidget);
   });
 
+  testWidgets('证书剩余天数显示在行内；快到期/失效有提示', (tester) async {
+    final service = _FakeService(
+      snapshotBody: _body(monitors: [
+        {'name': 'myb2api', 'up': true, 'pingMs': 118, 'uptime24h': 100.0,
+         'certDays': 57, 'certValid': true},
+        {'name': 'kimi2api', 'up': true, 'pingMs': 116, 'uptime24h': 100.0,
+         'certDays': 43, 'certValid': true},
+        {'name': 'zocr', 'up': true, 'pingMs': 120, 'uptime24h': 100.0,
+         'certDays': 0, 'certValid': false},
+      ]),
+    );
+    await _pumpPage(tester, service);
+
+    expect(find.text('证书 57 天'), findsOneWidget);
+    expect(find.text('证书 43 天'), findsOneWidget);
+    expect(find.text('证书已失效'), findsOneWidget);
+  });
+
+  testWidgets('没有证书信息的项不显示证书那一段', (tester) async {
+    final service = _FakeService(
+      snapshotBody: _body(monitors: [
+        {'name': '普通站点', 'up': true, 'pingMs': 110, 'uptime24h': 100.0},
+      ]),
+    );
+    await _pumpPage(tester, service);
+
+    expect(find.textContaining('延迟 110 ms'), findsOneWidget);
+    expect(find.textContaining('证书'), findsNothing);
+  });
+
   testWidgets('快照里没有监控项也不崩，给一句说明', (tester) async {
     final service = _FakeService(snapshotBody: _body(monitors: []));
     await _pumpPage(tester, service);

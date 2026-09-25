@@ -38,7 +38,16 @@ PANEL_URL = "https://ham.hpa888.top/"
 PUBLIC_URL = "https://box.hpa888.top/monitors.json"
 CST = timezone(timedelta(hours=8))
 
-LINE_RE = re.compile(r'^monitor_(status|response_time)\{(.*)\}\s+([0-9.eE+-]+)\s*$')
+LINE_RE = re.compile(
+    r'^monitor_(status|response_time|cert_days_remaining|cert_is_valid)'
+    r'\{(.*)\}\s+([0-9.eE+-]+)\s*$'
+)
+
+# 采样链自身故障时的告警（Kuma 已经会报"某个站点挂了"，这里只管"我没采到/没送到"，
+# 避免同一次故障两条消息）。
+ALERT_STATE = "/opt/kuma-monitor/alert_state.json"
+ALERT_MIN_GAP_SEC = 3600
+FEISHU_TARGET = "feishu"
 
 
 def parse_labels(raw: str) -> dict:
@@ -105,7 +114,13 @@ def monitor_ids_by_name() -> dict:
 
 def build() -> dict:
     text = fetch_metrics()
-    status, ping = {}, {}
+    status, ping, cert_days, cert_valid = {}, {}, {}, {}
+    buckets = {
+        "status": status,
+        "response_time": ping,
+        "cert_days_remaining": cert_days,
+        "cert_is_valid": cert_valid,
+    }
     for line in text.splitlines():
         m = LINE_RE.match(line.strip())
         if not m:
@@ -115,7 +130,7 @@ def build() -> dict:
         name = labels.get("monitor_name")
         if not name:
             continue
-        (status if kind == "status" else ping)[name] = value
+        buckets[kind][name] = value
 
     ids = monitor_ids_by_name()
     up24 = uptime_24h()
@@ -130,6 +145,10 @@ def build() -> dict:
             entry["id"] = mid
         if name in ping:
             entry["pingMs"] = int(round(ping[name]))
+        if name in cert_days:
+            entry["certDays"] = int(round(cert_days[name]))
+        if name in cert_valid:
+            entry["certValid"] = cert_valid[name] >= 1
         if mid is not None and mid in up24:
             entry["uptime24h"] = up24[mid]
         monitors.append(entry)
@@ -144,6 +163,61 @@ def build() -> dict:
     }
 
 
+def notify(title: str, body: str) -> None:
+    """发一条到飞书（复用 hermes send；失败只记日志，不因为通知失败影响采样）。"""
+    try:
+        subprocess.run(
+            ["hermes", "send", "-t", FEISHU_TARGET, f"{title}\n{body}"],
+            check=True, timeout=60, capture_output=True,
+        )
+        print(f"[alert] 已发送: {title}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] 告警发送失败: {e}", file=sys.stderr)
+
+
+def read_alert_state() -> dict:
+    try:
+        with open(ALERT_STATE) as f:
+            return json.load(f)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def write_alert_state(state: dict) -> None:
+    try:
+        tmp = ALERT_STATE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(state, f)
+        os.replace(tmp, ALERT_STATE)
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] 告警状态写盘失败: {e}", file=sys.stderr)
+
+
+def alert_on_failure(reason: str) -> None:
+    """采样链自身出问题时的告警：只在"故障"和"恢复"两个边沿发，且最多每小时一条。
+
+    注意**不报单个站点宕机** —— 那是 Kuma 自己通知的事，重复报只会让人麻木。
+    """
+    now = int(time.time())
+    state = read_alert_state()
+    failures = int(state.get("failures", 0)) + 1
+    last = int(state.get("lastAlertTs", 0))
+    should_send = now - last >= ALERT_MIN_GAP_SEC
+    if should_send:
+        notify("🔴 监控快照采样异常", f"{reason}\n（已连续失败 {failures} 次）")
+    write_alert_state({"failures": failures, "lastAlertTs": now if should_send else last,
+                       "state": "fail"})
+
+
+def alert_on_recovery() -> None:
+    state = read_alert_state()
+    if state.get("state") == "fail" and int(state.get("failures", 0)) > 0:
+        notify("🟢 监控快照采样已恢复",
+               f"连续失败 {state.get('failures')} 次后恢复正常。")
+    write_alert_state({"failures": 0, "lastAlertTs": int(state.get("lastAlertTs", 0)),
+                       "state": "ok"})
+
+
 def push_to_edge(payload: bytes) -> None:
     tmp = EDGE_PATH + ".tmp"
     subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", EDGE_HOST,
@@ -154,7 +228,20 @@ def push_to_edge(payload: bytes) -> None:
 
 def main() -> int:
     started = time.time()
-    doc = build()
+    try:
+        doc = build()
+    except Exception as e:  # noqa: BLE001 - 采不到（Kuma 挂了/账号变了/网络）也要留痕并告警
+        print(f"[error] 采样失败: {e}", file=sys.stderr)
+        alert_on_failure(f"采样失败：{e}")
+        return 1
+
+    s = doc["summary"]
+    if s["total"] == 0:
+        # 0 项通常是"读到了 metrics 但解析不出监控项"，比采样失败更隐蔽 —— 也要报。
+        print("[error] 快照里 0 个监控项", file=sys.stderr)
+        alert_on_failure("快照里 0 个监控项（metrics 读到了但没解析出监控项）")
+        return 1
+
     payload = json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     os.makedirs(os.path.dirname(LOCAL_OUT), exist_ok=True)
     tmp = LOCAL_OUT + ".tmp"
@@ -166,7 +253,11 @@ def main() -> int:
         pushed = "ok"
     except Exception as e:  # noqa: BLE001 - 推不动时边缘机继续提供上一份（含旧 generatedAt）
         pushed = f"FAILED: {e}"
-    s = doc["summary"]
+
+    if pushed == "ok":
+        alert_on_recovery()
+    else:
+        alert_on_failure(f"推送到边缘机失败：{pushed}")
     print(f"[{doc['generatedAt']}] 共 {s['total']} 项，在线 {s['up']}，异常 {s['down']}，"
           f"{len(payload)}B，推送边缘机={pushed}，{time.time() - started:.1f}s")
     return 0 if pushed == "ok" else 1

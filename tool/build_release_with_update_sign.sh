@@ -36,6 +36,20 @@ OBFUSCATE="${OBFUSCATE:-1}"
 VERSION_CODE="$(grep -m1 '^version:' pubspec.yaml | sed 's/.*+//' | tr -d ' \r')"
 SYMBOLS_DIR="${SYMBOLS_DIR:-build/symbols/$VERSION_CODE}"
 
+# ---- 取监控快照令牌（端点已收口，缺了包里的插件会被判 404）-------------------
+MONITOR_TOKEN_FILE="${MONITOR_TOKEN_FILE:-/root/.secrets/box-monitor-snapshot-token}"
+MONITOR_TOKEN=""
+if [[ -r "$MONITOR_TOKEN_FILE" ]]; then
+  MONITOR_TOKEN="$(tr -d '\r\n' < "$MONITOR_TOKEN_FILE")"
+fi
+if [[ -z "$MONITOR_TOKEN" ]]; then
+  echo "[错误] 找不到监控快照令牌：$MONITOR_TOKEN_FILE" >&2
+  echo "       没有它，「服务监控」插件请求 https://box.hpa888.top/monitors.json 会被 nginx 判 404。" >&2
+  echo "       写入方式：openssl rand -hex 24 > $MONITOR_TOKEN_FILE && chmod 600 $MONITOR_TOKEN_FILE" >&2
+  echo "       （边缘机 nginx 的 location = /monitors.json 里那行 if 必须与本文件一致）" >&2
+  exit 1
+fi
+
 # ---- 取密钥 ----------------------------------------------------------------
 SECRET="${UPDATE_SIGNATURE_SECRET:-}"
 if [[ -z "$SECRET" && -r "$SECRET_FILE" ]]; then
@@ -117,6 +131,7 @@ flutter build apk --release \
   --dart-define=UPDATE_CHECK_URL="$CHECK_URL" \
   --dart-define=UPDATE_SIGNATURE_ALGORITHM="$SIG_ALGO" \
   --dart-define=UPDATE_SIGNATURE_SECRET="$SECRET" \
+  --dart-define=MONITOR_SNAPSHOT_TOKEN="$MONITOR_TOKEN" \
   --dart-define=UPDATE_DOWNLOAD_ALLOWED_HOSTS="$ALLOWED_HOSTS" \
   --dart-define=REQUIRE_UPDATE_SHA256=true \
   --dart-define=APP_CHANNEL="$CHANNEL"

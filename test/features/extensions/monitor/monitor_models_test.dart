@@ -100,6 +100,42 @@ void main() {
       );
     });
 
+    test('证书字段：剩余天数、是否有效、缺字段', () {
+      final snap = MonitorSnapshot.parse(
+        jsonEncode({
+          'monitors': [
+            {'name': 'a', 'up': true, 'certDays': 43, 'certValid': true},
+            {'name': 'b', 'up': true, 'certDays': 7, 'certValid': true},
+            {'name': 'c', 'up': true, 'certDays': 0, 'certValid': false},
+            {'name': 'd', 'up': true},
+          ],
+        }),
+      );
+      expect(snap.monitors[0].certificateLabel, '证书 43 天');
+      expect(snap.monitors[0].certificateWarning, isFalse);
+      expect(snap.monitors[1].certificateLabel, '证书 7 天');
+      expect(snap.monitors[1].certificateWarning, isTrue);
+      expect(snap.monitors[2].certificateLabel, '证书已失效');
+      expect(snap.monitors[2].certificateWarning, isTrue);
+      expect(snap.monitors[3].certificateLabel, isNull, reason: '没有证书信息就不显示这一段');
+      expect(snap.monitors[3].certificateWarning, isFalse, reason: '不知道 ≠ 有问题');
+    });
+
+    test('证书边界：正好 30 天不提醒，29 天提醒；没有天数但标了失效也提醒', () {
+      MonitorEntry parse(int? days, bool? valid) => MonitorEntry.tryParse({
+        'name': 'x',
+        'up': true,
+        ?'certDays': days,
+        ?'certValid': valid,
+      })!;
+      expect(parse(30, true).certificateWarning, isFalse);
+      expect(parse(29, true).certificateWarning, isTrue);
+      expect(parse(-3, true).certificateLabel, '证书已到期');
+      expect(parse(-3, true).certificateWarning, isTrue);
+      expect(parse(null, false).certificateLabel, '证书已失效');
+      expect(parse(null, false).certificateWarning, isTrue);
+    });
+
     test('key：有 id 用 id，没有就用名字', () {
       final snap = MonitorSnapshot.parse(
         jsonEncode({

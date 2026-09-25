@@ -37,13 +37,34 @@ class ServiceMonitorService {
     Uri? endpoint,
     MonitorFetcher? fetcher,
     Duration? timeout,
+    String? token,
   })  : endpoint = endpoint ?? defaultEndpoint,
-        _fetcher = fetcher ?? _dioFetch,
+        token = token ?? defaultToken,
+        _providedFetcher = fetcher,
         _timeout = timeout ?? const Duration(seconds: 12);
 
   /// 线上快照（边缘机 nginx 静态文件，由 175 每 2 分钟推送）。
+  ///
+  /// 端点已收口：nginx 要求 `?token=`，不对直接 404。令牌**不进仓库**，
+  /// 构建时经 `--dart-define=MONITOR_SNAPSHOT_TOKEN` 注入（与验签密钥同一套路）。
+  /// 本机开发/测试拿不到令牌也没关系：单测都注入假 fetcher，不会真去请求。
   static final Uri defaultEndpoint =
       Uri.parse('https://box.hpa888.top/monitors.json');
+
+  /// 构建时注入的默认令牌（测试/开发可经构造参数覆盖）。
+  static const String defaultToken =
+      String.fromEnvironment('MONITOR_SNAPSHOT_TOKEN');
+
+  /// 本次实例使用的令牌。
+  final String token;
+
+  /// 实际请求地址：配了令牌就带上 `?token=`，没配就原样（构建脚本会拦住漏配）。
+  Uri get requestUrl {
+    if (token.isEmpty) return endpoint;
+    return endpoint.replace(
+      queryParameters: {...endpoint.queryParameters, 'token': token},
+    );
+  }
 
   static const String cacheKey = 'serviceMonitor.lastSnapshot';
   static const String cacheAtKey = 'serviceMonitor.lastSnapshotAt';
@@ -52,14 +73,18 @@ class ServiceMonitorService {
   static const int cacheMaxBytes = 64 * 1024;
 
   final Uri endpoint;
-  final MonitorFetcher _fetcher;
+  final MonitorFetcher? _providedFetcher;
+
+  /// 默认实现是实例方法（要看实例上的令牌），注入的则直接用注入的。
+  late final MonitorFetcher _fetcher = _providedFetcher ?? _dioFetch;
+
   final Duration _timeout;
 
   /// 拉一份新快照；成功时顺手把原始文本落盘。失败抛 [MonitorFetchException]。
   Future<MonitorSnapshot> fetch() async {
     final String body;
     try {
-      body = await _fetcher(endpoint, _timeout);
+      body = await _fetcher(requestUrl, _timeout);
     } on MonitorFetchException {
       rethrow;
     } catch (e) {
@@ -112,7 +137,7 @@ class ServiceMonitorService {
   }
 
   /// 默认实现：dio 取纯文本。HTTP 状态码也翻译成人话（页面直接显示）。
-  static Future<String> _dioFetch(Uri url, Duration timeout) async {
+  Future<String> _dioFetch(Uri url, Duration timeout) async {
     final dio = Dio(
       BaseOptions(
         connectTimeout: timeout,
@@ -134,6 +159,12 @@ class ServiceMonitorService {
       return data;
     } on DioException catch (e) {
       final code = e.response?.statusCode;
+      if (code == 404 && token.isEmpty) {
+        // 端点收口后最常见的一种"看起来像服务端坏了"：本机构建没注入令牌。
+        throw MonitorFetchException(
+          '快照端点已收口，但这个构建没有带上访问令牌（MONITOR_SNAPSHOT_TOKEN）',
+        );
+      }
       if (code != null) {
         throw MonitorFetchException('服务端返回 HTTP $code');
       }

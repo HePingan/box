@@ -29,6 +29,8 @@ class MonitorEntry {
     this.id,
     this.pingMs,
     this.uptime24h,
+    this.certDays,
+    this.certValid,
   });
 
   final String name;
@@ -36,6 +38,30 @@ class MonitorEntry {
   final int? id;
   final int? pingMs;
   final double? uptime24h;
+
+  /// HTTPS 监控项的证书剩余天数（Kuma 的 `monitor_cert_days_remaining`）；
+  /// 非 HTTPS 或服务端没采到就是 null。
+  final int? certDays;
+
+  /// 证书是否有效（`monitor_cert_is_valid`）；null = 不知道。
+  final bool? certValid;
+
+  /// 证书一行文案：没有证书信息返回 null，界面就不显示这一段。
+  String? get certificateLabel {
+    if (certValid == false) return '证书已失效';
+    final days = certDays;
+    if (days == null) return null;
+    if (days <= 0) return '证书已到期';
+    return '证书 $days 天';
+  }
+
+  /// 证书是否该被提醒（失效/已到期/不足 30 天）。没有证书信息的项永远不提醒。
+  bool get certificateWarning {
+    if (certValid == false) return true;
+    final days = certDays;
+    if (days == null) return false;
+    return days < 30;
+  }
 
   /// 站点标识：优先用服务端 id，没有就用名字（名字在 Kuma 里是人写的，够稳定）。
   String get key => id != null ? 'id:$id' : 'name:$name';
@@ -51,6 +77,8 @@ class MonitorEntry {
       id: _asInt(raw['id']),
       pingMs: _asInt(raw['pingMs']),
       uptime24h: _asDouble(raw['uptime24h']),
+      certDays: _asInt(raw['certDays']),
+      certValid: _asBool(raw['certValid']),
     );
   }
 }

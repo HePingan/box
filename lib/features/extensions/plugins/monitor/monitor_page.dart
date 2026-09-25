@@ -408,6 +408,51 @@ class _SummaryCard extends StatelessWidget {
   }
 }
 
+/// 行内第二行：延迟 · 24h 可用率 · 证书剩余。
+/// 证书快到期/已失效时那一段换色（其余保持次要色，避免整行都在喊）。
+class _MonitorSubtitle extends StatelessWidget {
+  const _MonitorSubtitle({required this.entry, required this.theme});
+
+  final MonitorEntry entry;
+  final ThemeData theme;
+
+  @override
+  Widget build(BuildContext context) {
+    final base = theme.textTheme.bodySmall?.copyWith(
+      color: theme.colorScheme.outline,
+    );
+    final parts = <String>[
+      '延迟 ${monitorPingText(entry.pingMs)}',
+      '24h 可用率 ${monitorUptimeText(entry.uptime24h)}',
+    ];
+    final cert = entry.certificateLabel;
+    return Row(
+      children: [
+        Flexible(
+          child: Text(
+            parts.join(' · '),
+            style: base,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (cert != null) ...[
+          Text(' · ', style: base),
+          Text(
+            cert,
+            style: base?.copyWith(
+              color: entry.certificateWarning
+                  ? const Color(0xFFB45309)
+                  : theme.colorScheme.outline,
+              fontWeight: entry.certificateWarning ? FontWeight.w700 : null,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class _MonitorTile extends StatelessWidget {
   const _MonitorTile({required this.entry});
 
@@ -444,13 +489,7 @@ class _MonitorTile extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 3),
-                  Text(
-                    '延迟 ${monitorPingText(entry.pingMs)}'
-                    ' · 24h 可用率 ${monitorUptimeText(entry.uptime24h)}',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.outline,
-                    ),
-                  ),
+                  _MonitorSubtitle(entry: entry, theme: theme),
                 ],
               ),
             ),

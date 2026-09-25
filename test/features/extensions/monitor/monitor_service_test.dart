@@ -43,6 +43,41 @@ void main() {
       expect(seen.toString(), 'https://box.hpa888.top/monitors.json');
     });
 
+    test('端点已收口：配置了令牌就带 ?token=，没配就不带', () async {
+      final withToken = ServiceMonitorService(
+        fetcher: (u, t) async => bodyWith(),
+        token: 'abc123',
+      );
+      expect(
+        withToken.requestUrl.toString(),
+        'https://box.hpa888.top/monitors.json?token=abc123',
+      );
+
+      Uri? seen;
+      final capture = ServiceMonitorService(
+        fetcher: (u, t) async {
+          seen = u;
+          return bodyWith();
+        },
+        token: 'abc123',
+      );
+      await capture.fetch();
+      expect(seen!.queryParameters['token'], 'abc123');
+
+      final noToken = ServiceMonitorService(fetcher: (u, t) async => bodyWith());
+      expect(noToken.requestUrl, ServiceMonitorService.defaultEndpoint);
+      expect(noToken.requestUrl.queryParameters.containsKey('token'), isFalse);
+    });
+
+    test('已有查询参数时令牌是追加而不是覆盖', () {
+      final service = ServiceMonitorService(
+        endpoint: Uri.parse('https://box.hpa888.top/monitors.json?x=1'),
+        fetcher: (u, t) async => bodyWith(),
+        token: 'abc123',
+      );
+      expect(service.requestUrl.queryParameters, {'x': '1', 'token': 'abc123'});
+    });
+
     test('网络异常 → MonitorFetchException，message 带原因', () async {
       final service = ServiceMonitorService(
         fetcher: (url, timeout) async => throw Exception('连接被拒绝'),
