@@ -111,6 +111,52 @@ class OpsApiClient {
     return _decode(res, action);
   }
 
+  /// 发一次**写动作**（POST + JSON）。写动作要令牌带 write 作用域，
+  /// 没带的话服务端回 403 并说明怎么重签 —— 这条错误原样透传到界面上。
+  Future<Map<String, dynamic>> post(
+    String action,
+    Map<String, Object?> body,
+  ) async {
+    if (_baseUrl.isEmpty) {
+      throw const OpsApiException(
+        OpsApiErrorKind.badRequest,
+        '这台机器还没填只读接口地址（设置 → 服务器 → 只读接口）',
+      );
+    }
+    if (_token.isEmpty) {
+      throw const OpsApiException(
+        OpsApiErrorKind.unauthorized,
+        '这台机器还没填设备令牌（设置 → 服务器 → 设备令牌）',
+      );
+    }
+    final uri = Uri.parse('$_baseUrl/$action');
+    http.Response res;
+    try {
+      res = await _client
+          .post(
+            uri,
+            headers: {
+              'Authorization': 'Bearer $_token',
+              'Content-Type': 'application/json; charset=utf-8',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(timeout);
+    } on TimeoutException {
+      throw OpsApiException(
+        OpsApiErrorKind.timeout,
+        '请求超时（${timeout.inSeconds} 秒）：这一步可能还在跑，稍后刷新看结果',
+      );
+    } catch (_) {
+      throw const OpsApiException(
+        OpsApiErrorKind.network,
+        '连不上这台机器的只读接口（网络或地址不对）',
+      );
+    }
+    return _decode(res, action);
+  }
+
   Map<String, dynamic> _decode(http.Response res, String action) {
     Map<String, dynamic> body = const {};
     final text = res.body;
@@ -201,6 +247,87 @@ class OpsApiClient {
     final d = await call('audit', query: {'limit': '$limit'});
     return _listOf(d['items'], OpsAuditEntry.fromJson);
   }
+
+  // ── 能力与写动作（写档）────────────────────────────────────────
+
+  /// 这把令牌能干什么（写按钮显不显示、能不能停某个服务都看它）。
+  Future<OpsCapabilities> capabilities() async =>
+      OpsCapabilities.fromJson(await call('capabilities'));
+
+  Future<Map<String, dynamic>> serviceOp(String unit, String op) =>
+      post('service', {'unit': unit, 'op': op});
+
+  Future<Map<String, dynamic>> mkdir(String path) =>
+      post('mkdir', {'path': path});
+
+  Future<Map<String, dynamic>> chmod(String path, String mode,
+          {bool recursive = false}) =>
+      post('chmod', {'path': path, 'mode': mode, 'recursive': recursive});
+
+  Future<Map<String, dynamic>> chown(String path,
+          {String owner = '', String group = '', bool recursive = false}) =>
+      post('chown', {
+        'path': path,
+        'owner': owner,
+        'group': group,
+        'recursive': recursive,
+      });
+
+  /// 解压（zip / tar / tar.gz / tgz / tar.bz2 / tar.xz / gz）。
+  /// [dest] 留空 = 解到压缩包所在目录。
+  Future<Map<String, dynamic>> extract(String path, {String dest = ''}) =>
+      post('extract', {'path': path, 'dest': dest});
+}
+
+/// 这把令牌的能力（服务端 `/capabilities`）。
+class OpsCapabilities {
+  const OpsCapabilities({
+    required this.hostname,
+    required this.admin,
+    required this.write,
+    required this.writeActions,
+    required this.selfDestructiveUnits,
+    required this.protectedPaths,
+  });
+
+  final String hostname;
+
+  /// 能不能读服务端审计。
+  final bool admin;
+
+  /// 能不能做写动作（服务启停/建目录/改权限/解压）。
+  final bool write;
+
+  final List<String> writeActions;
+
+  /// 停/禁用就会被服务端拒绝的单元（ssh、本服务、隧道、网络…）。
+  final List<String> selfDestructiveUnits;
+
+  /// 写动作一律拒绝的路径前缀。
+  final List<String> protectedPaths;
+
+  /// 这个服务能不能被停/禁用；不能时返回理由（界面直接显示，不要让用户点了才知道）。
+  String? stopBlockedReason(String unit) {
+    if (!write) return '这把令牌没有写权限';
+    if (selfDestructiveUnits.contains(unit)) {
+      return '这个服务是「能让你再连上来」的那一层，服务端会拒绝停它';
+    }
+    return null;
+  }
+
+  static OpsCapabilities fromJson(Map<String, dynamic> json) => OpsCapabilities(
+        hostname: _s(json['hostname']),
+        admin: json['admin'] == true,
+        write: json['write'] == true,
+        writeActions: _stringList(json['writeActions']),
+        selfDestructiveUnits: _stringList(json['selfDestructiveUnits']),
+        protectedPaths: _stringList(json['protectedPaths']),
+      );
+}
+
+List<String> _stringList(Object? raw) {
+  if (raw is! List) return const <String>[];
+  return [for (final item in raw) _s(item)];
 }
 
 List<T> _listOf<T>(Object? raw, T Function(Map<String, dynamic>) build) {

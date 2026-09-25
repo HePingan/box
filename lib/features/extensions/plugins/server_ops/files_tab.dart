@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_api_client.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
@@ -422,6 +423,107 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
     });
   }
 
+  /// 压缩包后缀（与服务端认的那批一致）。用它决定"解压"这一项显不显示。
+  static bool _looksLikeArchive(String name) {
+    final lower = name.toLowerCase();
+    return const ['.zip', '.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2',
+            '.tar.xz', '.txz', '.gz']
+        .any(lower.endsWith);
+  }
+
+  /// 远端**绝对**路径（当前目录 + 条目名）。
+  ///
+  /// 注意两套路径口径不一样：文件通道（WebDAV）用的是相对根目录的 'a/b.txt'，
+  /// 而只读接口的写动作要求绝对路径 '/a/b.txt'（它要 resolve() 之后比对保护名单）。
+  /// 这两台机器的 DAV 根就是 '/'，所以补一个前导斜杠即可对齐；少了它会直接 400「必须是绝对路径」。
+  String _remotePathOf(RemoteStorageEntry entry) {
+    final dir = _path.endsWith('/') ? _path.substring(0, _path.length - 1) : _path;
+    final full = '$dir/${entry.name}';
+    return full.startsWith('/') ? full : '/$full';
+  }
+
+  /// **解压**（写档，走只读接口）：服务端解，手机不用把包下下来再传上去。
+  ///
+  /// 这条动作以前只能"下载到手机 → 本机解压 → 再传回去"，一个几百 MB 的包光流量就够呛。
+  Future<void> _extract(RemoteStorageEntry entry) async {
+    final path = _remotePathOf(entry);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('解压「${entry.name}」'),
+        content: Text('服务端会把它解到当前目录（$_path）。\n'
+            '同名的文件会被覆盖 —— 服务端只做白名单动作，不执行压缩包里的脚本。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('解压')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await _runApiTask('解压', () async {
+      final api = serverOpsApiClient(widget.settings);
+      final d = await api.extract(path);
+      return '已解压 ${d['count'] ?? 0} 个条目到 $_path'
+          '${d['truncated'] == true ? '（到上限被截断）' : ''}';
+    });
+  }
+
+  /// **权限 / 属主**（写档）：宝塔里最常用的一格。
+  ///
+  /// 输入框的控制器交给对话框自己持有 —— 早先的写法是"showDialog 返回后立刻 dispose()"，
+  /// 结果退场动画还在跑、TextField 还在用那个控制器，直接抛
+  /// `A TextEditingController was used after being disposed`（用例里抓到）。
+  Future<void> _editPermissions(RemoteStorageEntry entry) async {
+    final path = _remotePathOf(entry);
+    final r = await showDialog<_PermResult>(
+      context: context,
+      builder: (_) => _PermissionsDialog(
+        name: entry.name,
+        isDirectory: entry.isDirectory,
+      ),
+    );
+    if (r == null || !mounted) return;
+    await _runApiTask('改权限', () async {
+      final api = serverOpsApiClient(widget.settings);
+      final parts = <String>[];
+      if (r.mode.isNotEmpty) {
+        final d = await api.chmod(path, r.mode, recursive: r.recursive);
+        parts.add('权限 ${d['mode'] ?? r.mode}');
+      }
+      if (r.owner.isNotEmpty || r.group.isNotEmpty) {
+        await api.chown(
+          path,
+          owner: r.owner,
+          group: r.group,
+          recursive: r.recursive,
+        );
+        parts.add('属主 ${r.owner.isEmpty ? '(不改)' : r.owner}'
+            ':${r.group.isEmpty ? '(不改)' : r.group}');
+      }
+      if (parts.isEmpty) return '没改任何东西（权限与属主都留空了）';
+      return '已改 ${entry.name}：${parts.join('，')}';
+    });
+  }
+
+  /// 写动作的统一壳：成功后刷新列表 + 记日志（失败把服务端原话给出来）。
+  Future<void> _runApiTask(String op, Future<String> Function() run) async {
+    final started = DateTime.now();
+    setState(() => _busy = true);
+    try {
+      final detail = await run();
+      if (!mounted) return;
+      _toast(detail);
+      _log(op, true, detail, started);
+      await _load();
+    } on OpsApiException catch (e) {
+      if (!mounted) return;
+      _toast('$op失败：${e.message}', error: true);
+      _log(op, false, e.message, started);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   /// 批量删除：保留二次确认（文案写明不可恢复），串行执行、失败不打断整批。
   Future<void> _deleteSelected() async {
     final targets = _entries
@@ -815,6 +917,10 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
                         await _rename(entry);
                       case 'delete':
                         await _delete(entry);
+                      case 'extract':
+                        await _extract(entry);
+                      case 'permissions':
+                        await _editPermissions(entry);
                     }
                   },
                   itemBuilder: (context) => [
@@ -853,6 +959,25 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
                         contentPadding: EdgeInsets.zero,
                         leading: Icon(Icons.drive_file_rename_outline_rounded),
                         title: Text('重命名'),
+                      ),
+                    ),
+                    if (!entry.isDirectory && _looksLikeArchive(entry.name))
+                      const PopupMenuItem(
+                        value: 'extract',
+                        child: ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.unarchive_outlined),
+                          title: Text('解压到当前目录'),
+                        ),
+                      ),
+                    const PopupMenuItem(
+                      value: 'permissions',
+                      child: ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.admin_panel_settings_outlined),
+                        title: Text('权限 / 属主'),
                       ),
                     ),
                     const PopupMenuItem(
@@ -1506,4 +1631,116 @@ String _prettyTime(DateTime at) {
   String two(int v) => v.toString().padLeft(2, '0');
   return '${local.year}-${two(local.month)}-${two(local.day)} '
       '${two(local.hour)}:${two(local.minute)}';
+}
+
+/// 「权限 / 属主」对话框的返回值。
+class _PermResult {
+  const _PermResult({
+    required this.mode,
+    required this.owner,
+    required this.group,
+    required this.recursive,
+  });
+
+  final String mode;
+  final String owner;
+  final String group;
+  final bool recursive;
+}
+
+/// 「权限 / 属主」对话框：自己持有控制器，随自己的 State 一起释放。
+class _PermissionsDialog extends StatefulWidget {
+  const _PermissionsDialog({required this.name, required this.isDirectory});
+
+  final String name;
+  final bool isDirectory;
+
+  @override
+  State<_PermissionsDialog> createState() => _PermissionsDialogState();
+}
+
+class _PermissionsDialogState extends State<_PermissionsDialog> {
+  late final TextEditingController _mode =
+      TextEditingController(text: widget.isDirectory ? '755' : '644');
+  final TextEditingController _owner = TextEditingController();
+  final TextEditingController _group = TextEditingController();
+  bool _recursive = false;
+
+  @override
+  void dispose() {
+    _mode.dispose();
+    _owner.dispose();
+    _group.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('权限 / 属主：${widget.name}'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _mode,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: '权限（八进制，如 644 / 755）',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _owner,
+              decoration: const InputDecoration(
+                labelText: '属主（留空即不改，如 www）',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _group,
+              decoration: const InputDecoration(
+                labelText: '属组（留空即不改）',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (widget.isDirectory)
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _recursive,
+                onChanged: (v) => setState(() => _recursive = v ?? false),
+                title: const Text('连同里面的内容（递归）',
+                    style: TextStyle(fontSize: 13)),
+              ),
+            const SizedBox(height: 6),
+            Text(
+              '服务端会拒绝受保护的路径（密钥/审计/它自己）。',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(
+            context,
+            _PermResult(
+              mode: _mode.text.trim(),
+              owner: _owner.text.trim(),
+              group: _group.text.trim(),
+              recursive: _recursive,
+            ),
+          ),
+          child: const Text('应用'),
+        ),
+      ],
+    );
+  }
 }

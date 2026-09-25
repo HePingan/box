@@ -44,6 +44,9 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
   bool _loading = false;
   bool _auditTried = false;
 
+  /// 这把令牌能干什么。拉不到就当作"只有读"（写按钮不显示，而不是点了才 403）。
+  OpsCapabilities? _caps;
+
   String _procSort = 'cpu';
   String _serviceFilter = '';
   bool _onlyInteresting = true;
@@ -121,6 +124,7 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
       }
     }
 
+    final caps = await pull('能力', client.capabilities);
     final results = await Future.wait<Object?>([
       pull('概览', client.overview),
       pull('进程', () => client.processes(sort: _procSort, limit: 15)),
@@ -143,6 +147,7 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
       if (results[4] != null) _diskRows = results[4] as List<OpsDiskRow>;
       if (results[5] != null) _sessions = results[5] as OpsSessions;
       if (audit != null) _audit = audit;
+      if (caps != null) _caps = caps;
       _auditTried = true;
       _errors
         ..clear()
@@ -484,7 +489,10 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
       builder: (_) => _ServiceSheet(
         unit: unit,
         client: _client(),
+        caps: _caps,
         onResult: (ok, detail) => _log(ok, '服务 $unit：$detail', started),
+        // 写成功之后刷新父页（服务列表的状态就跟着变了）
+        onChanged: _refresh,
       ),
     );
   }
@@ -650,11 +658,19 @@ class _ServiceSheet extends StatefulWidget {
     required this.unit,
     required this.client,
     required this.onResult,
+    this.caps,
+    this.onChanged,
   });
 
   final String unit;
   final OpsApiClient client;
   final void Function(bool ok, String detail) onResult;
+
+  /// 令牌能力（null = 拉不到，按"只有读"处理）。
+  final OpsCapabilities? caps;
+
+  /// 写成功后的回调（父页刷新列表）。
+  final VoidCallback? onChanged;
 
   @override
   State<_ServiceSheet> createState() => _ServiceSheetState();
@@ -664,6 +680,8 @@ class _ServiceSheetState extends State<_ServiceSheet> {
   OpsServiceDetail? _detail;
   String? _error;
   bool _loading = true;
+  bool _busy = false;
+  String? _actionError;
 
   @override
   void initState() {
@@ -690,6 +708,117 @@ class _ServiceSheetState extends State<_ServiceSheet> {
     }
   }
 
+  static const Map<String, String> _opLabels = <String, String>{
+    'start': '启动',
+    'stop': '停止',
+    'restart': '重启',
+    'reload': '重载配置',
+    'enable': '开机自启',
+    'disable': '取消自启',
+  };
+
+  /// 停/禁用里"会把自己锁在门外"的那几个，按钮直接禁用并说明理由 ——
+  /// 不让用户点了才知道（服务端也会拒，但界面先讲清楚）。
+  bool _blocked(String op) {
+    final caps = widget.caps;
+    if (caps == null) return true;
+    if (!caps.write) return true;
+    if (op == 'stop' || op == 'disable') {
+      return caps.stopBlockedReason(widget.unit) != null;
+    }
+    return false;
+  }
+
+  Future<void> _runOp(String op) async {
+    final label = _opLabels[op] ?? op;
+    if (widget.caps != null && !widget.caps!.write) {
+      setState(() => _actionError =
+          '这把令牌没有写权限：服务端用 box-ops-api.py token issue --label <名字> --write 重签一次，'
+          '再把新令牌填到「设置 → 服务器」');
+      return;
+    }
+    final reason = (op == 'stop' || op == 'disable')
+        ? widget.caps?.stopBlockedReason(widget.unit)
+        : null;
+    if (reason != null) {
+      setState(() => _actionError = reason);
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('$label ${widget.unit}？'),
+        content: const Text('这会真的改动这台机器（服务端会记审计）。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(label)),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() {
+      _busy = true;
+      _actionError = null;
+    });
+    try {
+      final d = await widget.client.serviceOp(widget.unit, op);
+      widget.onResult(true, '$label 成功（${d['activeState'] ?? '?'}）');
+      widget.onChanged?.call();
+      await _load();
+    } on OpsApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _actionError = e.message);
+      widget.onResult(false, '$label 失败：${e.message}');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Widget _actionBar(BuildContext context) {
+    final caps = widget.caps;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(),
+        Text('操作', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 6),
+        if (caps == null || !caps.write)
+          // 不能加 const：style 里有 Theme.of(context)，那是方法调用（加 const 直接编译不过）。
+          Text(
+            '这把令牌只能读：想做服务启停/解压这类写动作，要在服务端用 --write 重签一次令牌。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            for (final entry in _opLabels.entries)
+              Tooltip(
+                message: _blocked(entry.key)
+                    ? (caps?.stopBlockedReason(widget.unit) ??
+                        (caps == null || !caps.write ? '这把令牌没有写权限' : ''))
+                    : '',
+                child: OutlinedButton(
+                  onPressed: (_busy || _blocked(entry.key)) ? null : () => _runOp(entry.key),
+                  child: Text(entry.value),
+                ),
+              ),
+          ],
+        ),
+        if (_busy) ...[
+          const SizedBox(height: 8),
+          const LinearProgressIndicator(minHeight: 2),
+        ],
+        if (_actionError != null) ...[
+          const SizedBox(height: 8),
+          Text(_actionError!,
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.error, fontSize: 12)),
+        ],
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return DraggableScrollableSheet(
@@ -698,9 +827,13 @@ class _ServiceSheetState extends State<_ServiceSheet> {
       maxChildSize: 0.95,
       builder: (context, controller) => Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-        child: ListView(
+        // 用 SingleChildScrollView + Column 而不是 ListView：这份内容本来就不长，
+        // 惰性列表会让"最下面的操作按钮"在小屏上根本不被建出来（用例里就撞过：按钮找不到）。
+        child: SingleChildScrollView(
           controller: controller,
-          children: [
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             Text(widget.unit, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             if (_loading)
@@ -720,8 +853,10 @@ class _ServiceSheetState extends State<_ServiceSheet> {
               const SizedBox(height: 4),
               SelectableText(_detail!.journal,
                   style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+              _actionBar(context),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

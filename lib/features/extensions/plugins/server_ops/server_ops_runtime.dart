@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/image_preview_dialog.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_service.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_api_client.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_diagnostics.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_download_cache.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
@@ -19,6 +20,20 @@ import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.d
 HostService _hostService = HostService();
 ServerOpsSettings? _settingsOverride;
 ServerOpsFilesService? _filesServiceOverride;
+
+/// 按设置**现建**只读接口客户端的接缝（写档）：文件页的「解压」「改权限」走它。
+/// 用例注入假客户端就不会联网；不注入时按当前这台机器的地址与令牌现建。
+OpsApiClient Function(ServerOpsSettings settings)? _apiClientFactory;
+
+/// 当前生效的只读接口客户端（每台机器一套地址与令牌）。
+OpsApiClient serverOpsApiClient(ServerOpsSettings settings) {
+  final factory = _apiClientFactory;
+  if (factory != null) return factory(settings);
+  return OpsApiClient(
+    baseUrl: settings.effectiveApiUrl,
+    token: settings.effectiveApiToken,
+  );
+}
 
 /// 按设置**现建**文件服务的接缝（B1）：页面每换一台服务器都会重问一次，
 /// 用它就能断言"切完之后连的到底是哪台"（假实现里读 settings.effectiveBaseUrl）。
@@ -119,6 +134,7 @@ void debugSetServerOpsRuntime({
   OpsTerminalProbe? terminalProbe,
   OpsFilePicker? filePicker,
   ServerOpsDownloadCache? downloadCache,
+  OpsApiClient Function(ServerOpsSettings settings)? apiClientFactory,
 }) {
   _hostService = hostService ?? HostService();
   _settingsOverride = settings;
@@ -128,4 +144,5 @@ void debugSetServerOpsRuntime({
   _terminalProbe = terminalProbe;
   _filePicker = filePicker ?? _defaultPickFiles;
   _downloadCache = downloadCache ?? ServerOpsDownloadCache();
+  _apiClientFactory = apiClientFactory;
 }
