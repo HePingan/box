@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/extensions/plugins/plugin_toolbox.dart';
 import 'package:box/features/extensions/plugins/monitor/monitor_page.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_page.dart';
 import 'package:box/features/image_generator/presentation/image_generator_page.dart';
 import 'package:box/features/policy/plugin_policy.dart';
 import 'package:box/features/quiz_plugin/presentation/quiz_bank_view_page.dart';
@@ -302,6 +303,22 @@ List<HomePlugin> buildDefaultPlugins() {
         await Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const ServiceMonitorPage()),
+        );
+      },
+    ),
+    HomePlugin(
+      id: 'builtin_server_ops',
+      title: '服务器运维',
+      subtitle: '主机指标 / 运维文件 / 终端',
+      icon: Icons.terminal_rounded,
+      color: const Color(0xFF334155),
+      area: HomePluginArea.center,
+      builtIn: true,
+      sort: 58,
+      onTap: (context) async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const ServerOpsPage()),
         );
       },
     ),
