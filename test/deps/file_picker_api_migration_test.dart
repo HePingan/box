@@ -97,7 +97,7 @@ void main() {
       //  2. 链式直接取值：`FilePicker.pickFiles().files.isEmpty`。
       // 不写成"只要 `.files.length`"是因为那样会误伤别的模型：远程存储的
       // `scan.files.length`（本地目录扫描结果）就被误判过一次。
-      final valuePattern =
+      const valuePattern =
           r'\??\.files\s*\.\s*(first|single|isEmpty|isNotEmpty|length)';
       final assignedFromPicker =
           RegExp(r'\b(\w+)\s*=\s*(?:await\s+)?FilePicker\.[\w]+\(');
@@ -113,7 +113,7 @@ void main() {
             .allMatches(code)
             .map((m) => m.group(1)!)
             .toSet()) {
-          final re = RegExp('\\b' + name + valuePattern);
+          final re = RegExp('\\b$name$valuePattern');
           found.addAll(re.allMatches(code).map((m) => m.group(0)!));
         }
         return found;
