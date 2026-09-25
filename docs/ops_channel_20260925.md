@@ -220,3 +220,55 @@ ssh newhost 'bash /tmp/box_ops_provision.sh --id 176'  # 标识 176 → 前缀 /
 | `https://IP:端口` + 自签证书 | ❌ 连不上：证书不受信时 WebDAV 与终端都会失败，得先在系统里信任那张证书 |
 
 端口不用记也不用填：外网只暴露 443，内部回环端口由边缘机转发。
+
+## 十一、通道收口（C4）：密钥类路径不再可达
+
+两条通道 serve 的是整盘 `/`。整盘里放着发布链的根材料 —— 实测（只读探测，2026-09-25）：
+
+| 通道 | 路径 | 收口前 | 收口后 |
+|---|---|---|---|
+| `/dav175` | `root/.secrets/box-release.p12`（**APK 发布签名库**，4402 B） | 200 | **404** |
+| `/dav175` | `root/.secrets/box-release-keystore-password`、`box-update-manifest-sign-secret` | 200 | **404** |
+| `/dav175` | `root/.secrets/box-ops-webdav.password`（**主服务端那只口令**） | 200 | **404** |
+| `/dav175` | `root/.ssh/hermes-target`（**连主服务端的私钥**）、`root/.ssh/id_ed25519` | 200 | **404** |
+| `/dav` | `root/.secrets/box-update-server.admin_password` / `.env` / 清单密钥 | 200 | **404** |
+| `/dav` | `etc/shadow` | 200 | **404** |
+
+含义：收口前任一口令都能下载签名库 + 库口令 + 清单密钥 → **签一个假 APK 发给全部用户**（客户端验签会通过）。
+
+现在的过滤（两条单元各 17 条，接入脚本同步生成）：
+
+```
+/root/.secrets/**  /root/.ssh/**  /root/.hermes/**  /root/.hermes-web-ui/**
+/root/.acme.sh/**  /root/.docker/**  /etc/shadow  /etc/gshadow
+*.p12  *.key  *.env  *.htpasswd  *password*  *secret*  *token*  id_rsa*  id_ed25519*
+```
+
+**故意不含 `*.pem`**：`/etc/ssl/certs` 下全是公共 CA 证书，按后缀排除等于把证书库藏起来（而它不敏感）。
+
+改动方式与验收：`/root/.hermes/cache/scratch/apply_ops_filters.py <unit> <baseurl> <port>`（备份单元 →
+重写 ExecStart → daemon-reload → restart → 18 条密钥路径期望 404、对照期望 200）；
+live 守卫 `test/features/extensions/server_ops/ops_webdav_denylist_live_test.dart`（两条通道各 10/10）。
+
+**边界（别把黑名单当边界）**：终端仍是 root shell，有口令的人 `cat` 一下就回来了。它收掉的是
+"文件通道 + 手机缓存/备份/截屏"这一类的意外暴露。真正的边界是服务端代理 + 设备令牌（方案 C2）。
+
+顺带记录：rclone 本地后端**不跟随符号链接**，`/etc/os-release` 这类软链一律 404
+（直取 `/usr/lib/os-release` 才是 200）。这是既有行为，不是收口收过头。
+
+## 十二、新机器接入的"指标"这一半（A10）
+
+文件与终端由**目标机**自己起（`box_ops_provision.sh`，一条命令）；主机指标则由**监控机**去 ssh
+目标机采 —— 信任方向相反，必须在监控机上跑：
+
+```bash
+box_ops_monitor_add.sh --id 176 --name "机房 C · 网关" --ip 1.2.3.4 --ssh root@1.2.3.4
+box_ops_monitor_add.sh --id 176 --ssh root@1.2.3.4 --remove     # 摘掉（含目标机 authorized_keys 里那行）
+```
+
+它做四件幂等的事：装监控机专用钥匙（`/root/.ssh/id_box_monitor`）→ 写目标机 `authorized_keys`
+（带标记）→ 写 `boxmon-<id>` ssh 别名 → upsert 采集器的额外机器清单（部署副本 + 仓库副本同步），
+最后采一次并**断言该 id 出现在快照里**（截图级验收，而不是"应该好了"）。
+
+采集器侧的新接缝：`EXTRA_HOSTS`（标记内由脚本维护）、`BOX_OPS_HOSTS_OUT`（输出可重定向）、
+`--no-push`（自检不碰线上快照）。

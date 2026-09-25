@@ -237,8 +237,41 @@ curl -s -u "boxops:$PW" -X PROPFIND -H 'Depth: 1' \
 
 | 项 | 状态 | 提交 |
 |---|---|---|
-| 291 的 401 提示两条（"地址与口令要属于同一台" + 填成别台口令的防呆） | 已提交待发版 | `141cf72`、`21a0b37` |
-| A9 / A10 / A11 / A12 / A13 | 未做 | — |
-| B2 | 未做 | — |
-| C4 | 未做 | — |
-| C2 / C3 / C1 根治档 | 未做 | — |
+| 291 的 401 提示两条（"地址与口令要属于同一台" + 填成别台口令的防呆） | 已完成 | `141cf72`、`21a0b37` |
+| A13 闸门扩到 server_ops | 已完成（扩范围后**当场抓到 1 个**：`serverById` 零调用 → 删掉） | `8cbdf48` |
+| A9 体检面板加"最近请求" | 已完成（多服务器、失败行标红、口令不进面板有用例守着） | `3ada25f` |
+| C4 暴露面收口 | 已完成（两条通道各 18 条密钥路径实测 404，对照路径 200，写入路径 201/200/204 无回归） | `25355c0` |
+| A10 接入补齐指标 | 已完成（`tool/box_ops_monitor_add.sh`，装/查/拆/零残留闭环实测） | `26b78c9` |
+| A11 大目录 / A12 续传 | 未做（下一批） | — |
+| B2 历史服务端化 | 未做 | — |
+| C2 只读档 / C3 告警 / C1 根治档 | 未做（C2 建议单独一版） | — |
+
+### C4 实测与边界（本轮唯一的"安全项"）
+
+* 两条通道（`box-ops-dav.service` @ hpa888、`box-ops175-dav.service` @ 175）各加 17 条 `--exclude`；
+  改动脚本、验收清单与 live 守卫分别为 `/root/.hermes/cache/scratch/apply_ops_filters.py`、
+  `test/features/extensions/server_ops/ops_webdav_denylist_live_test.dart`。
+* 实测：18 条密钥/私钥/口令路径**全部 404**；`/etc/hostname`、`/etc/sudoers`、`/root/.bashrc`、
+  `nginx.conf`、`update-server/app/main.py` 等对照**全部 200**；写路径 PUT/GET/DELETE = 201/200/204；
+  两条终端 200/200；`hosts.json`（带 token）200；OTA 清单 200。live 用例两条通道各 **10/10 通过**。
+* **有意排除 `/etc/shadow`**（与最初"整个盘"那句里的举例相反）：它属"密钥类"，且不给它也不影响
+  整盘管理。要放开就删掉 `--exclude "/etc/shadow"` 一条即可 —— 这是一次性决定，写在这里备查。
+* 收紧了一处既有断言：`ops_webdav_live_test.dart` 原来断言 `/etc/shadow` 可读（那时是我们的设计），
+  现改为 `/etc/sudoers`（同样 root-only，守的仍是"服务以 root 跑"）。
+* 顺带发现（**非本项引入**）：rclone 的本地后端不跟随符号链接，`/etc/os-release` 这类软链一律 404
+  （`ls -l /etc/os-release` → `../usr/lib/os-release`，直取 `/usr/lib/os-release` 才是 200）。
+  影响面很小，但列在这里，免得下次被当成收口收过头。
+* **黑名单不是安全边界**：终端仍是 root shell，有口令的人 `cat` 一下就回来了。它收掉的是
+  "文件通道 + 手机缓存/备份/截屏"这一类的意外暴露；真边界是 C2 的设备令牌。
+
+### A10 实测（含自检当场抓到的两个自造坑）
+
+`tool/box_ops_monitor_add.sh` 走"监控机发起"的方向（要往目标机 `authorized_keys` 装监控机的专用钥匙），
+与接入脚本的信任方向相反。自检用真实机器跑了完整闭环：
+
+* 装：`t99test`（借 `ssh hpa888` 当目标）→ 采集输出里**出现第 3 台且 online=True**；
+* 拆：清单条目 / `~/.ssh/config` 的 `boxmon-<id>` 段 / 目标机 `authorized_keys` 里那行 —— **残留全 0**；
+* 不污染线上：自检用 `BOX_OPS_HOSTS_OUT` + `--no-push`，线上快照始终是那两台。
+* 自检抓到的两个自造坑（都已在脚本里修 + 加了前置校验）：① 条目被插到 `EXTRA_HOSTS = [...]`
+  的**右括号之后**（标记包住了整条声明），采集器直接 `IndentationError`；② `--remove` 摘公钥用
+  `$MARKER-$ID` 去匹配，而密钥注释是 `$MARKER` —— 一行都没摘掉却报告成功，现改为**按公钥指纹匹配**。
