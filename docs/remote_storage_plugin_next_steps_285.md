@@ -150,3 +150,84 @@
    硬做会造坏文件。
 3. **P2 的前置**：Orientation 是"先验证再修"——如果你能给我一张竖拍照片（或告诉我你手机
    相册里竖拍照片在 box 里是否躺倒），这条就能立刻定案。
+
+---
+
+## 6. 执行记录（285 拍板「按你的建议」后落地）
+
+| 项 | 提交 | 结果 |
+|---|---|---|
+| P1 传输队列持久化 + 前台保活 | `86c6839` | 完成。新增 `data/transfer_queue_store.dart`（单文件 JSON、临时文件+改名、上限 200、坏数据当空表）与 `data/transfer_keepalive.dart` + 原生 `TransferKeepAliveService/Channel`（通知 ID 1002、5s 内 startForeground、10 分钟看门狗）；队列新增 `TransferRestoreSpec` 与 `restorePending`（排队中→重新排队并标「已恢复」、上次失败→恢复成失败态不自动重跑、按去重键不重复、被过滤的记录同时从盘里清掉）；账户页启动时恢复并提示条数 |
+| P2 EXIF Orientation | — | **结案，不改代码**：你反馈真机上竖拍照片显示正常（Flutter 已处理方向），所以不做旋转变换。解析出的 orientation 仍保留在 `ExifThumbnail` 里备用 |
+| P3 加速链核查 + live 用例分级 | `fdea68f` | 完成，并且**查出一个真 bug**（见下）；live 用例重写为「结构解析 + 真下字节」两条 + 分级判定，实测 4 条镜像线路全部 206 且拿到 ZIP 魔数 |
+| P4 C7 flake 根治 | `f8d9805` | 完成，根因是**用例的同步点**而不是实现竞态（见下） |
+| E1 上传续传 | — | 按拍板本轮不做；决定已记录：将来只做「探测服务端是否支持 Content-Range PUT + 明确报错」，不做分片拼接 |
+
+### P1：测试逮到的两个真 bug（都已修）
+
+1. **落盘节流把"已完成"这次状态变化也吞掉了** → 盘里留着一条已经传完的记录，
+   下次启动会当未完成再跑一遍。修法：落盘只在生命周期变化时发生，**不节流**
+   （进度根本不入库，没有节流的必要）。
+2. **前台保活只在进度回调里挂** → 长任务期间根本没保住（进度回调 150ms 才来一次，
+   而且第一个回调之前一直是裸跑）。修法：任务转入 running 时就 `_syncKeepAlive()`。
+
+### P3：一个真实的用户可见 bug
+
+签名长链只含仓库 id 与文件名，原实现一律重建为 `releases/latest/download/<文件>` ——
+只在"该文件正好属于最新版"时成立。实测：rikkahub 已发到 2.5.4，而
+`RikkaHub-2.4.15` 的 latest 地址经镜像返回 **404**（旧代码给出的就是这个地址）。
+
+修法：解析时先拉一次 `/repositories/{id}/releases?per_page=30`（**同样一次请求**，
+但一次拿到 owner/repo 与该文件名所属 tag），用 `releases/download/<tag>/<file>`；
+查不到再退回 latest 并在文案里写明"可能 404"；releases 通道不可用
+（限流/非 JSON）退回原来的仓库名查询，不让新增请求变成新的单点失败。
+
+实测证据（同一条签名链）：现在解析为
+`.../releases/download/2.4.15/RikkaHub-2.4.15-arm64-v8a.apk`，文案
+「定位到该文件所在版本 2.4.15，已转换为 tag 固定地址」。
+
+另外测试还逮到我自己的一个安全问题：tag 清洗只按字符集校验，`v1.0/../evil`
+这种段能通过（`.` 是"合法字符"）→ 会把地址指到 releases/download/evil/… 去。
+已加"`.`/`..` 段一律拒绝"。
+
+### P4：C7 那条偶发红的根因（是测试，不是实现）
+
+全量并发时的失败签名：
+
+```
+Expected: <1> Actual: <0>                          ← 第一个上传还没发出 PUT
+PathNotFoundException ... rs_service_test_XXX/one.txt   ← 断言先炸 → 测试提前结束
+                                                      → tearDown 删掉临时目录
+                                                      → 在途的上传才去取文件长度
+```
+
+根因：`await pumpEventQueue()` 只有 20 个事件循环轮次，而 `srcFile.length()` 是
+**IO 线程池**的活 —— 机器忙（全量并发）时 IO 回来得比 20 轮还晚，同步点失效。
+实现里的在途占位没问题。
+
+- 修法：改用"等信号"（假传输层收到第一个 PUT 时 complete 一个 Completer，
+  用例 `await putStarted.future.timeout(10s)`），并给假传输层的 HEAD **故意加
+  20ms 延迟**，让这条用例从此对负载不敏感。
+- **证伪证据**：临时探针（老写法 + 20ms 慢 HEAD）稳定复现 `Expected: <1> Actual: <0>`
+  —— 与全量日志的失败签名一致，证明根因判断成立。
+- 同一类问题的排查结论：`transfer_queue_test.dart` 里的 35 处 `pumpEventQueue()`
+  **不用改** —— 那些 runner 是纯内存闭包，同步点只涉及微任务/事件循环轮次，
+  与 IO 线程池无关。
+
+### 本轮验证
+
+- 插件目录 **498 通过**（P1 +29）；github_accel 全组 **78 通过**（P3 +5）
+- C7 用例：修后单跑 3/3、插件目录全量 498 全通过
+- live 用例（`--tags live`）：3/3 通过，4 条镜像线路全部 206 + ZIP 魔数
+- CI 口径全量（`flutter test --exclude-tags live`）：**3128 通过 / 3 跳过 / 0 失败**，
+  **连跑两次都是这个结果**（P4 修的就是偶发红）；`flutter analyze` exit 0
+  （0 error / 0 warning，220 条 info 为既有基线）；悬挂 API 闸门 0 个
+- release 构建（Flutter 3.44.6，版本 **1.20.28+285**）：`BUILD_EXIT=0`，
+  APK 27,033,752 字节，sha256 `a9f3e57d1ecc776b7117a68cf82f7d36e8b32d62e5d4202644a342011b0e620e`，
+  符号表 → `/root/.box-symbols/285/`（**284 的符号表未被覆盖** —— 提版之后才构建）
+- P1 原生部分**确实进包**（在 APK 里查得，不是只看构建通过）：
+  dex 里有 `top.hpa888.box/remote_storage_transfer_service`、
+  `TransferKeepAliveService`、`remote_storage_transfer_channel`；
+  APK manifest 里声明了 `top.hpa888.box.TransferKeepAliveService`
+  （`exported=false`、`foregroundServiceType=dataSync`）
+- 未发版：本轮只做到"可发布"，发不发由你定
