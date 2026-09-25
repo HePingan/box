@@ -23,6 +23,14 @@ class GithubAccelResolution {
   String? get stableUrl => link.stableUrl;
 }
 
+/// releases 列表里查到的信息：仓库名 + 该文件所属的 tag（没找到同名附件时为 null）。
+class _ReleaseLookup {
+  const _ReleaseLookup({required this.fullName, this.tag});
+
+  final String fullName;
+  final String? tag;
+}
+
 /// 把任意 GitHub 链接解析成可加速下载的地址。
 ///
 /// 只有签名长链需要联网（查 `owner/repo`），其余形态纯本地转换。
@@ -73,6 +81,76 @@ class GithubAccelService {
   }
 
   Future<GithubAccelResolution> _resolveSigned(GithubAccelLink link) async {
+    // 先试"一次拿到 owner/repo + 文件所属 tag"的 releases 列表通道：同样一次请求，
+    // 但结果比只查仓库名更有用（见 [_resolveViaReleases]）。查不到再退回老路。
+    final byTag = await _resolveViaReleases(link);
+    if (byTag != null) return byTag;
+    return _resolveViaRepoLookup(link);
+  }
+
+  /// 按仓库 id 拉 releases 列表：一次请求同时得到 `owner/repo`（来自
+  /// `repository_url`）与"这个文件名出现在哪个 tag 里"。
+  ///
+  /// 返回 null 表示"这条路走不通"（所有通道都失败 / 不是 JSON / 连仓库名都没拿到），
+  /// 调用方会退回 [_resolveViaRepoLookup]——保留老路径，不让新增的这次请求变成
+  /// 新的单点失败。
+  Future<GithubAccelResolution?> _resolveViaReleases(GithubAccelLink link) async {
+    final linkForLookup = link;
+    final fetch = _fetch;
+    if (linkForLookup.repositoryId.isEmpty || fetch == null) return null;
+
+    // 只看最近 30 个版本：一次请求的返回体已经 ~150KB，翻到 100 个是给移动流量
+    // 找麻烦；更老的附件查不到时会退回 latest 地址，并在文案里说清风险。
+    final api = 'https://api.github.com/repositories/'
+        '${linkForLookup.repositoryId}/releases?per_page=30';
+    final channels = _lookupChannels(api, linkForLookup.mirror);
+
+    Object? lastError;
+    for (final url in channels) {
+      for (var attempt = 0; attempt < attemptsPerChannel; attempt++) {
+        try {
+          final body = await fetch(url);
+          final parsed = _parseReleases(body, linkForLookup.fileName);
+          if (parsed == null) {
+            lastError = '返回内容不是 releases 列表';
+            continue;
+          }
+          final rebuilt =
+              linkForLookup.rebuildWithRepo(parsed.fullName, tag: parsed.tag);
+          if (!rebuilt.canBuildDirectly) {
+            return GithubAccelResolution(
+              link: linkForLookup,
+              ok: false,
+              message: '仓库信息「${parsed.fullName}」不合法，无法拼出下载地址。',
+            );
+          }
+          final expiredNote =
+              linkForLookup.expired ? '（原链接签名已过期）' : '';
+          return GithubAccelResolution(
+            link: rebuilt,
+            ok: true,
+            message: parsed.tag == null
+                ? '已识别为 ${parsed.fullName}$expiredNote，转换为最新版稳定地址。\n'
+                    '注：若该文件不属于最新版，这个地址会 404 —— 换 tag 固定地址更稳。'
+                : '已识别为 ${parsed.fullName}$expiredNote，定位到该文件所在版本 '
+                    '${parsed.tag}，已转换为 tag 固定地址。',
+          );
+        } catch (e) {
+          lastError = e;
+          if (retryDelay > Duration.zero) {
+            await Future<void>.delayed(retryDelay);
+          }
+        }
+      }
+    }
+    debugPrint('[GithubAccel] releases 通道均失败，退回仓库名查询: $lastError');
+    return null;
+  }
+
+  /// 老路径：只查 `owner/repo`，拼 latest 地址（releases 通道不可用时的兜底）。
+  Future<GithubAccelResolution> _resolveViaRepoLookup(
+    GithubAccelLink link,
+  ) async {
     if (link.fileName.isEmpty) {
       return GithubAccelResolution(
         link: link,
@@ -162,6 +240,71 @@ class GithubAccelService {
       buf.writeln('到 Release 页面复制形如 /releases/latest/download/xxx 的地址。');
     }
     return buf.toString().trimRight();
+  }
+
+  /// 查询通道：直连优先，gh-proxy 次之，用户选的镜像兜底（与仓库名查询同策略）。
+  static List<String> _lookupChannels(String api, String mirror) {
+    final trimmed =
+        mirror.endsWith('/') ? mirror.substring(0, mirror.length - 1) : mirror;
+    final channels = <String>[api, 'https://gh-proxy.com/$api'];
+    final custom = '$trimmed/$api';
+    if (!channels.contains(custom) &&
+        !GithubAccelLink.deadLookupHosts.any(custom.contains)) {
+      channels.add(custom);
+    }
+    return channels;
+  }
+
+  /// 解析 releases 列表，挑出"含这个文件名"的那个版本。
+  ///
+  /// 拿不到 `owner/repo`（连 `repository_url` 都没有）时返回 null，让调用方兜底；
+  /// 拿得到但没找到同名附件时返回 [tag] 为 null 的结果（地址退回 latest）。
+  static _ReleaseLookup? _parseReleases(String body, String fileName) {
+    Object? decoded;
+    try {
+      decoded = jsonDecode(body);
+    } catch (_) {
+      // 镜像可能回 HTML 错误页 —— 与仓库名查询一样，按"这条路不通"处理。
+      return null;
+    }
+    if (decoded is! List) return null;
+
+    String fullName = '';
+    for (final item in decoded) {
+      if (item is! Map) continue;
+      // releases 列表项里**没有** `repository_url` 字段（实测：它是 release 详情
+      // 接口才有的）；能用来定位仓库的是 `url`（形如 /repos/o/r/releases/123）。
+      // 两个都试：谁先出现用谁，避免换接口时静默退化成"只认 latest"。
+      final fromUrl = _fullNameFromRepositoryUrl(
+        '${item['repository_url'] ?? item['url']}',
+      );
+      if (fullName.isEmpty && fromUrl.isNotEmpty) fullName = fromUrl;
+
+      if (fileName.isEmpty) continue;
+      final tag = item['tag_name'];
+      final assets = item['assets'];
+      if (tag is! String || assets is! List) continue;
+      for (final asset in assets) {
+        if (asset is Map && asset['name'] == fileName) {
+          final full = fullName.isNotEmpty ? fullName : fromUrl;
+          if (full.isEmpty) return null;
+          return _ReleaseLookup(fullName: full, tag: tag);
+        }
+      }
+    }
+    if (fullName.isEmpty) return null;
+    return _ReleaseLookup(fullName: fullName);
+  }
+
+  /// `https://api.github.com/repos/owner/repo` → `owner/repo`。
+  static String _fullNameFromRepositoryUrl(String url) {
+    const marker = '/repos/';
+    final idx = url.indexOf(marker);
+    if (idx < 0) return '';
+    final rest = url.substring(idx + marker.length);
+    final parts = rest.split('/').where((s) => s.isNotEmpty).toList();
+    if (parts.length < 2) return '';
+    return '${parts[0]}/${parts[1]}';
   }
 
   static String _fullNameFrom(String body) {

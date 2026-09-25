@@ -142,14 +142,31 @@ class GithubAccelLink {
     ];
     // 用户选的镜像若不在清单里，作为最后兜底也试一把。
     final custom = '${_trimSlash(mirror)}/$api';
-    if (!channels.contains(custom) && !_lookupDeadHosts.any(custom.contains)) {
+    if (!channels.contains(custom) && !deadLookupHosts.any(custom.contains)) {
       channels.add(custom);
     }
     return List.unmodifiable(channels);
   }
 
-  /// 实测无法代理 api.github.com 的域名，不放进查询通道。
-  static const List<String> _lookupDeadHosts = [
+  /// tag 只保留合法字符（字母数字与 `. _ - +`，段之间允许 `/`）；不合法就退回
+  /// latest —— 宁可少精确一点，也不要把可疑字符串拼进 URL。
+  static String? _sanitizeTag(String? tag) {
+    final raw = tag?.trim() ?? '';
+    if (raw.isEmpty) return null;
+    final segments = raw.split('/').where((s) => s.isNotEmpty).toList();
+    if (segments.isEmpty) return null;
+    final ok = RegExp(r'^[A-Za-z0-9._+-]+$');
+    for (final segment in segments) {
+      if (!ok.hasMatch(segment)) return null;
+      // `.` / `..` 单看是"合法字符"，但在 URL 路径里是上跳/跳转（`v1.0/../evil`
+      // 能把地址指到 releases/download/evil/... 去）。测试逮到的真问题。
+      if (segment == '.' || segment == '..') return null;
+    }
+    return segments.map(Uri.encodeComponent).join('/');
+  }
+
+  /// 实测无法代理 api.github.com 的域名，不放进查询通道（service 构造通道时共用）。
+  static const List<String> deadLookupHosts = [
     'ghfast.top',
     'hk.gh-proxy.com',
     'ghproxy.net',
@@ -328,7 +345,16 @@ class GithubAccelLink {
   ///
   /// 用 `releases/latest/download/<file>` 而不是带 tag 的形态：签名链里没有 tag
   /// 信息，而 latest 对「下最新版」这个诉求也更实用。
-  GithubAccelLink rebuildWithRepo(String fullName) {
+  /// 用查到的 `owner/repo` 重建稳定链接。
+  ///
+  /// [tag] 给定时用 **tag 固定地址**（`releases/download/<tag>/<file>`），否则退回
+  /// `releases/latest/download/<file>`。
+  ///
+  /// 为什么优先 tag：`latest/download/<file>` 只在"这个文件正好属于最新版"时成立。
+  /// 用户从浏览器复制的签名链往往指向**旧版本**的附件（例如刚从 v2.4.15 页面复制，
+  /// 但仓库已经发到 v2.5.0），这时 latest 地址必然 404 —— 解析看起来成功、下载却是
+  /// 死链。能查到 tag 就用 tag，地址才是真稳定的。
+  GithubAccelLink rebuildWithRepo(String fullName, {String? tag}) {
     final parts = fullName.split('/').where((s) => s.isNotEmpty).toList();
     if (parts.length != 2 || fileName.isEmpty) {
       return this;
@@ -337,9 +363,11 @@ class GithubAccelLink {
     final ok = RegExp(r'^[A-Za-z0-9._-]+$');
     if (!ok.hasMatch(parts[0]) || !ok.hasMatch(parts[1])) return this;
 
-    final stable =
-        'https://github.com/${parts[0]}/${parts[1]}/releases/latest/download/'
-        '${Uri.encodeComponent(fileName)}';
+    final safeTag = _sanitizeTag(tag);
+    final path = safeTag == null
+        ? 'releases/latest/download/${Uri.encodeComponent(fileName)}'
+        : 'releases/download/$safeTag/${Uri.encodeComponent(fileName)}';
+    final stable = 'https://github.com/${parts[0]}/${parts[1]}/$path';
 
     return GithubAccelLink._(
       kind: GithubLinkKind.releaseDownload,
@@ -349,7 +377,7 @@ class GithubAccelLink {
       repo: parts[1],
       repositoryId: repositoryId,
       fileName: fileName,
-      tag: 'latest',
+      tag: safeTag ?? 'latest',
       expired: expired,
       stableUrl: stable,
     );

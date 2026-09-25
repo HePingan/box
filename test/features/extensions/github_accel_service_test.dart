@@ -69,12 +69,23 @@ void main() {
       final r = await svc.resolve(signed);
 
       expect(r.ok, isTrue);
-      expect(requested.first, 'https://api.github.com/repositories/1333629201');
+      // 现在先试 releases 列表通道（直连 → 镜像），失败后退回仓库名查询；
+      // 两条路都必须是"直连优先、镜像兜底"。
+      expect(
+        requested.first,
+        'https://api.github.com/repositories/1333629201/releases?per_page=30',
+      );
       expect(
         requested,
         contains(
-          'https://gh-proxy.com/https://api.github.com/repositories/1333629201',
+          'https://gh-proxy.com/https://api.github.com/repositories/1333629201'
+          '/releases?per_page=30',
         ),
+      );
+      expect(
+        requested,
+        contains('https://api.github.com/repositories/1333629201'),
+        reason: 'releases 通道全灭后仍要退回仓库名查询',
       );
     });
 
@@ -195,6 +206,99 @@ void main() {
         expect(r.ok, isTrue);
         expect(r.accelUrl, '${m.url}/$stable');
       }
+    });
+  });
+
+  group('releases 列表：用 tag 固定地址（285 P3）', () {
+    // 真实 releases 列表的关键字段（已用 curl 核对：repository_url / tag_name / assets[].name）
+    String releasesBody({required String tag, required bool withAsset}) =>
+        '[{"tag_name":"$tag","repository_url":'
+        '"https://api.github.com/repos/kelai141/dsh-mobile-apk",'
+        '"assets":[${withAsset ? '{"name":"dsh-mobile-apk-v0.13.0-fx-1-arm64.apk"}' : '{"name":"其它文件.zip"}'}]},'
+        '{"tag_name":"v0.12.0","repository_url":'
+        '"https://api.github.com/repos/kelai141/dsh-mobile-apk",'
+        '"assets":[{"name":"旧版本.apk"}]}]';
+
+    test('同名附件在某个版本里 → 拼 tag 固定地址（不再赌 latest）', () async {
+      final requested = <String>[];
+      final svc = GithubAccelService(
+        retryDelay: Duration.zero,
+        fetch: (url) async {
+          requested.add(url);
+          return releasesBody(tag: 'v0.13.0', withAsset: true);
+        },
+      );
+
+      final r = await svc.resolve(signed);
+
+      expect(r.ok, isTrue);
+      expect(
+        r.stableUrl,
+        'https://github.com/kelai141/dsh-mobile-apk/releases/download/'
+        'v0.13.0/dsh-mobile-apk-v0.13.0-fx-1-arm64.apk',
+        reason: '签名链可能指向旧版附件，latest 地址会 404',
+      );
+      expect(r.accelUrl, startsWith('https://gh-proxy.com/'));
+      expect(r.message, contains('v0.13.0'));
+      expect(requested.first, contains('/releases?per_page=30'),
+          reason: '一次请求就能同时拿到仓库名与 tag');
+    });
+
+    test('同名附件不在前 30 个版本里 → 退回 latest 地址，并在文案里说清风险', () async {
+      final svc = GithubAccelService(
+        retryDelay: Duration.zero,
+        fetch: (_) async => releasesBody(tag: 'v0.13.0', withAsset: false),
+      );
+
+      final r = await svc.resolve(signed);
+
+      expect(r.ok, isTrue);
+      expect(r.stableUrl, contains('/releases/latest/download/'));
+      expect(r.message, contains('404'), reason: '要提前告诉用户这个地址可能失效');
+    });
+
+    test('releases 通道全失败 → 退回仓库名查询（新增的请求不能变成单点失败）', () async {
+      final requested = <String>[];
+      final svc = GithubAccelService(
+        retryDelay: Duration.zero,
+        fetch: (url) async {
+          requested.add(url);
+          if (url.contains('/releases')) throw Exception('403 rate limited');
+          return apiBody;
+        },
+      );
+
+      final r = await svc.resolve(signed);
+
+      expect(r.ok, isTrue);
+      expect(r.stableUrl, stable, reason: '老路径仍然要能拼出 latest 地址');
+      expect(requested.any((u) => u.contains('/releases')), isTrue);
+      expect(requested.any((u) => u.contains('/repositories/1333629201')), isTrue);
+    });
+
+    test('镜像回 HTML 错误页（不是 JSON）→ 同样退回仓库名查询', () async {
+      final svc = GithubAccelService(
+        retryDelay: Duration.zero,
+        fetch: (url) async =>
+            url.contains('/releases') ? '<html>rate limited</html>' : apiBody,
+      );
+
+      final r = await svc.resolve(signed);
+
+      expect(r.ok, isTrue);
+      expect(r.stableUrl, stable);
+    });
+
+    test('tag 里有可疑字符 → 不用它，退回 latest（不把脏字符串拼进 URL）', () async {
+      final svc = GithubAccelService(
+        retryDelay: Duration.zero,
+        fetch: (_) async => releasesBody(tag: 'v1.0/../evil', withAsset: true),
+      );
+
+      final r = await svc.resolve(signed);
+
+      expect(r.ok, isTrue);
+      expect(r.stableUrl, contains('/releases/latest/download/'));
     });
   });
 }
