@@ -11,8 +11,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:box/features/extensions/plugins/monitor/monitor_detail_page.dart';
 import 'package:box/features/extensions/plugins/monitor/monitor_models.dart';
 import 'package:box/features/extensions/plugins/monitor/monitor_service.dart';
+import 'package:box/features/extensions/plugins/monitor/monitor_sparkline.dart';
 
 /// 页面用的服务实例（测试可替换）。
 ServiceMonitorService _runtimeService = ServiceMonitorService();
@@ -182,7 +184,8 @@ class _ServiceMonitorPageState extends State<ServiceMonitorPage> {
               style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
             ),
           ),
-          for (final entry in snapshot.monitors) _MonitorTile(entry: entry),
+          for (final entry in snapshot.monitors)
+            _MonitorTile(entry: entry, generatedAt: snapshot.generatedAt),
           if (snapshot.monitors.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 32),
@@ -454,9 +457,12 @@ class _MonitorSubtitle extends StatelessWidget {
 }
 
 class _MonitorTile extends StatelessWidget {
-  const _MonitorTile({required this.entry});
+  const _MonitorTile({required this.entry, this.generatedAt});
 
   final MonitorEntry entry;
+
+  /// 传给详情页，用来给"最近心跳"标上时刻。
+  final DateTime? generatedAt;
 
   @override
   Widget build(BuildContext context) {
@@ -464,7 +470,18 @@ class _MonitorTile extends StatelessWidget {
     final color = entry.up ? const Color(0xFF16A34A) : theme.colorScheme.error;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Container(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        // 点进详情（287 P3）：列表只能看"现在"，趋势与"什么时候开始不通"在详情里。
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => MonitorDetailPage(
+              entry: entry,
+              generatedAt: generatedAt,
+            ),
+          ),
+        ),
+        child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
@@ -493,12 +510,33 @@ class _MonitorTile extends StatelessWidget {
                 ],
               ),
             ),
-            Text(
-              entry.up ? '正常' : '异常',
-              style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12.5),
+            // 迷你折线（287 P3）：一眼看出"这段是不是红的"。
+            // 点太少时组件自己会说"暂无历史"——比有条件地不渲染更好：
+            // 用户看到的是"没有历史"，而不是"这里本该有东西但没了"。
+            const SizedBox(width: 8),
+            MonitorSparkline(pings: entry.pingSeries, ups: entry.upSeries),
+            const SizedBox(width: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  entry.up ? '正常' : '异常',
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12.5,
+                  ),
+                ),
+                if (entry.downSinceLabel != null)
+                  Text(
+                    entry.downSinceLabel!,
+                    style: theme.textTheme.labelSmall?.copyWith(color: color),
+                  ),
+              ],
             ),
           ],
         ),
+      ),
       ),
     );
   }

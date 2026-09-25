@@ -31,6 +31,9 @@ class MonitorEntry {
     this.uptime24h,
     this.certDays,
     this.certValid,
+    this.pingSeries = const <int?>[],
+    this.upSeries = const <int>[],
+    this.seriesStepSec = kDefaultSeriesStepSec,
   });
 
   final String name;
@@ -45,6 +48,47 @@ class MonitorEntry {
 
   /// 证书是否有效（`monitor_cert_is_valid`）；null = 不知道。
   final bool? certValid;
+
+  /// 最近 N 次采样的延迟（毫秒）；`null` = 那一次没采到（**不是 0ms**）。
+  final List<int?> pingSeries;
+
+  /// 最近 N 次采样是否在线（1/0），与 [pingSeries] 等长。
+  final List<int> upSeries;
+
+  /// 相邻两次采样的间隔秒数（服务端给的，缺省 120）。
+  final int seriesStepSec;
+
+  /// 有没有可画的历史（至少两个点才画得出线）。
+  bool get hasSeries => upSeries.length >= 2 || pingSeries.length >= 2;
+
+  /// 折线用的点数（取两个序列里长的那个）。
+  int get seriesLength =>
+      pingSeries.length > upSeries.length ? pingSeries.length : upSeries.length;
+
+  /// 序列里最后一次在线之后连续不通了几次采样；一直在线返回 0。
+  ///
+  /// 只在**有序列**时可用；没有序列（老快照）返回 0，界面就别下结论。
+  int get consecutiveDownSamples {
+    if (upSeries.isEmpty) return 0;
+    var count = 0;
+    for (var i = upSeries.length - 1; i >= 0; i--) {
+      if (upSeries[i] == 1) break;
+      count += 1;
+    }
+    return count;
+  }
+
+  /// "从多久前开始不通"的文案；在线或没有序列时返回 null。
+  String? get downSinceLabel {
+    final samples = consecutiveDownSamples;
+    if (samples <= 0) return null;
+    final minutes = (samples * seriesStepSec) ~/ 60;
+    if (minutes <= 0) return '刚开始不通（不到 1 分钟）';
+    if (minutes < 60) return '已不通约 $minutes 分钟';
+    final hours = minutes ~/ 60;
+    if (hours < 24) return '已不通约 $hours 小时';
+    return '已不通超过 1 天';
+  }
 
   /// 证书一行文案：没有证书信息返回 null，界面就不显示这一段。
   String? get certificateLabel {
@@ -79,8 +123,51 @@ class MonitorEntry {
       uptime24h: _asDouble(raw['uptime24h']),
       certDays: _asInt(raw['certDays']),
       certValid: _asBool(raw['certValid']),
+      pingSeries: _asPingSeries(raw['seriesPing']),
+      upSeries: _asUpSeries(raw['seriesUp']),
+      seriesStepSec: _asPositiveInt(raw['seriesStepSec']) ?? kDefaultSeriesStepSec,
     );
   }
+}
+
+/// 服务端没给采样间隔时的默认值（cron 每 2 分钟一次）。
+const int kDefaultSeriesStepSec = 120;
+
+/// 延迟序列：只认数字与 null（**别的类型一律丢掉，不能当 0**）。
+List<int?> _asPingSeries(Object? raw) {
+  if (raw is! List) return const <int?>[];
+  final out = <int?>[];
+  for (final item in raw) {
+    if (item == null) {
+      out.add(null);
+    } else if (item is int) {
+      out.add(item);
+    } else if (item is double && item.isFinite) {
+      out.add(item.round());
+    }
+    // 字符串/布尔等一律跳过：宁少一点，不能画错。
+  }
+  return out;
+}
+
+/// 在线序列：非 1 一律当 0（"不确定"在图上不该显成在线）。
+List<int> _asUpSeries(Object? raw) {
+  if (raw is! List) return const <int>[];
+  return <int>[for (final item in raw) item == 1 ? 1 : 0];
+}
+
+/// 严格只认数字（**字符串不采信**）：服务端自己的字段没必要宽容解析，
+/// 而"把 '60' 当 60 用"这种宽容一旦出错很难发现。
+int? _asPositiveInt(Object? raw) {
+  final int v;
+  if (raw is int) {
+    v = raw;
+  } else if (raw is double && raw.isFinite) {
+    v = raw.round();
+  } else {
+    return null;
+  }
+  return v <= 0 ? null : v;
 }
 
 class MonitorSnapshot {
