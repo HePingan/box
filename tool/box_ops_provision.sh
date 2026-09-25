@@ -19,6 +19,14 @@ set -euo pipefail
 EDGE_DEFAULT=hpa888
 DOMAIN_DEFAULT=box.hpa888.top
 USER_DEFAULT=boxops
+
+# 文件通道 serve 的是整盘 `/`，而整盘里放着发布链的根材料（签名库 + 其口令 + 清单密钥）、
+# 私钥、对面机器的口令。App 一行代码都没用到它们 —— 纯属"把 / 暴露出去"的副作用。
+# 这里排除"密钥类路径"：目录级 + 名字级。**故意不含 `*.pem`**（/etc/ssl/certs 下全是
+# 公共 CA 证书，按后缀一概排除等于把证书库藏起来，而它一点都不敏感）。
+# 注意：黑名单不是安全边界（终端仍是 root shell），真边界是服务端代理 + 设备令牌。
+# 已上线的两条通道用同一个清单，见 docs/server_ops_plugin_next_steps_291.md 的 C4。
+RCLONE_EXCLUDE_ARGS='--exclude "/root/.secrets/**" --exclude "/root/.ssh/**" --exclude "/root/.hermes/**" --exclude "/root/.hermes-web-ui/**" --exclude "/root/.acme.sh/**" --exclude "/root/.docker/**" --exclude "/etc/shadow" --exclude "/etc/gshadow" --exclude "*.p12" --exclude "*.key" --exclude "*.env" --exclude "*.htpasswd" --exclude "*password*" --exclude "*secret*" --exclude "*token*" --exclude "id_rsa*" --exclude "id_ed25519*"' 
 MIRROR=https://ghfast.top
 RCLONE_VER=v1.71.2
 
@@ -183,7 +191,8 @@ Type=simple
 User=root
 EnvironmentFile=$ENV_FILE
 # --dir-cache-time 0：本地后端必须关缓存，否则刚上传的文件看不见
-ExecStart=/usr/local/bin/rclone serve webdav / --addr 127.0.0.1:$DAV_PORT --baseurl /$PREFIX --dir-cache-time 0 --log-level INFO
+ExecStart=/usr/local/bin/rclone serve webdav / --addr 127.0.0.1:$DAV_PORT --baseurl /$PREFIX --dir-cache-time 0 --log-level INFO \
+$RCLONE_EXCLUDE_ARGS
 Restart=always
 RestartSec=2
 
@@ -455,6 +464,10 @@ main() {
   if [ "$MODE" = dryrun ]; then log 完成 "dry-run：以上都是计划，没有写任何东西"; exit 0; fi
   sleep 2
   verify
+  # 文件与终端到此就通了。**指标是另一半**，而且信任方向相反（监控机要 ssh 进这台机器采 /proc），
+  # 所以必须在监控机上执行另一个脚本 —— 否则新机器接进来只有文件与终端，服务器页里永远没有它。
+  log 下一步 "主机指标（服务器页那一行）在监控机上补："
+  log 下一步 "  box_ops_monitor_add.sh --id $ID --name '显示名' --ip \$(curl -s https://api.ipify.org) --ssh root@<这台机器的公网地址>"
 }
 
 main

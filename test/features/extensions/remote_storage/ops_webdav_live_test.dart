@@ -76,13 +76,17 @@ void main() {
       expect(names, containsAll(<String>['etc', 'home', 'root']));
     });
 
-    test('root 身份才能读的路径也可读（/etc/shadow 与 /root 全树）', () async {
+    test('root 身份才能读的路径也可读（/etc/sudoers 与 /root 全树）', () async {
       // 这条是"整盘"与"只有 www 能看的半盘"的分界线：主 nginx worker 是 www 用户，
       // 这两处会 403；只有以 root 跑的专用实例才读得到。
-      // /etc/shadow 是 0000，/root 是 0700 —— 都是 www 读不到的典型。
-      expect(await dav.exists('/etc/shadow'), isTrue);
-      final shadow = await dav.readUpTo('/etc/shadow', 512);
-      expect(shadow.bytes, isNotEmpty, reason: '/etc/shadow 应能读出内容（root 身份）');
+      // /etc/sudoers 是 0440、/root 是 0700 —— 都是 www 读不到的典型。
+      //
+      // 换成 /etc/sudoers 是因为 **/etc/shadow 已被 C4 有意排除**（通道收口：密钥类路径
+      // 不再可达，见 ops_webdav_denylist_live_test.dart）。这条用例本身要守的是
+      // "服务以 root 身份跑"，不是"能读机密文件"，所以换成同样 root-only 的 sudoers。
+      expect(await dav.exists('/etc/sudoers'), isTrue);
+      final sudoers = await dav.readUpTo('/etc/sudoers', 512);
+      expect(sudoers.bytes, isNotEmpty, reason: '/etc/sudoers 应能读出内容（root 身份）');
 
       // 顺带覆盖"目录不带尾斜杠会 301 → 客户端要能跟过去"这条（内层 nginx 曾把
       // 重定向写成 http://域名:8081/...，真机上就是导航进目录即超时）。
