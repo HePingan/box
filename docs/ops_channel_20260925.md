@@ -272,3 +272,91 @@ box_ops_monitor_add.sh --id 176 --ssh root@1.2.3.4 --remove     # 摘掉（含�
 
 采集器侧的新接缝：`EXTRA_HOSTS`（标记内由脚本维护）、`BOX_OPS_HOSTS_OUT`（输出可重定向）、
 `--no-push`（自检不碰线上快照）。
+
+---
+
+## 十三、只读运维 API（C2 只读档；同时是 C1 凭据根治档的载体）
+
+### 为什么有它
+
+WebDAV 拿不到 unix 权限/属主，也拿不到进程、服务、日志、端口、目录占用 ——
+宝塔式管理里真正好用的那半。而它还有第二个身份：**凭据模型的根治档**。
+以前只有一条通道、一个口令，那口令等同 root（整盘读写 + root shell）；现在 App 拆成
+「文件通道（口令）」+「只读接口（**可撤销的设备令牌**）」——令牌泄了单独撤，不必动通道口令。
+
+### 形状（与既有两条通道同一套约定：服务只绑回环，外网入口由边缘机 nginx 代理）
+
+| 机器 | 服务监听 | 公网入口 | 解释器 |
+|---|---|---|---|
+| hpa888 | 127.0.0.1:8095 | `https://box.hpa888.top/opsapi/` | `/root/anaconda3/bin/python3`（3.11；**系统 python3 只有 3.6**） |
+| 175 | 127.0.0.1:8095 | `https://box.hpa888.top/opsapi175/` | `/usr/bin/python3`（3.11） |
+
+175 那条经**既有隧道**多转一路：边缘机 `127.0.0.1:8096` → `175:8095`
+（`box-ops175-tunnel.service` 里加了 `-L 127.0.0.1:8096:127.0.0.1:8095`）。
+nginx 两条 location 用 `proxy_pass .../;`（带尾斜杠）= 剥掉 `/opsapi*` 前缀，API 收到的是 `/overview` 这种干净路径。
+服务以 root 跑（`journalctl` 读别家单元日志、`ss -p` 读进程名、`lastb` 读 /var/log/btmp 都要权限），
+风险面由「白名单只读动作 + 设备令牌 + 全量审计」承担。
+
+### 部署与运维（一条脚本）
+
+```bash
+tool/ops_api/deploy_box_ops_api.sh --host 175      # 或 --host hpa888
+tool/ops_api/deploy_box_ops_api.sh --edge          # 边缘机：两条 location + 隧道加一路
+tool/ops_api/deploy_box_ops_api.sh --token 175     # 签发/轮换设备令牌（写 .secrets，只打印长度与哈希）
+tool/ops_api/deploy_box_ops_api.sh --verify        # 端到端：两条公网入口 + 拒绝路径
+python3 tool/ops_api/box_ops_api.py selftest       # 20 项自检（正常 + 拒绝 + 撤销 + 审计），不碰线上文件
+```
+
+### 动作（全部只读；**没有写动作、没有 shell**）
+
+| 动作 | 说明 |
+|---|---|
+| `health` | 活着没、版本 |
+| `overview` | 发行版/内核/uptime/负载/CPU/内存/Swap/各挂载点用量 |
+| `processes?sort=cpu\|mem&limit=N` | 前 N 个进程（pid/user/cpu%/mem%/rss/已跑时长/命令行） |
+| `services?q=&limit=` | systemd 服务清单（active/sub/enabled/描述） |
+| `service?unit=nginx.service&lines=20` | 单个服务详情 + journal 尾巴 |
+| `logs?path=/var/log/x&lines=N` | 白名单目录下的文件 tail（从尾部读，不整文件载入） |
+| `ports` | `ss -ltnp` 监听端口与进程 |
+| `diskusage?path=/var/log` | `du -x --max-depth=1` |
+| `sessions` | `last` / `lastb` 最近登录与失败登录 |
+| `audit?limit=N` | 审计流水（**要 admin 令牌**） |
+
+### 硬上限与拒绝路径（都实测过）
+
+* 行数 ≤ 500、进程 ≤ 200、服务 ≤ 400、超时 ≤ 15 秒、响应 ≤ 256 KB；
+* 限流：每个令牌 10 秒内 60 次，超了 429；
+* 日志只允许 `/var/log`、`/www/wwwlogs`、`/home/update-server/logs`、`/tmp` 下的**文件**，
+  且显式拒绝含 `..` 的路径（`/etc/shadow` → 403）；
+* `du` 拒绝 `/root/.secrets`、`/root/.ssh`、`/root/.hermes`、`/proc`、`/sys`、`/dev`；
+* unit 名走正则且必须是 systemd 里真实存在的单元；
+* **没有 shell**：每条命令都是固定 argv 模板 + 校验过的参数，绝不拼字符串；
+* 未知动作 404、无/错令牌 401 —— **被拒绝的调用同样进审计**（这才是审计的意义）。
+
+### 设备令牌模型
+
+* 文件：`/root/.secrets/box-ops-api-tokens.json`（只存 `sha256` 哈希 + `label` + `admin` + 创建时间，chmod 600）；
+* 比较用 `hmac.compare_digest`；签发 `box_ops_api.py token issue --label <名字> [--admin]`；
+* 撤销 `box_ops_api.py token revoke --label <名字>` → **立刻 401**（无需重启服务）；
+* `admin` 令牌才能读审计；普通令牌读 → 403；
+* 令牌只存在 App 的加密存储里（键 `serverOps.api.token.<机器id>`），与口令**分表** ——
+  撤销令牌不影响文件/终端，改口令也不影响系统页。
+
+### 审计
+
+`/var/log/box-ops-api/audit.jsonl`（超过 5 MB 轮转一份 `.1`），一行一条：
+`at / action / params / token(=label) / ip / status / ms / note`。
+**不记凭据**：参数里只有动作参数（如 unit、path、limit），没有口令、没有令牌。
+
+### 有意不做（写清楚，免得下次又被当成"漏了"）
+
+* 服务启停、解压、改权限这类**写动作**：等审计与令牌先跑一段时间再说；
+* 任意命令执行 / 伪终端：那是既有 ttyd 终端的事，别在这里开口子；
+* "读任意文件当日志"：只白名单目录，不做"整盘当日志"；
+* 把审计开放给普通令牌（跨设备可见的活动记录只给 admin）。
+
+### 与 WebDAV 通道的关系
+
+两条通道**互相独立、可以只开一条**：只读接口不需要 DAV 口令，DAV 也不需要令牌。
+客户端两套凭据分别按机器存（口令 `serverOps.dav.password.<id>`、令牌 `serverOps.api.token.<id>`），
+设置页一行能看出这台"口令配没配 / 系统页令牌配没配"。
