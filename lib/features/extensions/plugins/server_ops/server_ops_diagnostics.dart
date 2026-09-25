@@ -11,6 +11,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_models.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
@@ -74,6 +75,15 @@ Future<List<OpsProbeResult>> runOpsProbesForServer({
       terminalProbe: terminalProbe,
     );
 
+/// 401 的统一提示。这个插件的口令**每台机器不同**，最常见的错法就是把 A 台的口令
+/// 填到 B 台的地址上 —— 实测：用 175 的口令打 /dav 必然 401，用主服务端的口令打
+/// /dav175 也必然 401（两层认证各自校验各自的口令）。
+///
+/// 为什么不直接用底层 WebDAV 那句：那句来自远端存储插件，写着"坚果云请使用网页端
+/// 生成的「应用密码」"—— 对自建运维通道是纯噪音，会把用户往错方向带（真机反馈过）。
+const String opsAuthHint = '认证失败（401）：这台机器的口令不对。'
+    '口令每台机器不同（/dav 是主服务端、/dav175 是 175），地址与口令要属于同一台。';
+
 /// 文件通道：列一次根目录。这是"口令对不对、服务起没起"最小的一次真实请求。
 Future<OpsProbeResult> probeOpsFiles(ServerOpsFilesService files) async {
   try {
@@ -84,10 +94,12 @@ Future<OpsProbeResult> probeOpsFiles(ServerOpsFilesService files) async {
       detail: '根目录 ${entries.length} 项',
     );
   } catch (e) {
+    final unauthorized =
+        e is RemoteStorageException && e.kind == RemoteStorageError.unauthorized;
     return OpsProbeResult(
       label: '文件通道（WebDAV）',
       ok: false,
-      detail: serverOpsErrorMessage(e),
+      detail: unauthorized ? opsAuthHint : serverOpsErrorMessage(e),
     );
   }
 }
@@ -143,7 +155,12 @@ Future<OpsProbeResult> probeOpsTerminal(
       case 200:
         return const OpsProbeResult(label: label, ok: true, detail: '页面可达（200）');
       case 401:
-        return const OpsProbeResult(label: label, ok: false, detail: '认证失败（401）：口令不对');
+        return const OpsProbeResult(
+          label: label,
+          ok: false,
+          detail: '认证失败（401）：这台机器的口令不对'
+              '（终端与文件用同一个口令，且每台机器不同）',
+        );
       case 404:
         return const OpsProbeResult(
           label: label,

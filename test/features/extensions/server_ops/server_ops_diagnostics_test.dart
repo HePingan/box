@@ -85,6 +85,18 @@ void main() {
       expect(r.detail.contains('口令'), isTrue, reason: '结论要能定位：${r.detail}');
     });
 
+    test('文件通道 401 的提示说的是「地址与口令要属于同一台」，不是坚果云那套', () async {
+      // 真机反馈过：把 175 的口令填到 /dav 的条目上，402/401 一堆；而底层 WebDAV 的
+      // 401 文案来自远端存储插件（"坚果云请使用网页端生成的「应用密码」"），
+      // 对自建运维通道是纯噪音，会把用户往错方向带。
+      final r = await probeOpsFiles(
+        _Files(fail: RemoteStorageException(RemoteStorageError.unauthorized, '口令不对')),
+      );
+      expect(r.detail, contains('每台机器不同'), reason: r.detail);
+      expect(r.detail, contains('属于同一台'), reason: r.detail);
+      expect(r.detail, isNot(contains('坚果云')), reason: '别用别的插件的措辞：${r.detail}');
+    });
+
     test('主机快照：成功时带上采样时刻（分钟级）', () async {
       final r = await probeOpsSnapshot(
         _Hosts(
