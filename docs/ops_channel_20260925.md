@@ -60,7 +60,27 @@ curl -s --http1.1 -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
 回归口径：`box.hpa888.top` 的 OTA 端点（`/monitors.json` 带 token 200、无 token 404、
 `/health` 200、`/admin` 200、`/docs` 404）在改 nginx 后逐条复测过。
 
-## 五、待办
+## 五、主机指标快照 hosts.json（运维插件「服务器」页的数据源）
+
+链路与 `monitors.json` 完全相同（采集 → 边缘机静态文件 → nginx 带 token）：
+
+```
+175: /opt/ops-monitor/gen_hosts_json.py   ← cron */2（/etc/cron.d/box-ops-monitor，日志 /var/log/ops-monitor.log）
+        │ 本机读 /proc + statvfs；远端用 `ssh hpa888 python3 - --collect` 把同一份脚本喂过去执行
+        ▼ ssh 推送（.tmp → mv 原子）
+hpa888: /home/update-server/public/hosts.json
+        ▼ nginx `location = /hosts.json`（与 monitors.json 同一把共享令牌）
+https://box.hpa888.top/hosts.json?token=...
+```
+
+- 源在仓库 `tool/gen_hosts_json.py`，改完要 `scp` 到 175 的 `/opt/ops-monitor/`。
+- 字段：`id/name/ip/online` + `cpuPercent/cpuCount/memTotal|UsedBytes/memPercent/
+  swap*/diskTotal|UsedBytes/diskPercent/load1|5|15/uptimeSeconds/netRx|TxBytesPerSec`。
+- 单台 SSH 采不到 → 那台 `online:false`（其余字段缺失），**不让一台机器拖垮整份快照**；
+  离线不返回非 0 退出码（关机是常态，页面自己显示离线）。
+- CPU 与网络速率靠两次采样（间隔 0.4s）求差，所以脚本自身耗时约 1 秒。
+
+## 六、待办
 
 1. **175 接入**：175 没有 443 也没有证书，计划用 SSH 隧道把 175 的回环 DAV 挂到 hpa888，
    再用 `^~ /dav175/` 暴露（不要新域名/新证书）。
