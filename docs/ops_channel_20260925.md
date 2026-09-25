@@ -1,0 +1,70 @@
+# 运维通道（box-ops）：整盘文件管理 + Web 终端
+
+> 2026-09-25 部署并验证。目标是让 box 像宝塔APP 那样直接管服务器文件与终端，
+> 且**不把宝塔面板 API key 放进客户端**（面板 API 权限等同 root，见下"为什么不用宝塔 API"）。
+
+## 一、服务器端布局（hpa888 / 47.109.97.1）
+
+| 组件 | 位置 | 说明 |
+|---|---|---|
+| WebDAV 后端 | `box-ops-dav.service` → `/usr/local/bin/rclone serve webdav / --addr 127.0.0.1:8081 --baseurl /dav --dir-cache-time 0` | **以 root 运行**、只监听回环、整盘为根 |
+| Web 终端 | `box-ops-term.service` → `/usr/local/bin/ttyd -p 7681 -i 127.0.0.1 -b /term -W /bin/bash -l` | root shell，只监听回环 |
+| 外网入口 | `box.hpa888.top` 的 `location ^~ /dav/` 与 `^~ /term/` | 复用已有 LE 证书；`^~` 前缀匹配**绕过该 vhost 里的"敏感文件/敏感目录"正则拦截**（整盘管理必须） |
+| 限流 | nginx `box_ops` zone：`$binary_remote_addr` 20r/s burst=60 | 定义在 `/www/server/nginx/conf/nginx.conf` |
+| 凭据 | `/root/.secrets/box-ops-webdav.password`（htpasswd 源）、`/root/.secrets/box-ops-rclone.env`（`RCLONE_USER`/`RCLONE_PASS`） | 令牌不进 argv（走 `EnvironmentFile`）；htpasswd 在 `/www/server/nginx/conf/box-ops.htpasswd`，需 `root:www 640`（600 会让 nginx worker 报 500） |
+
+客户端侧（box 的「远端存储」插件）填：`baseUrl = https://box.hpa888.top/dav`，用户名 `boxops`。
+
+## 二、为什么是 rclone，不是 nginx 原生 DAV
+
+先用主 nginx 的 `dav_methods` 做过一版，能在**根目录**跑通，但连撞三个硬坑（均为实测）：
+
+| 现象 | 原因 | 结论 |
+|---|---|---|
+| `GET /dav/root/.ssh/config` → 403 | 主 nginx worker 是 `www` 用户，读不到 0700 目录 | "整个 /" 必须由 root 身份的进程提供 |
+| `MKCOL` / `DELETE` 目录（URI 不带尾斜杠）→ 409 | nginx 原生 DAV 把"集合 URI 必须以 / 结尾"当硬要求；box 客户端 `createDirectory` 不带尾斜杠 → 新建文件夹静默失败 | 靠 `if ($request_method = MKCOL)` + `if (-d $request_filename)` 两条 rewrite 可救 |
+| `MOVE` 目录（目标不存在）→ 409/400 | 目标还不存在，`-d` 判断不了，无法补斜杠 | **无解** |
+| `MOVE` 带绝对 URL Destination → 400 | nginx 只在 Destination 的端口/方案与监听端口一致时才接受；客户端按 RFC 发的是 `https://域名/...` | 得在 nginx 里 map 改写 Destination |
+| 目录重定向 → `Location: http://域名:8081/...` | 绝对重定向带上了内网监听端口，客户端跟着跳就超时 | 得关 `absolute_redirect`/`port_in_redirect` |
+
+换成 rclone 的 WebDAV 后，`--baseurl /dav` 直接提供正确前缀的 href，上面五条全部消失。
+第二条还有一个**必须保留**的配置：`--dir-cache-time 0`，否则本地后端会缓存目录列表，
+刚上传的文件在文件管理器里"看不见"。
+
+## 三、已知差异（不是说服务端合规，是记录实情）
+
+- **`Overwrite: F` 不被实现**：rclone 在目标已存在时仍返回 201 并覆盖。覆盖保护实际由
+  服务层 `remote_storage_service.dart` 的 `renameEntry` / `moveEntry` 先 `exists(target)`
+  再抛 `conflict` 承担（**竞态窗口仍在**）。live 测试断言的是 `exists()` 预检原语本身。
+- **HEAD 集合（无尾斜杠）返回 405**：客户端 `exists()` 已内置退回 `PROPFIND Depth: 0`，实测正常。
+- **权限等价 root**：`/etc/shadow`、`/root` 全树可读可写。凭据泄露 = 整机失守，
+  所以只走 HTTPS、端点带 `limit_req`，凭据不进 APK 仓库、任何时候都不写进代码。
+- 宝塔面板自带 API（`/www/server/panel/config/api.json`，`open:true`）**没有使用**：
+  `limit_addr` 为空时它对任何 IP 都回"IP校验失败"（`class/common.py` 的 `is_api_limit_ip`），
+  且其权限涵盖写任意文件、执行命令；把 key 放进客户端等于把 root 交出去。
+
+## 四、验证
+
+```bash
+# 用仓库里那个真客户端（DioWebdavTransport，就是「远端存储」的生产传输层）打真服务端
+export PATH=/opt/flutter-3.44.6/bin:$PATH
+OPS_BASE=https://box.hpa888.top/dav OPS_USER=boxops OPS_PASS=... \
+  flutter test --tags live test/features/extensions/remote_storage/ops_webdav_live_test.dart
+
+# 终端 WebSocket 握手（公网，必须走 HTTP/1.1）
+curl -s --http1.1 -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+  -u boxops:$PASS https://box.hpa888.top/term/ws | head -1   # 期望 101
+```
+
+回归口径：`box.hpa888.top` 的 OTA 端点（`/monitors.json` 带 token 200、无 token 404、
+`/health` 200、`/admin` 200、`/docs` 404）在改 nginx 后逐条复测过。
+
+## 五、待办
+
+1. **175 接入**：175 没有 443 也没有证书，计划用 SSH 隧道把 175 的回环 DAV 挂到 hpa888，
+   再用 `^~ /dav175/` 暴露（不要新域名/新证书）。
+2. **凭据轮换**：改 `/root/.secrets/box-ops-webdav.password` + htpasswd + `systemctl restart box-ops-dav`。
+3. **插件 `server_ops`**：首页一个入口，页签「服务器（状态）/ 文件 / 终端」——
+   文件页直接复用「远端存储」，状态页读主机指标快照，终端页用 `webview_flutter` 打开 `/term/`
+   （`onHttpAuthRequest` 处理 Basic 认证）。
