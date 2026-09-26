@@ -265,6 +265,31 @@ def _meminfo() -> dict:
     }
 
 
+def _cpu_busy_percent(sample_gap: float = 0.25) -> float | None:
+    """主机 CPU 使用率：/proc/stat 取两次，算 busy 占比。
+
+    为什么不用 load：load 只说明"排队长度"，一台 4 核机器 load 2.0 可能 CPU 很闲
+    （都在等 IO），也可能很忙 —— 告警必须看**占用率**，load 只能当辅证。
+    采样的 0.25 秒是刻意的：太短会被瞬时抖动带跑，太长就把这次只读请求拖慢了。
+    """
+    def snap() -> tuple[int, int]:
+        fields = Path("/proc/stat").read_text().splitlines()[0].split()[1:]
+        nums = [int(x) for x in fields]
+        idle = nums[3] + (nums[4] if len(nums) > 4 else 0)  # idle + iowait
+        return sum(nums), idle
+
+    try:
+        total1, idle1 = snap()
+        time.sleep(sample_gap)
+        total2, idle2 = snap()
+        dt, di = total2 - total1, idle2 - idle1
+        if dt <= 0:
+            return None
+        return round(max(0.0, min(100.0, (dt - di) * 100.0 / dt)), 1)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def act_overview(_q: dict, _label: str) -> tuple[int, dict]:
     up = float(Path("/proc/uptime").read_text().split()[0])
     load = Path("/proc/loadavg").read_text().split()[:3]
@@ -293,12 +318,13 @@ def act_overview(_q: dict, _label: str) -> tuple[int, dict]:
                               "used": cols[2], "avail": cols[3], "usePercent": cols[4]})
     except Exception:  # noqa: BLE001
         pass
+    busy = _cpu_busy_percent()
     return 0, {
         "os": os_release(),
         "hostname": socket.gethostname(),
         "uptimeSeconds": int(up),
         "load": {"load1": float(load[0]), "load5": float(load[1]), "load15": float(load[2])},
-        "cpu": {"model": cpu_model, "cores": cores},
+        "cpu": {"model": cpu_model, "cores": cores, "usedPercent": busy},
         "memory": _meminfo(),
         "disks": disks,
         "generatedAt": now_iso(),
@@ -834,6 +860,14 @@ def selftest() -> int:
     check("health 200 且带版本", st == 200 and d.get("version"))
     st, d = call("/overview", tok)
     check("overview 带内存/磁盘/负载", st == 200 and "memory" in d and "disks" in d and "load" in d)
+    # CPU 使用率（告警的取数口）：必须有、且在 0~100 之间 —— 采不到要回 null，绝不回 0 冒充"很闲"。
+    cpu = d.get("cpu", {})
+    check(
+        "overview 带 CPU 使用率（0~100）",
+        isinstance(cpu.get("usedPercent"), (int, float))
+        and 0 <= cpu["usedPercent"] <= 100,
+        f"cpu={cpu}",
+    )
     st, d = call("/processes?sort=mem&limit=5", tok)
     check("processes 限条数生效", st == 200 and len(d.get("processes", [])) <= 5 and d.get("count", 9) <= 5)
     st, d = call("/services?limit=10", tok)
