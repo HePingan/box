@@ -779,4 +779,4 @@ if "box-ops-rw.htpasswd" in text:   # ← 线上从来不引用这个文件
 
 改法两处：① 幂等判断改成看**真正决定行为的标记**（两个闸门变量 + 审计日志格式都在 ⇒ 已装过）；② 插入前先把旧的闸门块清掉。改完 `--check` 输出"vhost 上已经装过 / 两台单元的 `--htpasswd` 都在"，**diff 为空、退出码 0** —— 即"现在跑 `--apply` 等于什么都不做"，这才是稳态。
 
-（另记一笔：`CHANNELS` 里的 `rw` 两个 htpasswd 文件是更早的"读写分开两份文件"设计留下的，现方案不用它们 —— 上面那个错判就是从它来的。文件本身不存在，也没人写，先留着不动。）
+（另记一笔：`CHANNELS` 里的 `rw` 两个 htpasswd 文件是更早的"读写分开两份文件"设计留下的 —— 上面那个错判就是从它来的。核实：vhost 里 **0 处**引用它们（4 个 location 的 `auth_basic_user_file` 全指 `box-ops*.htpasswd`），只读/可写由用户名 `ro-` 前缀 + 闸门变量分；但 `box_channel_cred.py` 仍在同步维护这两份（`box-ops-rw.htpasswd` 里只有可写设备），属于"写而无人读"，先留着不动 —— 真要收，得同时改 `box_channel_cred.py` 的同步逻辑。）
