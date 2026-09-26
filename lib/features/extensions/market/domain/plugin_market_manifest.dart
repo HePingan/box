@@ -181,6 +181,36 @@ List<MarketPluginTemplate> dedupMarketPluginTemplates(
 
 enum PluginPermission { network, storage, clipboard, camera, none }
 
+/// 权限的中文标签 —— **单一事实源**（同 area/action 的做法：写两份必然漂移）。
+///
+/// 只用于「如实披露」：把插件声明的权限翻译成人能看懂的话，
+/// 让用户在安装前知道它要什么。**不要**把它写成「权限控制 / 沙箱」——
+/// 当前没有第三方代码在下游执行，也就没有可拦截的承载对象，
+/// 那样写会重复 FIX-01 那类「声明与事实不符」的问题。
+extension PluginPermissionLabel on PluginPermission {
+  String get label => switch (this) {
+        PluginPermission.network => '网络',
+        PluginPermission.storage => '存储',
+        PluginPermission.clipboard => '剪贴板',
+        PluginPermission.camera => '相机',
+        PluginPermission.none => '无',
+      };
+}
+
+/// 把声明的权限 code 列表翻成中文标签（认不出的 code 原样保留，不静默吞掉）。
+List<String> permissionLabelsOf(Iterable<String> codes) {
+  final out = <String>[];
+  for (final code in codes) {
+    final trimmed = code.trim();
+    if (trimmed.isEmpty) continue;
+    final typed = _pluginPermissionFromCode(trimmed);
+    final label = typed == null ? trimmed : typed.label;
+    if (label == '无') continue;
+    if (!out.contains(label)) out.add(label);
+  }
+  return out;
+}
+
 PluginPermission? _pluginPermissionFromCode(String code) {
   final normalized = code.trim();
   for (final value in PluginPermission.values) {
@@ -465,6 +495,13 @@ class MarketPluginTemplate {
   bool requiresPermission(PluginPermission permission) {
     return typedPermissions.contains(permission);
   }
+
+  /// 占位条目：可安装但点了只弹提示（`toast` 且没有 payload 内容）。
+  ///
+  /// 市场里这类条目会以「即将上线」分组呈现、不给安装按钮 ——
+  /// 不然用户装完点一下只弹个提示，像是装坏了。
+  bool get isPlaceholder =>
+      actionCode.trim() == 'toast' && payloadData.isEmpty && payload.trim().isEmpty;
 
   Map<String, dynamic> toJson() {
     return {

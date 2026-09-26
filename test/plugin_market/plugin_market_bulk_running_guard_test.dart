@@ -73,7 +73,7 @@ void main() {
       'title': '批量护栏插件',
       'subtitle': '用于验证按钮不卡死',
       'areaCode': 'recommend',
-      'actionCode': 'toast',
+      'actionCode': 'openVideoList',
     })!;
 
     await pumpPage(tester, [tpl]);

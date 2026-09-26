@@ -184,5 +184,18 @@ void main() {
       );
       expect(marketAllowedAreas.contains(HomePluginArea.center), isFalse);
     });
+
+    test('displayOrder = 枚举全集 − 排除集（刻意不含 center）', () {
+      expect(
+        HomePluginArea.displayOrder.toSet(),
+        marketAllowedAreas,
+        reason: '投稿下拉的顺序表与「市场允许区域」必须表达同一条产品决策',
+      );
+      expect(
+        HomePluginArea.displayOrder.contains(HomePluginArea.center),
+        isFalse,
+        reason: '工具区不开放投稿，所以投稿下拉里没有它',
+      );
+    });
   });
 }

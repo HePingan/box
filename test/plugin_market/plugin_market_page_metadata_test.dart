@@ -90,7 +90,8 @@ void main() {
     expect(find.text('元数据插件'), findsOneWidget);
     expect(find.text('v2.3.0'), findsOneWidget);
     expect(find.text('作者：Box Team'), findsOneWidget);
-    expect(find.text('权限：network、openPage'), findsOneWidget);
+    // FIX-08：权限标签改为如实的中文披露（原样保留认不出的 code）。
+    expect(find.text('声明：网络、openPage'), findsOneWidget);
     expect(find.text('已废弃'), findsOneWidget);
     expect(find.text('AI'), findsOneWidget);
     expect(find.text('效率'), findsOneWidget);
@@ -145,7 +146,7 @@ void main() {
         'title': '可安装插件',
         'subtitle': '兼容当前版本',
         'areaCode': 'recommend',
-        'actionCode': 'toast',
+        'actionCode': 'openVideoList',
       })!;
       final blocked = MarketPluginTemplate.tryFromJson({
         'id': 'blocked_plugin',
@@ -192,7 +193,7 @@ void main() {
       'title': '废弃插件',
       'subtitle': '需要确认',
       'areaCode': 'recommend',
-      'actionCode': 'toast',
+      'actionCode': 'openVideoList',
       'deprecated': true,
     })!;
 
@@ -296,4 +297,86 @@ void main() {
 
     expect(find.textContaining('未验签'), findsWidgets);
   });
+
+  // FIX-08：安装前的权限披露（只翻译给人看，不暗示沙箱）。
+  testWidgets('安装确认里如实列出插件声明的权限', (tester) async {
+    final template = MarketPluginTemplate.tryFromJson({
+      'id': 'perm_plugin',
+      'title': '要权限的插件',
+      'subtitle': '声明了网络与剪贴板',
+      'areaCode': 'recommend',
+      'actionCode': 'openVideoList',
+      'permissions': ['network', 'clipboard'],
+    })!;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PluginMarketPage(
+          initialInstalledIds: const {},
+          onInstall: (_, {onProgress}) async {},
+          onUninstall: (_) async {},
+          manifestRepository: _FakePluginMarketManifestRepository(
+            _manifest([template]),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, '安装').last);
+        // 模态面板常驻不下，pumpAndSettle 会一直等它收尾；定量 pump 足够。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(
+      find.textContaining('该插件声明将访问：网络、剪贴板'),
+      findsOneWidget,
+      reason: '装之前必须能看到它要什么',
+    );
+    expect(
+      find.textContaining('不做运行时权限拦截'),
+      findsOneWidget,
+      reason: '如实说明：声明≠控制，不能暗示有沙箱',
+    );
+  });
+
+  // FIX-09：占位条目（toast 且无 payload）不给安装入口。
+  testWidgets('占位条目显示「即将上线」且没有安装按钮', (tester) async {
+    final placeholder = MarketPluginTemplate.tryFromJson({
+      'id': 'market_placeholder_probe',
+      'title': '占位条目',
+      'subtitle': '还没做完',
+      'areaCode': 'recommend',
+      'actionCode': 'toast',
+    })!;
+    final real = MarketPluginTemplate.tryFromJson({
+      'id': 'market_real_probe',
+      'title': '真条目',
+      'subtitle': '能装',
+      'areaCode': 'recommend',
+      'actionCode': 'openVideoList',
+    })!;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PluginMarketPage(
+          initialInstalledIds: const {},
+          onInstall: (_, {onProgress}) async {},
+          onUninstall: (_) async {},
+          manifestRepository: _FakePluginMarketManifestRepository(
+            _manifest([real, placeholder]),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('即将上线'), findsOneWidget);
+    expect(
+      find.widgetWithText(FilledButton, '安装'),
+      findsOneWidget,
+      reason: '只有真条目有安装按钮；占位条目装了只会弹提示',
+    );
+  });
 }
+

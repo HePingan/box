@@ -295,7 +295,10 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       return false;
     }
 
-    if (result.warningIssues.isNotEmpty) {
+    // 有兼容告警，或插件声明了权限 —— 两者都要先说清楚再装。
+    // （权限披露是"知情权"：装之前能看到它要什么，而不是装完才知道。）
+    final declared = permissionLabelsOf(item.permissions);
+    if (result.warningIssues.isNotEmpty || declared.isNotEmpty) {
       return _showCompatibilityIssues(
         title: '安装前确认',
         item: item,
@@ -356,6 +359,29 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                 ],
               ),
             ),
+            // 如实披露插件声明的权限（只翻译给人看；不做运行时拦截，
+            // 所以文案里不能出现「权限控制 / 沙箱」这类暗示）。
+            if (permissionLabelsOf(item.permissions).isNotEmpty) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '该插件声明将访问：'
+                  '${permissionLabelsOf(item.permissions).join('、')}'
+                  '\n（仅为作者声明，App 目前不做运行时权限拦截）',
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    height: 1.5,
+                    color: Color(0xFF334155),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
             const SizedBox(height: 16),
             Row(
               children: [
@@ -434,11 +460,24 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     }
   }
 
+  /// 展示顺序：可用条目在前，占位（即将上线）在后。稳定排序，不改变同组内相对次序。
+  List<MarketPluginTemplate> _orderedForDisplay(
+    List<MarketPluginTemplate> input,
+  ) {
+    final ready = <MarketPluginTemplate>[];
+    final soon = <MarketPluginTemplate>[];
+    for (final item in input) {
+      (item.isPlaceholder ? soon : ready).add(item);
+    }
+    return [...ready, ...soon];
+  }
+
   Future<void> _installVisible() async {
     if (_bulkRunning) return;
 
     final target = _visibleTemplates
-        .where((e) => !_installedIds.contains(e.id))
+        // 占位条目不给安装（单个卡片没有入口，批量更不能漏）。
+        .where((e) => !e.isPlaceholder && !_installedIds.contains(e.id))
         .toList();
 
     if (target.isEmpty) {
@@ -853,8 +892,12 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                 // 安装前的权限知情权：卡片直接标出插件申请的权限，
                 // 用户投稿 → 管理员审核 → 他人安装 的链路里，普通用户
                 // 装之前必须能看到它要什么（网络、打开页面等）。
+                // 如实披露：翻成中文给人看，**不**写成「权限控制/沙箱」——
+                // 当前没有第三方代码在下游执行，没有可拦截的对象。
                 if (item.permissions.isNotEmpty)
-                  MarketTagChip(text: '权限：${item.permissions.join('、')}'),
+                  MarketTagChip(
+                    text: '声明：${permissionLabelsOf(item.permissions).join('、')}',
+                  ),
               ],
             ),
             const SizedBox(height: 10),
@@ -895,6 +938,17 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                             visualDensity: VisualDensity.compact,
                           ),
                           child: const Text('卸载'),
+                        )
+                      : item.isPlaceholder
+                      // 占位条目（toast 且无 payload）：装了也只会弹个提示，
+                      // 像是装坏了。不给安装入口，明确标「即将上线」。
+                      ? OutlinedButton(
+                          onPressed: null,
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          child: const Text('即将上线'),
                         )
                       : FilledButton(
                           onPressed: () => _install(item),
@@ -1206,7 +1260,9 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                       sliver: SliverList.separated(
                         itemCount: visible.length,
                         separatorBuilder: (_, _) => const SizedBox(height: 10),
-                        itemBuilder: (_, index) => _buildCard(visible[index]),
+                        // 占位条目沉到最后，和「即将上线」标一起形成可读的分组。
+                        itemBuilder: (_, index) =>
+                            _buildCard(_orderedForDisplay(visible)[index]),
                       ),
                     ),
                 ],

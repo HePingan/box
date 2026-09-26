@@ -23,7 +23,7 @@ import 'package:box/video/video_compat_pages.dart';
 
 /// 内置插件目录（P2-2 从 home_plugin_core.dart 拆出）。
 ///
-/// 15 个内置插件的元数据 + onTap 装配入口。拆分动机：core 原先同时承担
+/// 17 个内置插件的元数据 + onTap 装配入口（数量由 plugin_builtin_catalog_snapshot_test 守着）。拆分动机：core 原先同时承担
 /// 注册表 / 内置目录 / 页面装配三职，胀到 1500+ 行，任何页面改路径都要动 core。
 List<HomePlugin> buildDefaultPlugins() {
   // 注册答题插件自动搜题的 MethodChannel handler

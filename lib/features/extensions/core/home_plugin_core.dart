@@ -62,6 +62,10 @@ enum HomePluginArea {
   }
 
   /// 顺序即 UI 下拉/标签的展示顺序（供投稿页等复用，避免再抄一份）。
+  ///
+  /// **刻意不含 center（工具区）**：工具区只放 App 自带工具、不开放投稿，
+  /// 所以投稿下拉里没有它；而 `marketAllowedAreas`（枚举全集 − 排除集）
+  /// 表达的正是同一条产品决策 —— 两处必须一致。
   static const List<HomePluginArea> displayOrder = [
     HomePluginArea.recommend,
     HomePluginArea.novel,
@@ -443,6 +447,9 @@ class HomeCustomPluginConfig {
   final String author;
   /// published | yanked | local_cache | ''
   final String marketStatus;
+  /// 插件声明的权限（原样保留 code，展示时用 permissionLabelsOf 翻译）。
+  /// 只作披露与审计，不做运行时拦截。
+  final List<String> declaredPermissions;
   final bool marketRisk;
   final String marketRiskNote;
 
@@ -466,6 +473,7 @@ class HomeCustomPluginConfig {
     this.packageSha256 = '',
     this.author = '',
     this.marketStatus = '',
+    this.declaredPermissions = const [],
     this.marketRisk = false,
     this.marketRiskNote = '',
   });
@@ -500,6 +508,8 @@ class HomeCustomPluginConfig {
       marketVersion: template.version,
       packageSha256: '',
       author: template.author,
+      // 权限只做披露与审计（快照里留档），不做运行时拦截。
+      declaredPermissions: template.permissions,
       marketStatus: origin == 'user_market' ? 'published' : '',
       marketRisk: false,
       marketRiskNote: '',
@@ -547,6 +557,7 @@ class HomeCustomPluginConfig {
     String? packageSha256,
     String? author,
     String? marketStatus,
+    List<String>? declaredPermissions,
     bool? marketRisk,
     String? marketRiskNote,
   }) {
@@ -570,6 +581,7 @@ class HomeCustomPluginConfig {
       packageSha256: packageSha256 ?? this.packageSha256,
       author: author ?? this.author,
       marketStatus: marketStatus ?? this.marketStatus,
+      declaredPermissions: declaredPermissions ?? this.declaredPermissions,
       marketRisk: marketRisk ?? this.marketRisk,
       marketRiskNote: marketRiskNote ?? this.marketRiskNote,
     );
@@ -596,6 +608,7 @@ class HomeCustomPluginConfig {
       'packageSha256': packageSha256,
       'author': author,
       'marketStatus': marketStatus,
+      'declaredPermissions': declaredPermissions,
       'marketRisk': marketRisk,
       'marketRiskNote': marketRiskNote,
     };
@@ -638,6 +651,7 @@ class HomeCustomPluginConfig {
       packageSha256: _asString(json['packageSha256']),
       author: _asString(json['author']),
       marketStatus: _asString(json['marketStatus']),
+      declaredPermissions: _asStringList(json['declaredPermissions']),
       marketRisk: _asBool(json['marketRisk'], false),
       marketRiskNote: _asString(json['marketRiskNote']),
     );
@@ -1512,4 +1526,16 @@ class HomePluginHost {
 
 Future<void> _showSnack(BuildContext context, String text) async {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+}
+
+/// 读字符串列表（容错：非列表/含 null 一律跳过）。
+List<String> _asStringList(dynamic raw) {
+  if (raw is! List) return const [];
+  final out = <String>[];
+  for (final item in raw) {
+    if (item == null) continue;
+    final text = item.toString().trim();
+    if (text.isNotEmpty) out.add(text);
+  }
+  return out;
 }
