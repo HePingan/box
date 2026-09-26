@@ -288,6 +288,26 @@ class ServerOpsSettings {
     return _DavSibling(host: 'https://${m.group(1)}', suffix: m.group(2) ?? '');
   }
 
+  /// 文件通道地址看着是**别的通道**的地址时给一句提醒。
+  ///
+  /// 真机上踩过：用户把终端地址填进了「文件通道地址」那格，体检就报
+  /// "文件通道：服务器拒绝访问" —— 日志里是 `PROPFIND /term175/ → 403`
+  /// （拿 WebDAV 去问终端端点，端点只认 GET）。这类错误最难查，因为报错像权限问题。
+  static String? baseUrlKindWarning(String baseUrl) {
+    final t = baseUrl.trim();
+    if (t.isEmpty) return null;
+    final m = RegExp(r'^(?:https?:)?//[^/]+(/.*)?$').firstMatch(t);
+    if (m == null) return null;
+    final path = (m.group(1) ?? '').toLowerCase();
+    if (path.startsWith('/term')) {
+      return '这看着是终端地址：文件通道要填 /dav 那族（两台分别是 /dav 与 /dav175）';
+    }
+    if (path.startsWith('/opsapi')) {
+      return '这看着是只读接口地址：文件通道要填 /dav 那族（两台分别是 /dav 与 /dav175）';
+    }
+    return null;
+  }
+
   /// 地址规范化：只写主机（`box.hpa888.top/dav175`）时补上 `https://`；
   /// 已经带了协议或 `//` 的原样返回。填地址时少打字是常态，但**存下来的必须
   /// 是能直接用的形状**，否则同一格地址会出现两种写法，排查时对不上。

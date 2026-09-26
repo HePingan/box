@@ -668,6 +668,29 @@ void main() {
       expect(ServerOpsSettings.normalizeAddress('   '), isEmpty);
     });
 
+    test('文件地址填成别的通道：当场说清该填什么（真机那条"服务器拒绝访问"）', () {
+      // 真机：把终端地址填进「文件通道地址」→ 体检报"文件通道：服务器拒绝访问"，
+      // 日志里是 PROPFIND /term175/ → 403（拿 WebDAV 去问只认 GET 的终端端点）。
+      final termAsBase =
+          ServerOpsSettings.baseUrlKindWarning('https://box.hpa888.top/term175/');
+      expect(termAsBase, isNotNull);
+      expect(termAsBase, contains('/dav'));
+      expect(
+        ServerOpsSettings.baseUrlKindWarning('https://box.hpa888.top/opsapi175'),
+        isNotNull,
+      );
+      expect(
+        ServerOpsSettings.baseUrlKindWarning('https://box.hpa888.top/dav175'),
+        isNull,
+      );
+      expect(ServerOpsSettings.baseUrlKindWarning(''), isNull);
+      expect(
+        ServerOpsSettings.baseUrlKindWarning('https://别的域名/files'),
+        isNull,
+        reason: '自定义命名不误报',
+      );
+    });
+
     test('地址形态检查：明显的错要说出来，看着正常的不拦', () {
       expect(ServerOpsSettings.addressProblem(''), isNull);
       expect(ServerOpsSettings.addressProblem('https://box.hpa888.top/dav175'), isNull);

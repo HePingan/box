@@ -900,6 +900,8 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
     final mismatch = _mismatch;
     final canFill = (_terminalUrl.text.trim().isEmpty && preview.terminalUrl.isNotEmpty) ||
         (_apiUrl.text.trim().isEmpty && preview.apiUrl.isNotEmpty);
+    final baseUrlWarning =
+        ServerOpsSettings.baseUrlKindWarning(_baseUrl.text);
     return AlertDialog(
       title: Text('服务器连接 · ${widget.server.id}'),
       content: SizedBox(
@@ -953,6 +955,32 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
                   border: const OutlineInputBorder(),
                 ),
               ),
+              if (baseUrlWarning != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.error_outline,
+                          size: 16, color: theme.colorScheme.error),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          baseUrlWarning,
+                          style: theme.textTheme.labelSmall
+                              ?.copyWith(color: theme.colorScheme.error),
+                        ),
+                      ),
+                      if (byIdBase.isNotEmpty)
+                        TextButton(
+                          onPressed: () => setState(() {
+                            _baseUrl.text = byIdBase;
+                          }),
+                          child: const Text('用这台机器的'),
+                        ),
+                    ],
+                  ),
+                ),
               const SizedBox(height: 10),
               TextField(
                 controller: _user,
@@ -1017,7 +1045,8 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
                       ? 'https://主机/termXxx/'
                       : preview.terminalUrl,
                   helperText: _terminalUrl.text.trim().isNotEmpty
-                      ? '留空的话会按文件地址推：${preview.terminalUrl.isEmpty ? '推不出来' : preview.terminalUrl}'
+                      ? '留空的话会按文件地址推：'
+                          '${ServerOpsSettings.terminalUrlFromDav(_baseUrl.text).isEmpty ? '推不出来，得自己填' : ServerOpsSettings.terminalUrlFromDav(_baseUrl.text)}'
                       : (preview.terminalFromBase
                           ? '留空就用上面文件地址推出来的这个'
                           : '留空就用这台机器的默认；填了才用得了终端页'),
