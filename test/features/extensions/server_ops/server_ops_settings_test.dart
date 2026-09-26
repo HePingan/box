@@ -156,10 +156,45 @@ void main() {
       expect(server.usedBuildDefaults, isFalse);
     });
 
-    test('空串 / 空白等于没填，回到构建默认', () {
-      const server = ServerOpsServer(id: 'x', label: 'X', baseUrl: '  ');
-      expect(server.effectiveBaseUrl, ServerOpsSettings.defaultBaseUrl);
-      expect(server.effectiveUser, ServerOpsSettings.defaultUser);
+    test('内置的两台：空串回到**各自**的构建默认（不是主服务端那一套）', () {
+      const hpa = ServerOpsServer(id: 'hpa888', label: '主服务端');
+      expect(hpa.effectiveBaseUrl, ServerOpsSettings.defaultBaseUrl);
+      expect(hpa.effectiveUser, ServerOpsSettings.defaultUser);
+      expect(hpa.effectiveTerminalUrl, ServerOpsSettings.defaultTerminalUrl);
+
+      const t175 = ServerOpsServer(id: 'tencent175', label: '构建机');
+      expect(t175.effectiveBaseUrl, ServerOpsSettings.defaultBaseUrl175);
+      expect(t175.effectiveUser, ServerOpsSettings.defaultUser175);
+      expect(t175.effectiveTerminalUrl, ServerOpsSettings.defaultTerminalUrl175);
+    });
+
+    test('回归：175 没填终端地址时**不得**落到主服务端的 /term/（真机上就是这么 401 的）', () {
+      // 真机现场（2026-09-26）：用户自己加的 175（id 不在内置名单里）终端地址留空，
+      // 旧口径兜到 https://box.hpa888.top/term/（主服务端），拿 175 的凭据打它必然 401 ——
+      // 而报错文案说的是"口令不对"，方向就查偏了。
+      const mine = ServerOpsServer(
+        id: 'my-175',
+        label: '腾讯云 · 构建/监控机',
+        baseUrl: 'https://box.hpa888.top/dav175',
+      );
+      expect(mine.effectiveTerminalUrl, 'https://box.hpa888.top/term175/');
+      expect(mine.effectiveTerminalUrl, isNot(ServerOpsSettings.defaultTerminalUrl));
+    });
+
+    test('用户自己加的机器：地址/用户名没填就是空串，不静默借主服务端的', () {
+      const mine = ServerOpsServer(id: 'srv-x', label: 'X');
+      expect(mine.effectiveBaseUrl, isEmpty);
+      expect(mine.effectiveUser, isEmpty);
+      expect(mine.effectiveTerminalUrl, isEmpty);
+    });
+
+    test('推不出 /termX/ 就不猜（别的路径形状一律留空）', () {
+      const mine = ServerOpsServer(
+        id: 'srv-y',
+        label: 'Y',
+        baseUrl: 'https://example.com/remote.php/dav/files/me',
+      );
+      expect(mine.effectiveTerminalUrl, isEmpty);
     });
 
     test('snapshotId 留空就用 id（用户自己加的机器没有快照行）', () {

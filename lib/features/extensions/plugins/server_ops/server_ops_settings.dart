@@ -55,12 +55,18 @@ class ServerOpsServer {
   String get effectiveSnapshotId => _nonEmpty(snapshotId) ?? id;
 
   String get effectiveBaseUrl =>
-      _nonEmpty(baseUrl) ?? ServerOpsSettings.defaultBaseUrl;
+      _nonEmpty(baseUrl) ?? ServerOpsSettings.defaultBaseUrlFor(id);
 
-  String get effectiveUser => _nonEmpty(user) ?? ServerOpsSettings.defaultUser;
+  String get effectiveUser => _nonEmpty(user) ?? ServerOpsSettings.defaultUserFor(id);
 
-  String get effectiveTerminalUrl =>
-      _nonEmpty(terminalUrl) ?? ServerOpsSettings.defaultTerminalUrl;
+  /// 生效的终端地址：**填了的 > 按 id 的内置默认 > 从文件地址推**，都没有就是空串。
+  String get effectiveTerminalUrl {
+    final explicit = _nonEmpty(terminalUrl);
+    if (explicit != null) return explicit;
+    final byId = ServerOpsSettings.defaultTerminalUrlFor(id);
+    if (byId.isNotEmpty) return byId;
+    return ServerOpsSettings.terminalUrlFromDav(_nonEmpty(baseUrl) ?? '');
+  }
 
   /// 生效的只读 API 地址；用户自己加的机器没填就是空串（界面据此提示"这台的系统页还没接"）。
   String get effectiveApiUrl =>
@@ -170,6 +176,46 @@ class ServerOpsSettings {
     if (id == builtInHpa888Id) return defaultApiUrl;
     if (id == builtInTencent175Id) return defaultApiUrl175;
     return '';
+  }
+
+  // ── 下面三个也是"按 id 分"的默认值 ──────────────────────────────
+  //
+  // 为什么必须按 id 分：终端地址的兜底曾经是**写死的主服务端** `/term/`，于是
+  // "加了 175 但没填终端地址"的机器会静默去开**主服务端**的终端 —— 用 175 的凭据
+  // 打主服务端的终端必然 401（真机上报过这条），而报错文案指向"口令不对"，
+  // 会让人查错方向。文件地址与用户名同理：静默借另一台机器的地址，用户会以为
+  // 自己在看这台机器的文件。所以用户自己加的机器**宁可空着**，让界面说"没填"。
+
+  /// 按 id 给文件通道地址的默认值。
+  static String defaultBaseUrlFor(String id) {
+    if (id == builtInHpa888Id) return defaultBaseUrl;
+    if (id == builtInTencent175Id) return defaultBaseUrl175;
+    return '';
+  }
+
+  /// 按 id 给用户名的默认值。
+  static String defaultUserFor(String id) {
+    if (id == builtInHpa888Id) return defaultUser;
+    if (id == builtInTencent175Id) return defaultUser175;
+    return '';
+  }
+
+  /// 按 id 给终端地址的默认值。
+  static String defaultTerminalUrlFor(String id) {
+    if (id == builtInHpa888Id) return defaultTerminalUrl;
+    if (id == builtInTencent175Id) return defaultTerminalUrl175;
+    return '';
+  }
+
+  /// 从文件通道地址推终端地址：`/dav175` → `/term175/`（只认这套命名）。
+  ///
+  /// 这是给"用户自己加的机器"兜底的：id 不在内置名单里、终端地址又没填时，
+  /// 只要地址是这套命名，就能推对；推不出来返回空串（不猜）。
+  static String terminalUrlFromDav(String davUrl) {
+    final m = RegExp(r'^(https?://[^/]+)/dav([A-Za-z0-9_]*)/?$')
+        .firstMatch(davUrl.trim());
+    if (m == null) return '';
+    return '${m.group(1)}/term${m.group(2)}/';
   }
 
   // ── 构建注入的默认值（两台机器各一套；名字与

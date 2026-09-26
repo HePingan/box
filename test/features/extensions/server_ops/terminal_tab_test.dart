@@ -3,11 +3,13 @@
 // 这里**不真的建 WebViewController**：widget 测试里没有平台实现，建了就会抛。
 // 需要被验证的是"凭据怎么算"与"没口令时的引导"这两件事——
 // 它们决定用户会不会看到 401 白屏，且都能在不碰平台的情况下测到。
+import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 import 'package:box/features/extensions/plugins/server_ops/terminal_controls.dart';
 import 'package:box/features/extensions/plugins/server_ops/terminal_tab.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 /// 单台服务器的等价构造：口令只在内存缓存里（对应"从加密存储读出来"那一刻）。
 const _oneServer = ServerOpsServer(id: 's1', label: '测试机');
@@ -20,6 +22,61 @@ ServerOpsSettings _withPassword(String password, {String user = ''}) =>
     );
 
 void main() {
+  group('换过凭据要先清 WebView 的凭据缓存（296）', () {
+    // 真机现场：在设置里把口令换成设备凭据之后，终端页的 /term/ws 带的还是旧用户名 ——
+    // Android WebView 按 (源 + realm) 缓存 Basic 凭据，缓存命中时 onHttpAuthRequest
+    // 不会被调用，App 也就没机会给新凭据。所以进页面时凭据变了就先清一次缓存。
+    test('凭据指纹：没口令是空串，换了用户名或口令都算变', () {
+      expect(opsTerminalAuthFingerprint(null), isEmpty);
+      const a = WebViewCredential(user: 'u1', password: 'p1');
+      const b = WebViewCredential(user: 'u1', password: 'p2');
+      const c = WebViewCredential(user: 'u2', password: 'p1');
+      expect(opsTerminalAuthFingerprint(a), isNot(opsTerminalAuthFingerprint(b)));
+      expect(opsTerminalAuthFingerprint(a), isNot(opsTerminalAuthFingerprint(c)));
+      expect(
+        opsTerminalAuthFingerprint(const WebViewCredential(user: 'u1', password: 'p1')),
+        opsTerminalAuthFingerprint(a),
+      );
+    });
+
+    test('该不该清：第一次进要清；同一份凭据再进不清', () {
+      const cred = WebViewCredential(user: 'phone-hpa888', password: 'pw');
+      expect(
+        opsTerminalNeedsCredentialCacheClear(credential: cred, previousFingerprint: ''),
+        isTrue,
+      );
+      expect(
+        opsTerminalNeedsCredentialCacheClear(
+          credential: cred,
+          previousFingerprint: opsTerminalAuthFingerprint(cred),
+        ),
+        isFalse,
+      );
+      expect(
+        opsTerminalNeedsCredentialCacheClear(
+          credential: const WebViewCredential(user: 'boxops', password: 'old'),
+          previousFingerprint: opsTerminalAuthFingerprint(cred),
+        ),
+        isTrue,
+        reason: '换回旧凭据同样是"变了"，也得清一次',
+      );
+    });
+
+    test('平台侧没有这条通道也不抛（单测 / 非 Android / 老安装）', () async {
+      debugSetServerOpsRuntime();
+      await serverOpsClearWebViewAuthCache();
+    });
+
+    test('接缝可注入：页面调的确实是注入进去的那份', () async {
+      var calls = 0;
+      debugSetServerOpsRuntime(webViewAuthCacheClearer: () async => calls++);
+      await serverOpsClearWebViewAuthCache();
+      await serverOpsClearWebViewAuthCache();
+      expect(calls, 2);
+      debugSetServerOpsRuntime();
+    });
+  });
+
   group('Basic 凭据', () {
     test('没口令时不给凭据（页面改走"先去设置里填"）', () {
       expect(opsTerminalCredential(const ServerOpsSettings()), isNull);
@@ -30,11 +87,30 @@ void main() {
       );
     });
 
-    test('有口令时给出用户名 + 口令（用户名缺省是 boxops）', () {
-      final credential = opsTerminalCredential(_withPassword('pw'));
+    test('内置主服务端：用户名缺省就是构建默认（boxops）', () {
+      final credential = opsTerminalCredential(
+        const ServerOpsSettings(
+          servers: [ServerOpsServer(id: 'hpa888', label: '主服务端')],
+          selectedServerId: 'hpa888',
+          passwords: {'hpa888': 'pw'},
+        ),
+      );
       expect(credential, isNotNull);
-      expect(credential!.user, 'boxops');
+      expect(credential!.user, ServerOpsSettings.defaultUser);
       expect(credential.password, 'pw');
+    });
+
+    test('用户自己加的机器：用户名没填就不给凭据（走“先去设置里填”，不是拿空用户名去 401）', () {
+      // 真机坑：用户名空着时 Basic 只会拿回 401，而文案说“口令不对”，方向就查偏了。
+      expect(
+        opsTerminalCredential(_withPassword('pw')),
+        isNull,
+        reason: 'id 不在内置名单里、又没填用户名 → 不该默默用 boxops',
+      );
+      expect(
+        opsTerminalCredential(_withPassword('pw', user: 'phone-x')),
+        isNotNull,
+      );
     });
 
     test('用户填过的用户名以其为准', () {

@@ -26,6 +26,7 @@ import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
 import 'package:box/features/extensions/plugins/server_ops/terminal_controls.dart';
 
@@ -35,11 +36,27 @@ import 'package:box/features/extensions/plugins/server_ops/terminal_controls.dar
 /// 单测里起不来；凭据怎么算这件事不该只有真机才验证得了。
 WebViewCredential? opsTerminalCredential(ServerOpsSettings settings) {
   if (!settings.hasPassword) return null;
+  final user = settings.effectiveUser.trim();
+  // 用户名没填等于没配全：Basic 拿空用户名去试只会拿回 401，而报错会说"口令不对"，
+  // 把人引到错的方向（用户自己加的机器不再默默用 boxops 这个旧用户名）。
+  if (user.isEmpty) return null;
   return WebViewCredential(
-    user: settings.effectiveUser,
+    user: user,
     password: settings.effectivePassword,
   );
 }
+
+/// 凭据指纹：用来判断"这次进终端页该不该先清一次 WebView 的凭据缓存"。
+/// 抽成纯函数是为了能单测（真起 WebView 需要平台实现，单测里起不来）。
+String opsTerminalAuthFingerprint(WebViewCredential? credential) =>
+    credential == null ? '' : '${credential.user}\u0000${credential.password}';
+
+/// 该不该清：凭据与上次进页面时不是同一份（换过口令/用户名），就要清一次。
+bool opsTerminalNeedsCredentialCacheClear({
+  required WebViewCredential? credential,
+  required String previousFingerprint,
+}) =>
+    opsTerminalAuthFingerprint(credential) != previousFingerprint;
 
 /// 页面 20 秒还没 onPageFinished 就当卡住了（onWebResourceError 不一定会来）。
 const Duration terminalWatchdogTimeout = Duration(seconds: 20);
@@ -62,6 +79,9 @@ class ServerOpsTerminalTab extends StatefulWidget {
 
 class _ServerOpsTerminalTabState extends State<ServerOpsTerminalTab> {
   WebViewController? _controller;
+
+  /// 上次进终端页用的凭据指纹（换过了就先清一次 WebView 的凭据缓存）。
+  String _authFingerprint = '';
   bool _loading = true;
   String? _error;
   double _fontSize = terminalFontSizeDefault;
@@ -117,9 +137,39 @@ class _ServerOpsTerminalTabState extends State<ServerOpsTerminalTab> {
     if (url == null || !url.hasScheme) {
       _controller = null;
       _loading = false;
-      _error = '终端地址不合法：${widget.settings.effectiveTerminalUrl}';
+      _error = widget.settings.effectiveTerminalUrl.trim().isEmpty
+          ? '这台机器没填终端地址（「设置 → 服务器」里补上，例如 /term175/）'
+          : '终端地址不合法：${widget.settings.effectiveTerminalUrl}';
       return;
     }
+    if (opsTerminalNeedsCredentialCacheClear(
+      credential: credential,
+      previousFingerprint: _authFingerprint,
+    )) {
+      _authFingerprint = opsTerminalAuthFingerprint(credential);
+      unawaited(_clearAuthCacheThenStart(url));
+      return;
+    }
+    _startWebView(url);
+  }
+
+  /// 先清 WebView 里缓存的旧 Basic 凭据，再加载终端页。
+  Future<void> _clearAuthCacheThenStart(Uri url) async {
+    try {
+      await serverOpsClearWebViewAuthCache();
+    } catch (_) {
+      // 清不掉也别把终端页卡住（最坏是这次仍按缓存里的旧凭据问一次）
+    }
+    if (!mounted) return;
+    // 等这一拍的工夫用户又改了设置：让新的那次 _setup 去建，别用旧 URL 覆盖它
+    if (opsTerminalAuthFingerprint(opsTerminalCredential(widget.settings)) !=
+        _authFingerprint) {
+      return;
+    }
+    _startWebView(url);
+  }
+
+  void _startWebView(Uri url) {
     _error = null;
     _loading = true;
     _loadStarted = DateTime.now();
