@@ -21,6 +21,7 @@ import 'package:open_filex/open_filex.dart';
 
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_api_client.dart';
+import 'package:box/features/extensions/plugins/server_ops/file_editor_page.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
@@ -721,7 +722,14 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
       case RemoteEntryKind.text:
         await showDialog<void>(
           context: context,
-          builder: (_) => _TextPreviewDialog(service: _service, entry: entry),
+          builder: (_) => _TextPreviewDialog(
+            service: _service,
+            entry: entry,
+            onSaved: () async {
+              // 保存/恢复之后刷新列表（大小与时间会变）
+              await _load(silent: true);
+            },
+          ),
         );
       case RemoteEntryKind.video:
       case RemoteEntryKind.audio:
@@ -1659,10 +1667,17 @@ class _DirectoryPickerDialogState extends State<_DirectoryPickerDialog> {
 }
 
 class _TextPreviewDialog extends StatefulWidget {
-  const _TextPreviewDialog({required this.service, required this.entry});
+  const _TextPreviewDialog({
+    required this.service,
+    required this.entry,
+    this.onSaved,
+  });
 
   final ServerOpsFilesService service;
   final RemoteStorageEntry entry;
+
+  /// 保存/恢复之后回调（让文件页刷新）。
+  final Future<void> Function()? onSaved;
 
   @override
   State<_TextPreviewDialog> createState() => _TextPreviewDialogState();
@@ -1728,6 +1743,28 @@ class _TextPreviewDialogState extends State<_TextPreviewDialog> {
         ),
       ),
       actions: [
+        // 编辑：能改就直接进去改（大小/编码/二进制的判断在编辑器里做，
+        // 并由它把"为什么不能改"说清楚 —— 这里不重复一套规则）。
+        TextButton(
+          key: const ValueKey('ops-preview-edit'),
+          onPressed: _error != null
+              ? null
+              : () async {
+                  final navigator = Navigator.of(context);
+                  navigator.pop();
+                  await navigator.push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => OpsFileEditorPage(
+                        service: widget.service,
+                        path: widget.entry.path,
+                        name: widget.entry.name,
+                        onSaved: widget.onSaved,
+                      ),
+                    ),
+                  );
+                },
+          child: const Text('编辑'),
+        ),
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('关闭'),

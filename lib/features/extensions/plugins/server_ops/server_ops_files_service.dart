@@ -11,12 +11,14 @@
 // domain（WebdavClient / RemoteStorageError）与传输实现（DioWebdavTransport）。
 
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:box/features/extensions/plugins/remote_storage/application/remote_storage_service.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/webdav_client.dart';
 
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_text_edit.dart';
 
 class ServerOpsFilesService {
   ServerOpsFilesService({
@@ -316,6 +318,127 @@ class ServerOpsFilesService {
     final normalized = path.replaceAll(RegExp(r'/+$'), '');
     final idx = normalized.lastIndexOf('/');
     return idx < 0 ? normalized : normalized.substring(idx + 1);
+  }
+
+  /// 路径的父目录（`/a/b/c` → `/a/b`；根下第一层 → 空串）。
+  static String dirname(String path) {
+    final normalized = path.replaceAll(RegExp(r'/+$'), '');
+    final idx = normalized.lastIndexOf('/');
+    if (idx < 0) return '';
+    return normalized.substring(0, idx);
+  }
+
+  /// 单个条目的元信息（大小 / 修改时间 / etag）。
+  ///
+  /// 实现走"列父目录再挑那一条"：这条路径已经验证过能用，而且顺带确认了
+  /// 文件还在。读不到（父目录打不开、文件没了）返回 null —— 调用方据此
+  /// 说"文件已经不在"而不是"你没权限"。
+  Future<RemoteStorageEntry?> statFor(String path) async {
+    try {
+      final entries = await client.list(dirname(path));
+      for (final e in entries) {
+        if (e.path == path || basename(e.path) == basename(path)) return e;
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  /// 列某文件的历史备份（本插件生成的 `*.box-bak-*`），最新在前。
+  Future<List<RemoteStorageEntry>> listBackups(String path) async {
+    final parent = dirname(path);
+    final base = basename(path);
+    try {
+      final entries = await client.list(parent);
+      final backups = entries
+          .where((e) =>
+              !e.isDirectory &&
+              e.name.startsWith('$base$kOpsBackupMarker'))
+          .toList()
+        ..sort((a, b) => b.name.compareTo(a.name));
+      return backups;
+    } catch (_) {
+      return const <RemoteStorageEntry>[];
+    }
+  }
+
+  /// 保存编辑后的内容：先落本机临时文件，再上传覆盖（WebDAV PUT）。
+  ///
+  /// 为什么走临时文件：底层只有 `uploadFrom(File)`。临时文件用完即删，
+  /// 里面是用户自己正在编辑的文本，不留痕。
+  Future<void> saveText(String path, Uint8List bytes) async {
+    final dir = await Directory.systemTemp.createTemp('box-ops-save-');
+    final file = File('${dir.path}/payload');
+    try {
+      await file.writeAsBytes(bytes, flush: true);
+      await client.uploadFrom(file, path);
+    } finally {
+      try {
+        await dir.delete(recursive: true);
+      } catch (_) {
+        // 删不掉临时目录不影响保存结果
+      }
+    }
+  }
+
+  /// 落盘（覆盖式，抗半路断网）：先上传到临时名，再 MOVE 盖到目标上。
+  ///
+  /// 为什么不直接 PUT 覆盖：手机网络断在传输中间时，rclone 会留下**被截断**的目标
+  /// 文件 —— "文件坏了"比"这次没保存成功"严重得多（`sshd_config` 这种直接把自己锁
+  /// 在门外）。先写临时名再 MOVE，失败时目标原样不动，最坏只多一个临时文件。
+  ///
+  /// 这里的 MOVE 语义是**要覆盖**：服务层的 [rename] 带 exists 预检（防手滑覆盖），
+  /// 那是给用户手动改名用的；保存场景正相反，所以单独一个方法，故意不走那个预检。
+  Future<void> saveTextAtomic(String path, Uint8List bytes) async {
+    final stamp = DateTime.now().toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    final tmp = '$path$kOpsPendingMarker${stamp.year}${two(stamp.month)}'
+        '${two(stamp.day)}-${two(stamp.hour)}${two(stamp.minute)}'
+        '${two(stamp.second)}-${stamp.millisecond.toString().padLeft(3, '0')}';
+    await saveText(tmp, bytes);
+    try {
+      await client.move(tmp, path);
+    } catch (e) {
+      // MOVE 没过：把半成品收拾掉，别在用户的目录里留垃圾（目标文件没被动过）
+      try {
+        await delete(tmp);
+      } catch (_) {}
+      rethrow;
+    }
+  }
+
+  /// 保存前备份：把当前内容 COPY 成 `<name>.box-bak-<时间戳>`，并只留最近 [keep] 份。
+  ///
+  /// 返回备份的路径（界面上要显示"已备份到 …"，让人知道有后路）。
+  /// 备份失败**要抛** —— 没有后路的保存不能悄悄进行。
+  Future<String> backupBeforeSave(
+    String path, {
+    int keep = kOpsBackupKeep,
+    DateTime? now,
+  }) async {
+    final backup = opsBackupName(path, now ?? DateTime.now());
+    await copyEntry(path, backup, isDirectory: false);
+    // 清理旧备份：失败无所谓（顶多多留几份），绝不能因此让保存失败。
+    try {
+      final stale = opsBackupsToPrune(
+        (await listBackups(path)).map((e) => e.name).toList(),
+        keep: keep,
+      );
+      final parent = dirname(path);
+      for (final name in stale) {
+        await delete(parent.isEmpty ? name : '$parent/$name');
+      }
+    } catch (_) {}
+    return backup;
+  }
+
+  /// 用某个备份覆盖目标文件 —— 恢复之前**先把当前内容也备份一次**，
+  /// 这样"恢复"本身也能撤销（恢复错了还能再退回来）。
+  Future<void> restoreBackup(String backupPath, String targetPath) async {
+    final result = await readUpTo(backupPath, kOpsEditMaxBytes);
+    await backupBeforeSave(targetPath);
+    await saveText(targetPath, result.bytes);
   }
 }
 
