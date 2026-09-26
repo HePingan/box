@@ -518,3 +518,112 @@ tool/ops_api/deploy_box_ops_alert.sh --rotate    # 重签两把只读令牌
 修法是把两个档位分开存：`level`（测到的）与 `alert_level`（**报过的**），判断只跟后者比。
 这类 bug 的特点是"平时看起来一切正常"，只有故意演练才会露出来 —— 所以 `--test` 与低阈值演练
 不是可选步骤。
+---
+
+## 16. 文件与终端的凭据：按设备、可撤销、有作用域、有审计（C1 剩余）
+
+C1 的前半（收窄 rclone 能看到的路径）在第十三节就落地了。这一节做的是后半：
+**这两个入口用谁的凭据进去**。
+
+原来的形状（到 2026-09-26 为止）是两个静态口令：
+* 文件：`/dav`、`/dav175` 的鉴权在 rclone 自己（`RCLONE_USER/RCLONE_PASS`，从 env 读）；
+* 终端：`/term/`、`/term175/` 的鉴权在边缘机 nginx（`auth_basic` + 一个 htpasswd）。
+
+问题不是"口令弱"，而是这四条：
+1. **没法按设备撤销** —— 口令只有一份，一台设备丢了就得整体轮换，轮换完你还不知道旧口令在谁手里；
+2. **没有作用域** —— 一份口令同时能读文件、写文件、进终端；"给运维同事一个只读的"做不到；
+3. **没有审计** —— 谁在什么时候动了什么文件，事后查不到；
+4. **终端那端是一条 root shell**，而它的凭据与前两个是同一份。
+
+### 16.1 为什么没做成"nginx auth_request + 自建认证服务"
+
+最先设计的方案更"正统"：nginx `auth_request` 把每个请求交给 `box-ops-api` 的
+`/dav-auth` 判（能复用设备令牌那套存储：只存哈希、可撤销、带作用域、有审计）。
+代码写了、自检 12 项也过了、部署脚本带自动回滚 —— 上路时**当场死在第一步**：
+
+```
+nginx: [emerg] unknown directive "auth_request" in .../box.hpa888.top.conf:144
+```
+
+这台 nginx（1.20.2，面板装的）**没编 `ngx_http_auth_request_module`**，`modules/` 目录是空的，
+只在 `src/` 里留着源码（等于要重编线上 nginx 才能用）。重编主站的 nginx 只为省一个认证环节，
+风险与收益不成比例 —— 于是换路，那条方案的代码也从仓库里撤掉了（留着一个"接不上"的端点
+比没有更糟：它看起来能用，还会多出一个校验口令的入口）。
+
+### 16.2 实际用的形状：htpasswd 多用户
+
+nginx 自带 Basic 认证，rclone v1.71 支持 `--htpasswd`（**多用户**），于是让两层读**同一个文件**：
+
+| 层 | 位置 | 作用 |
+|---|---|---|
+| nginx | 4 个 location 的 `auth_basic` | 拦在最外面；终端唯一的一道门（ttyd 自己没有凭据） |
+| rclone | 两个 `serve webdav` 的 `--htpasswd` | 文件通道的第二道门（纵深）；nginx 挂了也不至于裸奔 |
+
+* 凭据 = htpasswd 里一行：`<label>:<bcrypt($2b$)>`；
+* **只读**的凭据用户名带 `ro-` 前缀；
+* 作用域在 nginx 侧判（服务端保证，不靠客户端自觉）：
+  * 文件：`map "$remote_user:$request_method" $boxops_ro_write`，命中 `ro-*` + 写方法 → **403**；
+  * 终端：`map $remote_user $boxops_ro_term`，命中 `ro-` → **403**（"这条凭据是只读的：能读文件，不能进终端"）；
+* 审计：这四个入口单独记一份 access log（`/www/wwwlogs/box-ops-access.log`，格式含 `$remote_user`）
+  —— 一行一个请求，"谁（哪个 label）在什么时候做了什么"；
+* **旧口令一行不动**（用户名 `boxops`）：迁移期 App 不用改，审计里看用户名还在用 `boxops`
+  就说明那台设备没换凭据；等不再需要，删掉那一行（或 revoke 掉那台设备的凭据）即可。
+
+一个已验证的细节：rclone 同时给 `--user/--pass`（env）与 `--htpasswd` 时，
+**`--htpasswd` 优先**（实验：htpasswd 里的用户 207、env 用户 401、无凭据 401）。
+所以 env 里那两行留着不碍事，但**别再往那儿加人**。
+
+### 16.3 操作（都在边缘机 hpa888 上跑）
+
+```bash
+# 给一台设备签一条可写凭据（文件 + 终端），口令只在最后一行出现一次
+box_channel_cred.py issue --label phone-x --host hpa888
+# 只读凭据（能读文件，不能写、不能进终端）
+box_channel_cred.py issue --label tablet-x --host 175 --read-only
+# 看现状（只有用户名，没有哈希）
+box_channel_cred.py list
+# 撤销（*立即*生效：行删掉 + rclone 重启 + nginx reload）
+box_channel_cred.py revoke --label phone-x --host hpa888
+```
+
+`--host 175` 会多做两步：把同一份文件推给 175（`/etc/box-ops/box-ops175.htpasswd`，rclone 读它），
+并重启 175 的 rclone；`hpa888` 的 rclone 与 nginx 读同一个文件，不用推。
+
+改造入口（装/重装这整套）用 `apply_channel_gate.py`：
+`--check` 先看 diff（凭据行自动脱敏）、`--apply` 真改并**自动跑 27 项真实验证，任何一项不过就自动回滚**。
+
+### 16.4 门票巡检（10 分钟一次）
+
+这套闸门写在**面板管的 vhost 文件**里 —— 面板重新生成一次站点配置，那几行就可能被抹掉，
+后果是"没凭据/旧口令都能进"，而且**没有任何现象**。所以加了 `box-ops-gate-probe.py`（175，cron `*/10`）：
+
+* 活的：四个入口没凭据必须 401；只读凭据能读（207）、PUT 必须 403、进终端必须 403；
+  密钥类路径与 `/etc/shadow` 仍 404（C4）；
+* 配置：vhost 里 4 处 `auth_basic_user_file`、两个 `if ($boxops_ro_*)` 闸门、审计日志格式；
+  两台 rclone 单元的 `--htpasswd` 与 **17 条 `--exclude`**（C4 的命根子）都还在；
+* 只在**状态变化**时发飞书（正常时一声不出），恢复时补一条；
+* 巡检自己用的是一条**只读**凭据（`/var/lib/box-ops-gate/creds.json`，600）—— 泄漏了也只能读文件。
+
+### 16.5 踩过的坑（都是几分钟到半小时级的）
+
+| 坑 | 现象 | 结论 |
+|---|---|---|
+| `auth_request` | `nginx -t` 报 unknown directive | 先查模块再设计方案：`nginx -V`、`ls modules/`、`nginx -t` 三步 |
+| `limit_except` 换 `auth_basic_user_file` | 只读凭据写文件拿到 **401**（不是 403） | 语义是"凭据不对"，客户端会以为要重填口令；改用 `map` + `if` 显式 403 |
+| `limit_except` 里的方法名 | `invalid method "REPORT"` | nginx 只认它内置的方法表（REPORT 不在其中） |
+| systemd 单元**多行续行**的 ExecStart | 只匹配第一行再重写 → 续行整段丢掉：C4 的 17 条 `--exclude` 没了、单元解析失败、175 的 rclone 起不来（`/dav175` 502） | 按"上一行以 `\` 结尾就继续吃"读完整段；补一条护栏：重写后 `--exclude` 数量必须不变 |
+| 线上 htpasswd 条目是 `$apr1$` | Python `crypt` 验不了（glibc 不认 apr1） | 别自己算哈希去"确认条目与口令一致"，直接问 nginx（拿当前口令打一次终端） |
+| 自检里的用户名 | 全 401 | htpasswd 的用户名**就是 label**（只读带 `ro-`），不是随便填一个 |
+| 重启后立刻测 | 偶发 502/401 | 加"等就绪"（反复试到 2xx/207，最多 ~18 秒） |
+| 自己 `pkill -f` | 把正在跑的那条 ssh 命令一起杀了（退出码 -15） | 收尾用 PID，别用宽泛的 `pkill -f`（记忆里那条禁忌再次应验） |
+
+### 16.6 验证（2026-09-26）
+
+| 项 | 结果 |
+|---|---|
+| 改造脚本自带验证 | **27/27**：四入口无凭据 401、旧口令 207/200（两台）、可写凭据读+写+终端、只读凭据读 207 写 403 终端 403、撤销后 401、审计有用户名、密钥路径 404 |
+| 本机独立复核 | 四入口无凭据 → 401；两台旧口令 → `/dav*` 207、`/term*` 200；审计日志里能看到 `boxops` + 方法 + URI |
+| 终端 WebSocket | `/term/ws`、`/term175/ws` 均 **101 Switching Protocols**（这一改动没把终端弄坏） |
+| 工具自检 | `box_channel_cred.py --selftest` **17/17**（哈希、旧口令行保留、ro- 不进 rw 文件、重复 label 拒、撤销只删自己那行） |
+| 巡检反向测试 | 撤掉巡检凭据 → 当场报出两条并**发出飞书**；补回凭据 → 报"已恢复"并补一条消息 |
+| 线上对齐 | `box-ops-api.py` 重新部署两台（撤掉那个接不上的端点，`/opsapi/dav-auth` → 404），App 令牌 `capabilities write=true` 正常 |
