@@ -1,7 +1,7 @@
 // P2-5 回归测试：未知 area/action code 的回退必须留日志，不再静默丢弃。
 //
 // 已修复的真实缺陷：_areaFromName / _actionFromName 遇到未知值悄悄回退
-// 到 recommend / toast，调用方（fromJson / fromMarketTemplate）无从得知
+// 到中心回退值 / toast，调用方（fromJson / fromMarketTemplate）无从得知
 // 数据里有无法识别的 code，问题被完全掩盖。
 //
 // 这里通过注入一个未知 actionCode 的模板，断言回退发生时确实打了日志。
@@ -48,7 +48,10 @@ void main() {
       );
     });
 
-    test('未知 area code 回退 recommend 并打日志', () {
+    // FIX-03：回退值从 recommend 统一为 center。此前标签路径
+    // （homePluginAreaFromCode）回 center、落库路径（_areaFromName）回 recommend，
+    // 同一个输入在两条路径上是两个区域。现在只有一条链路。
+    test('未知 area code 回退 center 并打日志', () {
       final logs = <String>[];
       final prev = debugPrint;
       debugPrint = (String? message, {int? wrapWidth}) {
@@ -60,8 +63,8 @@ void main() {
         tplWith(area: 'no_such_area_xyz', action: 'toast'),
       );
 
-      expect(cfg.area, HomePluginArea.recommend,
-          reason: '未知 area 仍须安全回退到 recommend（行为不变）');
+      expect(cfg.area, HomePluginArea.center,
+          reason: '未知 area 回退到统一回退值 center（与标签路径一致）');
       expect(
         logs.any((l) => l.contains('no_such_area_xyz')),
         isTrue,

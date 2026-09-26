@@ -117,19 +117,12 @@ IconData marketIconByCodePoint(int codePoint, {IconData? fallback}) {
   return _MarketIconRegistry.byCodePoint(codePoint, fallback: fallback);
 }
 
-const Set<String> _allowedAreaCodes = {
-  'recommend',
-  'music',
-  'video',
-  'comic',
-  'novel',
-};
-
-String _normalizeAreaCode(String areaCode) {
-  final code = areaCode.trim();
-  if (_allowedAreaCodes.contains(code)) return code;
-  return 'recommend';
-}
+/// 归一化区域 code —— 直接委托核心枚举（本文件 :3 已 import core）。
+///
+/// 此前这份硬编码白名单只有 5 个值、不含 center、回退 recommend：
+/// 与标签路径（回 center）不一致，且给枚举加新区域时不会自动生效。
+String _normalizeAreaCode(String areaCode) =>
+    homePluginAreaFromCode(areaCode).name;
 
 IconData _defaultIconForArea(String areaCode) {
   switch (_normalizeAreaCode(areaCode)) {
@@ -141,6 +134,8 @@ IconData _defaultIconForArea(String areaCode) {
       return Icons.image_outlined;
     case 'novel':
       return Icons.menu_book_outlined;
+    case 'center':
+      return Icons.extension_outlined;
     case 'recommend':
     default:
       return Icons.local_fire_department_outlined;
@@ -157,6 +152,8 @@ Color _defaultColorForArea(String areaCode) {
       return const Color(0xFF0D9488);
     case 'novel':
       return const Color(0xFFF59E0B);
+    case 'center':
+      return const Color(0xFF334155);
     case 'recommend':
     default:
       return const Color(0xFF7C3AED);

@@ -12,6 +12,7 @@
 
 import 'dart:io';
 
+import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _corePath = 'lib/features/extensions/core/home_plugin_core.dart';
@@ -134,6 +135,54 @@ void main() {
         isTrue,
         reason: 'navigate 已有 handler 实现，必须登记进 HomePluginActionType',
       );
+    });
+  });
+
+  // FIX-03：区域解析必须只有一条链路。此前三份实现两种回退：
+  //   标签路径（homePluginAreaFromCode）→ center，
+  //   落库路径（_areaFromName）→ recommend，
+  //   市场白名单（_allowedAreaCodes，5 个值）→ recommend。
+  // 结果：同一个 center 输入，标签说「工具」而落库进「推荐」。
+  group('区域解析：标签路径与落库路径必须一致（FIX-03）', () {
+    test('任意 code 两路径解析结果一致', () {
+      const inputs = [
+        'recommend',
+        'music',
+        'video',
+        'comic',
+        'novel',
+        'center',
+        '',
+        'bogus',
+        'Center',
+      ];
+      for (final code in inputs) {
+        final label = homePluginAreaLabel(code);
+        final cfg = HomeCustomPluginConfig.fromJson(<String, dynamic>{
+          'id': 'x',
+          'title': 'x',
+          'area': code,
+        });
+        expect(
+          homePluginAreaLabel(cfg.area.name),
+          label,
+          reason: 'code="$code" 标签路径与落库路径不一致',
+        );
+      }
+    });
+
+    test('未知 code 的回退值是 center（与标签路径一致）', () {
+      expect(kHomePluginAreaFallback, HomePluginArea.center);
+      expect(homePluginAreaFromCode('bogus'), HomePluginArea.center);
+    });
+
+    test('市场允许区域 = 枚举全集 - 排除集（新增枚举值自动生效）', () {
+      expect(
+        marketAllowedAreas,
+        HomePluginArea.values.toSet()..remove(HomePluginArea.center),
+        reason: '硬编码白名单会在新增区域时静默失效，必须由枚举派生',
+      );
+      expect(marketAllowedAreas.contains(HomePluginArea.center), isFalse);
     });
   });
 }

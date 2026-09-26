@@ -529,3 +529,58 @@ class HomeCustomPluginConfig {
 - FIX-03 ~ FIX-10（区域清单单一事实源、顺序落盘、URL 白名单、静默失败上报、
   扩展点接线或删除、权限 UI、数量与注释对齐、zip 状态机）
 
+---
+
+## 十三、批次 2 落地记录（2026-09-26，1.20.50 / 307）
+
+### FIX-03：区域解析收敛为单一事实源
+
+- 新增 `kHomePluginAreaFallback`（= `center`）、`kMarketExcludedAreas`、
+  `marketAllowedAreas`（= 枚举全集 − 排除集）。
+- `_areaFromName()` 与市场的 `_normalizeAreaCode()` 一律**委托** `homePluginAreaFromCode()`；
+  删掉市场侧硬编码的 `_allowedAreaCodes`（5 个值、不含 center）。
+- `HomeCustomPluginConfig.fromJson` 里键缺失时的默认值也改用统一回退值 ——
+  这一处漏了的话，"任意 code 两路径一致"的用例仍会挂（实测挂了才补上）。
+- 给 `_defaultIconForArea` / `_defaultColorForArea` 补 `center` 分支，
+  否则 center 会落到 `default` 复用 recommend 的图标与配色。
+
+原缺陷：同一个 `center` 输入，标签路径说「工具」而落库进「推荐」；且给枚举加
+新区域时市场侧会静默归一化掉（硬编码白名单不随枚举增长，而单一事实源测试
+只校验 label 与 displayOrder，不会失败）。
+
+### FIX-04：内置插件排序持久化 + 删死代码
+
+- 快照升到 v2，新增 `orderMap`（id → sort，内置与自定义统一）；
+  `kSupportedPluginSnapshotVersions = {1, 2}`，v1 仍可读（顺序回落默认）。
+- `reorderPlugin` 删掉"算了相邻中点又被 `base = 100` 覆盖"的整段死代码，
+  明确写成 100/200/300 整段重排。
+- `_mergeSnapshot` 一并合并 `orderMap`；导入校验的报错文案列出受支持版本。
+
+原缺陷：`_buildCurrentSnapshot()` 只写 `enabledMap`，内置插件的排序**没有落地位置**
+（`customPlugins` 只收非内置项），而 `_applySnapshot()` 重建内置项时只套用 `enabled`
+—— 拖动重排内置插件，重启后顺序还原；同一个交互，自定义插件却能保住顺序。
+
+### FIX-07：三个扩展点——选**方案 A（接线）**
+
+方案稿自己附录里倾向方案 B（删除）。选 A 的理由：那三个扩展点连同单测都在仓库里，
+文档还把「可扩展 Action 系统」「生命周期 + 事件总线」列为**已完成收益** ——
+删掉等于承认文档一直不实；接线才让"承诺 = 运行时"。
+
+- 新增 `PluginEvents`（installed / uninstalled / enabled / disabled / riskFlagged）
+  + `PluginEvents.all`（订阅与清理用，避免再抄一份）。
+- 新增 `HomePluginLifecycleObserver`（真实实现）：四个回调记**可查看的审计轨迹**
+  + 真实 `validate()`（id/标题为空的插件直接拒）；单例与公开构造的默认生命周期
+  都换成它，`configureLifecycle()` 仍可覆盖。**不再默认 Noop。**
+- `HomePluginActionRegistry`：静态字面量地图清空，内置动作改由 `registerDefaults()`
+  经**公开** `register()` 注册（键仍是 `HomePluginActionType.x.name`，不裸字符串）；
+  `contains()` / `run()` 先确保默认已注册。
+- `register` / `unregister` / `toggleEnabled` 真的 emit 事件；`marketRisk` 的插件
+  额外 emit `riskFlagged`。
+
+刻意不做运行时拦截：当前没有第三方代码在下游执行，没有可拦截的承载对象。
+
+### 与方案稿的第三处出入
+
+方案稿 FIX-07 的方案 A 里写"下架时停答题插件 overlay"——仓库里**没有**这样的
+overlay 启停 API（全仓 grep 无命中），故未实现该项；生命周期改做审计轨迹 + 真实校验。
+

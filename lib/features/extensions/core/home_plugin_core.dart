@@ -71,14 +71,35 @@ enum HomePluginArea {
   ];
 }
 
-/// 由 code 解析区域；未知 code 记日志并回落到 [HomePluginArea.center]。
+/// 未知 area code 的统一回退值 —— 标签路径与落库路径**必须一致**。
+///
+/// 此前两份实现各回各的：`homePluginAreaFromCode` 回 center（标签说「工具」），
+/// 而 `_areaFromName` 回 recommend（落库进「推荐」）。同一个 `center` 输入，
+/// 标签和落库是两个区域。
+const HomePluginArea kHomePluginAreaFallback = HomePluginArea.center;
+
+/// 市场投稿**显式排除**的区域。
+///
+/// 排除 center（工具区）是刻意的产品决策：工具区只放 App 自带工具，不开放投稿。
+/// 写成「枚举全集 - 排除集」而不是硬编码白名单 —— 硬编码那份（市场侧
+/// `_allowedAreaCodes`）在给 `HomePluginArea` 加新枚举值时不会自动生效，
+/// 新区域会被悄悄归一化掉，而单一事实源测试（只校验 label 与 displayOrder）
+/// 不会失败。这正是该测试想防的那类漂移。
+const Set<HomePluginArea> kMarketExcludedAreas = {HomePluginArea.center};
+
+/// 市场投稿允许的区域 = 枚举全集 - 排除集（新增枚举值自动生效）。
+Set<HomePluginArea> get marketAllowedAreas =>
+    HomePluginArea.values.toSet().difference(kMarketExcludedAreas);
+
+/// 由 code 解析区域；未知 code 记日志并回落到 [kHomePluginAreaFallback]。
 HomePluginArea homePluginAreaFromCode(String code) {
   final text = code.trim();
   for (final area in HomePluginArea.values) {
     if (area.name == text) return area;
   }
-  debugPrint('[plugin] 未知的 area code "$code"，已回落到 center');
-  return HomePluginArea.center;
+  debugPrint('[plugin] 未知的 area code "$code"，已回落到 '
+      '${kHomePluginAreaFallback.name}');
+  return kHomePluginAreaFallback;
 }
 
 /// 区域 code → 中文标签（单一事实源入口）。
@@ -235,8 +256,20 @@ String _payloadUrl(HomePluginActionContext actionContext) {
 class HomePluginActionRegistry {
   HomePluginActionRegistry._();
 
-  static final Map<String, HomePluginActionHandler> _handlers = {
-    HomePluginActionType.toast.name: (context, actionContext) async {
+  /// 内置动作实现表：由 [registerDefaults] 通过**公开** [register] 填入。
+  ///
+  /// 此前这里是静态字面量地图，而公开的 `register()` 零生产调用 ——
+  /// 「可扩展 Action 系统」看着完成、实际没有任何外部接入点被用过。
+  static final Map<String, HomePluginActionHandler> _handlers = {};
+
+  /// 注册全部内置动作。幂等，可重复调用。
+  ///
+  /// 键必须是 `HomePluginActionType.x.name`，**不得裸字符串** ——
+  /// plugin_area_action_single_source_test.dart 会锁这一条。
+  static void registerDefaults() {
+    register(
+      HomePluginActionType.toast.name,
+      (context, actionContext) async {
       if (context == null) return;
       await _showSnack(
         context,
@@ -245,7 +278,10 @@ class HomePluginActionRegistry {
             : actionContext.payload.trim(),
       );
     },
-    HomePluginActionType.navigate.name: (context, actionContext) async {
+    );
+    register(
+      HomePluginActionType.navigate.name,
+      (context, actionContext) async {
       if (context == null) return;
       HomePluginRouteRegistry.registerDefaults();
       final routeCode = _payloadRouteCode(actionContext);
@@ -253,29 +289,40 @@ class HomePluginActionRegistry {
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));
     },
-    HomePluginActionType.openDailyNews.name: (context, actionContext) async {
+    );
+    register(
+      HomePluginActionType.openDailyNews.name,
+      (context, actionContext) async {
       if (context == null) return;
       HomePluginRouteRegistry.registerDefaults();
       final builder = HomePluginRouteRegistry.lookup('openDailyNews');
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));
     },
-    HomePluginActionType.openNovelList.name: (context, actionContext) async {
+    );
+    register(
+      HomePluginActionType.openNovelList.name,
+      (context, actionContext) async {
       if (context == null) return;
       HomePluginRouteRegistry.registerDefaults();
       final builder = HomePluginRouteRegistry.lookup('openNovelList');
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));
     },
-    HomePluginActionType.openVideoList.name: (context, actionContext) async {
+    );
+    register(
+      HomePluginActionType.openVideoList.name,
+      (context, actionContext) async {
       if (context == null) return;
       HomePluginRouteRegistry.registerDefaults();
       final builder = HomePluginRouteRegistry.lookup('openVideoList');
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));
     },
-    HomePluginActionType.openImageGenerator.name:
-        (context, actionContext) async {
+    );
+    register(
+      HomePluginActionType.openImageGenerator.name,
+      (context, actionContext) async {
           if (context == null) return;
           HomePluginRouteRegistry.registerDefaults();
           final builder = HomePluginRouteRegistry.lookup('openImageGenerator');
@@ -284,20 +331,28 @@ class HomePluginActionRegistry {
         },
     // GitHub 加速下载是个底部面板而不是整页，所以走 show 而不是 Navigator.push。
     // payload 若带链接就直接预填并自动转换，方便从别处「用加速下载打开」。
-    // P2-2：具体页面/面板的依赖已拆到 builtin_plugin_pages.dart。
-    HomePluginActionType.openGithubAccel.name: (context, actionContext) async {
+    // P2-2：具体页面/面板的依赖已拆到 builtin_plugin_pages.dart。,
+    );
+    register(
+      HomePluginActionType.openGithubAccel.name,
+      (context, actionContext) async {
       await showGithubAccelAction(context, _payloadUrl(actionContext));
     },
-    HomePluginActionType.openRemoteStorage.name: (context, actionContext) async {
+    );
+    register(
+      HomePluginActionType.openRemoteStorage.name,
+      (context, actionContext) async {
       if (context == null) return;
       HomePluginRouteRegistry.registerDefaults();
       final builder = HomePluginRouteRegistry.lookup('openRemoteStorage');
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));
     },
-  };
+    );
+  }
 
   static bool contains(String actionCode) {
+    registerDefaults();
     return _handlers.containsKey(actionCode.trim());
   }
 
@@ -312,6 +367,7 @@ class HomePluginActionRegistry {
     BuildContext? context,
     HomePluginActionContext actionContext,
   ) async {
+    registerDefaults();
     final handler = _handlers[actionCode.trim()];
     if (handler == null) return false;
     await handler(context, actionContext);
@@ -319,17 +375,10 @@ class HomePluginActionRegistry {
   }
 }
 
-HomePluginArea _areaFromName(String name) {
-  for (final value in HomePluginArea.values) {
-    if (value.name == name) {
-      return value;
-    }
-  }
-  // P2-5：未知值不再静默回退，打日志留痕（回退值保持 recommend 不变）。
-  debugPrint('[plugin] 未知 area code "$name"，已回落到 '
-      '${HomePluginArea.recommend.name}');
-  return HomePluginArea.recommend;
-}
+/// 落库路径的区域解析 —— **委托**单一事实源，不再自己抄一份枚举遍历。
+///
+/// 此前这里回 recommend 而标签路径回 center，导致「标签说工具、落库存推荐」。
+HomePluginArea _areaFromName(String name) => homePluginAreaFromCode(name);
 
 HomePluginActionType _actionFromName(String name) {
   for (final value in HomePluginActionType.values) {
@@ -540,8 +589,11 @@ class HomeCustomPluginConfig {
           ? null
           : _asString(json['iconFontPackage']),
       colorValue: _asInt(json['colorValue'], Colors.blue.toARGB32()),
+      // 键缺失/空串时的默认值也必须走统一回退值（center）：
+      // 这里曾经写死 recommend，于是同一条脏数据在标签路径说「工具」、
+      // 在落库路径进「推荐」。历史存档都带 area 字段，改它只影响破损数据。
       area: _areaFromName(
-        _asString(json['area'], HomePluginArea.recommend.name),
+        _asString(json['area'], kHomePluginAreaFallback.name),
       ),
       actionType: _actionFromName(
         _asString(json['actionType'], fallbackActionName),
@@ -566,25 +618,39 @@ class HomeCustomPluginConfig {
 }
 
 /// 插件快照结构版本。`toJson` 写出、`importSnapshotJson` 校验，二者须同源。
-const int kPluginSnapshotVersion = 1;
+///
+/// v2 新增 `orderMap`（id → sort）：v1 只存 enabledMap，内置插件的排序信息
+/// 没有任何落地位置 —— 拖动重排内置插件，重启后顺序还原，而自定义插件因为
+/// 走 customPlugins 能保住顺序。同一交互两种结果。
+const int kPluginSnapshotVersion = 2;
+
+/// 兼容读取的历史版本：v1 没有 orderMap，读出来内置顺序回落默认值。
+const Set<int> kSupportedPluginSnapshotVersions = {1, 2};
 
 class HomePluginSnapshot {
   final Map<String, bool> enabledMap;
+
+  /// id → sort，内置与自定义**统一**存这里（v2 新增）。
+  final Map<String, int> orderMap;
+
   final List<HomeCustomPluginConfig> customPlugins;
 
   const HomePluginSnapshot({
     required this.enabledMap,
     required this.customPlugins,
+    this.orderMap = const {},
   });
 
   const HomePluginSnapshot.empty()
     : enabledMap = const {},
+      orderMap = const {},
       customPlugins = const [];
 
   Map<String, dynamic> toJson() {
     return {
       'version': kPluginSnapshotVersion,
       'enabledMap': enabledMap,
+      'orderMap': orderMap,
       'customPlugins': customPlugins.map((e) => e.toJson()).toList(),
     };
   }
@@ -615,8 +681,18 @@ class HomePluginSnapshot {
       }
     }
 
+    // v1 没有这个字段：读出来是空表，内置顺序回落各自默认值（向后兼容）。
+    final orderMap = <String, int>{};
+    final orderRaw = json['orderMap'];
+    if (orderRaw is Map) {
+      orderRaw.forEach((key, value) {
+        if (value is num) orderMap[key.toString()] = value.toInt();
+      });
+    }
+
     return HomePluginSnapshot(
       enabledMap: enabledMap,
+      orderMap: orderMap,
       customPlugins: customPlugins,
     );
   }
@@ -748,6 +824,99 @@ class NoopHomePluginLifecycle implements HomePluginLifecycle {
   Future<bool> validate(HomePlugin plugin) async => true;
 }
 
+/// 插件事件名（单一事实源）：此前事件总线只有实现、没有任何生产 emit ——
+/// App 从不知道"插件装了/停了/被判风险"，文档却把它列为已完成能力。
+class PluginEvents {
+  PluginEvents._();
+
+  static const String installed = 'plugin.installed';
+  static const String uninstalled = 'plugin.uninstalled';
+  static const String enabled = 'plugin.enabled';
+  static const String disabled = 'plugin.disabled';
+  static const String riskFlagged = 'plugin.risk';
+
+  /// 全部事件名（订阅/清理用，避免各处再抄一份）。
+  static const List<String> all = [
+    installed,
+    uninstalled,
+    enabled,
+    disabled,
+    riskFlagged,
+  ];
+}
+
+/// 面向生产的生命周期实现 —— 三个扩展点的**第一个真实消费者**。
+///
+/// 接线前：单例写死 `NoopHomePluginLifecycle`，事件总线与动作注册表的公开
+/// `register()` 全零生产调用；代码与单测都在，App 从未用过。
+///
+/// 这里只做"真能做的事"，不假装有沙箱：
+///   - `validate`：真实校验（id/标题为空的行在 UI 上是空白，直接拒掉）；
+///   - 四个回调：留一条**可查看的审计轨迹**（什么时候装/停/卸的）；
+///   - 订阅事件总线，把事件也记进同一条轨迹。
+///
+/// 刻意不做运行时拦截：当前没有第三方代码在下游执行，没有可拦截的承载对象。
+class HomePluginLifecycleObserver implements HomePluginLifecycle {
+  HomePluginLifecycleObserver({int keepLast = 50}) : _keepLast = keepLast {
+    for (final event in PluginEvents.all) {
+      PluginEventBus.instance.subscribe(event, (data) => _record(event, data));
+    }
+  }
+
+  static final HomePluginLifecycleObserver instance =
+      HomePluginLifecycleObserver();
+
+  final int _keepLast;
+  final List<String> _trail = <String>[];
+
+  /// 最近的生命周期/事件轨迹（最新的在末尾）。诊断用，别当数据源。
+  List<String> get trail => List.unmodifiable(_trail);
+
+  void _record(String event, dynamic data) {
+    _trail.add(data == null ? event : '$event:${data.toString()}');
+    while (_trail.length > _keepLast) {
+      _trail.removeAt(0);
+    }
+  }
+
+  void _log(String stage, HomePlugin plugin) {
+    debugPrint('[plugin] $stage ${plugin.id}（${plugin.area.name}）');
+  }
+
+  @override
+  Future<void> onInitialize(HomePlugin plugin) async {
+    _log('初始化', plugin);
+    _record(PluginEvents.installed, plugin.id);
+  }
+
+  @override
+  Future<void> onEnabled(HomePlugin plugin) async {
+    _log('启用', plugin);
+    _record(PluginEvents.enabled, plugin.id);
+  }
+
+  @override
+  Future<void> onDisabled(HomePlugin plugin) async {
+    _log('停用', plugin);
+    _record(PluginEvents.disabled, plugin.id);
+  }
+
+  @override
+  Future<void> onUninstall(HomePlugin plugin) async {
+    _log('卸载', plugin);
+    _record(PluginEvents.uninstalled, plugin.id);
+  }
+
+  @override
+  Future<bool> validate(HomePlugin plugin) async {
+    if (plugin.id.trim().isEmpty || plugin.title.trim().isEmpty) {
+      debugPrint('[plugin] 校验不通过：id 或标题为空，已拒绝注册');
+      return false;
+    }
+    return true;
+  }
+}
+
 class PluginEventBus {
   PluginEventBus();
 
@@ -782,18 +951,25 @@ class HomePluginHost {
     HomePluginPersistence? persistence,
     HomePluginLifecycle? lifecycle,
   }) : _persistence = persistence ?? HomePluginPersistence(),
-       _lifecycle = lifecycle ?? const NoopHomePluginLifecycle();
+       // 默认也用真实实现，与单例保持一致（注入仍可覆盖）。
+       _lifecycle = lifecycle ?? HomePluginLifecycleObserver.instance;
 
   HomePluginHost._()
     : _persistence = HomePluginPersistence(),
-      _lifecycle = const NoopHomePluginLifecycle();
+      // 生产默认走真实实现（审计轨迹 + 真实校验），不再是 Noop。
+      _lifecycle = HomePluginLifecycleObserver.instance;
 
   static final HomePluginHost instance = HomePluginHost._();
 
   final ValueNotifier<List<HomePlugin>> _notifier =
       ValueNotifier<List<HomePlugin>>(<HomePlugin>[]);
 
-  final HomePluginLifecycle _lifecycle;
+  /// 非 final：测试可注入，也可由 App 换成别的实现。
+  HomePluginLifecycle _lifecycle;
+
+  /// 换掉生命周期实现（接线点；测试与 App 定制都用它）。
+  void configureLifecycle(HomePluginLifecycle lifecycle) =>
+      _lifecycle = lifecycle;
 
   // 非 final：测试可注入内存实现（injectPersistenceForTesting）。
   HomePluginPersistence _persistence;
@@ -916,6 +1092,14 @@ class HomePluginHost {
     if (isNew) {
       await _lifecycle.onInitialize(normalized);
     }
+    PluginEventBus.instance.emit(
+      isNew ? PluginEvents.installed : PluginEvents.enabled,
+      normalized.id,
+    );
+    final cfg = normalized.customConfig;
+    if (cfg != null && cfg.marketRisk) {
+      PluginEventBus.instance.emit(PluginEvents.riskFlagged, normalized.id);
+    }
   }
 
   Future<void> addCustomPlugin(HomeCustomPluginConfig config) async {
@@ -935,6 +1119,7 @@ class HomePluginHost {
     _notifier.value = _sorted(list);
     await _persist();
     await _lifecycle.onUninstall(removed);
+    PluginEventBus.instance.emit(PluginEvents.uninstalled, removed.id);
   }
 
   Future<void> toggleEnabled(String id, bool enabled) async {
@@ -966,6 +1151,10 @@ class HomePluginHost {
     } else {
       await _lifecycle.onDisabled(updated);
     }
+    PluginEventBus.instance.emit(
+      enabled ? PluginEvents.enabled : PluginEvents.disabled,
+      updated.id,
+    );
   }
 
   Future<void> reorderPlugin(
@@ -989,25 +1178,18 @@ class HomePluginHost {
     final moved = inArea.removeAt(oldIndex);
     inArea.insert(newIndex, moved);
 
-    // 重新分配 sort 值
-    int base = 100;
-    for (final p in inArea) {
-      if (p.id == moved.id) {
-        // 分配中间值
-        final prevSort = newIndex > 0 ? inArea[newIndex - 1].sort : 0;
-        final nextSort = newIndex < inArea.length - 1
-            ? inArea[newIndex + 1].sort
-            : prevSort + 200;
-        base = (prevSort + nextSort) ~/ 2;
-      }
-    }
-
-    base = 100;
+    // 区域内顺序即 sort 升序：整段重排为 100/200/300…
+    //
+    // 此前这里先算「相邻中点」赋给 base，紧接着 `base = 100` 把它覆盖掉 ——
+    // 整段是死代码（结果可用，但留下永不生效的逻辑，读的人会以为做了中点插入）。
+    // 中点方案也无法多表达任何顺序：_sorted() 的二级排序本就是 title。
+    const int base = 100;
+    const int step = 100;
     final list = List<HomePlugin>.from(_notifier.value);
     for (int i = 0; i < inArea.length; i++) {
       final idx = list.indexWhere((p) => p.id == inArea[i].id);
       if (idx >= 0) {
-        list[idx] = list[idx].copyWith(sort: base + i * 100);
+        list[idx] = list[idx].copyWith(sort: base + i * step);
       }
     }
 
@@ -1061,10 +1243,15 @@ class HomePluginHost {
     }
 
     // 1) 版本校验：缺失/不匹配一律拒绝，避免把无关 JSON 当成空快照。
+    //    受支持版本是**集合**（v1 无 orderMap，仍要能读进来）。
     final versionRaw = decoded['version'];
-    if (versionRaw is! num || versionRaw.toInt() != kPluginSnapshotVersion) {
+    final version = versionRaw is num ? versionRaw.toInt() : null;
+    if (version == null ||
+        !kSupportedPluginSnapshotVersions.contains(version)) {
       throw FormatException(
-        '快照版本不受支持（期望 $kPluginSnapshotVersion，实际 ${versionRaw ?? '缺失'}）',
+        '快照版本不受支持（支持 '
+        '${kSupportedPluginSnapshotVersions.join(' / ')}，'
+        '实际 ${versionRaw ?? '缺失'}）',
       );
     }
 
@@ -1118,6 +1305,7 @@ class HomePluginHost {
 
     return HomePluginSnapshot(
       enabledMap: enabled,
+      orderMap: <String, int>{...base.orderMap, ...incoming.orderMap},
       customPlugins: customMap.values.toList(),
     );
   }
@@ -1127,10 +1315,14 @@ class HomePluginHost {
 
   HomePluginSnapshot _buildCurrentSnapshot() {
     final enabledMap = <String, bool>{};
+    final orderMap = <String, int>{};
     final customPlugins = <HomeCustomPluginConfig>[];
 
     for (final plugin in _notifier.value) {
       enabledMap[plugin.id] = plugin.enabled;
+      // 顺序对**所有**插件都记（此前只写 enabledMap + 非内置的 customPlugins，
+      // 内置插件的排序没有任何落地位置 —— 重排后重启即丢）。
+      orderMap[plugin.id] = plugin.sort;
       if (!plugin.builtIn) {
         final config =
             (plugin.customConfig ?? _fallbackConfigFromPlugin(plugin)).copyWith(
@@ -1144,6 +1336,7 @@ class HomePluginHost {
 
     return HomePluginSnapshot(
       enabledMap: enabledMap,
+      orderMap: orderMap,
       customPlugins: customPlugins,
     );
   }
@@ -1154,13 +1347,25 @@ class HomePluginHost {
     final defaults = _buildDefaultPlugins();
     for (final plugin in defaults) {
       final enabled = snapshot.enabledMap[plugin.id] ?? plugin.enabled;
-      result.add(plugin.copyWith(enabled: enabled));
+      result.add(
+        plugin.copyWith(
+          enabled: enabled,
+          sort: snapshot.orderMap[plugin.id] ?? plugin.sort,
+        ),
+      );
     }
 
     for (final config in snapshot.customPlugins) {
       if (!config.isValid) continue;
       final enabled = snapshot.enabledMap[config.id] ?? config.enabled;
-      result.add(_pluginFromCustomConfig(config.copyWith(enabled: enabled)));
+      result.add(
+        _pluginFromCustomConfig(
+          config.copyWith(
+            enabled: enabled,
+            sort: snapshot.orderMap[config.id] ?? config.sort,
+          ),
+        ),
+      );
     }
 
     _notifier.value = _sorted(result);
