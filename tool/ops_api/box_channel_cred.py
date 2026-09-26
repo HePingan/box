@@ -220,6 +220,12 @@ def cmd_list(a) -> int:
             f"{'只读' if v.get('readOnly') else '可写'}  建于 {v.get('createdAt', '?')}")
     say("")
     for host, cfg in FILES.items():
+        if not cfg["all"].exists():
+            # 读不到文件 ≠ 已经退休：以前这里会报"已退休"，在错的机器上跑就会
+            # 让人以为退休做过了（真发生过）。宁可疑，不许错。
+            say(f"  {host}：⚠ htpasswd 不在 {cfg['all']} —— 你大概不是在边缘机上跑，"
+                f"状态未知（不是'已退休'）")
+            continue
         users = [ln.split(":", 1)[0] for ln in read_lines(cfg["all"])]
         legacy = "还在（App 里没换凭据的设备仍能用它）" if LEGACY_USER in users else "已退休"
         say(f"  {host} 的 htpasswd 里有：{', '.join(users) or '（空）'}")
@@ -236,6 +242,9 @@ def cmd_retire_legacy(a) -> int:
     hosts = [a.host] if a.host else ["hpa888", "175"]
     for host in hosts:
         cfg = FILES[host]
+        if not cfg["all"].exists():
+            say(f"  ✗ {host}：htpasswd 不在 {cfg['all']} —— 拒绝动手（在边缘机上跑这个工具）")
+            return 3
         lines = read_lines(cfg["all"])
         has = any(ln.startswith(LEGACY_USER + ":") for ln in lines)
         if not has:
