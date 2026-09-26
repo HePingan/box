@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:box/features/extensions/plugins/server_ops/files_tab.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_tab.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_diagnostics.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_help.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
@@ -353,6 +354,31 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     });
   }
 
+  /// 打开「凭据小抄」。用 SelectableText：里面的命令要能让用户直接复制走。
+  void _showCredentialHelp() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('凭据小抄'),
+        content: const SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              opsCredentialHelpText,
+              style: TextStyle(fontSize: 12, height: 1.55),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _save() async {
     setState(() {
       _saving = true;
@@ -450,6 +476,14 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               onPressed: _saving ? null : _add,
               icon: const Icon(Icons.add_rounded, size: 16),
               label: const Text('新增服务器'),
+            ),
+            const SizedBox(height: 2),
+            // 用户的原话是"我怕忘记了"：生成/撤销口令的命令与四个坑得放在他随手能翻的地方。
+            // 这里只放"怎么做"，不放"是什么"（一个口令都不许出现）。
+            TextButton.icon(
+              onPressed: _showCredentialHelp,
+              icon: const Icon(Icons.help_outline_rounded, size: 16),
+              label: const Text('凭据怎么生成 / 怎么填'),
             ),
             if (_error != null) ...[
               const SizedBox(height: 8),

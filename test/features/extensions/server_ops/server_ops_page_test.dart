@@ -159,4 +159,21 @@ void main() {
     expect(find.textContaining('https://box.hpa888.top/dav175'), findsOneWidget);
     expect(find.textContaining('终端：'), findsWidgets);
   });
+  testWidgets('设置弹层里有「凭据怎么生成 / 怎么填」，点了能看到小抄', (tester) async {
+    await _pumpPage(tester);
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('凭据怎么生成 / 怎么填'), findsOneWidget, reason: '用户要求放进 App 随手可翻');
+
+    await tester.tap(find.text('凭据怎么生成 / 怎么填'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('凭据小抄'), findsOneWidget);
+    expect(find.textContaining('box_channel_cred.py'), findsWidgets,
+        reason: '命令要能在界面上看到并复制');
+    expect(find.textContaining('只读接口地址'), findsWidgets);
+  });
 }
