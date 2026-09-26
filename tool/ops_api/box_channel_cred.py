@@ -221,7 +221,37 @@ def cmd_list(a) -> int:
     say("")
     for host, cfg in FILES.items():
         users = [ln.split(":", 1)[0] for ln in read_lines(cfg["all"])]
+        legacy = "还在（App 里没换凭据的设备仍能用它）" if LEGACY_USER in users else "已退休"
         say(f"  {host} 的 htpasswd 里有：{', '.join(users) or '（空）'}")
+        say(f"  {host} 的旧通道口令（{LEGACY_USER}）：{legacy}")
+    return 0
+
+
+def cmd_retire_legacy(a) -> int:
+    """把旧通道口令那一行删掉 —— 这一步之后，还在用旧口令的设备立刻 401。
+
+    只有在"设备都换成设备凭据"之后才该跑；跑完旧口令就再也回不来了（要恢复只能
+    重新往 htpasswd 里加一行 apr1/bcrypt 哈希）。
+    """
+    hosts = [a.host] if a.host else ["hpa888", "175"]
+    for host in hosts:
+        cfg = FILES[host]
+        lines = read_lines(cfg["all"])
+        has = any(ln.startswith(LEGACY_USER + ":") for ln in lines)
+        if not has:
+            say(f"  {host}：旧口令那一行本来就不在（已经退休过了）")
+            continue
+        if not a.yes:
+            say(f"  {host}：要删掉旧口令那一行 —— 加 --yes 确认（删了之后用它登录的设备立刻 401）")
+            return 2
+        write_lines(cfg["all"], [ln for ln in lines if not ln.startswith(LEGACY_USER + ":")])
+        rw = read_lines(cfg["rw"])
+        if any(ln.startswith(LEGACY_USER + ":") for ln in rw):
+            write_lines(cfg["rw"], [ln for ln in rw if not ln.startswith(LEGACY_USER + ":")])
+        if host == "175":
+            sync_175(cfg)
+        restart_channel(cfg)
+        say(f"  ✓ {host}：旧口令那一行已删，rclone 已重启、nginx 已 reload —— 旧口令现在 401")
     return 0
 
 
@@ -324,6 +354,29 @@ def selftest() -> int:
             check("撤销只删自己那一行（ro-phone-ro 还在）", "ro-phone-ro" in after, str(after))
             check("撤销后 rw 文件里也没有了",
                   "phone-x" not in [ln.split(":", 1)[0] for ln in read_lines(cfg["rw"])])
+            # 先问"没 --yes 该不该拒绝"（此时旧口令那一行还在），再真退休
+            class H:
+                host, yes = "hpa888", False
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_no_yes = cmd_retire_legacy(H())
+            check("没有 --yes 时拒绝退休（rc=2）", rc_no_yes == 2, f"rc={rc_no_yes}")
+
+            class G:
+                host, yes = "hpa888", True
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_retire = cmd_retire_legacy(G())
+            check("退休旧口令：返回 0", rc_retire == 0, f"rc={rc_retire}")
+            retired = [ln.split(":", 1)[0] for ln in read_lines(cfg["all"])]
+            check("退休后旧口令那一行没了", LEGACY_USER not in retired, str(retired))
+            check("退休后**设备凭据还在**（不能连别人的一起删）",
+                  "ro-phone-ro" in retired, str(retired))
+            rw_after = [ln.split(":", 1)[0] for ln in read_lines(cfg["rw"])]
+            check("退休后写档文件里也清了旧口令",
+                  LEGACY_USER not in rw_after, str(rw_after))
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_again = cmd_retire_legacy(G())
+            check("再退休一次是幂等的（返回 0，不报错）", rc_again == 0, f"rc={rc_again}")
+
             left = [v["label"] for v in load_state().values()]
             check("状态文件里只剩没被撤销的那条", left == ["phone-ro"], str(left))
         finally:
@@ -346,6 +399,9 @@ def main(argv: list[str]) -> int:
     p3 = sub.add_parser("revoke")
     p3.add_argument("--label", required=True)
     p3.add_argument("--host", required=True, choices=["hpa888", "175"])
+    p4 = sub.add_parser("retire-legacy", help="删掉旧通道口令那一行（不可逆）")
+    p4.add_argument("--host", choices=["hpa888", "175"], help="不给就两台都做")
+    p4.add_argument("--yes", action="store_true", help="确认：删了之后用旧口令的设备立刻 401")
     a = ap.parse_args(argv)
 
     if a.selftest:
@@ -356,6 +412,8 @@ def main(argv: list[str]) -> int:
         return cmd_list(a)
     if a.cmd == "revoke":
         return cmd_revoke(a)
+    if a.cmd == "retire-legacy":
+        return cmd_retire_legacy(a)
     ap.print_help()
     return 2
 

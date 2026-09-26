@@ -7,8 +7,17 @@
 
 判定规则：
   1. 在某个 .dart 文件里**定义**了公开方法（缩进 2 空格、方法名不以 `_` 开头）；
-  2. 在**该文件之外**（默认扫 lib/ 与 test/ 全仓）没有任何 `名字(` 形式的调用；
+  2. 在**该文件之外**（默认扫 lib/ 与 test/ 全仓）没有任何引用 —— 引用有两种形状：
+     `名字(` 是直接调用，`.名字` 是把它当回调传递（tear-off，例如
+     `pull('概览', client.overview)`）；**两种都算**，否则"接了线"会被误报成悬挂；
   3. 两条都成立 → 报为"悬挂 API"。
+
+分两档：
+  * **悬挂**（红，退出码 1）：全仓（含 test/）都零引用 —— 写了确实没人用；
+  * **只有测试在调**（黄，不影响退出码）：`lib/` 内零引用、只有 `test/` 在调 ——
+    这是"接口 + 用例都在、界面没接上"的半成品（`logs` 之前就是这样藏了很久，
+    因为老口径把 test/ 里的调用也算调用点，它连黄灯都不会亮）。**黄灯要人看一眼**：
+    要么接上界面，要么删掉，要么在 ALLOW 里说明这是给外部用的。
 
 已知的边界（不假装它能判所有情况）：
   - 私有方法（`_foo`）不参与：它们本来就只在本文件用；
@@ -16,7 +25,10 @@
     所以"只被 override、从不被直接调用"的方法会被报出来。遇到这种：
       a) 如果它真的没接上 → 接上（这正是本脚本要抓的）；
       b) 如果它是给外部用的（平台侧、其他包、反射式调用）→ 加进 ALLOW 并写原因；
-  - 只做"名字 + 左括号"的文本匹配，不做语义分析（宁可漏报也不误报）。
+  - 只做文本匹配（`名字(` 或 `.名字`），不做语义分析：同名但不同类的方法会互相
+    充数（例如某个类的 `list` 被另一处的 `.list` 认成引用）。宁可漏报也不误报 ——
+    这个闸门是为了抓"整条线没接上"，不是为了证明每条线都接了；
+  - 黄灯（只有测试在调）是**提示不是判决**：有的确实是半成品，有的就是测试钩子。
 
 用法：
   python3 tool/scan_dangling_apis.py                    # 扫默认范围（见下方 SCOPE）
@@ -48,7 +60,10 @@ SCOPE = [
 SEARCH = ["lib", "test"]
 
 # 白名单：确认为"给外部调用"的方法，格式 (方法名, 原因)。
-ALLOW: list[tuple[str, str]] = []
+ALLOW: list[tuple[str, str]] = [
+    # 测试钩子：等"落盘那次"完成，只有用例需要（名字与注释都写明了是测试用）。
+    ("debugAwaitPersistence", "测试钩子（transfer_queue），不在界面里用"),
+]
 
 # 方法声明：缩进 2 空格，返回类型 + 名字 + 左括号；名字不以 _ 开头。
 DECL = re.compile(
@@ -84,13 +99,21 @@ def reference_counts(
     declarations: dict[str, list[str]],
     search_roots: list[str],
 ) -> dict[str, int]:
-    """每个名字在（全仓搜索范围内）`名字(` 形式的**调用**次数。
+    """每个名字在（搜索范围内）被**引用**的次数：`名字(`（调用）与 `.名字`（传回调）。
 
     必须把定义行本身排除掉：定义行也长成 `名字(`，算进去的话任何方法都至少
     有 1 次"调用"，闸门永远不会红——一个静默失效的闸门比没有闸门更糟。
+
+    为什么要认 `.名字`：把方法当回调传（`pull('概览', client.overview)`）是**真的接了线**，
+    只认括号会把它误报成悬挂（294 的 `channel` 就这么被误报过一次）。
     """
+    names = set(names)
     counts = {name: 0 for name in names}
-    pattern = re.compile(r"\b(" + "|".join(re.escape(n) for n in sorted(names)) + r")\s*\(")
+    if not names:
+        return counts
+    alt = "|".join(re.escape(n) for n in sorted(names))
+    call = re.compile(r"\b(" + alt + r")\s*\(")
+    tear = re.compile(r"\.\s*(" + alt + r")\b(?!\s*\()")
     for root_name in search_roots:
         root = REPO / root_name
         if not root.exists():
@@ -98,12 +121,13 @@ def reference_counts(
         for path in root.rglob("*.dart"):
             rel = str(path.relative_to(REPO))
             text = path.read_text(encoding="utf-8", errors="replace")
-            for match in pattern.finditer(text):
-                name = match.group(1)
-                line = text.count("\n", 0, match.start()) + 1
-                if f"{rel}:{line}" in declarations.get(name, []):
-                    continue  # 这是定义行，不是调用
-                counts[name] += 1
+            for pattern in (call, tear):
+                for match in pattern.finditer(text):
+                    name = match.group(1)
+                    line = text.count("\n", 0, match.start()) + 1
+                    if f"{rel}:{line}" in declarations.get(name, []):
+                        continue  # 这是定义行，不是引用
+                    counts[name] += 1
     return counts
 
 
@@ -129,15 +153,28 @@ def main() -> int:
     }
     counts = reference_counts(set(candidates), declarations, search_roots)
 
+    # lib/ 内的引用单独数一遍：用来区分"界面/业务真的在用"与"只有测试在调"。
+    lib_roots = [r for r in search_roots if r == "lib" or r.startswith("lib/")]
+    lib_counts = reference_counts(set(candidates), declarations, lib_roots)
+
     dangling: list[tuple[str, list[str]]] = []
+    test_only: list[tuple[str, list[str], int]] = []
     for name, locations in candidates.items():
-        # 出现在定义行上的那一次不算调用；定义文件之外零调用才叫悬挂。
-        if counts[name] > 0:
-            continue
-        dangling.append((name, locations))
+        # 出现在定义行上的那一次不算引用；定义文件之外零引用才叫悬挂。
+        if counts[name] == 0:
+            dangling.append((name, locations))
+        elif lib_roots and lib_counts[name] == 0:
+            test_only.append((name, locations, counts[name]))
 
     print(f"扫描目录: {', '.join(str(d.relative_to(REPO)) for d in directories)}")
     print(f"公开方法: {len(declarations)} 个（白名单 {len(allowed)} 个不计）")
+    print("引用口径: `名字(` 与 `.名字`（传回调）都算引用；定义行不算")
+    if test_only:
+        print("")
+        print(f"只有测试在调（黄灯 {len(test_only)} 个，不影响退出码）：")
+        for name, locations, count in sorted(test_only):
+            print(f"  {name}  ← 定义于 {locations[0]}；引用 {count} 次，都在 test/ 里")
+        print("  处理方式：接上界面、删掉、或在 ALLOW 里登记原因（半成品最会藏在这里）")
     if not dangling:
         print("悬挂 API: 0 个 ✅（每个公开方法至少有一个调用点）")
         return 0

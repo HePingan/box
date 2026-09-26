@@ -324,15 +324,28 @@ def verify() -> list[str]:
         c = curl_code(PUBLIC + path)
         check(f"{path} 没凭据 → 401", c == "401", f"拿到 {c}")
 
-    say("== 2) 旧口令仍然能进（迁移期不能把 App 弄断）==")
-    c = wait_ready(PUBLIC + "/dav/", "boxops", pw_hpa, "PROPFIND")
-    check("/dav/ 旧口令列目录 → 207", c == "207", f"拿到 {c}")
-    c = wait_ready(PUBLIC + "/dav175/", "boxops", pw_175, "PROPFIND")
-    check("/dav175/ 旧口令列目录 → 207", c == "207", f"拿到 {c}")
-    c = wait_ready(PUBLIC + "/term/", "boxops", pw_hpa)
-    check("/term/ 旧口令 → 2xx", c.startswith("2"), f"拿到 {c}")
-    c = wait_ready(PUBLIC + "/term175/", "boxops", pw_175)
-    check("/term175/ 旧口令 → 2xx", c.startswith("2"), f"拿到 {c}")
+    # 旧口令已经退休时（htpasswd 里没有 boxops 那一行），这一节改成断言它进不来 ——
+    # 否则这个脚本在退休之后每次重跑都会"预检/验证不过"而自动回滚。
+    legacy_alive = bool(htpasswd_line(CHANNELS["hpa888"]["all"], "boxops"))
+    if not legacy_alive:
+        say("== 2) 旧口令已退休：断言它进不来（401）==")
+        for path, method, user, pw in (("/dav/", "PROPFIND", "boxops", pw_hpa),
+                                       ("/dav175/", "PROPFIND", "boxops", pw_175),
+                                       ("/term/", "GET", "boxops", pw_hpa),
+                                       ("/term175/", "GET", "boxops", pw_175)):
+            c = curl_code(PUBLIC + path, user, pw, method,
+                          ["Depth: 0"] if method == "PROPFIND" else None)
+            check(f"{path} 旧口令 → 401（已退休）", c == "401", f"拿到 {c}")
+    else:
+        say("== 2) 旧口令仍然能进（迁移期不能把 App 弄断）==")
+        c = wait_ready(PUBLIC + "/dav/", "boxops", pw_hpa, "PROPFIND")
+        check("/dav/ 旧口令列目录 → 207", c == "207", f"拿到 {c}")
+        c = wait_ready(PUBLIC + "/dav175/", "boxops", pw_175, "PROPFIND")
+        check("/dav175/ 旧口令列目录 → 207", c == "207", f"拿到 {c}")
+        c = wait_ready(PUBLIC + "/term/", "boxops", pw_hpa)
+        check("/term/ 旧口令 → 2xx", c.startswith("2"), f"拿到 {c}")
+        c = wait_ready(PUBLIC + "/term175/", "boxops", pw_175)
+        check("/term175/ 旧口令 → 2xx", c.startswith("2"), f"拿到 {c}")
 
     say("== 3) 可写凭据：能写能进终端 ==")
     c = wait_ready(PUBLIC + "/dav/", rw_user, rw, "PROPFIND")
@@ -440,8 +453,9 @@ def main(argv: list[str]) -> int:
             pw = out.split("=", 1)[1].strip() if "=" in out else ""
             path = "/term175/"
         if not htpasswd_line(cfg["all"], "boxops"):
-            say(f"✗ {host}: {cfg['all']} 里没有 boxops 这一行 —— 切过去旧口令就没法用了，停手")
-            return 1
+            # 退休之后再跑这个脚本是正常操作：没有那一行就不做"旧口令仍能进"的检查
+            pre.append(f"{host}: 旧通道口令已退休（htpasswd 里没有 boxops）—— 跳过旧口令检查 ✅")
+            continue
         # 线上的条目是 $apr1$（Apache MD5），glibc 的 crypt 不认 —— 不自己算哈希，
         # 直接问 nginx（它读的就是这个文件）：旧口令能过，就说明条目与当前口令一致。
         c = curl_code(PUBLIC + path, "boxops", pw)
@@ -518,7 +532,10 @@ def main(argv: list[str]) -> int:
         say(f"回滚完成（nginx -t {'OK' if rc2 == 0 else out2}）；线上恢复为改动前的样子")
         return 1
     say("\n=== 全部通过 ✅ 文件与终端现在按设备凭据（可撤销、有作用域、有审计）===")
-    say("（旧口令仍然有效；审计里用户名还是 boxops 就说明那台设备还没换）")
+    say("（旧口令："
+        + ("仍然有效（审计里用户名还是 boxops 说明那台设备还没换）" if legacy_alive
+           else "已退休（用它一律 401）")
+        + "）")
     return 0
 
 
