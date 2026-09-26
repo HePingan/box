@@ -43,6 +43,9 @@ PUBLIC = "https://box.hpa888.top"
 ACCESS_LOG = "/www/wwwlogs/box-ops-access.log"
 LOG_FORMAT = "boxops_gate"
 
+# 4 个通道 location 的 auth_basic realm（升一次 = 让所有客户端重新问一次凭据）
+REALM_FOR = {"hpa888": "box-ops-v2", "175": "box-ops175-v2"}
+
 CHANNELS = {
     "hpa888": {
         "all": "/www/server/nginx/conf/box-ops.htpasswd",
@@ -123,7 +126,11 @@ def patch_vhost(text: str) -> tuple[str, list[str]]:
         start = text.index(f"    location ^~ {prefix} {{")
         end = text.index("\n    }", start) + len("\n    }")
         block = text[start:end]
-        realm = "box-ops" if host == "hpa888" else "box-ops175"
+        # realm 不只是个名字：客户端（尤其 Android WebView）按 (源 + realm) 缓存 Basic 凭据，
+        # 缓存命中时 App 的 onHttpAuthRequest 根本不会被调用 —— 所以"换了口令要让已装的
+        # 客户端重新问一次"就靠升 realm（v1 → v2 就是这么来的，真机上遇到过终端页还在用
+        # 旧口令的情况）。升了 realm 之后旧凭据仍需保留一个迁移窗口。
+        realm = REALM_FOR[host]
         if prefix.startswith("/dav"):
             add = (
                 f'        auth_basic "{realm}";\n'

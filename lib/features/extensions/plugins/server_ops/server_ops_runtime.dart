@@ -7,6 +7,7 @@
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/image_preview_dialog.dart';
@@ -120,6 +121,30 @@ ServerOpsFilesService serverOpsFilesService(ServerOpsSettings settings) =>
     _filesServiceOverride ??
     ServerOpsFilesService(settings: settings);
 
+/// 清掉 WebView 缓存的 HTTP Basic 凭据（296）。
+///
+/// 为什么要有：Android WebView 把 Basic 凭据按 (源 + realm) 缓存，**缓存命中时
+/// `onHttpAuthRequest` 不会被调用**，于是"在设置里换成设备凭据之后，终端页还在用旧口令"
+/// （真机日志里 `/term/ws` 带的还是旧用户名）。默认实现走平台通道；平台侧没有
+/// （单测、非 Android、老安装）就静静返回 —— 清不掉最多是这次仍按缓存问一次，
+/// 不该让终端页打不开。
+typedef OpsWebViewAuthCacheClearer = Future<void> Function();
+
+OpsWebViewAuthCacheClearer _clearWebViewAuthCacheImpl = _clearWebViewAuthCacheDefault;
+
+Future<void> _clearWebViewAuthCacheDefault() async {
+  try {
+    await const MethodChannel('top.hpa888.box/webview_auth_cache')
+        .invokeMethod<bool>('clear');
+  } catch (_) {
+    // 见上：平台差异不参与正确性判断
+  }
+}
+
+/// 当前生效的实现。
+OpsWebViewAuthCacheClearer get serverOpsClearWebViewAuthCache =>
+    _clearWebViewAuthCacheImpl;
+
 /// 读设置：测试注入优先（避免 widget 测试依赖 SharedPreferences 的时序）。
 Future<ServerOpsSettings> loadServerOpsSettings() async =>
     _settingsOverride ?? ServerOpsSettings.load();
@@ -135,6 +160,7 @@ void debugSetServerOpsRuntime({
   OpsFilePicker? filePicker,
   ServerOpsDownloadCache? downloadCache,
   OpsApiClient Function(ServerOpsSettings settings)? apiClientFactory,
+  OpsWebViewAuthCacheClearer? webViewAuthCacheClearer,
 }) {
   _hostService = hostService ?? HostService();
   _settingsOverride = settings;
@@ -145,4 +171,6 @@ void debugSetServerOpsRuntime({
   _filePicker = filePicker ?? _defaultPickFiles;
   _downloadCache = downloadCache ?? ServerOpsDownloadCache();
   _apiClientFactory = apiClientFactory;
+  _clearWebViewAuthCacheImpl =
+      webViewAuthCacheClearer ?? _clearWebViewAuthCacheDefault;
 }

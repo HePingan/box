@@ -448,6 +448,9 @@ class MainActivity : FlutterActivity() {
         // 传输入队期间挂一个前台服务，避免 app 退到后台被系统回收导致传输中断；
         // 通知 ID 与视频下载分开（1002 / 1001），两边状态机互不干扰。
         TransferKeepAliveChannel.register(flutterEngine.dartExecutor.binaryMessenger, this)
+        // 换过通道口令之后，终端页要先把 WebView 缓存的旧 Basic 凭据清掉，否则它会
+        // 一直用旧身份（缓存命中时 onReceivedHttpAuthRequest 不会被调用）。
+        WebViewAuthCacheChannel.register(flutterEngine.dartExecutor.binaryMessenger, this)
 
         // ── 远程存储：接收系统分享（286 P3）──
         // 冷启动：Intent 在 configureFlutterEngine 时已经就位，这里先收下来攒着
