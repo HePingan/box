@@ -61,6 +61,17 @@ MAX_SERVICES = 400
 CMD_TIMEOUT = 15
 MAX_RESPONSE = 256 * 1024
 
+# 通道访问日志（边缘机 nginx 给 4 个通道 location 写的，log_format=boxops_gate）
+# 形状：<ip> - <user> [<time>] "<METHOD> <PATH> <PROTO>" <status> <bytes> "<ua>"
+CHANNEL_LOG = "/www/wwwlogs/box-ops-access.log"
+CHANNEL_HTPASSWD = ("/www/server/nginx/conf/box-ops.htpasswd",
+                    "/www/server/nginx/conf/box-ops175.htpasswd")
+CHANNEL_ENTRIES = {"dav": "hpa888 文件", "dav175": "175 文件",
+                   "term": "hpa888 终端", "term175": "175 终端"}
+CHANNEL_LOG_MAX_BYTES = 4 * 1024 * 1024
+CHANNEL_WINDOW_MAX_DAYS = 30
+CHANNEL_OWNER_HOST = "hpa888"
+
 # 日志清单（logfiles）的上限：只列两层、最多这么多条 —— 只是给界面选文件用
 LOG_LIST_MAX = 200
 LOG_LIST_DEFAULT = 60
@@ -485,6 +496,133 @@ def act_logs(q: dict, _label: str) -> tuple[int, dict]:
                "content": body, "generatedAt": now_iso()}
 
 
+_CHANNEL_LINE = re.compile(
+    r'^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] '
+    r'"(?P<method>\S+) (?P<path>\S+)[^"]*" (?P<status>\d{3}) ')
+
+
+def _channel_log_tail() -> str:
+    """读通道访问日志的尾部（按字节，不整个读进来 —— 它可能有几百 MB）。"""
+    p = Path(CHANNEL_LOG)
+    if not p.is_file():
+        return ""
+    try:
+        size = p.stat().st_size
+        with p.open("r", errors="replace") as f:
+            if size > CHANNEL_LOG_MAX_BYTES:
+                f.seek(size - CHANNEL_LOG_MAX_BYTES)
+                f.readline()  # 丢掉被截断的半行
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _channel_known_users() -> tuple[set[str], bool]:
+    """htpasswd 里的用户名（**只要用户名**，哈希一个字节都不往外带）。"""
+    users: set[str] = set()
+    readable = False
+    for path in CHANNEL_HTPASSWD:
+        p = Path(path)
+        if not p.is_file():
+            continue
+        try:
+            text = p.read_text(errors="replace")
+            readable = True
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and ":" in line:
+                users.add(line.split(":", 1)[0])
+    return users, readable
+
+
+def act_channel(q: dict, _label: str) -> tuple[int, dict]:
+    """文件/终端通道**凭据使用情况**汇总（最近 N 天）。
+
+    回答的是："现在还有谁在用通道口令，用的是哪一条，最近什么时候、从哪个 IP"。
+    这也是"旧口令什么时候能退休"的唯一依据 —— 没有它，只能靠人 ssh 上去 awk。
+
+    硬约束（和 A9/C2 一致）：
+      * **不返回 URI**：只到"入口 + 方法 + 状态码"，不记用户在翻哪个目录/文件；
+      * **不返回任何哈希/口令**：htpasswd 只取用户名，用来判断这条凭据还算不算数；
+      * 只读动作，进审计。
+    """
+    try:
+        days = int((q.get("days") or ["7"])[0])
+    except ValueError:
+        return 400, {"error": "days 必须是整数"}
+    if days < 1 or days > CHANNEL_WINDOW_MAX_DAYS:
+        return 400, {"error": f"days 只能取 1~{CHANNEL_WINDOW_MAX_DAYS}"}
+
+    text = _channel_log_tail()
+    if not text:
+        return 0, {"available": False, "logPath": CHANNEL_LOG,
+                   "reason": "这台机器上没有通道访问日志（它由边缘机写）",
+                   "hint": f"换到 {CHANNEL_OWNER_HOST} 那条看", "windowDays": days,
+                   "generatedAt": now_iso()}
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    users: dict[str, dict] = {}
+    scanned = 0
+    matched = 0
+    skipped_old = 0
+    for line in text.splitlines():
+        scanned += 1
+        m = _CHANNEL_LINE.match(line)
+        if not m:
+            continue
+        try:
+            when = datetime.strptime(m.group("time"), "%d/%b/%Y:%H:%M:%S %z")
+        except ValueError:
+            continue
+        if when < cutoff:
+            skipped_old += 1
+            continue
+        # 入口 = 路径的第一段（/dav175/... → dav175）；不在白名单里的行直接跳过
+        seg = m.group("path").split("/")[1] if "/" in m.group("path") else ""
+        if seg not in CHANNEL_ENTRIES:
+            continue
+        matched += 1
+        user = m.group("user") if m.group("user") != "-" else "(未认证)"
+        status = int(m.group("status"))
+        u = users.setdefault(user, {
+            "user": user, "count": 0, "lastSeenTs": 0.0, "lastSeen": "",
+            "lastIp": "", "entries": {}, "methods": {}, "denied": 0,
+        })
+        u["count"] += 1
+        u["entries"][CHANNEL_ENTRIES[seg]] = u["entries"].get(CHANNEL_ENTRIES[seg], 0) + 1
+        u["methods"][m.group("method")] = u["methods"].get(m.group("method"), 0) + 1
+        if status == 401 or status == 403:
+            u["denied"] += 1
+        ts = when.timestamp()
+        if ts > u["lastSeenTs"]:
+            u["lastSeenTs"] = ts
+            u["lastSeen"] = _iso_local(ts)
+            u["lastIp"] = m.group("ip")
+
+    known, htpasswd_readable = _channel_known_users()
+    for u in users.values():
+        u["stillValid"] = u["user"] in known
+        u["readOnly"] = u["user"].startswith("ro-")
+        u.pop("lastSeenTs", None)
+    rows = sorted(users.values(), key=lambda x: x["count"], reverse=True)
+    used = set(users)
+    return 0, {
+        "available": True,
+        "logPath": CHANNEL_LOG,
+        "ownerHost": CHANNEL_OWNER_HOST,
+        "windowDays": days,
+        "scannedLines": scanned,
+        "matchedLines": matched,
+        "htpasswdReadable": htpasswd_readable,
+        "users": rows,
+        # 签了但窗口内没用过的凭据（可能是发出去忘了收，也可能是新签的还没填进 App）
+        "unused": sorted(known - used),
+        "generatedAt": now_iso(),
+    }
+
+
 def _iso_local(ts: float) -> str:
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -620,6 +758,7 @@ ACTIONS = {
     "service": act_service,
     "logs": act_logs,
     "logfiles": act_logfiles,
+    "channel": act_channel,
     "ports": act_ports,
     "diskusage": act_diskusage,
     "sessions": act_sessions,
@@ -880,7 +1019,7 @@ def selftest() -> int:
     import urllib.request
     import zipfile
 
-    global TOKENS_FILE, AUDIT_FILE, LOG_ROOTS
+    global TOKENS_FILE, AUDIT_FILE, LOG_ROOTS, CHANNEL_LOG, CHANNEL_HTPASSWD
     # 显式用 /tmp：TMPDIR 可能指向 /root/.hermes（那是被 du 拒绝的密钥类路径），
     # 用默认值会让自检自己撞上 denylist（第一次就是这么"红"的）。
     tmp = Path(tempfile.mkdtemp(prefix="box-ops-api-selftest-", dir="/tmp"))
@@ -956,6 +1095,57 @@ def selftest() -> int:
     check("logfiles 的 limit 生效", st == 200 and len(d2.get("list", [])) == 1)
     st, _ = call("/logfiles?root=/etc", tok)
     check("logfiles 里 root 只能取白名单", st == 403)
+
+    # ── 通道凭据使用情况（channel）──
+    # 时间戳按"现在"现算：写死日期的话，过几天这条用例会因为超出窗口而假失败。
+    def _ts(**kw):
+        return (datetime.now(timezone.utc) - timedelta(**kw)).strftime("%d/%b/%Y:%H:%M:%S %z")
+
+    clog = tmp / "channel-access.log"
+    clog.write_text("\n".join([
+        f'9.9.9.9 - phone-x [{_ts(minutes=3)}] "PROPFIND /dav/root/secret-thing.txt HTTP/1.1" 207 51 "Dart/3.12"',
+        f'9.9.9.9 - phone-x [{_ts(minutes=5)}] "GET /dav/root/secret-thing.txt HTTP/1.1" 200 10 "Dart/3.12"',
+        f'8.8.8.8 - boxops [{_ts(minutes=10)}] "GET /term/ HTTP/1.1" 200 500 "Mozilla"',
+        f'7.7.7.7 - ro-ro [{_ts(minutes=20)}] "PUT /dav175/tmp/x.txt HTTP/1.1" 403 52 "Python-urllib/3.11"',
+        f'1.1.1.1 - gone-user [{_ts(hours=2)}] "GET /dav/ HTTP/1.1" 200 1 "x"',
+        f'2.2.2.2 - - [{_ts(minutes=8)}] "GET /dav/ HTTP/1.1" 401 0 "curl"',
+        f'3.3.3.3 - phone-x [{_ts(days=20)}] "GET /dav/ HTTP/1.1" 200 1 "x"',
+        f'4.4.4.4 - phone-x [{_ts(minutes=6)}] "GET /not-an-entry/x HTTP/1.1" 200 1 "x"',
+    ]) + "\n")
+    chp = tmp / "box-ops.htpasswd"
+    chp.write_text("phone-x:$apr1$abc$hashhashhash\nro-ro:$2y$05$bcrypthash\n"
+                   "unused-one:$apr1$zzz$hashhash\n")
+    CHANNEL_LOG, CHANNEL_HTPASSWD = str(clog), (str(chp),)
+    st, d = call("/channel?days=7", tok)
+    by = {u["user"]: u for u in d.get("users", [])}
+    check("channel 汇总出四类用户", st == 200 and d.get("available") is True
+          and {"phone-x", "boxops", "ro-ro", "gone-user", "(未认证)"} <= set(by),
+          f"st={st} users={sorted(by)}")
+    check("channel 计数正确（phone-x 2 次，含窗口外那条不算）",
+          by.get("phone-x", {}).get("count") == 2, f"count={by.get('phone-x', {}).get('count')}")
+    check("channel 认出入口（dav175 那条进的是 175 文件）",
+          "175 文件" in by.get("ro-ro", {}).get("entries", {}))
+    check("channel 记了拒绝次数（ro-ro 的 PUT 403）",
+          by.get("ro-ro", {}).get("denied") == 1)
+    check("channel 标了 stillValid（htpasswd 里有 = true，没有 = false）",
+          by.get("phone-x", {}).get("stillValid") is True
+          and by.get("gone-user", {}).get("stillValid") is False)
+    check("channel 标了 readOnly（ro- 前缀）", by.get("ro-ro", {}).get("readOnly") is True)
+    check("channel 列出'签了但没用过'的凭据", d.get("unused") == ["unused-one"], str(d.get("unused")))
+    check("channel 的最后时间/IP 只取窗口内最新的那条",
+          by.get("phone-x", {}).get("lastIp") == "9.9.9.9" and bool(by.get("phone-x", {}).get("lastSeen")))
+    body = json.dumps(d, ensure_ascii=False)
+    check("channel **不带 URI**（只到入口+方法）", "secret-thing" not in body and "/dav/root" not in body)
+    check("channel **不带任何哈希/口令**", "apr1" not in body and "bcrypt" not in body and "$2y$" not in body)
+    st, _ = call("/channel?days=0", tok)
+    check("channel 的 days 越界 → 400", st == 400)
+    st, _ = call("/channel?days=99", tok)
+    check("channel 的 days 上限 → 400", st == 400)
+    CHANNEL_LOG = str(tmp / "no-such-log")
+    st, d = call("/channel", tok)
+    check("channel 在看不到通道日志的机器上给 available=false + 说明",
+          st == 200 and d.get("available") is False and "hpa888" in d.get("hint", ""))
+    CHANNEL_LOG = str(clog)
     st, d = call("/diskusage?path=" + str(tmp), tok)
     check("diskusage 正常", st == 200 and bool(d.get("rows")),
           f"st={st} body={str(d)[:150]}")

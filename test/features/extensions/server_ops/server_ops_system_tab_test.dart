@@ -196,6 +196,30 @@ MockClient _api({
             200,
             headers: _jsonHeaders,
           );
+        case 'channel':
+          return http.Response(
+            jsonEncode({
+              'available': true,
+              'logPath': '/www/wwwlogs/box-ops-access.log',
+              'ownerHost': 'hpa888',
+              'windowDays': 7,
+              'users': [
+                {'user': 'phone-hpa888', 'readOnly': false, 'stillValid': true,
+                 'count': 42, 'lastSeen': '2026-09-26 09:47:12', 'lastIp': '120.32.145.146',
+                 'entries': {'hpa888 文件': 40, 'hpa888 终端': 2},
+                 'methods': {'PROPFIND': 30, 'GET': 12}, 'denied': 0},
+                {'user': 'ro-probe-175', 'readOnly': true, 'stillValid': true,
+                 'count': 8, 'lastSeen': '2026-09-26 09:40:05', 'lastIp': '175.178.248.237',
+                 'entries': {'175 文件': 8}, 'methods': {'PROPFIND': 8}, 'denied': 1},
+                {'user': 'old-device', 'readOnly': false, 'stillValid': false,
+                 'count': 3, 'lastSeen': '2026-09-26 09:20:00', 'lastIp': '10.0.0.9',
+                 'entries': {'hpa888 文件': 3}, 'methods': {'GET': 3}, 'denied': 3},
+              ],
+              'unused': ['phone-175'],
+            }),
+            200,
+            headers: _jsonHeaders,
+          );
         case 'audit':
           return http.Response(
             jsonEncode({
@@ -390,6 +414,54 @@ void main() {
     expect(find.textContaining('没有权限'), findsWidgets);
     expect(find.text('VM-0-15-debian'), findsOneWidget, reason: '概览不该被带崩');
     expect(find.textContaining('127.0.0.1:8095'), findsWidgets, reason: '端口不该被带崩');
+  });
+
+  testWidgets('通道凭据：谁在用、用哪条、最近什么时候，且不出现口令与哈希', (tester) async {
+    final seen = <String>[];
+    await _pump(tester, _settings(), _api(seen: seen));
+
+    expect(seen, contains('channel'));
+    expect(find.textContaining('通道凭据（最近 7 天）'), findsOneWidget);
+    expect(find.textContaining('phone-hpa888'), findsWidgets);
+    expect(find.textContaining('42 次'), findsOneWidget);
+    expect(find.textContaining('hpa888 文件'), findsWidgets);
+    expect(find.textContaining('（只读）'), findsWidgets, reason: 'ro- 前缀要标出来');
+    expect(find.textContaining('（已撤销）'), findsWidgets, reason: '不在 htpasswd 里的要标出来');
+    expect(find.textContaining('签了但没用过：phone-175'), findsOneWidget);
+
+    // 这张卡是"凭据层"的视图，绝不能把这层的东西反露出来
+    expect(find.textContaining(_token), findsNothing);
+    expect(find.textContaining('apr1'), findsNothing);
+    expect(find.textContaining('\$2'), findsNothing);
+  });
+
+  testWidgets('通道凭据：看不到日志的机器上说清"换哪条看"', (tester) async {
+    final seen = <String>[];
+    final client = MockClient((req) async {
+      final action = req.url.path.split('/').where((s) => s.isNotEmpty).last;
+      seen.add(action);
+      if (action == 'channel') {
+        return http.Response(
+            jsonEncode({
+              'available': false,
+              'logPath': '/www/wwwlogs/box-ops-access.log',
+              'reason': '这台机器上没有通道访问日志（它由边缘机写）',
+              'hint': '换到 hpa888 那条看',
+              'windowDays': 7,
+            }),
+            200,
+            headers: _jsonHeaders);
+      }
+      if (action == 'capabilities') {
+        return http.Response(jsonEncode({'admin': true, 'write': false}),
+            200, headers: _jsonHeaders);
+      }
+      return http.Response('{}', 200, headers: _jsonHeaders);
+    });
+    await _pump(tester, _settings(), client);
+
+    expect(find.textContaining('这台机器上没有通道访问日志'), findsOneWidget);
+    expect(find.textContaining('换到 hpa888 那条看'), findsOneWidget);
   });
 
   testWidgets('切到另一台机器：按新机器的地址/令牌重新拉', (tester) async {

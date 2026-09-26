@@ -230,6 +230,14 @@ class OpsApiClient {
       OpsLogTail.fromJson(
           await call('logs', query: {'path': path, 'lines': '$lines'}));
 
+  /// 文件/终端通道的**凭据使用情况**（最近 N 天）。
+  ///
+  /// 这是"旧通道口令什么时候能退休"的依据：谁还在用它、最近什么时候、从哪个 IP。
+  /// 服务端只回入口与方法，**不回 URI、不回任何哈希**；看不到通道日志的机器
+  /// （日志在边缘机写）会回 available=false。
+  Future<OpsChannelUsage> channel({int days = 7}) async =>
+      OpsChannelUsage.fromJson(await call('channel', query: {'days': '$days'}));
+
   /// 有哪些日志文件可读（名字/大小/最后修改，最近的排前面）。
   ///
   /// `logs` 是按路径读尾部，得先知道路径；以前这一步只能靠人在终端里 ls。
@@ -538,6 +546,87 @@ class OpsServiceDetail {
         since: _s(j['since']),
         journal: _s(j['journal']),
       );
+}
+
+/// 通道凭据使用情况（见 [OpsApiClient.channel]）。
+class OpsChannelUsage {
+  const OpsChannelUsage({
+    required this.available,
+    required this.reason,
+    required this.hint,
+    required this.ownerHost,
+    required this.windowDays,
+    required this.users,
+    required this.unused,
+  });
+
+  final bool available;
+  final String reason;
+  final String hint;
+  final String ownerHost;
+  final int windowDays;
+  final List<OpsChannelUser> users;
+
+  /// htpasswd 里有、但窗口内一次都没用过的凭据（发出去忘了收，或刚签还没填进 App）。
+  final List<String> unused;
+
+  static OpsChannelUsage fromJson(Map<String, dynamic> j) => OpsChannelUsage(
+        available: j['available'] == true,
+        reason: _s(j['reason']),
+        hint: _s(j['hint']),
+        ownerHost: _s(j['ownerHost']),
+        windowDays: _i(j['windowDays']),
+        users: _listOf(j['users'], OpsChannelUser.fromJson),
+        unused: (j['unused'] is List)
+            ? [for (final x in j['unused'] as List) '$x']
+            : const <String>[],
+      );
+}
+
+class OpsChannelUser {
+  const OpsChannelUser({
+    required this.user,
+    required this.readOnly,
+    required this.stillValid,
+    required this.count,
+    required this.lastSeen,
+    required this.lastIp,
+    required this.entries,
+    required this.methods,
+    required this.denied,
+  });
+
+  final String user;
+  final bool readOnly;
+
+  /// 这个用户名现在还在不在 htpasswd 里（不在 = 已撤销，出现即说明有人在用旧凭据）。
+  final bool stillValid;
+  final int count;
+  final String lastSeen;
+  final String lastIp;
+  final Map<String, int> entries;
+  final Map<String, int> methods;
+  final int denied;
+
+  static OpsChannelUser fromJson(Map<String, dynamic> j) => OpsChannelUser(
+        user: _s(j['user']),
+        readOnly: j['readOnly'] == true,
+        stillValid: j['stillValid'] == true,
+        count: _i(j['count']),
+        lastSeen: _s(j['lastSeen']),
+        lastIp: _s(j['lastIp']),
+        entries: _countMap(j['entries']),
+        methods: _countMap(j['methods']),
+        denied: _i(j['denied']),
+      );
+}
+
+/// 服务端回的 {"入口名": 次数} 这类小计数表。
+Map<String, int> _countMap(Object? raw) {
+  if (raw is! Map) return const <String, int>{};
+  final out = <String, int>{};
+  raw.forEach((k, v) => out['$k'] = _i(v));
+  return out;
 }
 
 class OpsLogFile {

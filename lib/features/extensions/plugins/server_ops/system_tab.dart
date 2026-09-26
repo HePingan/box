@@ -45,6 +45,9 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
   List<OpsLogFile> _logFiles = const [];
   static const int _logRows = 4;
 
+  /// 通道凭据使用情况（最近 7 天）。只有边缘机那条入口看得到（日志在边缘机写）。
+  OpsChannelUsage? _channel;
+
   final Map<String, String> _errors = <String, String>{};
   bool _loading = false;
   bool _auditTried = false;
@@ -138,6 +141,7 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
       pull('磁盘目录', () => client.diskUsage(_diskPath)),
       pull('登录记录', client.sessions),
       pull('日志文件', () => client.logFiles(limit: 40)),
+      pull('通道凭据', client.channel),
     ]);
     final audit = await pull('服务端审计', () => client.audit(limit: 30));
     // 只有自己造的客户端才关；用例注入的那个由用例管（关掉会让后续断言炸）。
@@ -153,6 +157,7 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
       if (results[4] != null) _diskRows = results[4] as List<OpsDiskRow>;
       if (results[5] != null) _sessions = results[5] as OpsSessions;
       if (results[6] != null) _logFiles = results[6] as List<OpsLogFile>;
+      if (results[7] != null) _channel = results[7] as OpsChannelUsage;
       if (audit != null) _audit = audit;
       if (caps != null) _caps = caps;
       _auditTried = true;
@@ -207,6 +212,10 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
           _sessionsCard(),
           _sectionGap(),
           _auditCard(),
+          _sectionGap(),
+          if (_errors.containsKey('通道凭据'))
+            _errorCard('通道凭据', _errors['通道凭据']!),
+          _channelCard(),
         ],
       ),
     );
@@ -287,6 +296,89 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
           ),
         ),
       );
+
+  /// 通道凭据（文件/终端那个口令层的使用情况）。
+  ///
+  /// 为什么放在这一页：它和"服务端审计"一样是**跨设备**的数据，而且回答的是
+  /// "现在还有谁在用通道口令、用的是哪一条" —— 旧口令能不能退休就看这一张。
+  Widget _channelCard() {
+    final theme = Theme.of(context);
+    final c = _channel;
+    if (c == null) {
+      return _cardShell('通道凭据（最近 7 天）', const Text('（没有数据）'));
+    }
+    if (!c.available) {
+      return _cardShell(
+        '通道凭据（最近 7 天）',
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(c.reason.isEmpty ? '这台机器的 API 看不到通道访问日志' : c.reason),
+            if (c.hint.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(c.hint, style: theme.textTheme.bodySmall),
+            ],
+          ],
+        ),
+      );
+    }
+    return _cardShell(
+      '通道凭据（最近 ${c.windowDays} 天）',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (c.users.isEmpty)
+            const Text('窗口内没有通道访问记录')
+          else
+            for (final u in c.users)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${u.user}'
+                            '${u.readOnly ? '（只读）' : ''}'
+                            '${u.stillValid ? '' : '（已撤销）'}',
+                            style: theme.textTheme.bodyMedium,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text('${u.count} 次',
+                            style: theme.textTheme.bodySmall),
+                      ],
+                    ),
+                    Text(
+                      '${u.entries.keys.join('/')}'
+                      '${u.denied > 0 ? ' · 被拒 ${u.denied} 次' : ''}'
+                      ' · 最近 ${u.lastSeen}${u.lastIp.isEmpty ? '' : '（${u.lastIp}）'}',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: theme.colorScheme.outline),
+                    ),
+                  ],
+                ),
+              ),
+          if (c.unused.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              '签了但没用过：${c.unused.join('、')}',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.outline),
+            ),
+          ],
+          const SizedBox(height: 6),
+          Text(
+            '只统计入口与次数，不记录具体路径；口令本体与哈希都不在返回里。',
+            style: theme.textTheme.labelSmall
+                ?.copyWith(color: theme.colorScheme.outline),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _errorCard(String section, String message) => Card(
         color: Theme.of(context).colorScheme.errorContainer,
