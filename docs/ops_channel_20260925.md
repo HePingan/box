@@ -726,3 +726,42 @@ WebView 直接带旧凭据重发，`onHttpAuthRequest` **根本不会被调用**
   在 175 上跑会读不到文件，以前的 `list` 会把它报成"已退休"（**假状态**），
   `retire-legacy` 会"删了 0 行"还报成功。现在：文件不在 ⇒ `list` 报"状态未知"、
   退休**直接拒绝动手**并说明要在边缘机跑。
+
+## 十九、清掉 rclone 那一层的 RCLONE_USER/PASS（2026-09-26 13:3x）
+
+退休旧口令之后还剩一处：两个 rclone 单元挂着 `EnvironmentFile=/root/.secrets/box-ops*-rclone.env`，
+里面是 `RCLONE_USER/RCLONE_PASS` —— **每台一个共享口令**那套模型留下的东西。
+
+### 19.1 为什么这不只是"残留"
+
+* 明文还躺在盘上（虽然实测已失效：直连 rclone 用旧口令仍 401，rclone 以 `--htpasswd` 为准）；
+* **模板会长回来**：`tool/box_ops_provision.sh` 生成的单元里**根本没有 `--htpasswd`**，认证全靠那份环境文件 —— 也就是说新机器接进来就是"单口令模型"，跟我们刚统一好的两层读同一份 htpasswd 不一致；
+* **旧轮换脚本会写回新口令**：`box-ops-rotate-credentials.sh` / `box-ops175-rotate-credentials.sh` 轮换时把新口令写进那份文件（`printf 'RCLONE_PASS=%s' > $ENV_FILE`）。
+
+### 19.2 改了什么
+
+| 位置 | 改法 |
+| --- | --- |
+| 两台线上单元 | 去掉 `EnvironmentFile=`，认证只走 `--htpasswd`（边缘机 = nginx 那份；其它机器 = 边缘机推过来的 `/etc/box-ops/box-ops<ID>.htpasswd`） |
+| 两份 `*-rclone.env` | 删（先备份到 /root，验证通过后 shred） |
+| 两个旧轮换脚本 | 改成**指路桩**：说明它轮换的共享口令已退休，改用 `box_channel_cred.py issue/list/revoke`（老脚本留档 `*.obsolete-*`） |
+| `tool/box_ops_provision.sh` | ① 不再生成 `*-rclone.env`；② 生成的单元带 `--htpasswd $HTPASSWD_LOCAL`；③ 轮换时把**同一个哈希**同时落到边缘机 nginx 与本机 rclone 那份（只写一边 = "nginx 放行、rclone 拒收"，通道看着就是坏的） |
+| `tool/ops_api/apply_channel_gate.py` | ① 读不到旧口令明文不再算失败（退休后正常）；② 密钥路径那两条检查改用**本次跑出来的可写凭据**（拿已退休的 `boxops` 会得到 401 而不是 404 = 假失败） |
+
+### 19.3 怎么验的
+
+```
+直连 rclone（绕过 nginx）：127.0.0.1:8081/dav/ 与 127.0.0.1:8083/dav175/
+  无凭据 → 401 ✅    巡检只读凭据 → 207 ✅    旧口令 → 401 ✅
+单元：systemctl is-active = active ✅   EnvironmentFile 残留 = 0 行 ✅
+门禁探针（175 上跑）：✅ 没凭据 401、只读不能写不能进终端、密钥路径 404、闸门都在
+监控（每 10 分钟）：ro-probe-175 → 读 207 / 写 403 / 终端 403 / shadow 404 ✅
+手机：13:25 在 /term175/ 仍是 200 + token 200 + WS 101（退休之后、清理之前）✅
+```
+
+口令一律走 `--netrc-file`，不进 argv / 不进进程列表；设备凭据的明文已按设计销毁，所以校验只用**巡检只读凭据**。
+
+### 19.4 一句提醒（以后轮换怎么写）
+
+可写凭据的明文现在**只存在于用户手机里**。要换，就用 `box_channel_cred.py issue <label> --host hpa888|175`
+签一个新的、在 App 里填进去、确认收到 207/200 之后再 `revoke` 旧的 —— 别再去找"某台机器上的口令文件"。

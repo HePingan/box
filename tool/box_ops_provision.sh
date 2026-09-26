@@ -11,7 +11,8 @@
 # 设计要点（与手工接 175 时踩过的坑一一对应）：
 #   * 边缘侧隧道是**独立 systemd 单元**，不往在用的隧道上加 -L（否则改端口会重启别人的隧道）；
 #   * 口令**每台机器独立**、只写在目标机 /root/.secrets/（600）+ 边缘机 htpasswd（哈希），脚本全文不回显口令；
-#   * 认证分两层：/dav 前缀靠本机 rclone 拦，/term 前缀靠边缘机 nginx 的 htpasswd 拦（ttyd 自身无凭据）；
+#   * 认证两层读**同一份 htpasswd**：边缘机 nginx（/dav 与 /term）与本机 rclone（`--htpasswd`）
+#     都读它 —— 不再用 rclone 的 RCLONE_USER/RCLONE_PASS（单口令模型，轮换时两层会各说各话）；
 #   * vhost 改动前备份、nginx -t 通过才 reload、不通过自动回滚；
 #   * 端口自动挑空闲（本机与边缘机两侧都要空），避免和既有机器撞。
 set -euo pipefail
@@ -84,7 +85,12 @@ UNIT_DAV="box-ops${ID}-dav.service"
 UNIT_TERM="box-ops${ID}-term.service"
 UNIT_TUN="box-ops${ID}-tunnel.service"
 PW_FILE="/root/.secrets/box-ops${ID}-webdav.password"
-ENV_FILE="/root/.secrets/box-ops${ID}-rclone.env"
+# 认证用哪份 htpasswd：边缘机直接读 nginx 那份，其它机器读边缘机推过来的副本
+if [ -z "$ID" ]; then
+  HTPASSWD_LOCAL="/www/server/nginx/conf/box-ops.htpasswd"
+else
+  HTPASSWD_LOCAL="/etc/box-ops/box-ops${ID}.htpasswd"
+fi
 ROTATE=/usr/local/sbin/box-ops${ID}-rotate-credentials.sh
 
 detect_public_ip() {  # 多源轮询：VPC/NAT 后面 ip route 拿到的是私网地址，不能当边缘机的 ssh 目标
@@ -170,10 +176,11 @@ write_creds() {
     chmod 600 "$PW_FILE"
     log 凭据 "已生成 40 位口令（只打印长度）→ $PW_FILE"
   fi
-  if [ "$MODE" != dryrun ]; then
-    printf 'RCLONE_USER=%s\nRCLONE_PASS=%s\n' "$USERNAME" "$(cat "$PW_FILE")" > "$ENV_FILE"
-    chmod 600 "$ENV_FILE"
-  fi
+
+  # 这里以前会写 /root/.secrets/box-ops${ID}-rclone.env（RCLONE_USER/RCLONE_PASS）——
+  # 单口令模型，认证由 rclone 自己拦。现在统一走 --htpasswd（与边缘机 nginx 同一份文件），
+  # 所以**不再生成**那份环境文件：少一份口令明文，也少一个轮换时对不上的地方。
+  log 凭据 "$PW_FILE 已就绪（认证走 htpasswd；不再写 rclone.env）"
 }
 
 write_units() {
@@ -189,9 +196,9 @@ After=network.target
 [Service]
 Type=simple
 User=root
-EnvironmentFile=$ENV_FILE
+# 认证只走 htpasswd（与边缘机 nginx 同一份；两层一致，不再有 RCLONE_USER/PASS）
 # --dir-cache-time 0：本地后端必须关缓存，否则刚上传的文件看不见
-ExecStart=/usr/local/bin/rclone serve webdav / --addr 127.0.0.1:$DAV_PORT --baseurl /$PREFIX --dir-cache-time 0 --log-level INFO \
+ExecStart=/usr/local/bin/rclone serve webdav / --addr 127.0.0.1:$DAV_PORT --baseurl /$PREFIX --dir-cache-time 0 --log-level INFO --htpasswd $HTPASSWD_LOCAL \
 $RCLONE_EXCLUDE_ARGS
 Restart=always
 RestartSec=2
@@ -223,11 +230,12 @@ write_rotate_script() {
   [ "$MODE" = dryrun ] && { log 计划 "会写轮换脚本 $ROTATE（--check 自检两层认证）"; return 0; }
   cat > "$ROTATE" <<EOF
 #!/usr/bin/env bash
-# box-ops $ID 口令轮换（两层认证：本机 rclone 的 RCLONE_PASS + 边缘机 nginx 的 htpasswd）。
+# box-ops $ID 口令轮换（两层读**同一份 htpasswd**：边缘机 nginx + 本机 rclone 的 --htpasswd）。
 # --check 只自检；不带参数则轮换。轮换后 App 里这台机器要重新填一次口令。
 set -euo pipefail
 PW_FILE=$PW_FILE
-ENV_FILE=$ENV_FILE
+# 本机 rclone 的那份 htpasswd（边缘机推过来的副本；ID 为空时就是 nginx 那份）
+HTPASSWD_LOCAL=$HTPASSWD_LOCAL
 EDGE=$EDGE
 HTPASSWD=/www/server/nginx/conf/box-ops${ID}.htpasswd
 BASE=https://$DOMAIN
@@ -244,7 +252,11 @@ if [ "\${1:-}" = "--check" ]; then
 fi
 old=\$(cat "\$PW_FILE"); new=\$(tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 40 || true)
 printf '%s\n' "\$new" > "\$PW_FILE"; chmod 600 "\$PW_FILE"
-printf 'RCLONE_USER=$USERNAME\nRCLONE_PASS=%s\n' "\$new" > "\$ENV_FILE"; chmod 600 "\$ENV_FILE"
+# 同一个哈希两处落地：边缘机 nginx 那份 + 本机 rclone 那份（以前靠 RCLONE_PASS 同步,
+# 现在两层读同一份文件 —— 只写一边会让"nginx 放行、rclone 拒收"，通道看着就是坏的）
+newline="\$(printf '$USERNAME:%s\n' "\$(printf '%s' "\$new" | openssl passwd -apr1 -stdin)")"
+printf '%s\n' "\$newline" | ssh "\$EDGE" "umask 022; cat > \$HTPASSWD; chown root:www \$HTPASSWD; chmod 640 \$HTPASSWD"
+if [ -n "$ID" ]; then printf '%s\n' "\$newline" > "$HTPASSWD_LOCAL"; chmod 600 "$HTPASSWD_LOCAL"; fi
 systemctl restart $UNIT_DAV
 printf '$USERNAME:%s\n' "\$(printf '%s' "\$new" | openssl passwd -apr1 -stdin)" \\
   | ssh "\$EDGE" "umask 022; cat > \$HTPASSWD; chown root:www \$HTPASSWD; chmod 640 \$HTPASSWD"
@@ -439,7 +451,7 @@ remove_all() {
     chmod 600 /root/.ssh/authorized_keys
     log 拆除 "已从 authorized_keys 摘掉 box-ops-${ID} 公钥"
   fi
-  log 拆除 "本机凭据文件保留（要一并删：rm -f $PW_FILE $ENV_FILE；确认 App 里也已删掉这台机器）"
+  log 拆除 "本机凭据文件保留（要一并删：rm -f $PW_FILE；确认 App 里也已删掉这台机器）"
   log 完成 "已拆除 $ID"
 }
 

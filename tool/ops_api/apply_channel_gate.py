@@ -307,11 +307,13 @@ def verify() -> list[str]:
         if not ok:
             fails.append(desc)
 
+    # 旧口令的明文在退休时已清理（/root/.secrets/*-rclone.env 删掉了）——
+    # 读不到不是失败，只说明"旧口令那组检查没得可查"，后面的检查照跑。
     pw_hpa = read_env(SECRETS / "box-ops-rclone.env", "RCLONE_PASS")
     rc, out175 = sh_175("grep '^RCLONE_PASS=' /root/.secrets/box-ops175-rclone.env")
     pw_175 = out175.split("=", 1)[1].strip() if "=" in out175 else ""
     if not pw_hpa or not pw_175:
-        return ["读不到两台机器的通道口令（旧口令那条验证没意义了）"]
+        say("  · 旧口令明文已清理（退休后正常）：跳过「旧口令仍能进」这组检查")
 
     stamp = str(int(time.time()))
     # label 不能重（同一台同一 label 只能有一条），可写/只读分开命名
@@ -404,9 +406,9 @@ def verify() -> list[str]:
     rc, log = sh(["bash", "-lc", f"tail -200 {ACCESS_LOG} 2>/dev/null"])
     check("审计日志里能看到用户名（新凭据的用户名出现在里面）",
           rw_user in log or ro_user in log, (log[-300:] if log else "（日志是空的）"))
-    c = curl_code(PUBLIC + "/dav/root/.secrets/box-update-server.env", "boxops", pw_hpa)
+    c = curl_code(PUBLIC + "/dav/root/.secrets/box-update-server.env", rw_user, rw)
     check("/dav/ 密钥路径仍 404", c == "404", f"拿到 {c}")
-    c = curl_code(PUBLIC + "/dav175/etc/shadow", "boxops", pw_175)
+    c = curl_code(PUBLIC + "/dav175/etc/shadow", rw175_user, rw175)
     check("/dav175/ /etc/shadow 仍 404", c == "404", f"拿到 {c}")
     return fails
 
@@ -453,18 +455,20 @@ def main(argv: list[str]) -> int:
     pre: list[str] = []
     for host, cfg in CHANNELS.items():
         if host == "hpa888":
-            pw = read_env(SECRETS / "box-ops-rclone.env", "RCLONE_PASS")
-            path = "/term/"
-        else:
-            _rc, out = sh_175("grep '^RCLONE_PASS=' /root/.secrets/box-ops175-rclone.env")
-            pw = out.split("=", 1)[1].strip() if "=" in out else ""
-            path = "/term175/"
+            pw = ""  # 退休后读不到（下面按"有没有 boxops 那一行"决定要不要用）
         if not htpasswd_line(cfg["all"], "boxops"):
             # 退休之后再跑这个脚本是正常操作：没有那一行就不做"旧口令仍能进"的检查
             pre.append(f"{host}: 旧通道口令已退休（htpasswd 里没有 boxops）—— 跳过旧口令检查 ✅")
             continue
-        # 线上的条目是 $apr1$（Apache MD5），glibc 的 crypt 不认 —— 不自己算哈希，
-        # 直接问 nginx（它读的就是这个文件）：旧口令能过，就说明条目与当前口令一致。
+        # 旧口令那一行还在：这时必须能读到当前口令，否则这个预检没法做
+        if host == "hpa888":
+            pw = read_env(SECRETS / "box-ops-rclone.env", "RCLONE_PASS")
+        else:
+            _rc, out = sh_175("grep '^RCLONE_PASS=' /root/.secrets/box-ops175-rclone.env")
+            pw = out.split("=", 1)[1].strip() if "=" in out else ""
+        if not pw:
+            pre.append(f"{host}: ⚠ htpasswd 里还有 boxops，但读不到旧口令明文 —— 跳过一致性预检")
+            continue
         c = curl_code(PUBLIC + path, "boxops", pw)
         if not c.startswith("2"):
             say(f"✗ {host}: 用当前通道口令打 {path} 拿到 {c}（不是 2xx）—— "
