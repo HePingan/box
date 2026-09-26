@@ -118,8 +118,12 @@ def htpasswd_line(path: str, user: str) -> str:
 # ── 补丁 ────────────────────────────────────────────────────────────
 
 def patch_vhost(text: str) -> tuple[str, list[str]]:
-    if "box-ops-rw.htpasswd" in text:
-        return text, ["vhost 上已经装过（配置里已有 box-ops-rw.htpasswd）"]
+    # 幂等判断要看**真正装了什么**：只读是与否由 `map` + 这两个闸门变量决定，
+    # 而不是"配置里有没有某个 htpasswd 文件"——线上用的是 auth_basic_user_file
+    # 指向 box-ops.htpasswd（多用户，只读靠用户名 ro- 前缀），从来不引用 rw 那个文件，
+    # 所以旧判断永远不触发：每次 --check 都以为要重装，真跑 --apply 会把闸门重复插。
+    if "$boxops_ro_write" in text and "$boxops_ro_term" in text and LOG_FORMAT in text:
+        return text, ["vhost 上已经装过（两个只读闸门 + 审计日志格式都在）"]
     notes: list[str] = []
     for prefix, host in LOCATIONS.items():
         cfg = CHANNELS[host]
@@ -158,6 +162,9 @@ def patch_vhost(text: str) -> tuple[str, list[str]]:
         block = re.sub(r"\n\s*auth_basic [^\n]*", "", block)
         block = re.sub(r"\n\s*auth_basic_user_file [^\n]*", "", block)
         block = re.sub(r"\n\s*access_log [^\n]*box-ops-access[^\n]*", "", block)
+        # 已有的闸门块先清掉：闸门不是 auth_basic 那类"可重复插入"的行，
+        # 留着它再插一份就是两份一样的 if（不影响功能，但配置会每跑一次胖一圈）
+        block = re.sub(r"\n\s*if \(\$boxops_ro_(?:write|term)\) \{.*?\n\s*\}\n", "\n", block, flags=re.S)
         new_block = block.replace(f"    location ^~ {prefix} {{",
                                   f"    location ^~ {prefix} {{\n{add}", 1)
         text = text[:start] + new_block + text[end:]
