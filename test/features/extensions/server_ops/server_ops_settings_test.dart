@@ -775,5 +775,80 @@ void main() {
       expect(n.passwords['srv1'], 'pw');
     });
   });
+  group('自建条目其实就是在管内置那两台时（D10 补）', () {
+    test('地址与内置 175 相同的自建条目 → 快照 id 认成 tencent175', () {
+      const mine = ServerOpsServer(
+        id: 'srv1',
+        label: '我的构建机',
+        baseUrl: 'https://box.hpa888.top/dav175',
+        user: 'phone-175',
+      );
+      final n = ServerOpsSettings.normalizeForSave(
+        servers: const [mine],
+        selectedId: 'srv1',
+      );
+      final fixed = n.servers.single;
+      expect(fixed.label, '我的构建机', reason: '自己取的名字要尊重');
+      expect(fixed.effectiveSnapshotId, 'tencent175',
+          reason: '地址与内置 175 一致 → 快照 id 要挂到 tencent175，否则主机页永远打不上「当前」');
+    });
+
+    test('名字本身就是地址（自动取的那种）→ 换成正主的名字', () {
+      const mine = ServerOpsServer(
+        id: 'srv1',
+        label: 'box.hpa888.top/dav175',
+        baseUrl: 'https://box.hpa888.top/dav175',
+      );
+      final n = ServerOpsSettings.normalizeForSave(
+        servers: const [mine],
+        selectedId: 'srv1',
+      );
+      expect(n.servers.single.label, '腾讯云 · 构建/监控机');
+      expect(n.servers.single.effectiveSnapshotId, 'tencent175');
+    });
+
+    test('地址对不上任何一台内置机 → 快照 id 还是自己（不许乱认亲）', () {
+      const mine = ServerOpsServer(
+        id: 'srv9',
+        label: '别的机器',
+        baseUrl: 'https://elsewhere.test/dav',
+      );
+      final n = ServerOpsSettings.normalizeForSave(
+        servers: const [mine],
+        selectedId: 'srv9',
+      );
+      expect(n.servers.single.effectiveSnapshotId, 'srv9');
+      expect(n.servers.single.label, '别的机器');
+    });
+
+    test('自建条目指向内置 175 时，系统页的只读地址也认得它', () {
+      const mine = ServerOpsServer(
+        id: 'srv1',
+        label: '我的构建机',
+        baseUrl: 'https://box.hpa888.top/dav175',
+      );
+      expect(mine.effectiveApiUrl, 'https://box.hpa888.top/opsapi175');
+    });
+
+    test('自己填了只读地址就用自己的（不因为认到正主而覆盖）', () {
+      const mine = ServerOpsServer(
+        id: 'srv1',
+        label: '我的构建机',
+        baseUrl: 'https://box.hpa888.top/dav175',
+        apiUrl: 'https://mine.test/opsapi',
+      );
+      expect(mine.effectiveApiUrl, 'https://mine.test/opsapi');
+    });
+
+    test('地址对不上内置机的自建条目 → 只读地址仍为空（界面照旧提示还没接）', () {
+      const mine = ServerOpsServer(
+        id: 'srv9',
+        label: '别的机器',
+        baseUrl: 'https://elsewhere.test/dav',
+      );
+      expect(mine.effectiveApiUrl, '');
+    });
+
+  });
 
 }

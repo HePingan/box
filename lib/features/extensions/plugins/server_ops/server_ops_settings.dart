@@ -70,7 +70,24 @@ class ServerOpsServer {
 
   /// 生效的只读 API 地址；用户自己加的机器没填就是空串（界面据此提示"这台的系统页还没接"）。
   String get effectiveApiUrl =>
-      _nonEmpty(apiUrl) ?? ServerOpsSettings.defaultApiUrlFor(id);
+      _nonEmpty(apiUrl) ?? _apiUrlFromAddress();
+
+  /// 只读接口地址的兜底：按 id 的内置默认 → **地址与内置那台相同就用它的**。
+  ///
+  /// 后半段是给"自建条目其实在管内置那台"用的：这种条目的 id 是自己编的（拿不到按 id 的
+  /// 内置默认），地址却是 `/dav175` —— 不认这一层的话，系统页会白着说"这台的系统页还没接"，
+  /// 而机器明明就是那台。设备令牌仍然按条目自己的 id 存/读，不从别人那里借。
+  String _apiUrlFromAddress() {
+    final byId = ServerOpsSettings.defaultApiUrlFor(id);
+    if (byId.isNotEmpty) return byId;
+    final twin = ServerOpsSettings.addressTwin(
+      effectiveBaseUrl,
+      peers: const <ServerOpsServer>[],
+      selfId: id,
+    );
+    if (twin == null) return '';
+    return ServerOpsSettings.defaultApiUrlFor(twin.effectiveSnapshotId);
+  }
 
   /// 地址或用户名还是构建默认值（没被用户覆盖过）。
   bool get usedBuildDefaults =>
@@ -347,7 +364,10 @@ class ServerOpsSettings {
   }) {
     final key = addressKey(baseUrl);
     if (key.isEmpty) return null;
-    for (final peer in peers) {
+    // 内置两台也要参与比较：用户一旦保存过自己的列表，列表里就只剩他自己那几条，
+    // 内置两台不再出现在 peers 里 —— 于是「其实就是在管那两台之一」的自建条目认不出正主，
+    // 快照 id 挂不上（主机页永远打不上「当前」，还多一条红字）。内置的是正主，本来就该被认出来。
+    for (final peer in [...builtInServers, ...peers]) {
       if (peer.id == selfId) continue;
       if (addressKey(peer.effectiveBaseUrl) == key) return peer;
     }
@@ -365,7 +385,10 @@ class ServerOpsSettings {
     required String selfId,
   }) {
     final want = label.trim();
-    if (want.isNotEmpty && want != placeholderLabel) return want;
+    // 占位名，或者名字本身就是地址（自动取的那种）时，都算没取过名字：
+    // 后者能认到正主就换成正主的名字，比 box.hpa888.top/dav175 这种好看。
+    final looksAuto = want.isNotEmpty && want == addressKey(baseUrl);
+    if (want.isNotEmpty && want != placeholderLabel && !looksAuto) return want;
     final twin = addressTwin(baseUrl, peers: peers, selfId: selfId);
     if (twin != null) return twin.label;
     final key = addressKey(baseUrl);
