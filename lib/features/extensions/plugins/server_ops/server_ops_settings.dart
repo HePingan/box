@@ -212,10 +212,110 @@ class ServerOpsSettings {
   /// 这是给"用户自己加的机器"兜底的：id 不在内置名单里、终端地址又没填时，
   /// 只要地址是这套命名，就能推对；推不出来返回空串（不猜）。
   static String terminalUrlFromDav(String davUrl) {
-    final m = RegExp(r'^(https?://[^/]+)/dav([A-Za-z0-9_]*)/?$')
+    final parts = _davSibling(davUrl);
+    if (parts == null) return '';
+    return '${parts.host}/term${parts.suffix}/';
+  }
+
+  /// 从文件通道地址推只读接口地址：`/dav175` → `/opsapi175`（只认这套命名）。
+  static String apiUrlFromDav(String davUrl) {
+    final parts = _davSibling(davUrl);
+    if (parts == null) return '';
+    return '${parts.host}/opsapi${parts.suffix}';
+  }
+
+  /// 弹窗里"这一格留空的话会生效成什么"。
+  ///
+  /// 和 `effective*` 的区别：这里看的是**还没保存的输入框内容**，而且终端/只读接口
+  /// 在"按机器 id 的默认"之后，还会再按你填的文件地址推一次 —— 弹窗据此给出
+  /// 贴着这台机器的示例（以前这里写死主服务端的地址，等于在暗示用户填错）。
+  ///
+  /// 另一个用处是"还缺什么"的清单：推出来仍是空串 = 这一格真的没有来源。
+  static ServerOpsFieldPreview fieldPreview({
+    required String id,
+    required String baseUrl,
+    required String terminalUrl,
+    required String apiUrl,
+  }) {
+    final base = baseUrl.trim();
+    final explicitTerminal = terminalUrl.trim();
+    final explicitApi = apiUrl.trim();
+    final byIdTerminal = defaultTerminalUrlFor(id);
+    final byIdApi = defaultApiUrlFor(id);
+    return ServerOpsFieldPreview(
+      terminalUrl: explicitTerminal.isNotEmpty
+          ? explicitTerminal
+          : (byIdTerminal.isNotEmpty ? byIdTerminal : terminalUrlFromDav(base)),
+      apiUrl: explicitApi.isNotEmpty
+          ? explicitApi
+          : (byIdApi.isNotEmpty ? byIdApi : apiUrlFromDav(base)),
+      // 地址本身合法不合法由调用方按需再查（这里只回答"从哪儿来"）
+      terminalFromBase: explicitTerminal.isEmpty && byIdTerminal.isEmpty,
+      apiFromBase: explicitApi.isEmpty && byIdApi.isEmpty,
+    );
+  }
+
+  /// 终端地址和文件地址**看着不是同一台**时给一句提醒。
+  ///
+  /// 真机上就是这么错的：175 那条的终端地址指向主服务端的 `/term/`，拿 175 的口令
+  /// 去打必然 401，而报错说的是"口令不对"，方向就查偏了。只在**能推断**时提醒：
+  /// 两边的 `dav`/`term` 后缀对不上才报，推不出来（非这套命名）返回 null，不误报。
+  static String? terminalMismatchWarning({
+    required String baseUrl,
+    required String terminalUrl,
+  }) {
+    final dav = _davSibling(baseUrl);
+    if (dav == null) return null;
+    final term = RegExp(r'^(?:https?:)?//([^/]+)/term([A-Za-z0-9_]*)/?$')
+        .firstMatch(terminalUrl.trim());
+    if (term == null) return null;
+    final termSuffix = term.group(2) ?? '';
+    if (termSuffix == dav.suffix) return null;
+    return '文件地址是 /dav${dav.suffix}，终端地址却是 /term$termSuffix/ '
+        '—— 终端会拿这台的凭据去连另一台的终端，多半是 401';
+  }
+
+  /// 拆出 `…/dav<后缀>` 里的 `host` 与 `后缀`。
+  ///
+  /// 两种写法都认：`https://box.hpa888.top/dav175` 与 `//box.hpa888.top/dav175`
+  /// —— 后者是真机上真出现过的填法（协议省了，Android 侧照样能连），
+  /// 以前只认带协议的，于是"填了 //host/dav175 就推不出终端地址"。
+  /// 推不出来返回 null（不猜）。
+  static _DavSibling? _davSibling(String davUrl) {
+    final m = RegExp(r'^(?:https?:)?//([^/]+)/dav([A-Za-z0-9_]*)/?$')
         .firstMatch(davUrl.trim());
-    if (m == null) return '';
-    return '${m.group(1)}/term${m.group(2)}/';
+    if (m == null) return null;
+    return _DavSibling(host: 'https://${m.group(1)}', suffix: m.group(2) ?? '');
+  }
+
+  /// 地址规范化：只写主机（`box.hpa888.top/dav175`）时补上 `https://`；
+  /// 已经带了协议或 `//` 的原样返回。填地址时少打字是常态，但**存下来的必须
+  /// 是能直接用的形状**，否则同一格地址会出现两种写法，排查时对不上。
+  static String normalizeAddress(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return '';
+    if (t.startsWith('http://') ||
+        t.startsWith('https://') ||
+        t.startsWith('//')) {
+      return t;
+    }
+    return 'https://$t';
+  }
+
+  /// 地址形态检查：返回一句人话（问题）或 null（看着没问题）。
+  /// 只做"明显写错了"的判断，不做连通性判断 —— 那是「测试连接」的事。
+  static String? addressProblem(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return null;
+    if (t.contains(' ')) return '地址里不能有空格';
+    final body = t.startsWith('//')
+        ? t.substring(2)
+        : (t.startsWith('http://') ? t.substring(7)
+            : (t.startsWith('https://') ? t.substring(8) : t));
+    if (body.isEmpty) return '地址不完整';
+    final host = body.split('/').first;
+    if (!host.contains('.')) return '主机名看着不完整（例如 box.hpa888.top）';
+    return null;
   }
 
   // ── 构建注入的默认值（两台机器各一套；名字与
@@ -603,4 +703,31 @@ String? _nonEmpty(String? value) {
   if (value == null) return null;
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed;
+}
+
+/// `…/dav<后缀>` 拆出来的主机与后缀（如 `https://box.hpa888.top` + `175`）。
+class _DavSibling {
+  const _DavSibling({required this.host, required this.suffix});
+  final String host;
+  final String suffix;
+}
+
+/// 弹窗里两格地址"留空会用成什么"的预览（见 [ServerOpsSettings.fieldPreview]）。
+class ServerOpsFieldPreview {
+  const ServerOpsFieldPreview({
+    required this.terminalUrl,
+    required this.apiUrl,
+    this.terminalFromBase = false,
+    this.apiFromBase = false,
+  });
+
+  /// 最终会用的终端地址（空串 = 这台机器没有终端地址可用）。
+  final String terminalUrl;
+
+  /// 最终会用的只读接口地址（空串 = 这台机器没接只读接口）。
+  final String apiUrl;
+
+  /// 这两个是不是"从文件地址推出来的"（用来在界面上说明来源，别让人以为是默认值）。
+  final bool terminalFromBase;
+  final bool apiFromBase;
 }

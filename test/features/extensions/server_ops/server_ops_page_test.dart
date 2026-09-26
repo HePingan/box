@@ -123,6 +123,9 @@ void main() {
 
     expect(find.text('阿里云 · 主服务端'), findsWidgets);
     expect(find.text('腾讯云 · 构建/监控机'), findsOneWidget);
-    expect(find.text('https://box.hpa888.top/dav175'), findsOneWidget);
+    // 切换器每一项现在多一行"终端怎么样"（真机上正是这一格把人带偏的），
+    // 所以地址那行不再是一整条 Text
+    expect(find.textContaining('https://box.hpa888.top/dav175'), findsOneWidget);
+    expect(find.textContaining('终端：'), findsWidgets);
   });
 }

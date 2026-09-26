@@ -160,8 +160,8 @@ class _ServerSwitcher extends StatelessWidget {
               ),
               title: Text(server.label),
               subtitle: Text(
-                server.effectiveBaseUrl,
-                maxLines: 1,
+                '${server.effectiveBaseUrl}\n终端：${_terminalLine(server)}',
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -189,6 +189,23 @@ class _ServerSwitcher extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 列表里那句"终端怎么样"：没配 / 配了 / 看着指向另一台。
+///
+/// 为什么要写在列表上：真机上就是这一格留空（或被旧的默认值带偏）导致"终端 401"，
+/// 而列表原来只显示文件地址与口令状态 —— 得点进弹窗才能发现。
+String _terminalLine(ServerOpsServer server) {
+  final terminal = server.effectiveTerminalUrl;
+  final mismatch = ServerOpsSettings.terminalMismatchWarning(
+    baseUrl: server.effectiveBaseUrl,
+    terminalUrl: terminal,
+  );
+  if (mismatch != null) {
+    return '⚠ 看着指向另一台（${terminal.isEmpty ? '没填' : terminal}）';
+  }
+  if (terminal.isEmpty) return '还没配（终端页用不了）';
+  return '已配（$terminal）';
 }
 
 /// 设置弹层：服务器列表 + 每台一条连接（新增 / 编辑 / 删除 / 选为当前）。
@@ -497,9 +514,10 @@ class _ServerRow extends StatelessWidget {
         ],
       ),
       subtitle: Text(
-        '${server.effectiveBaseUrl}\n'
+        '${server.effectiveBaseUrl}   （${server.id}）\n'
         '口令：${passwordPresent ? '已在本机加密保存' : '还没配置'}'
-        ' · 系统页：${apiTokenPresent ? '已配令牌' : '没配令牌'}',
+        ' · 系统页：${apiTokenPresent ? '已配令牌' : '没配令牌'}\n'
+        '终端：${_terminalLine(server)}',
         style: theme.textTheme.labelSmall?.copyWith(
           color: theme.colorScheme.outline,
         ),
@@ -625,6 +643,44 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
     return widget.storedApiToken;
   }
 
+  /// 这一格留空会用成什么（贴着这台机器算，见 ServerOpsSettings.fieldPreview）。
+  ServerOpsFieldPreview get _preview => ServerOpsSettings.fieldPreview(
+        id: widget.server.id,
+        baseUrl: _baseUrl.text,
+        terminalUrl: _terminalUrl.text,
+        apiUrl: _apiUrl.text,
+      );
+
+  /// 这台还缺什么 —— 直接写在弹窗顶上，省得用户自己对着四格猜。
+  String get _missingSummary {
+    final missing = <String>[];
+    if (_probePassword.isEmpty) missing.add('口令');
+    if (_preview.terminalUrl.isEmpty) missing.add('终端地址');
+    if (_preview.apiUrl.isEmpty) missing.add('只读接口地址');
+    if (_probeApiToken.isEmpty) missing.add('设备令牌');
+    if (missing.isEmpty) return '四项都齐了';
+    return '这台还缺：${missing.join('、')}';
+  }
+
+  /// 终端地址和文件地址看着不是同一台时的提醒（真机踩过：175 那条指向主服务端终端）。
+  String? get _mismatch => ServerOpsSettings.terminalMismatchWarning(
+        baseUrl: _baseUrl.text,
+        terminalUrl: _preview.terminalUrl,
+      );
+
+  /// 校验：有问题就返回一句人话（并且不关窗），没问题返回 null。
+  String? _blockingProblem() {
+    for (final (label, raw) in [
+      ('文件通道地址', _baseUrl.text),
+      ('终端地址', _terminalUrl.text),
+      ('只读接口地址', _apiUrl.text),
+    ]) {
+      final problem = ServerOpsSettings.addressProblem(raw);
+      if (problem != null) return '$label：$problem';
+    }
+    return null;
+  }
+
   /// 体检要用的口令：输入框填了就用新的，否则用已保存的那份。
   String get _probePassword {
     if (_clearPassword) return '';
@@ -632,7 +688,40 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
     return widget.storedPassword;
   }
 
-  void _submit() {
+  Future<void> _submit() async {
+    final problem = _blockingProblem();
+    if (problem != null) {
+      setState(() => _error = problem);
+      return;
+    }
+    final mismatch = _mismatch;
+    if (mismatch != null) {
+      final go = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('地址可能不是同一台'),
+          content: Text('$mismatch\n\n确定要按现在这样保存吗？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('回去改'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('就这样保存'),
+            ),
+          ],
+        ),
+      );
+      if (go != true || !mounted) return;
+    }
+    // 存下来的地址统一成能直接用的形状（只写主机时补 https://）
+    final base = ServerOpsSettings.normalizeAddress(_baseUrl.text);
+    final terminal = ServerOpsSettings.normalizeAddress(_terminalUrl.text);
+    final api = ServerOpsSettings.normalizeAddress(_apiUrl.text);
+    if (base != _baseUrl.text) _baseUrl.text = base;
+    if (terminal != _terminalUrl.text) _terminalUrl.text = terminal;
+    if (api != _apiUrl.text) _apiUrl.text = api;
     final newPassword = _clearPassword
         ? ''
         : (_password.text.isEmpty ? null : _password.text);
@@ -804,8 +893,15 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final passwordPresent = _clearPassword ? false : _hasStoredPassword;
+    final preview = _preview;
+    final byIdBase = ServerOpsSettings.defaultBaseUrlFor(widget.server.id);
+    // 示例地址必须贴着这台机器：以前这里写死主服务端的地址，等于在暗示用户填错
+    final baseHint = byIdBase.isNotEmpty ? byIdBase : 'https://主机/davXxx';
+    final mismatch = _mismatch;
+    final canFill = (_terminalUrl.text.trim().isEmpty && preview.terminalUrl.isNotEmpty) ||
+        (_apiUrl.text.trim().isEmpty && preview.apiUrl.isNotEmpty);
     return AlertDialog(
-      title: const Text('服务器连接'),
+      title: Text('服务器连接 · ${widget.server.id}'),
       content: SizedBox(
         width: double.maxFinite,
         child: SingleChildScrollView(
@@ -813,6 +909,29 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Row(
+                children: [
+                  Icon(
+                    _missingSummary == '四项都齐了'
+                        ? Icons.check_circle_outline
+                        : Icons.info_outline,
+                    size: 16,
+                    color: _missingSummary == '四项都齐了'
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.outline,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _missingSummary,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.outline,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
               TextField(
                 controller: _label,
                 decoration: const InputDecoration(
@@ -825,10 +944,13 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
               TextField(
                 controller: _baseUrl,
                 keyboardType: TextInputType.url,
-                decoration: const InputDecoration(
-                  labelText: 'WebDAV 根地址',
-                  hintText: ServerOpsSettings.defaultBaseUrl,
-                  border: OutlineInputBorder(),
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  labelText: '文件通道地址（WebDAV 根）',
+                  hintText: baseHint,
+                  helperText: '浏览/上传/下载走这条；两台机器后面分别带 dav 与 dav175',
+                  helperMaxLines: 2,
+                  border: const OutlineInputBorder(),
                 ),
               ),
               const SizedBox(height: 10),
@@ -888,22 +1010,83 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
               TextField(
                 controller: _terminalUrl,
                 keyboardType: TextInputType.url,
-                decoration: const InputDecoration(
-                  labelText: '终端地址',
-                  hintText: ServerOpsSettings.defaultTerminalUrl,
-                  border: OutlineInputBorder(),
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  labelText: '终端地址（可选）',
+                  hintText: preview.terminalUrl.isEmpty
+                      ? 'https://主机/termXxx/'
+                      : preview.terminalUrl,
+                  helperText: _terminalUrl.text.trim().isNotEmpty
+                      ? '留空的话会按文件地址推：${preview.terminalUrl.isEmpty ? '推不出来' : preview.terminalUrl}'
+                      : (preview.terminalFromBase
+                          ? '留空就用上面文件地址推出来的这个'
+                          : '留空就用这台机器的默认；填了才用得了终端页'),
+                  helperMaxLines: 2,
+                  border: const OutlineInputBorder(),
                 ),
               ),
+              if (mismatch != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.error_outline,
+                          size: 16, color: theme.colorScheme.error),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          mismatch,
+                          style: theme.textTheme.labelSmall
+                              ?.copyWith(color: theme.colorScheme.error),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => setState(() {
+                          _terminalUrl.text = ServerOpsSettings.terminalUrlFromDav(
+                            _baseUrl.text,
+                          );
+                        }),
+                        child: const Text('改成对的那台'),
+                      ),
+                    ],
+                  ),
+                ),
               const SizedBox(height: 10),
               TextField(
                 controller: _apiUrl,
                 keyboardType: TextInputType.url,
-                decoration: const InputDecoration(
-                  labelText: '只读接口地址（C2）',
-                  hintText: 'https://box.hpa888.top/opsapi175',
-                  border: OutlineInputBorder(),
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  labelText: '只读接口地址（可选）',
+                  hintText: preview.apiUrl.isEmpty
+                      ? 'https://主机/opsapiXxx'
+                      : preview.apiUrl,
+                  helperText: preview.apiUrl.isEmpty
+                      ? '留空 = 不看服务器状态（系统页那几个卡片会空着）'
+                      : '留空就用这个；只读，专门给系统页的服务器状态用',
+                  helperMaxLines: 2,
+                  border: const OutlineInputBorder(),
                 ),
               ),
+              if (canFill)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => setState(() {
+                      if (_terminalUrl.text.trim().isEmpty &&
+                          preview.terminalUrl.isNotEmpty) {
+                        _terminalUrl.text = preview.terminalUrl;
+                      }
+                      if (_apiUrl.text.trim().isEmpty &&
+                          preview.apiUrl.isNotEmpty) {
+                        _apiUrl.text = preview.apiUrl;
+                      }
+                    }),
+                    icon: const Icon(Icons.auto_fix_high, size: 16),
+                    label: const Text('按文件地址补齐上面两格'),
+                  ),
+                ),
               const SizedBox(height: 10),
               TextField(
                 controller: _apiToken,

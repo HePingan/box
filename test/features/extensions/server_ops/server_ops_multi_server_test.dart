@@ -264,6 +264,51 @@ void main() {
     );
   });
 
+  testWidgets('地址写错了不让保存：把原因指出来，弹窗不关', (tester) async {
+    await _pumpPage(tester, testSettingsOnSecondary);
+    await _openSettings(tester);
+    await tester.tap(find.widgetWithText(ListTile, '腾讯云 · 构建/监控机'));
+    await _settle(tester);
+
+    final fields = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(fields.at(1), 'https://box hpa888.top/dav175x');
+    await tester.tap(find.text('确定'));
+    await _settle(tester);
+
+    expect(find.text('服务器连接 · tencent175'), findsOneWidget,
+        reason: '弹窗还开着（标题带上正在改的是哪台）');
+    expect(
+      find.textContaining('文件通道地址'),
+      findsWidgets,
+      reason: '要说清是哪一格不对',
+    );
+  });
+
+  testWidgets('串机器护栏：终端指向另一台时先问一句，能给一键改对', (tester) async {
+    // 真机上就是这么错的：175 那条的终端地址指向主服务端，拿 175 的口令去打必然 401
+    await _pumpPage(tester, testSettingsOnSecondary);
+    await _openSettings(tester);
+    await tester.tap(find.widgetWithText(ListTile, '腾讯云 · 构建/监控机'));
+    await _settle(tester);
+
+    final fields = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(fields.at(4), 'https://box.hpa888.top/term/');
+    await _settle(tester);
+
+    expect(find.textContaining('多半是 401'), findsOneWidget, reason: '当场说清后果');
+
+    // 一键改对：按文件地址推回这一族
+    await tester.tap(find.text('改成对的那台'));
+    await _settle(tester);
+    expect(find.textContaining('多半是 401'), findsNothing, reason: '改对了就不该再提醒');
+  });
+
   testWidgets('编辑服务器：改名/改地址后列表与落盘都跟着变', (tester) async {
     await _pumpPage(tester, testSettingsOnSecondary);
     await _openSettings(tester);
@@ -279,6 +324,11 @@ void main() {
     await tester.enterText(fields.at(1), 'https://box.hpa888.top/dav175x');
     await tester.tap(find.text('确定'));
     await _settle(tester);
+    // 改了文件地址、终端那格却还是旧的一族 → 会先问一句（新加的护栏），测试按"就这样保存"
+    if (find.text('地址可能不是同一台').evaluate().isNotEmpty) {
+      await tester.tap(find.text('就这样保存'));
+      await _settle(tester);
+    }
 
     expect(find.text('腾讯云 · 新名字'), findsOneWidget);
     expect(_listTexts(tester).last, contains('/dav175x'));

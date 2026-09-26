@@ -579,4 +579,104 @@ void main() {
       expect(prefs.getString(ServerOpsSettings.serversKey), isNull);
     });
   });
+  group('弹窗的示例地址与护栏（D5）', () {
+    // 真机源头：弹窗的示例地址写死主服务端那台，175 那格等于在暗示用户填错。
+    test('示例地址按机器走：175 条目留空时给的是 /term175/ 与 /opsapi175', () {
+      final p = ServerOpsSettings.fieldPreview(
+        id: 'tencent175',
+        baseUrl: 'https://box.hpa888.top/dav175',
+        terminalUrl: '',
+        apiUrl: '',
+      );
+      expect(p.terminalUrl, 'https://box.hpa888.top/term175/');
+      expect(p.apiUrl, 'https://box.hpa888.top/opsapi175');
+    });
+
+    test('自己加的机器：从文件地址推（含只写 //host 的写法）', () {
+      final p = ServerOpsSettings.fieldPreview(
+        id: 'myserver',
+        baseUrl: '//box.hpa888.top/dav175',
+        terminalUrl: '',
+        apiUrl: '',
+      );
+      expect(p.terminalUrl, 'https://box.hpa888.top/term175/');
+      expect(p.apiUrl, 'https://box.hpa888.top/opsapi175');
+      expect(p.terminalFromBase, isTrue, reason: '要能说明来源，别让人以为是内置默认');
+
+      expect(
+        ServerOpsSettings.fieldPreview(
+          id: 'myserver',
+          baseUrl: 'https://别的域名/files',
+          terminalUrl: '',
+          apiUrl: '',
+        ).terminalUrl,
+        isEmpty,
+        reason: '推不出来就是空，不猜',
+      );
+    });
+
+    test('自己填了就以填的为准（不再被默认值盖掉）', () {
+      final p = ServerOpsSettings.fieldPreview(
+        id: 'tencent175',
+        baseUrl: 'https://box.hpa888.top/dav175',
+        terminalUrl: 'https://box.hpa888.top/term175/',
+        apiUrl: 'https://box.hpa888.top/opsapi175',
+      );
+      expect(p.terminalFromBase, isFalse);
+      expect(p.apiFromBase, isFalse);
+      expect(p.terminalUrl, 'https://box.hpa888.top/term175/');
+    });
+
+    test('串机器护栏：175 的文件地址配主服务端的终端地址 → 提醒（真机那条 401）', () {
+      expect(
+        ServerOpsSettings.terminalMismatchWarning(
+          baseUrl: 'https://box.hpa888.top/dav175',
+          terminalUrl: 'https://box.hpa888.top/term/',
+        ),
+        isNotNull,
+      );
+      expect(
+        ServerOpsSettings.terminalMismatchWarning(
+          baseUrl: 'https://box.hpa888.top/dav175',
+          terminalUrl: 'https://box.hpa888.top/term175/',
+        ),
+        isNull,
+      );
+      expect(
+        ServerOpsSettings.terminalMismatchWarning(
+          baseUrl: 'https://别的域名/files',
+          terminalUrl: 'https://box.hpa888.top/term175/',
+        ),
+        isNull,
+        reason: '推不出来就不误报（自定义命名不是错）',
+      );
+    });
+
+    test('地址规范化：只写主机就补 https://，已有协议或 // 的原样', () {
+      expect(
+        ServerOpsSettings.normalizeAddress('box.hpa888.top/dav175'),
+        'https://box.hpa888.top/dav175',
+      );
+      expect(
+        ServerOpsSettings.normalizeAddress('https://box.hpa888.top/dav175'),
+        'https://box.hpa888.top/dav175',
+      );
+      expect(
+        ServerOpsSettings.normalizeAddress('  //box.hpa888.top/dav175  '),
+        '//box.hpa888.top/dav175',
+      );
+      expect(ServerOpsSettings.normalizeAddress('   '), isEmpty);
+    });
+
+    test('地址形态检查：明显的错要说出来，看着正常的不拦', () {
+      expect(ServerOpsSettings.addressProblem(''), isNull);
+      expect(ServerOpsSettings.addressProblem('https://box.hpa888.top/dav175'), isNull);
+      expect(ServerOpsSettings.addressProblem('//box.hpa888.top/dav175'), isNull);
+      expect(ServerOpsSettings.addressProblem('https://box hpa888.top'), isNotNull);
+      expect(ServerOpsSettings.addressProblem('https://localhost'), isNotNull);
+      expect(ServerOpsSettings.addressProblem('https://'), isNotNull);
+    });
+  });
+
 }
+
