@@ -389,6 +389,9 @@ String _s(Object? v) => v == null ? '' : '$v';
 int _i(Object? v) => v is num ? v.toInt() : int.tryParse(_s(v)) ?? 0;
 double _d(Object? v) => v is num ? v.toDouble() : double.tryParse(_s(v)) ?? 0;
 
+/// 时间戳（服务端给 ISO 串；解析不出来就是 null，不编一个"现在"顶上）
+DateTime? _dt(Object? v) => v is String ? DateTime.tryParse(v) : null;
+
 // ── 模型（字段缺失一律给默认值：服务端加字段不该把旧包打黑）──
 
 class OpsOverview {
@@ -684,6 +687,8 @@ class OpsLogTail {
     required this.lines,
     required this.truncated,
     required this.content,
+    this.mtime,
+    this.sizeBytes,
   });
 
   final String path;
@@ -691,11 +696,17 @@ class OpsLogTail {
   final bool truncated;
   final String content;
 
+  /// 这个文件的写入时刻/大小（服务端后加的字段；老服务端没有 → null）。
+  final DateTime? mtime;
+  final int? sizeBytes;
+
   static OpsLogTail fromJson(Map<String, dynamic> j) => OpsLogTail(
         path: _s(j['path']),
         lines: _i(j['lines']),
         truncated: j['truncated'] == true,
         content: _s(j['content']),
+        mtime: _dt(j['mtime']),
+        sizeBytes: j['sizeBytes'] is num ? (j['sizeBytes'] as num).toInt() : null,
       );
 }
 

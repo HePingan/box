@@ -504,8 +504,17 @@ def act_logs(q: dict, _label: str) -> tuple[int, dict]:
     text = _tail(p, lines)
     tail = text.splitlines()[-lines:]
     body, cut = cap("\n".join(tail))
+    # 带上 mtime/sizeBytes：客户端只有内容的话没法说"这是什么时候写的"，
+    # 而"巡检最近一次跑在什么时候"恰恰是体检要看的第一件事。
+    try:
+        st = p.stat()
+        mtime = datetime.fromtimestamp(st.st_mtime, CST).isoformat(timespec="seconds")
+        size = st.st_size
+    except OSError:
+        mtime, size = None, None
     return 0, {"path": str(p), "lines": len(tail), "truncated": cut,
-               "content": body, "generatedAt": now_iso()}
+               "content": body, "mtime": mtime, "sizeBytes": size,
+               "generatedAt": now_iso()}
 
 
 _CHANNEL_LINE = re.compile(

@@ -11,6 +11,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:box/features/extensions/plugins/server_ops/host_models.dart';
+import 'package:box/features/extensions/plugins/server_ops/host_series.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_sparkline.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
@@ -40,6 +41,10 @@ class _ServerOpsHostTabState extends State<ServerOpsHostTab> {
   String? _error;
   bool _loading = false;
   Map<String, HostHistory> _histories = const {};
+
+  /// 看多长的一段曲线（服务端历史最多留 24 小时）。默认看一整天：
+  /// "昨晚几点开始飙的"只有 24 小时窗口答得出来。
+  int _windowMinutes = 1440;
 
   @override
   void initState() {
@@ -133,6 +138,30 @@ class _ServerOpsHostTabState extends State<ServerOpsHostTab> {
   }
 
 
+    /// 这台机器在服务端历史里的那一段（窗口切好了）；没有就返回 null。
+  HostSeries? _serverSeriesFor(HostEntry host, HostSnapshot snapshot) {
+    final raw = snapshot.series[host.id];
+    if (raw == null || !raw.hasAny) return null;
+    return raw.window(Duration(minutes: _windowMinutes));
+  }
+
+  /// 优先用**服务端**历史（能翻到昨天），没有就退回本机攒的那几点。
+  ///
+  /// 本机那份只活在"你打开过 App 的那段时间"里，十来点、看不出趋势，
+  /// 但服务端历史刚上线、或者这台机器刚接入时它还是唯一的线索 —— 所以留着兜底，
+  /// 而不是直接空着。
+  HostHistory _historyFor(HostEntry host, HostSnapshot snapshot) {
+    final s = _serverSeriesFor(host, snapshot);
+    if (s != null) {
+      return HostHistory(
+        cpu: HostSeries.points(s.cpu),
+        mem: HostSeries.points(s.mem),
+        disk: HostSeries.points(s.disk),
+      );
+    }
+    return _histories[host.id] ?? const HostHistory();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -174,12 +203,20 @@ class _ServerOpsHostTabState extends State<ServerOpsHostTab> {
               ),
             ),
           ],
+          if (snapshot.series.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _WindowChips(
+              minutes: _windowMinutes,
+              onChanged: (v) => setState(() => _windowMinutes = v),
+            ),
+          ],
           const SizedBox(height: 12),
           for (final host in snapshot.hosts)
             _HostCard(
               host: host,
-              history: _histories[host.id] ?? const HostHistory(),
+              history: _historyFor(host, snapshot),
               stepSec: kHostSampleStepSec,
+              fromServer: _serverSeriesFor(host, snapshot) != null,
               // 与当前选中服务器对齐的那一行打「当前」：否则切了机器也不知道
               // 文件/终端打的是哪台（三处得能对上）。
               isCurrent:
@@ -329,6 +366,7 @@ class _HostCard extends StatelessWidget {
     required this.history,
     required this.stepSec,
     this.isCurrent = false,
+    this.fromServer = false,
   });
 
   final HostEntry host;
@@ -336,6 +374,10 @@ class _HostCard extends StatelessWidget {
 
   /// 相邻历史点的间隔（秒）；文案里用它说明"这段线有多长"。
   final int stepSec;
+
+  /// 这段线来自**服务端历史**（而不是本机记录的十来点）—— 文案要说明白，
+  /// 否则用户会以为"怎么突然有 700 个点了"。
+  final bool fromServer;
 
   /// 是不是当前选中的那台（决定要不要打「当前」标记）。
   final bool isCurrent;
@@ -488,8 +530,8 @@ class _HostCard extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(top: 6),
                 child: Text(
-                  '折线：最近 ${history.cpu.length} 个点，每点 '
-                  '${stepSec ~/ 60} 分钟',
+                  '折线：${fromServer ? '服务端历史 · ' : '本机记录 · '}'
+                  '最近 ${history.cpu.length} 个点，每点 ${stepSec ~/ 60} 分钟',
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.outline,
                     fontSize: 10,
@@ -702,4 +744,38 @@ String _formatStamp(DateTime at) {
   String two(int v) => v.toString().padLeft(2, '0');
   return '${local.year}-${two(local.month)}-${two(local.day)} '
       '${two(local.hour)}:${two(local.minute)}:${two(local.second)}';
+}
+
+/// 看多长的一段（服务端历史每 2 分钟一点，24 小时 = 720 点）。
+class _WindowChips extends StatelessWidget {
+  const _WindowChips({required this.minutes, required this.onChanged});
+
+  final int minutes;
+  final ValueChanged<int> onChanged;
+
+  static const _options = <int, String>{
+    60: '近 1 小时',
+    360: '近 6 小时',
+    1440: '近 24 小时',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Icon(Icons.show_chart_rounded, size: 15, color: theme.colorScheme.outline),
+        const SizedBox(width: 6),
+        for (final entry in _options.entries) ...[
+          const SizedBox(width: 6),
+          ChoiceChip(
+            label: Text(entry.value, style: const TextStyle(fontSize: 11)),
+            selected: minutes == entry.key,
+            visualDensity: VisualDensity.compact,
+            onSelected: (_) => onChanged(entry.key),
+          ),
+        ],
+      ],
+    );
+  }
 }

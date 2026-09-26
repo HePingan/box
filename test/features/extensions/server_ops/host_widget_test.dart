@@ -60,6 +60,28 @@ String _body({bool online = true, bool extended = false}) => jsonEncode({
       ],
     });
 
+
+/// 带服务端历史的快照：两点一组、每 2 分钟一点，共 [points] 点（默认 60 点 = 2 小时）。
+String _bodyWithSeries({int points = 60, int endEpoch = 1789000000}) {
+  final t = [for (var i = points - 1; i >= 0; i--) endEpoch - i * 120];
+  return jsonEncode({
+    'generatedAt': '2026-09-26T16:00:00+08:00',
+    'hosts': [
+      {'id': 'hpa888', 'name': '阿里云 · 主服务端', 'ip': '47.109.97.1', 'online': true,
+       'cpuPercent': 42.0, 'cpuCount': 4, 'memPercent': 55.0, 'diskPercent': 66.6},
+    ],
+    'series': {
+      'hpa888': {
+        't': t,
+        'cpu': [for (var i = 0; i < points; i++) 40.0 + (i % 5)],
+        'mem': [for (var i = 0; i < points; i++) 50.0 + (i % 3)],
+        'disk': [for (var i = 0; i < points; i++) 66.0],
+        'load': [for (var i = 0; i < points; i++) 1.0],
+      },
+    },
+  });
+}
+
 class _FakeHostService extends HostService {
   _FakeHostService({
     this.snapshotBody,
@@ -347,5 +369,37 @@ void main() {
       ));
       expect(find.text('当前'), findsNothing);
     });
+  });
+
+  testWidgets('服务端历史：折线用服务端那 24 小时，窗口能切（默认 24 小时）', (tester) async {
+    final service = _FakeHostService(snapshotBody: _bodyWithSeries());
+    await _pumpHostTab(tester, service);
+
+    expect(find.text('近 24 小时'), findsOneWidget, reason: '有服务端历史才出现窗口选择');
+    expect(find.textContaining('服务端历史'), findsWidgets,
+        reason: '文案要说明这段线来自服务端，否则"怎么突然这么多点"没人解释');
+
+    // 默认窗口 24 小时 → 60 个点全在
+    expect(find.textContaining('最近 60 个点'), findsWidgets);
+
+    // 切到近 1 小时 → 只剩 31 点（每 2 分钟一点，含边界）
+    await tester.tap(find.text('近 1 小时'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.textContaining('最近 31 个点'), findsWidgets);
+  });
+
+  testWidgets('没有服务端历史时：不显示窗口选择，退回本机攒的那几点', (tester) async {
+    final service = _FakeHostService(
+      snapshotBody: _body(),
+      // 本机历史（服务端那份还没有时唯一的线索）
+      histories: {
+        'hpa888': const HostHistory(cpu: [3.0, 3.2, 3.1], mem: [54.0, 55.0, 54.9], disk: [66.0, 66.0, 66.6]),
+      },
+    );
+    await _pumpHostTab(tester, service);
+    expect(find.text('近 24 小时'), findsNothing, reason: '没有服务端历史就别给窗口选择');
+    expect(find.textContaining('本机记录'), findsWidgets);
+    expect(find.textContaining('最近 3 个点'), findsWidgets);
   });
 }

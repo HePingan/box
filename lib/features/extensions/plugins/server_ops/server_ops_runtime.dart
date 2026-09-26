@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
+import 'package:box/features/extensions/plugins/server_ops/monitor_service.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/image_preview_dialog.dart';
 import 'package:box/features/extensions/plugins/server_ops/host_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_api_client.dart';
@@ -115,6 +116,12 @@ ServerOpsDownloadCache _downloadCache = ServerOpsDownloadCache();
 
 ServerOpsDownloadCache get serverOpsDownloadCache => _downloadCache;
 
+/// 站点快照（monitors.json）服务：体检卡用它取"证书还剩几天 / 站点在不在线"。
+/// 与主机快照同一条链路、同一个令牌；测试注入假实现就不联网。
+MonitorService _monitorService = MonitorService();
+
+MonitorService get serverOpsMonitorService => _monitorService;
+
 /// 文件页用的服务：测试注入优先，否则按当前设置懒建。
 ServerOpsFilesService serverOpsFilesService(ServerOpsSettings settings) =>
     _filesServiceFactory?.call(settings) ??
@@ -161,6 +168,7 @@ void debugSetServerOpsRuntime({
   ServerOpsDownloadCache? downloadCache,
   OpsApiClient Function(ServerOpsSettings settings)? apiClientFactory,
   OpsWebViewAuthCacheClearer? webViewAuthCacheClearer,
+  MonitorService? monitorService,
 }) {
   _hostService = hostService ?? HostService();
   _settingsOverride = settings;
@@ -171,6 +179,7 @@ void debugSetServerOpsRuntime({
   _filePicker = filePicker ?? _defaultPickFiles;
   _downloadCache = downloadCache ?? ServerOpsDownloadCache();
   _apiClientFactory = apiClientFactory;
+  _monitorService = monitorService ?? MonitorService();
   _clearWebViewAuthCacheImpl =
       webViewAuthCacheClearer ?? _clearWebViewAuthCacheDefault;
 }

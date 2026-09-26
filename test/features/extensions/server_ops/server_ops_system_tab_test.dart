@@ -9,6 +9,8 @@ import 'dart:convert';
 
 import 'package:box/features/extensions/plugins/server_ops/server_ops_api_client.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
+import 'package:box/features/extensions/plugins/server_ops/monitor_service.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 import 'package:box/features/extensions/plugins/server_ops/system_tab.dart';
 import 'package:flutter/material.dart';
@@ -115,6 +117,19 @@ MockClient _api({
             headers: _jsonHeaders,
           );
         case 'services':
+          // 体检卡会单独查一次隧道（q=tunnel）：这里要能和普通服务列表区分开，
+          // 否则那条断言等于在验"nginx 是不是隧道"。
+          if (req.url.queryParameters['q'] == 'tunnel') {
+            return http.Response(
+              jsonEncode({
+                'units': [
+                  {'unit': 'box-ops175-tunnel.service', 'active': 'active', 'sub': 'running', 'enabled': 'enabled', 'description': '175 tunnel'},
+                ],
+              }),
+              200,
+              headers: _jsonHeaders,
+            );
+          }
           return http.Response(
             jsonEncode({
               'units': [
@@ -214,6 +229,22 @@ MockClient _api({
             headers: _jsonHeaders,
           );
         case 'logs':
+          // 体检卡读的巡检日志与日志卡读的通道日志是两个文件：按 path 分流。
+          // 巡检那条 mtime 给"刚刚"，断言才不用看手机时钟。
+          if (req.url.queryParameters['path'] == '/var/log/security-patrol.log') {
+            return http.Response(
+              jsonEncode({
+                'path': '/var/log/security-patrol.log',
+                'lines': 2,
+                'truncated': false,
+                'content': 'STATE=alert\n• 边缘机 nginx 配置变了',
+                'mtime': DateTime.now().toIso8601String(),
+                'sizeBytes': 273,
+              }),
+              200,
+              headers: _jsonHeaders,
+            );
+          }
           return http.Response(
             jsonEncode({
               'path': '/www/wwwlogs/box.hpa888.top.log',
@@ -264,7 +295,21 @@ MockClient _api({
       }
     });
 
-Future<void> _pump(WidgetTester tester, ServerOpsSettings settings, MockClient client) async {
+Future<void> _pump(
+  WidgetTester tester,
+  ServerOpsSettings settings,
+  MockClient client, {
+  // 站点快照（monitors.json）走运行时接缝：**默认也得给一份假的** ——
+  // 不给的话每个用例都会真去联网，体检拉不到还会把"这次刷新成功"打挂。
+  String? monitorsBody,
+  MonitorFetcher? monitorsFetcher,
+}) async {
+  debugSetServerOpsRuntime(
+    monitorService: MonitorService(
+      fetcher: monitorsFetcher ??
+          (url, _) async => monitorsBody ?? '{"monitors":[]}',
+    ),
+  );
   // 窗口放大：这一页有七个小节，600px 高会让下面的小节根本没被建出来（假的失败）。
   tester.view.physicalSize = const Size(1000, 3000);
   tester.view.devicePixelRatio = 1.0;
@@ -291,6 +336,8 @@ void main() {
   setUp(() {
     serverOpsRequestLog = OpsRequestLog();
   });
+  // 站点快照（monitors.json）走运行时接缝：用例不注入就真去联网了。
+  tearDown(() => debugSetServerOpsRuntime());
 
   testWidgets('没配令牌：给"去哪填"的引导，且一次请求都不发', (tester) async {
     final seen = <String>[];
@@ -599,5 +646,54 @@ void main() {
     );
     expect(button.onPressed, isNull);
     expect(find.textContaining('没有写权限'), findsOneWidget);
+  });
+
+  testWidgets('体检卡：证书按天数升序（12 天要红）、站点挂了点名、隧道与巡检一眼看到', (tester) async {
+    await _pump(
+      tester,
+      _settings(),
+      _api(seen: <String>[]),
+      monitorsBody: jsonEncode({
+        'generatedAt': '2026-09-26T16:00:00+08:00',
+        'monitors': [
+          {'name': 'zzz 最晚', 'up': true, 'certDays': 87},
+          {'name': 'aaa 最早', 'up': true, 'certDays': 12},
+          {'name': 'mmm 中间', 'up': true, 'certDays': 56},
+          {'name': '挂了的站', 'up': false, 'certDays': 60},
+        ],
+      }),
+    );
+
+    expect(find.text('体检'), findsOneWidget);
+    expect(find.textContaining('还有 12 天'), findsOneWidget);
+    expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget,
+        reason: '12 天要按"急"标记（14 天内）');
+    final texts = <String>[
+      for (final t in tester.widgetList<Text>(find.byType(Text)))
+        if (t.data != null) t.data!,
+    ];
+    // 四个站点分别是 87/12/56/60 天 → 卡片只列最近三张：12、56、60（87 被挤掉）。
+    // 这一步同时验了"按天数排"和"只列最近三张"两件事。
+    final i12 = texts.indexWhere((t) => t.contains('还有 12 天'));
+    final i56 = texts.indexWhere((t) => t.contains('还有 56 天'));
+    final i60 = texts.indexWhere((t) => t.contains('还有 60 天'));
+    expect(i12, greaterThanOrEqualTo(0));
+    expect(i12 < i56 && i56 < i60, isTrue, reason: '卡片存在的意义就是"哪张最先到期"');
+    expect(find.textContaining('还有 87 天'), findsNothing,
+        reason: '只列最近三张：87 天那张不该挤进来');
+    expect(find.textContaining('挂了：挂了的站'), findsOneWidget);
+    expect(find.textContaining('box-ops175-tunnel.service active'), findsOneWidget);
+    expect(find.textContaining('巡检'), findsWidgets);
+  });
+
+  testWidgets('体检卡：站点快照取不到时说明白，不假装"0 个站点、全在线"', (tester) async {
+    await _pump(
+      tester,
+      _settings(),
+      _api(seen: <String>[]),
+      monitorsFetcher: (url, _) async => throw const MonitorFetchException('连不上'),
+    );
+    expect(find.textContaining('站点快照没取到'), findsOneWidget);
+    expect(find.textContaining('全部在线'), findsNothing, reason: '取不到 ≠ 全在线');
   });
 }

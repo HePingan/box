@@ -33,6 +33,19 @@ PUBLIC_URL = "https://box.hpa888.top/hosts.json"
 CST = timezone(timedelta(hours=8))
 SAMPLE_GAP = 0.4
 
+# 服务端历史：每 2 分钟一个点，留 24 小时（720 点）。
+#
+# 为什么存服务端：手机上那份折线只活在"你打开过 App 的那段时间"里（本地十来点），
+# 看不出"昨晚几点开始飙的"。存这里才能翻昨天的账。
+#
+# 为什么塞进 hosts.json 而不是单开一个文件：边缘机的 nginx 只放行了 hosts.json /
+# monitors.json 这两个名字（带 token 校验），塞进去就一行 nginx 都不用改。
+SERIES_PATH = os.environ.get("BOX_OPS_HOSTS_SERIES", "/opt/ops-monitor/hosts_series.json")
+SERIES_LEN = 720
+# 只留四条曲线，别的不进历史（文件会白大一圈）。
+SERIES_FIELDS = (("cpuPercent", "cpu"), ("memPercent", "mem"),
+                 ("diskPercent", "disk"), ("load1", "load"))
+
 # 要监控的机器：id 是稳定标识（插件按它做曲线历史的键），name 是显示名。
 # ssh=None 表示"就是跑本脚本的这台"（本脚本部署在 175）。
 HOSTS = [
@@ -240,6 +253,61 @@ def collect_remote(ssh_alias: str) -> dict | None:
         return None
 
 
+def load_series() -> dict:
+    try:
+        with open(SERIES_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        # 第一次跑、或者文件被人删了：从空开始，不进历史也没关系。
+        return {}
+
+
+def save_series(prev: dict, doc: dict) -> dict:
+    """把这一轮采样并进环形缓冲（每台一份，各自 720 点）。
+
+    离线/缺采样写 null：**不能拿 0 冒充** —— 否则折线会把"没采到"画成"CPU 0%、
+    延迟 0ms"，看起来像"机器很闲"，跟事实正好相反。
+    """
+    now = int(time.time())
+    out = dict(prev)
+    for h in doc.get("hosts", []):
+        hid = h.get("id")
+        if not hid:
+            continue
+        rec = prev.get(hid) if isinstance(prev.get(hid), dict) else {}
+        # 短名进文件（720 点 × 2 台，长名会让文件白白大一圈）
+        series = {"t": list(rec.get("t") or [])}
+        for _key, short in SERIES_FIELDS:
+            series[short] = list(rec.get(short) or [])
+        # 先**对齐**再追加：时间戳与各条曲线分别裁剪的话，某次异常（比如字段名改过）
+        # 会让它们各自漂开一格，之后画出来就是"曲线比时间轴少一个点"。
+        # 取最短的那条为准，全部裁到一样长 —— 顺带把历史残留自愈掉。
+        series["t"] = [t for t in series["t"] if isinstance(t, (int, float))]
+        n = len(series["t"])
+        for _key, short in SERIES_FIELDS:
+            series[short] = [v for v in series[short] if v is None or isinstance(v, (int, float))]
+            n = min(n, len(series[short]))
+        n = min(n, SERIES_LEN - 1)
+        series["t"] = series["t"][-n:] if n else []
+        for _key, short in SERIES_FIELDS:
+            series[short] = series[short][-n:] if n else []
+        series["t"].append(now)
+        for key, short in SERIES_FIELDS:
+            v = h.get(key) if h.get("online") else None
+            series[short].append(v if isinstance(v, (int, float)) else None)
+        out[hid] = series
+    return out
+
+
+def write_series(series: dict) -> None:
+    tmp = SERIES_PATH + ".tmp"
+    os.makedirs(os.path.dirname(SERIES_PATH), exist_ok=True)
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(series, f, ensure_ascii=False, separators=(",", ":"))
+    os.replace(tmp, SERIES_PATH)
+
+
 def build() -> dict:
     hosts = []
     for spec in HOSTS:
@@ -281,6 +349,15 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001 - 采不到也要留痕
         print(f"[error] 采样失败: {e}", file=sys.stderr)
         return 1
+
+    # 历史：读上一份 → 追加这一轮 → 写回 → 塞进推送的文档里。
+    # 历史出问题不该拖垮本轮快照（曲线没了还能看当前值），所以整段包起来。
+    try:
+        series = save_series(load_series(), doc)
+        write_series(series)
+        doc["series"] = series
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] 历史序列没写成功（本轮快照照发）: {e}", file=sys.stderr)
 
     payload = json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     os.makedirs(os.path.dirname(LOCAL_OUT), exist_ok=True)

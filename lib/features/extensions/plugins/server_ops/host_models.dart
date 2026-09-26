@@ -13,6 +13,7 @@
 //   * 连名字都没有就丢掉这一条，不影响其余条目。
 
 import 'dart:convert';
+import 'host_series.dart';
 
 /// 快照结构不对（整份不可用）。
 class HostFormatException implements Exception {
@@ -148,9 +149,14 @@ class HostEntry {
 }
 
 class HostSnapshot {
-  const HostSnapshot({required this.hosts, this.generatedAt});
+  const HostSnapshot({required this.hosts, this.generatedAt, this.series = const {}});
 
   final List<HostEntry> hosts;
+
+  /// 服务端存的历史（每台一段，每 2 分钟一点、留 24 小时）。
+  ///
+  /// 老快照没有这个字段（服务端是后加的），所以默认空 map —— 界面退回本机攒的那几点。
+  final Map<String, HostSeries> series;
 
   /// 服务端采样时刻；解析不出来就是 null（界面显示"时间未知"）。
   final DateTime? generatedAt;
@@ -176,9 +182,18 @@ class HostSnapshot {
       final entry = HostEntry.tryParse(item);
       if (entry != null) hosts.add(entry);
     }
+    final series = <String, HostSeries>{};
+    final rawSeries = raw['series'];
+    if (rawSeries is Map) {
+      for (final entry in rawSeries.entries) {
+        final parsed = HostSeries.tryParse(entry.value);
+        if (parsed != null) series['${entry.key}'] = parsed;
+      }
+    }
     return HostSnapshot(
       hosts: hosts,
       generatedAt: _asDateTime(raw['generatedAt']),
+      series: series,
     );
   }
 

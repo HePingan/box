@@ -12,7 +12,9 @@
 import 'package:flutter/material.dart';
 
 import 'package:box/features/extensions/plugins/server_ops/server_ops_api_client.dart';
+import 'package:box/features/extensions/plugins/server_ops/monitor_models.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_disk.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 
@@ -48,6 +50,14 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
 
   /// 通道凭据使用情况（最近 7 天）。只有边缘机那条入口看得到（日志在边缘机写）。
   OpsChannelUsage? _channel;
+
+  /// 体检：站点快照（证书天数/在线）+ 隧道单元 + 巡检日志。
+  ///
+  /// 这三样**不是这台机器的**指标，而是"整条链路还活着吗" —— 证书到期、隧道断、
+  /// 巡检不再跑，全是静默的：页面照常刷新、数字照常显示，直到通道某天全黑。
+  MonitorSnapshot? _monitors;
+  List<OpsServiceUnit> _tunnelUnits = const <OpsServiceUnit>[];
+  OpsLogTail? _patrol;
 
   final Map<String, String> _errors = <String, String>{};
   bool _loading = false;
@@ -143,6 +153,9 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
       pull('登录记录', client.sessions),
       pull('日志文件', () => client.logFiles(limit: 40)),
       pull('通道凭据', client.channel),
+      pull('体检站点', () => serverOpsMonitorService.fetch()),
+      pull('隧道', () => client.services(filter: 'tunnel', limit: 20)),
+      pull('巡检', () => client.logs('/var/log/security-patrol.log', lines: 6)),
     ]);
     final audit = await pull('服务端审计', () => client.audit(limit: 30));
     // 只有自己造的客户端才关；用例注入的那个由用例管（关掉会让后续断言炸）。
@@ -159,6 +172,9 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
       if (results[5] != null) _sessions = results[5] as OpsSessions;
       if (results[6] != null) _logFiles = results[6] as List<OpsLogFile>;
       if (results[7] != null) _channel = results[7] as OpsChannelUsage;
+      if (results[8] != null) _monitors = results[8] as MonitorSnapshot;
+      if (results[9] != null) _tunnelUnits = results[9] as List<OpsServiceUnit>;
+      if (results[10] != null) _patrol = results[10] as OpsLogTail;
       if (audit != null) _audit = audit;
       if (caps != null) _caps = caps;
       _auditTried = true;
@@ -190,6 +206,7 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
           _topBar(context),
           if (_errors.containsKey('概览')) _errorCard('概览', _errors['概览']!),
           if (_overview != null) _overviewCard(_overview!),
+          _healthCard(),
           _sectionGap(),
           if (_errors.containsKey('进程')) _errorCard('进程', _errors['进程']!),
           _processCard(),
@@ -683,6 +700,137 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
         onResult: (ok, detail) => _log(ok, '日志 ${f.name}：$detail', started),
       ),
     );
+  }
+
+  /// 体检卡：证书还剩几天 / 站点在不在线 / 隧道单元 / 巡检最近一次。
+  ///
+  /// 数据来源是**已有的**三处：站点快照（175 每 2 分钟采 Uptime Kuma，里面本来就有
+  /// certDays）、只读接口的服务列表、巡检日志。这里不新采任何东西 —— 缺的只是"摆到
+  /// 手机上一眼能看到"。
+  Widget _healthCard() {
+    final theme = Theme.of(context);
+    return _cardShell(
+        '体检',
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_monitors case final m?) ...[
+              for (final entry in m.nearestCerts())
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Row(
+                    children: [
+                      Icon(
+                        entry.certUrgent
+                            ? Icons.error_outline_rounded
+                            : entry.certTight
+                                ? Icons.warning_amber_rounded
+                                : Icons.verified_outlined,
+                        size: 15,
+                        color: entry.certUrgent
+                            ? theme.colorScheme.error
+                            : entry.certTight
+                                ? Colors.orange
+                                : theme.colorScheme.outline,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '${entry.name} 的证书还有 ${entry.certDays} 天',
+                          style: theme.textTheme.bodySmall,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              Text(
+                '证书：${m.nearestCerts().length} 张最近的 / 共 ${m.total} 个站点里 '
+                '${m.monitors.where((x) => x.certDays != null).length} 个拿得到天数；'
+                '证书一般 30 天内会提醒、14 天内该动手',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.outline,
+                  fontSize: 10,
+                ),
+              ),
+              const SizedBox(height: 4),
+              _fact(
+                theme,
+                m.allUp ? Icons.cloud_done_outlined : Icons.cloud_off_outlined,
+                m.allUp
+                    ? '站点 ${m.upCount}/${m.total} 全部在线'
+                    : '站点 ${m.upCount}/${m.total}，挂了：${m.downNames.join('、')}',
+              ),
+            ] else
+              Text('站点快照没取到（体检需要它来算证书天数）',
+                  style: theme.textTheme.bodySmall),
+            if (_tunnelUnits.isNotEmpty)
+              _fact(
+                theme,
+                Icons.cable_rounded,
+                _tunnelUnits.map((u) => '${u.unit} ${u.active}').join('；'),
+              ),
+            if (_patrol case final p?) ...[
+              _fact(theme, Icons.health_and_safety_outlined, '巡检 ${_patrolWhen(p)}'),
+              if (_patrolLastLine(p) case final last?)
+                Padding(
+                  padding: const EdgeInsets.only(left: 21, top: 2),
+                  child: Text(
+                    last,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.outline,
+                      fontSize: 10,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+          ],
+        ),
+      );
+  }
+
+  /// 一行"图标 + 说明"（体检卡里用；本文件没有现成的，别去借 host_tab 的私有件）。
+  Widget _fact(ThemeData theme, IconData icon, String text) => Padding(
+        padding: const EdgeInsets.only(top: 3),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 15, color: theme.colorScheme.outline),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(text, style: theme.textTheme.bodySmall),
+            ),
+          ],
+        ),
+      );
+
+  /// 巡检"最近一次什么时候跑的"。服务端回了 mtime 就说准；老服务端没这个字段就
+  /// 只说"有这个日志"，**不编一个时间**。
+  String _patrolWhen(OpsLogTail p) {
+    final at = p.mtime;
+    if (at == null) return '有日志（服务端没回时间）';
+    final d = DateTime.now().difference(at);
+    final stale = d.inHours > 48;
+    final ago = d.inMinutes < 1
+        ? '刚刚'
+        : d.inHours < 1
+            ? '${d.inMinutes} 分钟前'
+            : d.inHours < 48
+                ? '${d.inHours} 小时前'
+                : '${d.inDays} 天前';
+    return '$ago${stale ? '（超过 48 小时没跑了，检查 cron）' : ''}';
+  }
+
+  String? _patrolLastLine(OpsLogTail p) {
+    final lines = p.content
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+    return lines.isEmpty ? null : lines.last;
   }
 
   Widget _diskCard() => _cardShell(
