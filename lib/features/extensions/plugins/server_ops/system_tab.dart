@@ -40,6 +40,11 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
   OpsSessions? _sessions;
   List<OpsAuditEntry> _audit = const [];
 
+  /// 白名单里有哪些日志文件（最近的排前面）。`logs` 管"读某个文件的尾巴"，
+  /// 这一节管"有哪些文件可读"—— 以前这半步只能靠人在终端里 ls。
+  List<OpsLogFile> _logFiles = const [];
+  static const int _logRows = 4;
+
   final Map<String, String> _errors = <String, String>{};
   bool _loading = false;
   bool _auditTried = false;
@@ -132,6 +137,7 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
       pull('端口', client.ports),
       pull('磁盘目录', () => client.diskUsage(_diskPath)),
       pull('登录记录', client.sessions),
+      pull('日志文件', () => client.logFiles(limit: 40)),
     ]);
     final audit = await pull('服务端审计', () => client.audit(limit: 30));
     // 只有自己造的客户端才关；用例注入的那个由用例管（关掉会让后续断言炸）。
@@ -146,6 +152,7 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
       if (results[3] != null) _ports = results[3] as List<OpsPort>;
       if (results[4] != null) _diskRows = results[4] as List<OpsDiskRow>;
       if (results[5] != null) _sessions = results[5] as OpsSessions;
+      if (results[6] != null) _logFiles = results[6] as List<OpsLogFile>;
       if (audit != null) _audit = audit;
       if (caps != null) _caps = caps;
       _auditTried = true;
@@ -190,6 +197,10 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
           if (_errors.containsKey('磁盘目录'))
             _errorCard('磁盘目录', _errors['磁盘目录']!),
           _diskCard(),
+          _sectionGap(),
+          if (_errors.containsKey('日志文件'))
+            _errorCard('日志文件', _errors['日志文件']!),
+          _logCard(),
           _sectionGap(),
           if (_errors.containsKey('登录记录'))
             _errorCard('登录记录', _errors['登录记录']!),
@@ -521,6 +532,65 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
           ],
         ),
       );
+
+  /// 日志小节：先给最近改动的几个文件，其余的在弹层里选。
+  ///
+  /// 为什么不一次列 40 条：这一节在"系统"页里，用户九成只是要看**最近**的那几个；
+  /// 全列出来会把页面撑成长条，反而不好找。
+  Widget _logCard() => _cardShell(
+        '日志（白名单：/var/log、/www/wwwlogs、更新服务日志）',
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_logFiles.isEmpty)
+              const Text('（没有数据）')
+            else ...[
+              for (final f in _logFiles.take(_logRows))
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(f.path, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(
+                    '${formatBytes(f.size)} · ${f.mtime}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  trailing: const Icon(Icons.chevron_right, size: 18),
+                  onTap: () => _openLogFile(f),
+                ),
+              if (_logFiles.length > _logRows)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    onPressed: _openLogList,
+                    child: Text('看全部 ${_logFiles.length} 个'),
+                  ),
+                ),
+            ],
+          ],
+        ),
+      );
+
+  Future<void> _openLogList() async {
+    final picked = await showModalBottomSheet<OpsLogFile>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _LogListSheet(files: _logFiles),
+    );
+    if (picked != null && mounted) await _openLogFile(picked);
+  }
+
+  Future<void> _openLogFile(OpsLogFile f) async {
+    final started = DateTime.now();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _LogTailSheet(
+        file: f,
+        client: _client(),
+        onResult: (ok, detail) => _log(ok, '日志 ${f.name}：$detail', started),
+      ),
+    );
+  }
 
   Widget _diskCard() => _cardShell(
         '目录占用',
@@ -857,6 +927,175 @@ class _ServiceSheetState extends State<_ServiceSheet> {
               ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── D2：日志弹层 ────────────────────────────────────────────────────
+
+/// 「看全部日志」：把白名单里的日志文件列全，选一个交给 [_LogTailSheet]。
+class _LogListSheet extends StatelessWidget {
+  const _LogListSheet({required this.files});
+
+  final List<OpsLogFile> files;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('日志文件（${files.length} 个，最近的在前）',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: files.length,
+                itemBuilder: (context, i) {
+                  final f = files[i];
+                  return ListTile(
+                    dense: true,
+                    title: Text(f.name),
+                    subtitle: Text('${f.path}\n${formatBytes(f.size)} · ${f.mtime}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall),
+                    onTap: () => Navigator.of(context).pop(f),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 单个日志的尾巴。行数只有 100 / 500 两档 —— 服务端上限就是 500。
+class _LogTailSheet extends StatefulWidget {
+  const _LogTailSheet({
+    required this.file,
+    required this.client,
+    required this.onResult,
+  });
+
+  final OpsLogFile file;
+  final OpsApiClient client;
+  final void Function(bool ok, String detail) onResult;
+
+  @override
+  State<_LogTailSheet> createState() => _LogTailSheetState();
+}
+
+class _LogTailSheetState extends State<_LogTailSheet> {
+  OpsLogTail? _tail;
+  String? _error;
+  bool _loading = true;
+  int _lines = 100;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final t = await widget.client.logs(widget.file.path, lines: _lines);
+      if (!mounted) return;
+      setState(() {
+        _tail = t;
+        _loading = false;
+      });
+      widget.onResult(true, '读了 ${t.lines} 行${t.truncated ? '（已截断）' : ''}');
+    } on OpsApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _loading = false;
+      });
+      widget.onResult(false, e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.file.name,
+                style: theme.textTheme.titleMedium,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+            Text('${formatBytes(widget.file.size)} · ${widget.file.mtime}',
+                style: theme.textTheme.bodySmall),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                for (final n in const [100, 500])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text('$n 行'),
+                      selected: _lines == n,
+                      onSelected: (_) {
+                        if (_lines == n) return;
+                        setState(() => _lines = n);
+                        _load();
+                      },
+                    ),
+                  ),
+                const Spacer(),
+                if (_loading)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  IconButton(
+                    tooltip: '重新读',
+                    onPressed: _load,
+                    icon: const Icon(Icons.refresh, size: 18),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            if (_error != null)
+              Text(_error!, style: TextStyle(color: theme.colorScheme.error))
+            else
+              Flexible(
+                child: SingleChildScrollView(
+                  reverse: true,
+                  child: SelectableText(
+                    (_tail?.content ?? '').isEmpty
+                        ? '（这个文件是空的）'
+                        : _tail!.content,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );

@@ -230,6 +230,17 @@ class OpsApiClient {
       OpsLogTail.fromJson(
           await call('logs', query: {'path': path, 'lines': '$lines'}));
 
+  /// 有哪些日志文件可读（名字/大小/最后修改，最近的排前面）。
+  ///
+  /// `logs` 是按路径读尾部，得先知道路径；以前这一步只能靠人在终端里 ls。
+  Future<List<OpsLogFile>> logFiles({int limit = 60, String? root}) async {
+    final d = await call('logfiles', query: {
+      'limit': '$limit',
+      if (root != null && root.isNotEmpty) 'root': root,
+    });
+    return _listOf(d['list'], OpsLogFile.fromJson);
+  }
+
   Future<List<OpsPort>> ports() async {
     final d = await call('ports');
     return _listOf(d['listeners'], OpsPort.fromJson);
@@ -526,6 +537,32 @@ class OpsServiceDetail {
         restarts: _s(j['restarts']),
         since: _s(j['since']),
         journal: _s(j['journal']),
+      );
+}
+
+class OpsLogFile {
+  const OpsLogFile({
+    required this.path,
+    required this.name,
+    required this.root,
+    required this.size,
+    required this.mtime,
+  });
+
+  final String path;
+  final String name;
+  final String root;
+  final int size;
+
+  /// 服务端给的是本地时间字符串（"2026-09-26 09:41:03"），直接显示，不做时区换算。
+  final String mtime;
+
+  static OpsLogFile fromJson(Map<String, dynamic> j) => OpsLogFile(
+        path: _s(j['path']),
+        name: _s(j['name']),
+        root: _s(j['root']),
+        size: _i(j['size']),
+        mtime: _s(j['mtime']),
       );
 }
 

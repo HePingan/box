@@ -61,8 +61,13 @@ MAX_SERVICES = 400
 CMD_TIMEOUT = 15
 MAX_RESPONSE = 256 * 1024
 
+# 日志清单（logfiles）的上限：只列两层、最多这么多条 —— 只是给界面选文件用
+LOG_LIST_MAX = 200
+LOG_LIST_DEFAULT = 60
+LOG_LIST_DEPTH = 2
+
 # 日志白名单前缀：只允许读这些目录下的**文件**（不允许目录、不允许 ..
-LOG_ROOTS = ("/var/log", "/www/wwwlogs", "/home/update-server/logs", "/tmp")
+LOG_ROOTS = ("/var/log", "/www/wwwlogs", "/home/update-server/logs")
 
 # 目录占用白名单前缀（du 只对这些根生效；密钥类路径另行拒绝）
 DISK_ROOTS = ("/",)
@@ -442,6 +447,10 @@ def _safe_log_path(raw: str) -> Path | None:
         p = p.resolve()
     except Exception:  # noqa: BLE001
         return None
+    # resolve 之后必须**再查一次前缀**：白名单目录里的一条符号链接
+    # （例如 /var/log/box-x -> /etc/shadow）能在这一步把白名单整个绕过去。
+    if not any(str(p).startswith(root + "/") for root in LOG_ROOTS):
+        return None
     if not p.is_file():
         return None
     return p
@@ -474,6 +483,63 @@ def act_logs(q: dict, _label: str) -> tuple[int, dict]:
     body, cut = cap("\n".join(tail))
     return 0, {"path": str(p), "lines": len(tail), "truncated": cut,
                "content": body, "generatedAt": now_iso()}
+
+
+def _iso_local(ts: float) -> str:
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def act_logfiles(q: dict, _label: str) -> tuple[int, dict]:
+    """列出白名单里**有哪些日志文件**（名字/大小/最后修改），按最近改动排前面。
+
+    为什么需要它：`logs` 是按路径读尾部，但客户端得先知道"有哪些文件可读"——
+    以前这一步只能靠人在终端里 ls。这里只走白名单根下的两层目录（/var/log 与
+    /var/log/nginx 这种），不做全盘递归；符号链接一律不看（和 `logs` 同一口径）。
+    """
+    try:
+        limit = min(int((q.get("limit") or [str(LOG_LIST_DEFAULT)])[0]), LOG_LIST_MAX)
+    except ValueError:
+        return 400, {"error": "limit 必须是整数"}
+    if limit <= 0:
+        return 400, {"error": "limit 必须大于 0"}
+    want = (q.get("root") or [""])[0]
+    if want and want not in LOG_ROOTS:
+        return 403, {"error": f"root 只能取 {'、'.join(LOG_ROOTS)} 之一"}
+
+    found = []
+    for root in ([want] if want else list(LOG_ROOTS)):
+        rp = Path(root)
+        if not rp.is_dir():
+            continue
+        stack = [(rp, 1)]
+        while stack:
+            d, depth = stack.pop()
+            try:
+                children = sorted(d.iterdir())
+            except OSError:
+                continue
+            for c in children:
+                try:
+                    if c.is_symlink():
+                        continue
+                    if c.is_dir():
+                        if depth < LOG_LIST_DEPTH:
+                            stack.append((c, depth + 1))
+                        continue
+                    if not c.is_file():
+                        continue
+                    st = c.stat()
+                except OSError:
+                    continue
+                found.append({"path": str(c), "name": c.name, "root": root,
+                              "size": st.st_size, "mtimeTs": st.st_mtime})
+    total = len(found)
+    found.sort(key=lambda x: x["mtimeTs"], reverse=True)
+    items = [{"path": x["path"], "name": x["name"], "root": x["root"],
+              "size": x["size"], "mtime": _iso_local(x["mtimeTs"])}
+             for x in found[:limit]]
+    return 0, {"count": len(items), "total": total, "roots": list(LOG_ROOTS),
+               "list": items, "generatedAt": now_iso()}
 
 
 def act_ports(_q: dict, _label: str) -> tuple[int, dict]:
@@ -553,6 +619,7 @@ ACTIONS = {
     "services": act_services,
     "service": act_service,
     "logs": act_logs,
+    "logfiles": act_logfiles,
     "ports": act_ports,
     "diskusage": act_diskusage,
     "sessions": act_sessions,
@@ -876,8 +943,22 @@ def selftest() -> int:
     check("ports 至少有一条监听", st == 200 and d.get("count", 0) >= 1)
     st, d = call(f"/logs?path={tmp}/sample.log&lines=2", tok)
     check("logs 只回最后 2 行", st == 200 and d.get("lines") == 2 and "最后一行" in d.get("content", ""))
+    st, d = call("/logfiles", tok)
+    check("logfiles 列出白名单里的文件（含刚建的 sample.log）",
+          st == 200 and any(i["name"] == "sample.log" for i in d.get("list", [])),
+          f"count={d.get('count')} total={d.get('total')}")
+    check("logfiles 每条都带 size/mtime 且路径真实存在",
+          all(isinstance(i.get("size"), int) and i.get("mtime") and os.path.isfile(i["path"])
+              for i in d.get("list", [])))
+    check("logfiles 的 total ≥ count（被 limit 截过也说得清）",
+          d.get("total", 0) >= d.get("count", 0))
+    st, d2 = call("/logfiles?limit=1", tok)
+    check("logfiles 的 limit 生效", st == 200 and len(d2.get("list", [])) == 1)
+    st, _ = call("/logfiles?root=/etc", tok)
+    check("logfiles 里 root 只能取白名单", st == 403)
     st, d = call("/diskusage?path=" + str(tmp), tok)
-    check("diskusage 正常", st == 200 and d.get("rows"))
+    check("diskusage 正常", st == 200 and bool(d.get("rows")),
+          f"st={st} body={str(d)[:150]}")
     st, d = call("/sessions", tok)
     check("sessions 结构在位", st == 200 and "logins" in d and "failedLogins" in d)
 
@@ -888,6 +969,19 @@ def selftest() -> int:
     check("错令牌 401", st == 401)
     st, _ = call("/logs?path=/etc/shadow", tok)
     check("白名单外日志 403", st == 403)
+    # 符号链接绕过：白名单目录里放一条指向 /etc/shadow 的链接，必须照样 403
+    link = Path(tmp) / "escape.log"
+    try:
+        if link.exists() or link.is_symlink():
+            link.unlink()
+        link.symlink_to("/etc/shadow")
+    except OSError:
+        pass
+    st, _ = call(f"/logs?path={link}", tok)
+    check("白名单目录里的符号链接**不算白名单**（403）", st == 403, f"拿到 {st}")
+    st, d = call("/logfiles", tok)
+    check("logfiles 也不列符号链接",
+          st == 200 and not any(i["name"] == "escape.log" for i in d.get("list", [])))
     st, _ = call(f"/logs?path={tmp}/../etc/passwd", tok)
     check("带 .. 的路径 403", st == 403)
     st, _ = call("/diskusage?path=/root/.secrets", tok)

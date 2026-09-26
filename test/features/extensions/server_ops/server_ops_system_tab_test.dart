@@ -47,6 +47,7 @@ const Map<String, String> _jsonHeaders = {
 
 MockClient _api({
   required List<String> seen,
+  List<String>? queries,
   int? failStatusFor,
   String? failAction,
   bool write = true,
@@ -54,6 +55,7 @@ MockClient _api({
     MockClient((req) async {
       final action = req.url.path.split('/').where((s) => s.isNotEmpty).last;
       seen.add(action);
+      queries?.add('$action?${req.url.query}');
       if (failAction != null && action == failAction) {
         return http.Response(
             jsonEncode({'error': '没有权限'}),
@@ -164,6 +166,36 @@ MockClient _api({
             200,
             headers: _jsonHeaders,
           );
+        case 'logfiles':
+          return http.Response(
+            jsonEncode({
+              'count': 3,
+              'total': 3,
+              'roots': ['/var/log', '/www/wwwlogs', '/home/update-server/logs'],
+              'list': [
+                {'path': '/www/wwwlogs/box.hpa888.top.log', 'name': 'box.hpa888.top.log',
+                 'root': '/www/wwwlogs', 'size': 4096, 'mtime': '2026-09-26 09:41:03'},
+                {'path': '/var/log/nginx/access.log', 'name': 'access.log',
+                 'root': '/var/log', 'size': 2048, 'mtime': '2026-09-26 09:40:00'},
+                {'path': '/var/log/syslog', 'name': 'syslog',
+                 'root': '/var/log', 'size': 8192, 'mtime': '2026-09-26 09:30:00'},
+              ],
+            }),
+            200,
+            headers: _jsonHeaders,
+          );
+        case 'logs':
+          return http.Response(
+            jsonEncode({
+              'path': '/www/wwwlogs/box.hpa888.top.log',
+              'lines': 2,
+              'truncated': false,
+              'content': '10.0.0.1 - - GET /health 200\n10.0.0.2 - - GET /updates 206',
+              'generatedAt': '2026-09-26T09:41:05+08:00',
+            }),
+            200,
+            headers: _jsonHeaders,
+          );
         case 'audit':
           return http.Response(
             jsonEncode({
@@ -218,14 +250,14 @@ void main() {
     expect(serverOpsRequestLog.items, isEmpty);
   });
 
-  testWidgets('配好了：七个小节都渲染出来，并留一条"系统"请求记录', (tester) async {
+  testWidgets('配好了：各小节都渲染出来，并留一条"系统"请求记录', (tester) async {
     final seen = <String>[];
     await _pump(tester, _settings(), _api(seen: seen));
 
     expect(
       seen,
       containsAll(['capabilities', 'overview', 'processes', 'services', 'ports',
-        'diskusage', 'sessions', 'audit']),
+        'diskusage', 'sessions', 'audit', 'logfiles']),
     );
     expect(find.textContaining('概览'), findsWidgets);
     expect(find.text('VM-0-15-debian'), findsOneWidget);
@@ -234,6 +266,7 @@ void main() {
     expect(find.textContaining('nginx.service'), findsWidgets);
     expect(find.textContaining('127.0.0.1:8095'), findsWidgets);
     expect(find.textContaining('admin'), findsWidgets);
+    expect(find.textContaining('日志（白名单'), findsOneWidget);
 
     final records = serverOpsRequestLog.items;
     expect(records, hasLength(1));
@@ -321,6 +354,42 @@ void main() {
       find.widgetWithText(OutlinedButton, '重启'),
     );
     expect(restart.onPressed, isNull);
+  });
+
+  testWidgets('日志小节：列出白名单里的文件（最近的在前），点开能看尾巴', (tester) async {
+    final seen = <String>[];
+    final queries = <String>[];
+    await _pump(tester, _settings(), _api(seen: seen, queries: queries));
+
+    expect(find.textContaining('日志（白名单'), findsOneWidget);
+    // 白名单内的三个文件都在（前 4 个直接列，3 个都在里面）
+    expect(find.text('/www/wwwlogs/box.hpa888.top.log'), findsOneWidget);
+    expect(find.text('/var/log/nginx/access.log'), findsOneWidget);
+    expect(find.textContaining('4.0 KB'), findsWidgets);
+
+    // 点第一个：弹层去读尾巴，默认 100 行
+    await tester.tap(find.text('/www/wwwlogs/box.hpa888.top.log'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(queries, contains('logs?path=%2Fwww%2Fwwwlogs%2Fbox.hpa888.top.log&lines=100'));
+    expect(find.textContaining('GET /health 200'), findsOneWidget);
+
+    // 切 500 行：重读一次
+    await tester.tap(find.text('500 行'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(queries, contains('logs?path=%2Fwww%2Fwwwlogs%2Fbox.hpa888.top.log&lines=500'));
+  });
+
+  testWidgets('日志小节挂了只挂这一节：别的节照旧', (tester) async {
+    final seen = <String>[];
+    await _pump(tester, _settings(),
+        _api(seen: seen, failAction: 'logfiles', failStatusFor: 403));
+
+    expect(find.textContaining('日志文件'), findsWidgets, reason: '这一节要有自己的错误卡');
+    expect(find.textContaining('没有权限'), findsWidgets);
+    expect(find.text('VM-0-15-debian'), findsOneWidget, reason: '概览不该被带崩');
+    expect(find.textContaining('127.0.0.1:8095'), findsWidgets, reason: '端口不该被带崩');
   });
 
   testWidgets('切到另一台机器：按新机器的地址/令牌重新拉', (tester) async {
