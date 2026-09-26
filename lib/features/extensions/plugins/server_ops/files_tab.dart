@@ -12,6 +12,7 @@
 //   * 批量/目录级操作走**串行队列**（并发恒为 1，见 server_ops_transfer_queue.dart），
 //     进度显示"第 i/n"，可取消，单项失败不打断整批。
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -57,6 +58,22 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
   /// A2/A4：当前可取消的传输（null = 当前操作不可取消）。
   TransferCancelToken? _cancelToken;
 
+  // ── D1：大目录的呈现上限 / 慢提示 / 停止等待 ────────────────────────
+  /// 一次最多渲染多少条：`/usr/lib64` 这种目录实测 758 条要 54 秒、484 KB，
+  /// 一次把上千条塞进 ListView 只会让首帧更慢、更不像话。先给前 300 条。
+  static const int _initialRows = 300;
+  static const int _moreRows = 300;
+
+  /// 当前允许渲染的条数（过滤/排序/换目录/重新列举都会回到初值）。
+  int _renderLimit = _initialRows;
+
+  /// 列举的"停止等待"：传输层没有给 `list` 的取消能力（那是共享给远端存储插件的
+  /// WebdavClient，不动它），所以这里改成"结果回来也不再用"—— 用户看到的是转圈停了。
+  int _listAttempt = 0;
+  bool _slowList = false;
+  Timer? _slowTimer;
+  DateTime? _listStarted;
+
   /// 过滤 + 排序后的可见列表（`_entries` 始终是服务端返回的本地全量）。
   List<RemoteStorageEntry> get _visibleEntries =>
       ServerOpsFilesService.sortEntries(
@@ -84,29 +101,65 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
 
   Future<void> _load({bool silent = false}) async {
     if (!mounted) return;
+    final attempt = ++_listAttempt;
     setState(() {
       if (!silent) _loading = true;
       _error = null;
     });
     final started = DateTime.now();
+    _listStarted = started;
+    if (!silent) {
+      // 大目录要几十秒：5 秒还没回来就把话说清楚（别让人以为卡死了）
+      _slowTimer?.cancel();
+      _slowTimer = Timer(const Duration(seconds: 5), () {
+        if (!mounted || attempt != _listAttempt) return;
+        setState(() => _slowList = true);
+      });
+    }
     try {
       final entries = await _service.list(_path);
-      if (!mounted) return;
+      // "停止等待"之后回来的结果一律丢掉：不再 setState，也不写请求日志
+      if (!mounted || attempt != _listAttempt) return;
+      _slowTimer?.cancel();
       setState(() {
         _entries = entries;
         _loading = false;
+        _slowList = false;
+        _renderLimit = _initialRows; // 新的一份列表，从头给
       });
       // silent 是"操作成功后的自动刷新"，记下来只会把面板淹成一片"列举"；
       // 失败的 silent 刷新要记（那正是"上传成功了但列表没刷新"这种怪现象的证据）。
       if (!silent) _log('文件', true, '列举 $_path：${entries.length} 项', started);
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || attempt != _listAttempt) return;
+      _slowTimer?.cancel();
       setState(() {
         _error = serverOpsErrorMessage(e);
         _loading = false;
+        _slowList = false;
       });
       _log('文件', false, serverOpsErrorMessage(e), started);
     }
+  }
+
+  /// D1：停止等待这次列举（服务端可能还在跑，但结果不再影响界面）。
+  void _cancelList() {
+    _slowTimer?.cancel();
+    final started = _listStarted;
+    setState(() {
+      _listAttempt++; // 让在途请求的结果作废
+      _loading = false;
+      _slowList = false;
+    });
+    if (started != null) {
+      _log('文件', false, '已停止等待列举 $_path（服务端可能仍在列举）', started);
+    }
+  }
+
+  @override
+  void dispose() {
+    _slowTimer?.cancel();
+    super.dispose();
   }
 
   /// A9：把一次操作的元数据记进共享请求日志。
@@ -791,18 +844,28 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
           _SortFilterBar(
             mode: _sortMode,
             descending: _sortDescending,
-            onMode: (mode) => setState(() => _sortMode = mode),
-            onToggleDirection: () =>
-                setState(() => _sortDescending = !_sortDescending),
-            onFilter: (value) => setState(() => _filter = value),
+            onMode: (mode) => setState(() {
+              _sortMode = mode;
+              _renderLimit = _initialRows;
+            }),
+            onToggleDirection: () => setState(() {
+              _sortDescending = !_sortDescending;
+              _renderLimit = _initialRows;
+            }),
+            onFilter: (value) => setState(() {
+              _filter = value;
+              _renderLimit = _initialRows;
+            }),
           ),
         if (_error != null)
           _ErrorBanner(message: _error!, onRetry: () => _load()),
+        if (_loading && _entries.isNotEmpty)
+          const LinearProgressIndicator(minHeight: 2, semanticsLabel: '正在列举'),
         Expanded(
           child: RefreshIndicator(
             onRefresh: () => _load(),
             child: _loading && _entries.isEmpty
-                ? const Center(child: CircularProgressIndicator())
+                ? _buildListing(theme)
                 : _buildList(theme),
           ),
         ),
@@ -844,6 +907,53 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
     );
   }
 
+  /// D1：列举中的样子 —— 转圈 + 把"在做什么"说清楚 + 能停止等待。
+  ///
+  /// 为什么不是整页转圈了事：`/usr/lib64`（758 条）实测 54 秒。只转圈的话，用户
+  /// 分不清"卡死"和"在干活"，也没有退出的办法。
+  Widget _buildListing(ThemeData theme) {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        const SizedBox(height: 56),
+        const Center(child: CircularProgressIndicator()),
+        const SizedBox(height: 14),
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Text(
+              _slowList
+                  ? '这个目录比较大，还在列举。\n'
+                      '运维通道是逐项读取的：几百项的目录可能要几十秒。'
+                  : '正在列举 ${_path.isEmpty ? '/' : _path}',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
+            ),
+          ),
+        ),
+        if (_slowList) ...[
+          const SizedBox(height: 6),
+          Center(
+            child: TextButton(
+              onPressed: _cancelList,
+              child: const Text('停止等待'),
+            ),
+          ),
+          Center(
+            child: Text(
+              '停止后服务端那边可能还在跑完，只是结果不再刷到这个页面',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _buildList(ThemeData theme) {
     final visible = _visibleEntries;
     if (visible.isEmpty) {
@@ -868,12 +978,30 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
         ],
       );
     }
+    final shown =
+        visible.length > _renderLimit ? visible.sublist(0, _renderLimit) : visible;
+    final more = visible.length - shown.length;
     return ListView.separated(
       physics: const AlwaysScrollableScrollPhysics(),
-      itemCount: visible.length,
+      itemCount: shown.length + (more > 0 ? 1 : 0),
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (context, index) {
-        final entry = visible[index];
+        if (index >= shown.length) {
+          // 大目录：先把前 N 条给出来，剩下的按需加载
+          return ListTile(
+            dense: true,
+            leading: const Icon(Icons.expand_more_rounded, size: 18),
+            title: Text('还有 $more 项，继续加载'),
+            subtitle: Text(
+              '这个目录共 ${visible.length} 项（一次只渲染 $_initialRows 项，'
+              '大目录列举本身在服务端就要几十秒）',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onTap: () => setState(() => _renderLimit += _moreRows),
+          );
+        }
+        final entry = shown[index];
         return ListTile(
           dense: true,
           selected: _selecting && _selected.contains(entry.path),
