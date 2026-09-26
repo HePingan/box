@@ -21,6 +21,7 @@ import 'package:open_filex/open_filex.dart';
 
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_api_client.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_disk.dart';
 import 'package:box/features/extensions/plugins/server_ops/file_editor_page.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_files_service.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
@@ -520,6 +521,38 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
       return '已解压 ${d['count'] ?? 0} 个条目到 $_path'
           '${d['truncated'] == true ? '（到上限被截断）' : ''}';
     });
+  }
+
+  /// **打包**（写档，走只读接口）：目录/多份日志在服务器上压成一个 .tar.gz。
+  ///
+  /// 为什么不下载到手机再压：一个站点目录往往是几万个文件，手机既慢又费流量，
+  /// 而服务器一条 tar 就完事；压完直接在文件页下载那个包（下载已有续传外的单流）。
+  Future<void> _compress(RemoteStorageEntry entry) async {
+    final path = _remotePathOf(entry);
+    final defaultName = entry.name;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('打包「${entry.name}」'),
+        content: Text('会在 $_path 里生成 $defaultName.tar.gz（服务器上压，手机不用下载再上传）。\n\n'
+            '· 同名的包已存在时**不会覆盖**，会提示你换个名字\n'
+            '· 目录越大越慢（上百 MB 可能要十几秒），期间请别关页面\n'
+            '· 压完可以长按那个包直接下载'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('打包')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await _runApiTask('打包', () async {
+      final api = serverOpsApiClient(widget.settings);
+      final d = await api.compress(path);
+      final bytes = d['sizeBytes'];
+      final size = bytes is int ? '（${opsFormatBytes(bytes)}）' : '';
+      return '已打包成 ${d['archive']}$size';
+    });
+    if (mounted) await _load(silent: true);
   }
 
   /// **权限 / 属主**（写档）：宝塔里最常用的一格。
@@ -1055,6 +1088,8 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
                         await _delete(entry);
                       case 'extract':
                         await _extract(entry);
+                      case 'compress':
+                        await _compress(entry);
                       case 'permissions':
                         await _editPermissions(entry);
                     }
@@ -1107,6 +1142,15 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
                           title: Text('解压到当前目录'),
                         ),
                       ),
+                    const PopupMenuItem(
+                      value: 'compress',
+                      child: ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.folder_zip_outlined),
+                        title: Text('打包成 .tar.gz'),
+                      ),
+                    ),
                     const PopupMenuItem(
                       value: 'permissions',
                       child: ListTile(

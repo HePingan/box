@@ -51,11 +51,20 @@ MockClient _api({
   int? failStatusFor,
   String? failAction,
   bool write = true,
+  List<Map<String, String>>? diskRows,
+  List<String>? diskPaths,
+  List<Map<String, dynamic>>? postBodies,
 }) =>
     MockClient((req) async {
       final action = req.url.path.split('/').where((s) => s.isNotEmpty).last;
       seen.add(action);
       queries?.add('$action?${req.url.query}');
+      if (action == 'diskusage') {
+        diskPaths?.add(req.url.queryParameters['path'] ?? '');
+      }
+      if (req.body.isNotEmpty && postBodies != null) {
+        postBodies.add(jsonDecode(req.body) as Map<String, dynamic>);
+      }
       if (failAction != null && action == failAction) {
         return http.Response(
             jsonEncode({'error': '没有权限'}),
@@ -146,9 +155,29 @@ MockClient _api({
         case 'diskusage':
           return http.Response(
             jsonEncode({
-              'rows': [
-                {'size': '1.2G', 'path': '/var/log'},
-              ],
+              'rows': diskRows ??
+                  [
+                    {'size': '1.2G', 'path': '/var/log'},
+                  ],
+            }),
+            200,
+            headers: _jsonHeaders,
+          );
+        case 'cleanup':
+          final body = jsonDecode(req.body) as Map<String, dynamic>;
+          final dry = '${body['dry']}' == '1';
+          return http.Response(
+            jsonEncode({
+              'what': body['what'],
+              'dry': dry,
+              'limits': {'journalKeepMB': 200, 'tmpKeepDays': 7},
+              if (dry) ...{
+                'count': 7,
+                'bytes': 3 * 1024 * 1024,
+                'before': 'Archived and active journals take up 127.8M in the file system.',
+                'freedBytes': 0,
+              } else
+                'freedBytes': 80949248,
             }),
             200,
             headers: _jsonHeaders,
@@ -477,5 +506,98 @@ void main() {
       _api(seen: seenB),
     );
     expect(seenB, contains('overview'));
+  });
+
+  testWidgets('磁盘：按大小倒排 —— 10G 不排在 9.0M 后面（du 给的是字符串）', (tester) async {
+    await _pump(
+      tester,
+      _settings(),
+      _api(
+        seen: <String>[],
+        diskRows: [
+          {'size': '9.0M', 'path': '/var/log/small'},
+          {'size': '10G', 'path': '/var/log/big'},
+          {'size': '1.0K', 'path': '/var/log/tiny'},
+        ],
+      ),
+    );
+
+    final texts = <String>[
+      for (final t in tester.widgetList<Text>(find.byType(Text)))
+        if (t.data != null) t.data!,
+    ];
+    final iBig = texts.indexWhere((t) => t.contains('/var/log/big'));
+    final iSmall = texts.indexWhere((t) => t.contains('/var/log/small'));
+    expect(iBig, greaterThanOrEqualTo(0));
+    expect(iBig, lessThan(iSmall), reason: '10G 要排在 9.0M 前面');
+  });
+
+  testWidgets('磁盘：点一行钻进去，「上一级」退回（找"谁把盘吃满了"靠这两步）', (tester) async {
+    final paths = <String>[];
+    await _pump(
+      tester,
+      _settings(),
+      _api(
+        seen: <String>[],
+        diskPaths: paths,
+        diskRows: [
+          {'size': '10G', 'path': '/var/log/big'},
+        ],
+      ),
+    );
+    expect(paths, ['/var/log'], reason: '一进来先看默认目录');
+
+    await tester.tap(find.text('/var/log/big'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(paths.last, '/var/log/big', reason: '点一行就是钻进去');
+    expect(find.textContaining('当前：/var/log/big'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('上一级'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(paths.last, '/var/log', reason: '上一级要回到父目录');
+
+    await tester.tap(find.byTooltip('从根目录开始找'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(paths.last, '/');
+  });
+
+  testWidgets('清理：先 dry 报数字，取消就不许动手，确认后才真清并按人话报结果', (tester) async {
+    final bodies = <Map<String, dynamic>>[];
+    await _pump(tester, _settings(), _api(seen: <String>[], postBodies: bodies));
+
+    await tester.tap(find.text('系统日志'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(bodies.last['what'], 'journal');
+    expect('${bodies.last['dry']}', '1', reason: '第一步必须是预览，不能上来就清');
+    expect(find.textContaining('保留最近 200 MB'), findsOneWidget,
+        reason: '配额数字来自服务端响应（limits），不是 App 写死的');
+
+    await tester.tap(find.text('取消'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(bodies.where((b) => '${b['dry']}' != '1'), isEmpty, reason: '取消 = 一个真清请求都不发');
+
+    await tester.tap(find.text('系统日志'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    // 「清理」既是卡片的小标题也是确认框的按钮 —— 按类型取按钮，别撞名字。
+    await tester.tap(find.widgetWithText(FilledButton, '清理'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect('${bodies.last['dry']}', '0');
+    expect(find.textContaining('77.2 MB'), findsOneWidget, reason: '清出多少要说人话');
+  });
+
+  testWidgets('只读令牌：清理按钮禁用，并说明为什么（不是点了才 403）', (tester) async {
+    await _pump(tester, _settings(), _api(seen: <String>[], write: false));
+    final button = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, '系统日志'),
+    );
+    expect(button.onPressed, isNull);
+    expect(find.textContaining('没有写权限'), findsOneWidget);
   });
 }

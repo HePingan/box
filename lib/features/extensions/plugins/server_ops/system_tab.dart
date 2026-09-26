@@ -12,6 +12,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:box/features/extensions/plugins/server_ops/server_ops_api_client.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_disk.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_request_log.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 
@@ -709,34 +710,210 @@ class _ServerOpsSystemTabState extends State<ServerOpsSystemTab> {
                 ),
               ],
             ),
-            const SizedBox(height: 6),
-            Text('当前：$_diskPath', style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 4),
+            // 找"谁把盘吃满了"靠的就是这颗「上一级」：一路点下去看得见每一层的占比。
+            Row(
+              children: [
+                IconButton(
+                  tooltip: '上一级',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: opsParentPath(_diskPath) == null
+                      ? null
+                      : () => _runDisk(opsParentPath(_diskPath)!),
+                  icon: const Icon(Icons.arrow_upward_rounded, size: 18),
+                ),
+                IconButton(
+                  tooltip: '从根目录开始找',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _diskPath == '/' ? null : () => _runDisk('/'),
+                  icon: const Icon(Icons.home_outlined, size: 18),
+                ),
+                Expanded(
+                  child: Text('当前：$_diskPath',
+                      style: Theme.of(context).textTheme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                ),
+                if (_diskRows.isNotEmpty)
+                  Text('${_diskRows.length} 项',
+                      style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+            if (_errors['磁盘目录'] != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text('拉取失败：${_errors['磁盘目录']}',
+                    style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              ),
+            const SizedBox(height: 2),
             if (_diskRows.isEmpty)
               const Text('（没有数据）')
             else
-              for (final r in _diskRows)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 1),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 74,
-                        child: Text(r.size,
-                            style: Theme.of(context).textTheme.bodySmall),
-                      ),
-                      Expanded(
-                        child: Text(r.path,
-                            style: Theme.of(context).textTheme.bodySmall,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis),
-                      ),
-                    ],
+              for (final r in _sortedDiskRows())
+                InkWell(
+                  onTap: _loading ? null : () => _runDisk(r.path),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 66,
+                          child: Text(r.size,
+                              style: Theme.of(context).textTheme.bodySmall),
+                        ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(r.path,
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis),
+                              const SizedBox(height: 2),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(2),
+                                child: LinearProgressIndicator(
+                                  value: opsDiskBarShare(
+                                      opsParseHumanSize(r.size), _diskRows),
+                                  minHeight: 3,
+                                  backgroundColor: Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right_rounded, size: 16),
+                      ],
+                    ),
                   ),
                 ),
+            const Divider(height: 18),
+            Text('清理', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 2),
+            Text(
+              _caps?.write == true
+                  ? '先问一句"能清多少"，确认了才动手；清多狠由服务端定死，手机上改不了。'
+                  : '这把令牌没有写权限：要看能清多少可以，真清要带 --write 重签令牌。',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                for (final mode in kOpsCleanupModes)
+                  OutlinedButton.icon(
+                    onPressed: (_loading || _caps?.write != true)
+                        ? null
+                        : () => _runCleanup(mode),
+                    icon: const Icon(Icons.cleaning_services_outlined, size: 16),
+                    label: Text(mode.label),
+                  ),
+              ],
+            ),
+            if (_errors['清理'] != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text('清理失败：${_errors['清理']}',
+                    style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              ),
           ],
         ),
       );
+
+  List<OpsDiskRow> _sortedDiskRows() => opsSortDiskRowsBySize(_diskRows);
+
+  /// 清理：**先 dry 问一句"能清多少"**，把数字摆给用户看，再问要不要真清。
+  ///
+  /// 不做"点一下就清"：这是在别人的生产机上动刀，先看数字再确认是这条流程的全部意义。
+  Future<void> _runCleanup(OpsCleanupMode mode) async {
+    if (_loading) return;
+    final client = _client();
+    setState(() {
+      _loading = true;
+      _errors.remove('清理');
+    });
+    Map<String, dynamic> preview;
+    try {
+      preview = await client.cleanup(mode.key, dry: true);
+    } on OpsApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _errors['清理'] = e.message;
+        });
+      }
+      return;
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _errors['清理'] = '$e';
+        });
+      }
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _loading = false);
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('清理「${mode.label}」？'),
+        content: Text('${_cleanupPreviewText(mode, preview)}\n\n'
+            '${mode.hint}\n'
+            '只清这一类，不碰别的目录；清掉就没了，不可撤销。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('清理')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _loading = true);
+    try {
+      final d = await client.cleanup(mode.key);
+      final freed = d['freedBytes'];
+      final text = opsCleanupResultText(mode.key, freed is int ? freed : 0);
+      if (mounted) {
+        ScaffoldMessenger.maybeOf(context)
+            ?.showSnackBar(SnackBar(content: Text(text)));
+        _log(true, text, DateTime.now());
+      }
+      await _refresh();
+    } on OpsApiException catch (e) {
+      if (mounted) {
+        setState(() => _errors['清理'] = e.message);
+        _log(false, '清理 ${mode.key} 失败', DateTime.now());
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// 预览文案：数字全部来自服务端（`limits` 也在响应里，App 不写死配额）。
+  String _cleanupPreviewText(OpsCleanupMode mode, Map<String, dynamic> p) {
+    final limits = p['limits'] is Map ? p['limits'] as Map : const {};
+    switch (mode.key) {
+      case 'tmp':
+        final n = p['count'] is int ? p['count'] as int : 0;
+        final b = p['bytes'] is int ? p['bytes'] as int : 0;
+        final days = limits['tmpKeepDays'] ?? 7;
+        return '这台机器上有 $n 个 $days 天没动过的临时文件，约 ${opsFormatBytes(b)}。';
+      case 'apt':
+        final before = (p['before'] ?? '').toString().trim();
+        return before.isEmpty
+            ? '软件包缓存看起来是空的（清不出多少）。'
+            : '当前缓存：$before';
+      default:
+        final before = (p['before'] ?? '').toString().trim();
+        final mb = limits['journalKeepMB'] ?? 200;
+        return '${before.isEmpty ? '' : '$before\n'}清理后只保留最近 $mb MB 的日志。';
+    }
+  }
 
   void _runDisk(String path) {
     final trimmed = path.trim();

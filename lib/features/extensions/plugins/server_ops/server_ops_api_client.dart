@@ -296,6 +296,29 @@ class OpsApiClient {
   /// [dest] 留空 = 解到压缩包所在目录。
   Future<Map<String, dynamic>> extract(String path, {String dest = ''}) =>
       post('extract', {'path': path, 'dest': dest});
+
+  /// 打包（服务器上压，手机不用把目录下下来再传回去）。
+  ///
+  /// 服务端有两条硬护栏：同名包已存在 → 409（不覆盖）；包落在它自己的输入目录里 → 400。
+  Future<Map<String, dynamic>> compress(
+    String path, {
+    String format = 'tar.gz',
+    String dest = '',
+    String name = '',
+  }) =>
+      post('compress', {
+        'path': path,
+        'format': format,
+        'dest': dest,
+        'name': name,
+      });
+
+  /// 清理（journal / tmp / apt）。`dry: true` 只问「能清多少」，不动手。
+  ///
+  /// 清多狠由服务端定死（journal 只清到 200M、/tmp 只删 7 天前的普通文件）——
+  /// 参数从手机传不进去，免得"在手机上按错一个数"把生产机的日志清光。
+  Future<Map<String, dynamic>> cleanup(String what, {bool dry = false}) =>
+      post('cleanup', {'what': what, 'dry': dry ? '1' : '0'});
 }
 
 /// 这把令牌的能力（服务端 `/capabilities`）。

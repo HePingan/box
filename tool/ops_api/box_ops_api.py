@@ -114,6 +114,16 @@ EXTRACT_TIMEOUT = 180
 ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2",
                     ".tar.xz", ".txz", ".gz")
 
+# 打包：上限与超时。不是"手机上传一个 8G 包"的场景，是"把日志/站点目录收成一个包"。
+COMPRESS_MAX_INPUT_MB = 4096
+COMPRESS_TIMEOUT = 300
+COMPRESS_FREE_RESERVE_MB = 256      # 目标分区至少还要留这么多空闲
+
+# 清理动作（都是"公认可以清"的三类，配额与保留期写死在这里，不接受客户端指定）
+CLEANUP_MODES = ("journal", "tmp", "apt")
+CLEANUP_JOURNAL_KEEP_MB = 200       # journal 只清到剩这么多
+CLEANUP_TMP_DAYS = 7                # /tmp 只删 7 天没动过的**普通文件**
+
 
 def now_iso() -> str:
     return datetime.now(CST).isoformat(timespec="seconds")
@@ -229,9 +239,11 @@ def read_audit(limit: int) -> list[dict]:
 
 # ── 命令执行（固定 argv，无 shell）──────────────────────────────────────
 
-def run(args: list[str], timeout: int = CMD_TIMEOUT) -> tuple[int, str, str]:
+def run(args: list[str], timeout: int = CMD_TIMEOUT,
+        cwd: str | None = None) -> tuple[int, str, str]:
     try:
-        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
+                           cwd=cwd)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return 124, "", f"超时（{timeout}s）"
@@ -1236,6 +1248,38 @@ def selftest() -> int:
     st, d = call("/extract", write_tok, {"path": str(tmp / "sample.log"), "dest": str(tmp)})
     check("不是压缩包 → 400", st == 400)
 
+    print("== 写档：打包 / 清理 ==")
+    packdir = tmp / "packme"
+    packdir.mkdir()
+    (packdir / "one.txt").write_text("hello")
+    (packdir / "two.txt").write_text("world")
+    st, d = call("/compress", write_tok, {"path": str(packdir)})
+    check("打包目录 → tar.gz 落在同目录且非空",
+          st == 200 and (tmp / "packme.tar.gz").is_file() and d.get("sizeBytes", 0) > 0,
+          str(d)[:160])
+    st, d = call("/compress", write_tok, {"path": str(packdir)})
+    check("同名包已存在 → 409（不覆盖）", st == 409, str(d)[:120])
+    st, d = call("/compress", write_tok, {"path": str(packdir), "name": "inner",
+                                          "dest": str(packdir)})
+    check("把包裹进它自己的输入目录 → 400", st == 400, str(d)[:120])
+    st, d = call("/compress", write_tok, {"path": str(packdir), "name": "x", "format": "rar"})
+    check("不支持的打包格式 → 400", st == 400)
+    st, d = call("/compress", write_tok, {"path": "/root/.secrets"})
+    check("打包受保护路径 → 403", st == 403)
+    st, d = call("/compress", write_tok, {"path": str(tmp / "sample.log"), "name": "single"})
+    check("打包单个文件 → 200", st == 200 and (tmp / "single.tar.gz").is_file())
+    st, d = call("/cleanup", write_tok, {"what": "没有这个"})
+    check("不认的清理项 → 400", st == 400)
+    st, d = call("/cleanup", write_tok, {"what": "journal", "dry": "1"})
+    check("清理预览（dry）→ 200 且 dry=true（不动手）",
+          st == 200 and d.get("dry") is True, str(d)[:160])
+    st, d = call("/cleanup", write_tok, {"what": "tmp", "dry": "1"})
+    check("/tmp 清理预览能报出条数与体积",
+          st == 200 and isinstance(d.get("count"), int) and isinstance(d.get("bytes"), int),
+          str(d)[:160])
+    st, d = call("/cleanup", tok, {"what": "apt"})
+    check("只读令牌调清理 → 403", st == 403)
+
     print("== 写档：服务启停 ==")
     st, d = call("/service", write_tok, {"unit": "sshd.service", "op": "stop"})
     check("停 sshd → 403（自杀动作）", st == 403 and "停掉/禁用" in d.get("error", ""), str(d)[:140])
@@ -1304,6 +1348,9 @@ def _free_port() -> int:
 #   * 路径先 resolve() 再比对保护名单（软链接绕不过去）；
 #   * 停/禁用"自杀单元"直接拒（sshd、本服务、隧道、NetworkManager、systemd 自身）；
 #   * 解压必须防 zip 穿越（条目路径跑到目标目录之外）与膨胀炸弹（总量上限）。
+#   * 打包不许覆盖同名包、不许把包裹进自己的输入目录（tar 会把刚生成的包也收进去）。
+#   * 清理的配额与保留期写死在服务端（journal 只清到 200M、/tmp 只删 7 天前的普通文件）；
+#     调用方只能选"清哪一类"，不能选"清多狠"；dry=1 只报数不动手。
 
 class WriteError(Exception):
     """写动作的参数/权限问题（带 HTTP 状态）。"""
@@ -1554,7 +1601,130 @@ def act_extract(q: dict, _label: str) -> tuple[int, dict]:
     }
 
 
+def act_compress(q: dict, _label: str) -> tuple[int, dict]:
+    """把一个文件/目录打包成 .tar.gz / .zip，落在它的父目录（或 dest 指定的目录）里。"""
+    src = _safe_write_path((q.get("path") or [""])[0], must_exist=True)
+    fmt = ((q.get("format") or ["tar.gz"])[0] or "tar.gz").strip().lower()
+    if fmt not in ("tar.gz", "zip"):
+        raise WriteError(400, f"打包格式只支持 tar.gz 与 zip：{fmt}")
+    dest_raw = (q.get("dest") or [""])[0].strip()
+    dest_dir = (_safe_write_path(dest_raw, must_exist=True, must_be_dir=True)
+                if dest_raw else src.parent)
+    name = (q.get("name") or [""])[0].strip() or (src.name or "archive")
+    if "/" in name or name in (".", ".."):
+        raise WriteError(400, f"打包名不合法：{name}")
+    suffix = ".tar.gz" if fmt == "tar.gz" else ".zip"
+    out = dest_dir / (name if name.endswith(suffix) else name + suffix)
+
+    # 目标不许已经存在：覆盖会静默吃掉别人（或者你自己）的东西
+    if out.exists():
+        raise WriteError(409, f"目标已存在：{out.name}（换个名字，或先删掉）")
+    # 不许把包裹在**它自己的输入**里面：tar 会边写边把刚生成的包也收进去
+    out_in_src = src.is_dir() and (
+        str(out) == str(src) or str(out).startswith(str(src).rstrip("/") + "/"))
+    if out_in_src:
+        raise WriteError(400, "不能把压缩包放进它自己正在打包的目录里（会越打越大）")
+
+    du_code, du_out, _ = run(["du", "-sx", "--block-size=1048576", str(src)], timeout=120)
+    size_mb = 0
+    if du_code == 0 and (du_out or "").split():
+        try:
+            size_mb = int((du_out or "0").split()[0])
+        except ValueError:
+            size_mb = 0
+    if size_mb > COMPRESS_MAX_INPUT_MB:
+        raise WriteError(400, f"输入太大（约 {size_mb} MB），打包上限 "
+                              f"{COMPRESS_MAX_INPUT_MB} MB")
+    free_mb = shutil.disk_usage(str(dest_dir)).free // (1024 * 1024)
+    if free_mb < size_mb + COMPRESS_FREE_RESERVE_MB:
+        raise WriteError(400, f"目标分区只剩 {free_mb} MB，装不下"
+                              f"（输入约 {size_mb} MB，还要留 "
+                              f"{COMPRESS_FREE_RESERVE_MB} MB 余量）")
+
+    if fmt == "tar.gz":
+        code, _, err = run(["tar", "-czf", str(out), "-C", str(src.parent), src.name],
+                           timeout=COMPRESS_TIMEOUT)
+    else:
+        code, _, err = run(["zip", "-qr", str(out), src.name],
+                           timeout=COMPRESS_TIMEOUT, cwd=str(src.parent))
+    if code != 0:
+        try:
+            out.unlink()
+        except OSError:
+            pass
+        raise WriteError(502, f"打包失败：{(err or '').strip()[:200]}")
+
+    return 0, {
+        "archive": str(out),
+        "format": fmt,
+        "source": str(src),
+        "inputMB": size_mb,
+        "sizeBytes": out.stat().st_size,
+        "generatedAt": now_iso(),
+    }
+
+
+def act_cleanup(q: dict, _label: str) -> tuple[int, dict]:
+    """清理三类公认可以清的东西：journal 日志 / /tmp 陈旧文件 / apt 缓存。
+
+    配额与保留期写死在服务端（不接受客户端指定）：这台机器是别人的生产机，
+    "清到什么程度"不该由手机上的参数决定。dry=1 只报"能清多少"，不动手。
+    """
+    what = ((q.get("what") or [""])[0] or "").strip().lower()
+    dry = str((q.get("dry") or ["0"])[0]).strip().lower() in ("1", "true", "yes")
+    if what not in CLEANUP_MODES:
+        raise WriteError(400, f"不认的清理项（支持 {', '.join(CLEANUP_MODES)}）：{what}")
+
+    before = shutil.disk_usage("/").free
+    detail: dict = {
+        "what": what,
+        "dry": dry,
+        # 配额/保留期**报给客户端**：App 里就不用写死"200MB / 7天"，
+        # 以后改这里，手机上的文案跟着变（不写死的地方不会漂）。
+        "limits": {"journalKeepMB": CLEANUP_JOURNAL_KEEP_MB,
+                   "tmpKeepDays": CLEANUP_TMP_DAYS},
+    }
+
+    if what == "journal":
+        # journalctl --vacuum-size 会把超出部分删掉；先报当前的量
+        code, out, err = run(["journalctl", "--disk-usage"], timeout=60)
+        detail["before"] = (out or "").strip()[:200]
+        if not dry:
+            code, out, err = run(["journalctl", f"--vacuum-size={CLEANUP_JOURNAL_KEEP_MB}M"],
+                                 timeout=180)
+            if code != 0:
+                raise WriteError(502, f"清理 journal 失败：{(err or '').strip()[:200]}")
+            detail["log"] = (out or "").strip()[-300:]
+    elif what == "apt":
+        code, out, err = run(["du", "-sh", "/var/cache/apt"], timeout=60)
+        detail["before"] = (out or "").strip()[:200]
+        if not dry:
+            code, out, err = run(["apt-get", "clean"], timeout=180)
+            if code != 0:
+                raise WriteError(502, f"清理 apt 缓存失败：{(err or '').strip()[:200]}")
+    else:  # tmp
+        # 只删**普通文件**、且 7 天没被访问过；目录、软链接、最近用过的都不动
+        code, out, _ = run(["find", "/tmp", "-xdev", "-type", "f",
+                            "-mtime", f"+{CLEANUP_TMP_DAYS}", "-printf", "%s\n"],
+                           timeout=120)
+        sizes = [int(x) for x in (out or "").split() if x.isdigit()]
+        detail["count"] = len(sizes)
+        detail["bytes"] = sum(sizes)
+        if not dry and sizes:
+            code, _, err = run(["find", "/tmp", "-xdev", "-type", "f",
+                                "-mtime", f"+{CLEANUP_TMP_DAYS}", "-delete"], timeout=180)
+            if code != 0:
+                raise WriteError(502, f"清理 /tmp 失败：{(err or '').strip()[:200]}")
+
+    after = shutil.disk_usage("/").free
+    detail["freedBytes"] = max(0, after - before)
+    detail["generatedAt"] = now_iso()
+    return 0, detail
+
+
 WRITE_ACTIONS = {
+    "compress": act_compress,
+    "cleanup": act_cleanup,
     "capabilities": act_capabilities,
     "service": act_service_op,
     "mkdir": act_mkdir,

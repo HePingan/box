@@ -48,8 +48,13 @@ class _FakeFiles extends ServerOpsFilesService {
 
 /// 记录写动作请求的假传输。
 class _ApiCalls {
+  _ApiCalls({this.payload});
+
   final List<String> actions = <String>[];
   final List<Map<String, dynamic>> bodies = <Map<String, dynamic>>[];
+
+  /// 想让某个动作回什么就塞什么（默认那套字段是给解压/权限用的）。
+  final Map<String, dynamic>? payload;
 
   MockClient client({int status = 200, String? error}) => MockClient((req) async {
         actions.add(req.url.path.split('/').where((s) => s.isNotEmpty).last);
@@ -64,13 +69,14 @@ class _ApiCalls {
           );
         }
         return http.Response(
-          jsonEncode({
-            'path': '/a.zip',
-            'count': 3,
-            'dest': '/',
-            'mode': '755',
-            'truncated': false,
-          }),
+          jsonEncode(payload ??
+              {
+                'path': '/a.zip',
+                'count': 3,
+                'dest': '/',
+                'mode': '755',
+                'truncated': false,
+              }),
           200,
           headers: {'content-type': 'application/json; charset=utf-8'},
         );
@@ -263,5 +269,36 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.textContaining('受保护'), findsOneWidget);
+  });
+
+  testWidgets('打包：目录和普通文件都能打，先确认、路径用绝对路径、结果带包大小', (tester) async {
+    final api = _ApiCalls(payload: {
+      'archive': '/www.tar.gz',
+      'format': 'tar.gz',
+      'sizeBytes': 1024 * 1024,
+    });
+    await _pumpTab(tester, _FakeFiles(entries: entries), api);
+
+    await _openMenu(tester, 'www');
+    expect(find.text('打包成 .tar.gz'), findsOneWidget, reason: '目录要能打包');
+    await tester.tap(find.text('打包成 .tar.gz'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.textContaining('不会覆盖'), findsOneWidget, reason: '写动作要先确认');
+    expect(api.actions, isEmpty, reason: '还没点确认，一个请求都不该发');
+
+    await tester.tap(find.text('打包'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(api.actions.last, 'compress');
+    expect(api.bodies.last['path'], '/www', reason: '只读接口要绝对路径');
+    expect(api.bodies.last['format'], 'tar.gz');
+    expect(find.textContaining('1.0 MB'), findsOneWidget, reason: '包多大要说出来');
+  });
+
+  testWidgets('打包：普通文件也有这一项（单份日志收成一个包是常用操作）', (tester) async {
+    await _pumpTab(tester, _FakeFiles(entries: entries), _ApiCalls());
+    await _openMenu(tester, 'readme.txt');
+    expect(find.text('打包成 .tar.gz'), findsOneWidget);
   });
 }
