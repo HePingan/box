@@ -86,5 +86,33 @@ Future<void> showGithubAccelAction(
   String initialUrl,
 ) async {
   if (context == null) return;
-  await GithubAccelSheet.show(context, initialUrl: initialUrl);
+
+  // 预填的链接来自插件 payload（第三方清单/导入快照）→ 流量会被导向那个 host。
+  // 让用户在继续之前先看见"要去哪"，别让插件卡借用「GitHub 加速」的外观
+  // 把人送去没预期的主机。
+  final url = initialUrl.trim();
+  if (url.isNotEmpty) {
+    final host = Uri.tryParse(url)?.host ?? '';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('通过加速代理访问？'),
+        content: Text('将通过加速代理访问 $host'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('继续'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if (!context.mounted) return;
+  }
+
+  await GithubAccelSheet.show(context, initialUrl: url);
 }

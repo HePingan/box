@@ -1,3 +1,4 @@
+import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/plugin_manager.dart';
 import 'package:box/plugin_market_page.dart';
 import 'package:flutter/material.dart';
@@ -110,6 +111,32 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Route Registry Page'), findsOneWidget);
+    });
+  });
+
+  // FIX-05：加速动作此前对 payload 只判断「是否以 { 开头」，`_payloadUrl()` 原样返回。
+  // 第三方清单条目或用户导入的快照就能让插件卡把流量导向任意主机，
+  // 还借用「GitHub 加速」的信任外观；javascript: / file: 也会继续往后走。
+  group('加速动作 URL 白名单（FIX-05）', () {
+    test('拒绝非 http(s)、无 host、相对写法', () {
+      for (final bad in <String>[
+        'ftp://x/a',
+        'javascript:alert(1)',
+        'file:///etc/passwd',
+        '//evil.com',
+        'https://',
+        '',
+        'github.com/a/b',
+        '随便写的',
+      ]) {
+        expect(isAllowedAccelUrl(bad), isFalse, reason: '应拒绝：$bad');
+      }
+    });
+
+    test('放行 http/https 绝对链接（含首尾空白）', () {
+      expect(isAllowedAccelUrl('https://github.com/a/b'), isTrue);
+      expect(isAllowedAccelUrl('http://example.com/x.zip'), isTrue);
+      expect(isAllowedAccelUrl('  https://github.com/a/b  '), isTrue);
     });
   });
 }

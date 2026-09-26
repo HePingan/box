@@ -584,3 +584,24 @@ class HomeCustomPluginConfig {
 方案稿 FIX-07 的方案 A 里写"下架时停答题插件 overlay"——仓库里**没有**这样的
 overlay 启停 API（全仓 grep 无命中），故未实现该项；生命周期改做审计轨迹 + 真实校验。
 
+---
+
+## 十四、批次 3 落地记录（2026-09-26，1.20.51 / 308）
+
+### FIX-05：加速动作限制 URL 协议与主机
+
+原缺陷：`_payloadUrl()` 对 payload 只判断「是否以 `{` 开头」，命中就原样返回 ——
+第三方清单条目或用户导入的快照可以让插件卡把流量导向任意主机，并借用
+「GitHub 加速」的信任外观；没有 scheme 限制，`javascript:` / `file:` 也会继续往后走。
+
+改动：
+
+- 新增 `isAllowedAccelUrl()`：只接受 http/https 且 host 非空的绝对 URL。
+- `_payloadUrl()` 的**三个**返回点（`extra['url']`、`payload.url`、裸串 payload）
+  统一过校验；不合法则 `debugPrint` 留痕并当作「没给链接」处理 ——
+  面板照常打开、只是不预填，不因为一条脏 payload 把功能整块停掉。
+- `showGithubAccelAction()` 预填前加确认层：「将通过加速代理访问 `<host>`」，
+  取消则不打开面板；空链接（用户自己粘贴的常规路径）不打扰。
+
+方案稿只点了两个返回点，实际有第三个（`payload.url` 形态）—— 一并过了校验。
+

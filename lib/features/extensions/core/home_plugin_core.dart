@@ -231,11 +231,36 @@ String _payloadRouteCode(HomePluginActionContext actionContext) {
   return payload;
 }
 
+/// 加速动作只接受 http/https 且带 host 的绝对 URL。
+///
+/// 插件的 payload 来自第三方清单或用户导入的快照 —— 不校验就等于让插件卡把
+/// 流量导向任意主机，还借用「GitHub 加速」的信任外观；而 `javascript:` /
+/// `file:` 这类没有 scheme 限制时也会继续往后走。
+bool isAllowedAccelUrl(String raw) {
+  final uri = Uri.tryParse(raw.trim());
+  if (uri == null) return false;
+  if (uri.scheme != 'https' && uri.scheme != 'http') return false;
+  return uri.host.isNotEmpty;
+}
+
+/// 过一遍白名单：不合法则留痕，并当作「没给链接」处理
+/// （面板照常打开，只是不预填 —— 不因为一条脏 payload 把功能整块停掉）。
+String _allowedAccelUrlOrEmpty(String raw, {required String source}) {
+  final text = raw.trim();
+  if (text.isEmpty) return '';
+  if (isAllowedAccelUrl(text)) return text;
+  debugPrint('[plugin] 加速动作拒绝非法 URL（$source）：$text');
+  return '';
+}
+
 /// 从 payload 里取出链接。支持裸链接和 {"url": "..."} 两种形态。
 String _payloadUrl(HomePluginActionContext actionContext) {
   final payload = actionContext.payload.trim();
   if (payload.isEmpty) {
-    return actionContext.extra['url']?.toString().trim() ?? '';
+    return _allowedAccelUrlOrEmpty(
+      actionContext.extra['url']?.toString() ?? '',
+      source: 'extra.url',
+    );
   }
   if (payload.startsWith('{')) {
     try {
@@ -243,14 +268,16 @@ String _payloadUrl(HomePluginActionContext actionContext) {
       if (decoded is Map) {
         final url = decoded['url'] ?? decoded['link'] ?? decoded['href'];
         final text = url?.toString().trim() ?? '';
-        if (text.isNotEmpty) return text;
+        if (text.isNotEmpty) {
+          return _allowedAccelUrlOrEmpty(text, source: 'payload.url');
+        }
       }
     } catch (e) {
       debugPrint('[HomePlugin] GitHub 加速 payload 解析失败: $e');
     }
     return '';
   }
-  return payload;
+  return _allowedAccelUrlOrEmpty(payload, source: 'payload');
 }
 
 class HomePluginActionRegistry {
