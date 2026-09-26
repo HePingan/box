@@ -701,5 +701,79 @@ void main() {
     });
   });
 
-}
+  group('D7 条目规整：名字 / 快照 id / 当前那台', () {
+    const srv1 = ServerOpsServer(
+      id: 'srv1',
+      label: '新服务器',
+      baseUrl: 'https://box.hpa888.top/dav175',
+      user: 'phone-175',
+    );
+    const list = <ServerOpsServer>[
+      ServerOpsSettings.builtInHpa888,
+      ServerOpsSettings.builtInTencent175,
+      srv1,
+    ];
 
+    test('名字还是占位名 → 按地址取名（认到同一台内置的名字）', () {
+      final fixed = ServerOpsSettings.normalizeForSave(
+        servers: list,
+        selectedId: 'srv1',
+      );
+      expect(fixed.servers.last.label, '腾讯云 · 构建/监控机');
+    });
+
+    test('自建条目地址与内置 175 相同 → 快照 id 对齐（否则服务器页永远没有「当前」）', () {
+      final fixed = ServerOpsSettings.normalizeForSave(
+        servers: list,
+        selectedId: 'srv1',
+      );
+      expect(fixed.servers.last.snapshotId, 'tencent175');
+      expect(fixed.servers.last.effectiveSnapshotId, 'tencent175');
+    });
+
+    test('地址不同 → 快照 id 保持自己的（别乱认机器）', () {
+      const other = ServerOpsServer(
+        id: 'x',
+        label: 'X 机',
+        baseUrl: 'https://box.hpa888.top/davx',
+      );
+      final fixed = ServerOpsSettings.normalizeForSave(
+        servers: const [ServerOpsSettings.builtInHpa888, other],
+        selectedId: 'x',
+      );
+      expect(fixed.servers.last.effectiveSnapshotId, 'x');
+      expect(fixed.servers.last.label, 'X 机');
+    });
+
+    test('只差协议与结尾斜杠也算同一台', () {
+      expect(
+        ServerOpsSettings.addressKey('//box.hpa888.top/dav175/'),
+        ServerOpsSettings.addressKey('https://box.hpa888.top/dav175'),
+      );
+    });
+
+    test('选中的那台连地址都没有 → 换成第一台有地址的', () {
+      const draft = ServerOpsServer(id: 'draft', label: '新服务器');
+      final fixed = ServerOpsSettings.normalizeForSave(
+        servers: const [ServerOpsSettings.builtInHpa888, draft],
+        selectedId: 'draft',
+      );
+      expect(fixed.selectedId, 'hpa888');
+      expect(fixed.servers.last.label, '新服务器', reason: '没地址就取不了名，先不动它');
+    });
+
+    test('normalized()：本机存下来的旧数据一读出来就正常，口令不丢', () {
+      const stored = ServerOpsSettings(
+        servers: list,
+        selectedServerId: 'srv1',
+        passwords: {'srv1': 'pw'},
+      );
+      final n = stored.normalized();
+      expect(n.servers.last.label, '腾讯云 · 构建/监控机');
+      expect(n.servers.last.snapshotId, 'tencent175');
+      expect(n.currentServer.id, 'srv1');
+      expect(n.passwords['srv1'], 'pw');
+    });
+  });
+
+}

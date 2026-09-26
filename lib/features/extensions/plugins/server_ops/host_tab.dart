@@ -126,6 +126,13 @@ class _ServerOpsHostTabState extends State<ServerOpsHostTab> {
     await refresh();
   }
 
+  /// 当前这台在快照里有没有对应的 host（没有就打不上「当前」，得说清楚）。
+  bool _currentInSnapshot(HostSnapshot snapshot) {
+    final want = widget.settings.currentServer.effectiveSnapshotId;
+    return snapshot.hosts.any((h) => h.id == want);
+  }
+
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -155,6 +162,18 @@ class _ServerOpsHostTabState extends State<ServerOpsHostTab> {
           ),
           const SizedBox(height: 10),
           _SummaryRow(snapshot: snapshot),
+          if (!_currentInSnapshot(snapshot)) ...[
+            const SizedBox(height: 8),
+            Text(
+              // 快照里没有当前这台机器时**说清楚**：否则就是"切了机器，卡片上什么都没有、
+              // 也看不出为什么"。（自建条目的 snapshotId 对不上快照里的 host id 时就是这样。）
+              '当前这台（${widget.settings.currentServer.label}）不在监控快照里 —— '
+              '快照里是：${snapshot.hosts.map((h) => h.id).join('、')}',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           for (final host in snapshot.hosts)
             _HostCard(

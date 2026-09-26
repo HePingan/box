@@ -324,6 +324,69 @@ class ServerOpsSettings {
 
   /// 地址形态检查：返回一句人话（问题）或 null（看着没问题）。
   /// 只做"明显写错了"的判断，不做连通性判断 —— 那是「测试连接」的事。
+  /// 新建服务器时的默认名。留着它就会出现"顶部写着新服务器，也不知道文件页打的是哪台"。
+  static const String placeholderLabel = '新服务器';
+
+  /// 从地址里取"主机 + 路径"（忽略协议与结尾斜杠）—— 用来认两台条目是不是同一台机器。
+  ///
+  /// 两台机器共用同一个域名（`box.hpa888.top/dav` 与 `/dav175`），所以只比 host 不够，
+  /// 必须带上路径。
+  static String addressKey(String raw) {
+    var text = normalizeAddress(raw).trim().toLowerCase();
+    text = text.replaceFirst(RegExp(r'^[a-z][a-z0-9+.\-]*://'), ''); // 协议
+    text = text.replaceFirst(RegExp(r'^/+'), ''); // 协议相对写法 //host/path（真机上就是这么填的）
+    text = text.replaceFirst(RegExp(r'/+$'), ''); // 结尾斜杠
+    return text;
+  }
+
+  /// 地址一样的那台（不含自己）—— 用来认"其实就是同一台机器"。
+  static ServerOpsServer? addressTwin(
+    String baseUrl, {
+    required List<ServerOpsServer> peers,
+    required String selfId,
+  }) {
+    final key = addressKey(baseUrl);
+    if (key.isEmpty) return null;
+    for (final peer in peers) {
+      if (peer.id == selfId) continue;
+      if (addressKey(peer.effectiveBaseUrl) == key) return peer;
+    }
+    return null;
+  }
+
+  /// 这台是不是内置的两台之一（内置的是"正主"，别提示它去用别人）。
+  static bool isBuiltIn(String id) => builtInServers.any((s) => s.id == id);
+
+  /// 名字留空（或还是占位名）时按地址取名；填了就尊重填的。
+  static String deriveLabel(
+    String label,
+    String baseUrl, {
+    required List<ServerOpsServer> peers,
+    required String selfId,
+  }) {
+    final want = label.trim();
+    if (want.isNotEmpty && want != placeholderLabel) return want;
+    final twin = addressTwin(baseUrl, peers: peers, selfId: selfId);
+    if (twin != null) return twin.label;
+    final key = addressKey(baseUrl);
+    return key.isEmpty ? want : key;
+  }
+
+  /// 这台该挂到监控快照里的哪个 id：地址与别台（含内置两台）相同就用那台的，否则用自己。
+  ///
+  /// 为什么需要：快照里的 host id 是 `hpa888` / `tencent175`，而用户自建的条目
+  /// `snapshotId` 默认等于自己的 id（比如 `srv1`）→ 对不上任何 host →
+  /// 服务器页上那台**永远打不上「当前」**，看着就像"切了机器没反应"。
+  static String resolveSnapshotId({
+    required String id,
+    required String baseUrl,
+    required List<ServerOpsServer> peers,
+  }) {
+    final twin = addressTwin(baseUrl, peers: peers, selfId: id);
+    if (twin != null) return twin.effectiveSnapshotId;
+    return id;
+  }
+
   static String? addressProblem(String raw) {
     final t = raw.trim();
     if (t.isEmpty) return null;
@@ -441,6 +504,68 @@ class ServerOpsSettings {
     return list.first;
   }
 
+  /// 规整一遍：名字还是占位名的按地址取名、自建机器的快照 id 按地址对齐、选中的那台
+  /// 如果是"连地址都没有的条目"就换成第一台能用的。
+  ///
+  /// 为什么**读**的时候也要做（不只是保存时）：真机上出现过"顶部写着「新服务器」、
+  /// 服务器页两张卡片都没有「当前」、切了机器像没反应"——那是用户新建条目时名字留了默认、
+  /// 而它的 `snapshotId` 又对不上快照里的 host（快照里是 `hpa888`/`tencent175`）。
+  /// 这种已经存进本机的数据，不能等用户下次手动保存才恢复。
+  static ({List<ServerOpsServer> servers, String selectedId}) normalizeForSave({
+    required List<ServerOpsServer> servers,
+    required String selectedId,
+  }) {
+    final peers = List<ServerOpsServer>.of(servers);
+    final fixed = [
+      for (final server in servers)
+        server.copyWith(
+          label: deriveLabel(
+            server.label,
+            server.effectiveBaseUrl,
+            peers: peers,
+            selfId: server.id,
+          ),
+          snapshotId: resolveSnapshotId(
+            id: server.id,
+            baseUrl: server.effectiveBaseUrl,
+            peers: peers,
+          ),
+        ),
+    ];
+    var id = selectedId;
+    ServerOpsServer? chosen;
+    for (final server in fixed) {
+      if (server.id == id) {
+        chosen = server;
+        break;
+      }
+    }
+    if (chosen == null || chosen.effectiveBaseUrl.isEmpty) {
+      for (final server in fixed) {
+        if (server.effectiveBaseUrl.isNotEmpty) {
+          id = server.id;
+          break;
+        }
+      }
+    }
+    return (servers: fixed, selectedId: id);
+  }
+
+  /// 读取时套一遍 [normalizeForSave]（存储里没规整过的旧数据也能立刻正常）。
+  ServerOpsSettings normalized() {
+    if (effectiveServers.isEmpty) return this;
+    final fixed = normalizeForSave(
+      servers: effectiveServers,
+      selectedId: effectiveSelectedServerId,
+    );
+    return ServerOpsSettings(
+      servers: fixed.servers,
+      selectedServerId: fixed.selectedId,
+      passwords: passwords,
+      apiTokens: apiTokens,
+    );
+  }
+
   /// 生效的选中 id（把"没选 / 选了个不存在的"归一成实际那台）。
   String get effectiveSelectedServerId => currentServer.id;
 
@@ -507,7 +632,7 @@ class ServerOpsSettings {
           selectedServerId: _nonEmpty(prefs.getString(selectedKey)),
           passwords: await _readPasswords(persisted.map((s) => s.id)),
           apiTokens: await _readApiTokens(persisted.map((s) => s.id)),
-        );
+        ).normalized();   // 存下来的可能是"名字留了默认 / 快照 id 对不上"的旧数据
       }
       final migrated = await _migrateLegacy(prefs);
       if (migrated != null) return migrated;

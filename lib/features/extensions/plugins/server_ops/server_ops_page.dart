@@ -359,9 +359,15 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       _error = null;
     });
     try {
-      final updated = await widget.settings.save(
+      // 保存是唯一的收口：名字留了默认的按地址取名、自建机器的快照 id 按地址对齐
+      // （否则服务器页那台永远打不上「当前」），另外当前机器不能是"连地址都没有"的条目。
+      final fixed = ServerOpsSettings.normalizeForSave(
         servers: _draft,
-        selectedServerId: _selectedId,
+        selectedId: _selectedId,
+      );
+      final updated = await widget.settings.save(
+        servers: fixed.servers,
+        selectedServerId: fixed.selectedId,
         passwords: _pendingPasswords.isEmpty ? null : _pendingPasswords,
         apiTokens: _pendingApiTokens.isEmpty ? null : _pendingApiTokens,
       );
@@ -419,6 +425,20 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               _ServerRow(
                 server: _draft[i],
                 selected: _draft[i].id == _selectedId,
+                // 地址和**内置**那台一模一样的条目：真机上就是"为了填 175 又新建了一条"，
+                // 结果两台都出现在列表里、监控页只认其中一台。这里直说，并只在
+                // "自建条目撞了内置"这个方向提示（反过来去烦内置那两条没意义）。
+                twinLabel: () {
+                  final twin = ServerOpsSettings.addressTwin(
+                    _draft[i].effectiveBaseUrl,
+                    peers: _draft,
+                    selfId: _draft[i].id,
+                  );
+                  if (twin == null || !ServerOpsSettings.isBuiltIn(twin.id)) {
+                    return null;
+                  }
+                  return twin.label;
+                }(),
                 passwordPresent: _passwordPresent(_draft[i].id),
                 apiTokenPresent: _apiTokenPresent(_draft[i].id),
                 onTap: () => _edit(i),
@@ -467,6 +487,7 @@ class _ServerRow extends StatelessWidget {
     required this.selected,
     required this.passwordPresent,
     required this.apiTokenPresent,
+    this.twinLabel,
     required this.onTap,
     required this.onSelect,
     required this.onDelete,
@@ -476,6 +497,9 @@ class _ServerRow extends StatelessWidget {
   final bool selected;
   final bool passwordPresent;
   final bool apiTokenPresent;
+
+  /// 地址与另一台完全相同时，那台的名字（用来提示"其实就是同一台"）。
+  final String? twinLabel;
   final VoidCallback onTap;
   final VoidCallback onSelect;
   final VoidCallback onDelete;
@@ -517,7 +541,9 @@ class _ServerRow extends StatelessWidget {
         '${server.effectiveBaseUrl}   （${server.id}）\n'
         '口令：${passwordPresent ? '已在本机加密保存' : '还没配置'}'
         ' · 系统页：${apiTokenPresent ? '已配令牌' : '没配令牌'}\n'
-        '终端：${_terminalLine(server)}',
+        '终端：${_terminalLine(server)}'
+        '${twinLabel == null ? '' : '\n⚠ 和「$twinLabel」是同一台机器 —— 用那条更省事，'
+            '这条可以删掉'}',
         style: theme.textTheme.labelSmall?.copyWith(
           color: theme.colorScheme.outline,
         ),
@@ -528,10 +554,18 @@ class _ServerRow extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
-            tooltip: '设为当前',
+            // 状态要看得出来：原来永远是空心圆点，切了当前也毫无反馈
+            // （真机反馈："一个显示当前，一个切换了没有显示"）。
+            tooltip: selected ? '已是当前机器' : '设为当前',
             visualDensity: VisualDensity.compact,
-            onPressed: onSelect,
-            icon: const Icon(Icons.radio_button_unchecked, size: 18),
+            onPressed: selected ? null : onSelect,
+            icon: Icon(
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              size: 18,
+              color: selected ? theme.colorScheme.primary : null,
+            ),
           ),
           IconButton(
             tooltip: '删除',
@@ -938,7 +972,7 @@ class _ServerEditDialogState extends State<_ServerEditDialog> {
                 controller: _label,
                 decoration: const InputDecoration(
                   labelText: '名称',
-                  hintText: '阿里云 · 主服务端',
+                  hintText: '留空就按地址自动取名',
                   border: OutlineInputBorder(),
                 ),
               ),

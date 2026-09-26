@@ -35,10 +35,13 @@ class _FakeFilesService extends ServerOpsFilesService {
   Future<List<RemoteStorageEntry>> list(String path) async => const [];
 }
 
-Future<void> _pumpPage(WidgetTester tester) async {
+Future<void> _pumpPage(
+  WidgetTester tester, {
+  ServerOpsSettings settings = const ServerOpsSettings(),
+}) async {
   debugSetServerOpsRuntime(
     hostService: _FailingHostService(),
-    settings: const ServerOpsSettings(),
+    settings: settings,
     filesService: _FakeFilesService(),
   );
   await tester.pumpWidget(const MaterialApp(home: ServerOpsPage()));
@@ -48,6 +51,34 @@ Future<void> _pumpPage(WidgetTester tester) async {
 
 void main() {
   tearDown(() => debugSetServerOpsRuntime());
+
+  testWidgets('D7 列表里「设为当前」的圆点反映状态；撞了内置的条目会提示别重复建', (tester) async {
+    const settings = ServerOpsSettings(
+      servers: [
+        ServerOpsSettings.builtInHpa888,
+        ServerOpsSettings.builtInTencent175,
+        ServerOpsServer(
+          id: 'srv1',
+          label: '新服务器',
+          baseUrl: 'https://box.hpa888.top/dav175',
+        ),
+      ],
+      selectedServerId: 'srv1',
+    );
+    await _pumpPage(tester, settings: settings);
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // 当前那台的圆点是实心的、且不能再点（以前永远是空心，切了也没反馈）
+    expect(find.byTooltip('已是当前机器'), findsOneWidget);
+    expect(find.byIcon(Icons.radio_button_checked), findsWidgets);
+    // 撞了内置的条目直说"和内置那台是同一台"
+    expect(
+      find.textContaining('和「腾讯云 · 构建/监控机」是同一台机器'),
+      findsOneWidget,
+    );
+  });
 
   testWidgets('三个页签都在，默认停在"服务器"', (tester) async {
     await _pumpPage(tester);
