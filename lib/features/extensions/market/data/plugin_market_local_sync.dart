@@ -225,11 +225,14 @@ class PluginMarketLocalSync {
       return config;
     }
 
-    // 1) 若清单声明了 packageUrl/zip，下载并校验
-    final hasZipHint = template.packageFormat == 'zip' ||
-        template.packageUrl.contains('/package') ||
-        template.packageSha256.isNotEmpty;
-    if (hasZipHint) {
+    // 1) 只有**清单明确声明**是 zip 时才下载整包。
+    //
+    // 此前是弱启发式：`packageFormat == 'zip' || packageUrl 含 /package ||
+    // packageSha256 非空` —— 于是"只要清单带了 sha256"就会拉一整个包
+    // （服务端自报上限 50MB），下完即弃。另外两种情况本来走 /install 的
+    // JSON 路径就够，指纹取清单里的 packageSha256 一样能校验。
+    final isZipPackage = template.packageFormat == 'zip';
+    if (isZipPackage) {
       try {
         final pkg = await _api.downloadPackage(
           template.id,
@@ -243,6 +246,9 @@ class PluginMarketLocalSync {
         final fromManifest = template.packageSha256.trim();
         final fromResponse = pkg.sha256.trim();
         final expected = fromManifest.isNotEmpty ? fromManifest : fromResponse;
+        // 记下这颗指纹锚在哪：清单（受信）还是同一个响应的响应头（弱一档）。
+        // 只作展示与后续审计 —— 不是"信任等级"，别当作安全屏障读。
+        final trustAnchor = fromManifest.isNotEmpty ? 'manifest' : 'response-header';
         if (expected.isNotEmpty && actual != expected) {
           throw const PluginMarketApiException('插件包校验失败（sha256 不匹配）');
         }
@@ -252,6 +258,7 @@ class PluginMarketLocalSync {
         } catch (_) {}
         config = config.copyWith(
           packageSha256: actual,
+          packageTrust: trustAnchor,
           marketStatus: 'published',
           marketRisk: false,
           marketRiskNote: '',

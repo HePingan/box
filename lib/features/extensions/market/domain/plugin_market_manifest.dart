@@ -450,6 +450,8 @@ class MarketPluginTemplate {
   final List<String> permissions;
   final bool deprecated;
   final String changelog;
+  /// 只读元数据：**不用于实际下载** —— `downloadPackage()` 自己拼
+  /// `/api/plugin-market/{id}/package`，所以这里写第三方地址也不会被访问。
   final String packageUrl;
   final String packageSha256;
   final String packageFormat;

@@ -640,3 +640,40 @@ overlay 启停 API（全仓 grep 无命中），故未实现该项；生命周�
 引入占位概念后它们会撞上"占位条目没有安装按钮"。已把夹具换成有真实动作的插件
 （它们的意图与"能不能装"无关），并在提交信息里标明这是**有意行为变更**。
 
+---
+
+## 十六、批次 5 落地记录（2026-09-26，1.20.53 / 310）—— 方案稿 10 项收口
+
+### FIX-06：消除两处静默失败
+
+- `_persist()` 原先 `catch (_) {}`：落盘失败（磁盘满 / 序列化异常）对调用方完全
+  不可见、UI 照常提示成功。现在返回 `bool` + 置 `lastPersistFailed` + 落日志
+  （`AppLogger.instance.logChannelError(LogChannel.system, …)`）。
+- `readSnapshot()` 的解析异常不再直接返回空快照：**先把原始文本备份**到
+  `plugin_snapshot_v1.corrupt.<epochMs>`（键通过 `HomePluginPersistence.lastCorruptBackupKey`
+  可查，便于取证与测试），再回落空快照。否则坏数据会在下一次写入时被覆盖成默认，
+  用户的自定义插件与顺序静默丢失。
+- 日志调用本身也做了防御（`_logQuietly`）：记日志失败不得把"落盘失败"升级成
+  更难查的二次故障。
+
+### FIX-10：zip 下载触发条件收敛
+
+- 触发条件从弱启发式（`packageFormat == 'zip' || packageUrl 含 /package ||
+  packageSha256 非空`）收敛为 **`packageFormat == 'zip'`** —— 此前"只要清单带了
+  sha256"就会拉一整个包（服务端自报上限 50MB）然后扔掉。
+- `packageUrl` 补注释说明它**不用于实际下载**（`downloadPackage()` 自己拼
+  `/api/plugin-market/{id}/package`），避免后人误以为可指向第三方源。
+
+### FIX-02 附带项：`packageTrust`
+
+`HomeCustomPluginConfig.packageTrust` 记录这颗指纹**锚在哪**：`manifest`（清单，受信）
+或 `response-header`（同一响应，弱一档），随快照落库，供展示与后续审计。
+方案稿写的是"清单信任等级"，这里落成"锚点来源" —— 与 FIX-02 要解决的"自己验自己"
+是同一件事，且不需要把信任等级一路穿到 App 的安装回调里。
+
+### 未做（明确列出）
+
+方案稿 FIX-06 还提到"扩展页显示一次性提示"。失败状态已经可查
+（`lastPersistFailed`）并且已经进 `AppLogger` 的 system 频道（App 日志页可见），
+但**没有**在扩展页新增横幅 —— 那需要额外的重建触发点，暂时不值当。
+

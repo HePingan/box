@@ -24,13 +24,14 @@ void main() {
   final otherHash =
       sha256.convert(utf8.encode('another payload entirely')).toString();
 
-  MarketPluginTemplate tpl(String manifestSha) => MarketPluginTemplate.tryFromJson({
+  MarketPluginTemplate tpl(String manifestSha, {String fmt = 'zip'}) =>
+      MarketPluginTemplate.tryFromJson({
         'id': 'published_zip_plugin',
         'title': '有包的已发布插件',
         'subtitle': '清单给了 sha256',
         'areaCode': 'recommend',
         'actionCode': 'toast',
-        'packageFormat': 'zip',
+        'packageFormat': fmt,
         'packageUrl':
             'https://example.invalid/api/plugin-market/published_zip_plugin/package',
         'packageSha256': manifestSha,
@@ -86,4 +87,55 @@ void main() {
       );
     });
   });
+
+  group('FIX-10：只有清单声明 zip 才下载整包', () {
+    test('非 zip 模板装的时候不该请求 /package（省一次整包传输）', () async {
+      final hits = <String>[];
+      final api2 = PluginMarketApi(
+        httpClient: MockClient((req) async {
+          hits.add(req.url.path);
+          if (req.url.path.contains('/package')) {
+            return http.Response.bytes(body, 200, headers: const {
+              'x-package-sha256': '',
+            });
+          }
+          return http.Response(
+            '{}',
+            200,
+            headers: const {'content-type': 'application/json; charset=utf-8'},
+          );
+        }),
+        loadSession: () async => null,
+      );
+
+      // 清单带了 sha256、也带了 packageUrl，但 packageFormat 不是 zip：
+      // 此前这种"弱启发式"命中就会拉一整个包（服务端自报上限 50MB）然后扔掉。
+      final sync = PluginMarketLocalSync(api: api2);
+      final config = await sync.installFromTemplate(tpl(realHash, fmt: 'json'));
+
+      expect(
+        hits.any((h) => h.contains('/package')),
+        isFalse,
+        reason: 'packageFormat != zip 时应走 /install 的 JSON 路径',
+      );
+      expect(config.enabled, isTrue);
+    });
+  });
+
+  group('packageTrust：记下指纹锚在哪（审计用）', () {
+    test('清单给了 sha256 → 锚在清单', () async {
+      final sync = PluginMarketLocalSync(api: api(headerSha: otherHash));
+      final config = await sync.installFromTemplate(tpl(realHash));
+
+      expect(config.packageTrust, 'manifest');
+    });
+
+    test('只有响应头给了 sha256 → 锚在响应头（弱一档，如实记下）', () async {
+      final sync = PluginMarketLocalSync(api: api(headerSha: realHash));
+      final config = await sync.installFromTemplate(tpl(''));
+
+      expect(config.packageTrust, 'response-header');
+    });
+  });
 }
+

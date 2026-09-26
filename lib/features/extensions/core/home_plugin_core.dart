@@ -1,5 +1,7 @@
 // ignore_for_file: non_const_argument_for_const_parameter
 
+import 'package:box/utils/app_logger.dart';
+import 'package:box/utils/log_channels.dart';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -444,6 +446,10 @@ class HomeCustomPluginConfig {
   final String origin;
   final String marketVersion;
   final String packageSha256;
+
+  /// 包指纹锚在哪：`manifest`（清单，受信）/ `response-header`（同一响应，弱一档）。
+  /// 只作展示与后续审计。
+  final String packageTrust;
   final String author;
   /// published | yanked | local_cache | ''
   final String marketStatus;
@@ -471,6 +477,7 @@ class HomeCustomPluginConfig {
     this.origin = '',
     this.marketVersion = '',
     this.packageSha256 = '',
+    this.packageTrust = '',
     this.author = '',
     this.marketStatus = '',
     this.declaredPermissions = const [],
@@ -555,6 +562,7 @@ class HomeCustomPluginConfig {
     String? origin,
     String? marketVersion,
     String? packageSha256,
+    String? packageTrust,
     String? author,
     String? marketStatus,
     List<String>? declaredPermissions,
@@ -579,6 +587,7 @@ class HomeCustomPluginConfig {
       origin: origin ?? this.origin,
       marketVersion: marketVersion ?? this.marketVersion,
       packageSha256: packageSha256 ?? this.packageSha256,
+      packageTrust: packageTrust ?? this.packageTrust,
       author: author ?? this.author,
       marketStatus: marketStatus ?? this.marketStatus,
       declaredPermissions: declaredPermissions ?? this.declaredPermissions,
@@ -606,6 +615,7 @@ class HomeCustomPluginConfig {
       'origin': origin,
       'marketVersion': marketVersion,
       'packageSha256': packageSha256,
+      'packageTrust': packageTrust,
       'author': author,
       'marketStatus': marketStatus,
       'declaredPermissions': declaredPermissions,
@@ -649,6 +659,7 @@ class HomeCustomPluginConfig {
       origin: _asString(json['origin']),
       marketVersion: _asString(json['marketVersion'], _asString(json['version'])),
       packageSha256: _asString(json['packageSha256']),
+      packageTrust: _asString(json['packageTrust']),
       author: _asString(json['author']),
       marketStatus: _asString(json['marketStatus']),
       declaredPermissions: _asStringList(json['declaredPermissions']),
@@ -747,6 +758,9 @@ class HomePluginPersistence {
 
   static const String _snapshotKey = 'plugin_snapshot_v1';
 
+  /// 最近一次坏快照的备份键（诊断用：坏数据去了哪儿）。
+  String? lastCorruptBackupKey;
+
   Future<HomePluginSnapshot> readSnapshot() async {
     final raw = await _cache.read(_snapshotKey);
 
@@ -766,7 +780,22 @@ class HomePluginPersistence {
       if (raw is Map) {
         return HomePluginSnapshot.fromJson(Map<String, dynamic>.from(raw));
       }
-    } catch (_) {
+    } catch (e, st) {
+      // 不能静默清零：坏数据会在下一次写入时被覆盖成默认 ——
+      // 用户的插件与顺序就这么没了，还没有任何线索。
+      // 先把原始文本备份到一个可查的键，再回落空快照。
+      _logQuietly(e, st, '快照损坏');
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      try {
+        await _cache.write(
+          '$_snapshotKey.corrupt.$stamp',
+          raw is String ? raw : (raw?.toString() ?? ''),
+        );
+        lastCorruptBackupKey = '$_snapshotKey.corrupt.$stamp';
+        debugPrint('[plugin] 快照损坏，原文已备份到 $lastCorruptBackupKey');
+      } catch (backupError) {
+        debugPrint('[plugin] 快照损坏且备份失败：$backupError');
+      }
       return const HomePluginSnapshot.empty();
     }
 
@@ -1501,11 +1530,26 @@ class HomePluginHost {
     );
   }
 
-  Future<void> _persist() async {
+  /// 落盘。**不再静默吞异常**：磁盘满 / 序列化失败原先是 `catch (_) {}`，
+  /// 对调用方完全不可见，UI 照常提示成功。
+  ///
+  /// 返回是否写成功，并把失败状态留给 UI 做一次性提示。
+  Future<bool> _persist() async {
     try {
       await _persistence.writeSnapshot(_buildCurrentSnapshot());
-    } catch (_) {}
+      _lastPersistFailed = false;
+      return true;
+    } catch (e, st) {
+      _logQuietly(e, st, '快照落盘失败');
+      _lastPersistFailed = true;
+      return false;
+    }
   }
+
+  bool _lastPersistFailed = false;
+
+  /// 最近一次落盘是否失败（UI 据此弹一次性提示，避免"提示成功其实没存"）。
+  bool get lastPersistFailed => _lastPersistFailed;
 
   List<HomePlugin> _sorted(Iterable<HomePlugin> input) {
     final list = List<HomePlugin>.from(input);
@@ -1538,4 +1582,13 @@ List<String> _asStringList(dynamic raw) {
     if (text.isNotEmpty) out.add(text);
   }
   return out;
+}
+
+/// 记一条错误日志，但**绝不因为记日志本身失败而抛出去** ——
+/// 那会把"落盘失败"变成更难查的二次故障。
+void _logQuietly(Object error, StackTrace stack, String note) {
+  debugPrint('[plugin] $note：$error');
+  try {
+    AppLogger.instance.logChannelError(LogChannel.system, error, stack);
+  } catch (_) {}
 }
