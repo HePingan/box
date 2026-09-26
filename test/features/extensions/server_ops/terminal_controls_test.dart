@@ -278,4 +278,33 @@ void main() {
       expect(terminalClipboardEmptyHint, contains('剪贴板'));
     });
   });
+
+  group('终端认证闸门（口令不对时不许无限转圈）', () {
+    test('第一次挑战照常应答，第二次就取消', () {
+      final gate = TerminalAuthGate();
+      expect(gate.register(), 1);
+      expect(gate.shouldAnswer, isTrue, reason: '第一次挑战是正常的');
+      expect(gate.register(), 2);
+      expect(gate.shouldAnswer, isFalse,
+          reason: '同一台机器 realm 固定，再来一次就是口令被拒了');
+    });
+
+    test('重新加载要清零，否则"重连"永远取消', () {
+      final gate = TerminalAuthGate();
+      gate.register();
+      gate.register();
+      expect(gate.shouldAnswer, isFalse);
+      gate.reset();
+      expect(gate.challenges, 0);
+      expect(gate.register(), 1);
+      expect(gate.shouldAnswer, isTrue);
+    });
+
+    test('提示要点名"口令那一格"+ 别和设备令牌搞混', () {
+      expect(terminalAuthFailedHint, contains('口令'));
+      expect(terminalAuthFailedHint, contains('设备令牌'),
+          reason: '真机上就是把设备令牌填进了口令格；提示必须点破');
+      expect(terminalAuthFailedHint, contains('重连'));
+    });
+  });
 }

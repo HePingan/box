@@ -169,9 +169,13 @@ class _ServerOpsTerminalTabState extends State<ServerOpsTerminalTab> {
     _startWebView(url);
   }
 
+  /// 认证挑战计数（每次重新加载清零）。
+  final TerminalAuthGate _authGate = TerminalAuthGate();
+
   void _startWebView(Uri url) {
     _error = null;
     _loading = true;
+    _authGate.reset();
     _loadStarted = DateTime.now();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -183,6 +187,21 @@ class _ServerOpsTerminalTabState extends State<ServerOpsTerminalTab> {
             final cred = opsTerminalCredential(widget.settings);
             if (cred == null) {
               request.onCancel();
+              return;
+            }
+            // 口令不对时服务端会反复挑战：照旧无限应答下去，页面就一直转、连失败
+            // 提示都不给（真机上就是这样）。第二次挑战起直接取消并说明原因。
+            _authGate.register();
+            if (!_authGate.shouldAnswer) {
+              request.onCancel();
+              _watchdog?.cancel();
+              if (mounted) {
+                setState(() {
+                  _loading = false;
+                  _error = terminalAuthFailedHint;
+                });
+              }
+              _logTerminal(false, terminalAuthFailedHint);
               return;
             }
             request.onProceed(cred);

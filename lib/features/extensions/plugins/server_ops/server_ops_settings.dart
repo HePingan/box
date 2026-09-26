@@ -593,7 +593,28 @@ class ServerOpsSettings {
   String get effectiveSelectedServerId => currentServer.id;
 
   /// 某台服务器保存的口令（原样返回，不 trim：尾随空格可能是口令的一部分）。
-  String passwordFor(String serverId) => passwords[serverId] ?? '';
+  /// 某个 id 对应的**机器 id**：自建条目认出"其实就是内置那台"时是内置的 id，否则是自己。
+  String machineIdOf(String serverId) {
+    for (final s in servers) {
+      if (s.id == serverId) return s.effectiveSnapshotId;
+    }
+    return serverId;
+  }
+
+  /// 这台的口令：**条目自己填的优先，没填就用"认出来的那台机器"的**。
+  ///
+  /// 为什么：口令按键存（`…dav.password.<id>`），而"同一台机器换个名字又加一条"
+  /// （最常见：自建条目地址填的是内置那台的 `/dav175`）会拿不到已存的口令 ——
+  /// 用户看到的就是"我明明保存过，怎么又要填一遍 / 怎么 401"。认出来是同一台机器，
+  /// 凭据就该能共用；条目自己填了仍然以自己为准（下面的 ?? 顺序）。
+  String passwordFor(String serverId) {
+    // 注意：这里**不能**把 _nonEmpty 的返回值当口令用 —— 它会 trim，
+    // 而口令尾随空格可能是口令的一部分（有专门的用例守着）。它只用来判"空不空"。
+    final own = passwords[serverId] ?? '';
+    if (_nonEmpty(own) != null) return own;
+    final byMachine = passwords[machineIdOf(serverId)] ?? '';
+    return _nonEmpty(byMachine) != null ? byMachine : '';
+  }
 
   /// 某台服务器配过口令没有。
   bool hasPasswordFor(String serverId) => _nonEmpty(passwordFor(serverId)) != null;
@@ -611,7 +632,13 @@ class ServerOpsSettings {
   /// 生效的只读 API 地址（空 = 这台没接系统页）。
   String get effectiveApiUrl => currentServer.effectiveApiUrl;
 
-  String apiTokenFor(String serverId) => apiTokens[serverId] ?? '';
+  /// 这台的设备令牌：条目自己填的优先，没填就用"认出来的那台机器"的（同 [passwordFor]）。
+  String apiTokenFor(String serverId) {
+    final own = apiTokens[serverId] ?? '';
+    if (_nonEmpty(own) != null) return own;
+    final byMachine = apiTokens[machineIdOf(serverId)] ?? '';
+    return _nonEmpty(byMachine) != null ? byMachine : '';
+  }
 
   bool hasApiTokenFor(String serverId) => _nonEmpty(apiTokenFor(serverId)) != null;
 

@@ -300,5 +300,31 @@ const String terminalWatchdogHint =
     '终端页面迟迟没加载出来（20 秒无响应）：可能卡在认证或 nginx 转发上。'
     '点「重连」重试，或到设置里跑一次「测试连接」。';
 
+/// 同一次加载里允许应答几次认证。**只能给 1 次**：第 2 次挑战就说明上一次被服务端
+/// 拒了（同一台机器 realm 固定，正常页面不会二次挑战）。再答下去就是无限 401，
+/// 用户看到的就是"一直加载、连失败提示都没有"。
+const int terminalAuthAttemptsAllowed = 1;
+
+/// 认证被反复挑战时给出的结论。**必须点名"口令那一格"**：真机上踩到的坑是把
+/// 设备令牌填进了「口令」——两串都是同一工具生成的 43 位、肉眼分不出来。
+const String terminalAuthFailedHint =
+    '口令不对（服务端连续两次拒绝认证）：文件页和终端要填的是「用户名 + 通道口令」，'
+    '不是只读接口那一格的设备令牌。到 设置 → 服务器 改一下这两格，再点「重连」。';
+
+/// 认证挑战的计数：把"该不该再应答"从 WebView 回调里拆出来，好单测。
+class TerminalAuthGate {
+  int _challenges = 0;
+
+  int get challenges => _challenges;
+
+  /// 登记一次挑战，返回这是第几次。
+  int register() => ++_challenges;
+
+  /// 这次挑战还该不该照常应答（false = 直接取消并报"口令不对"）。
+  bool get shouldAnswer => _challenges <= terminalAuthAttemptsAllowed;
+
+  void reset() => _challenges = 0;
+}
+
 /// 剪贴板里没有可粘贴的文本时的提示。
 const String terminalClipboardEmptyHint = '剪贴板里没有文本可粘贴。';

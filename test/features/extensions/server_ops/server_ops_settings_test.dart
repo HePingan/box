@@ -851,4 +851,52 @@ void main() {
 
   });
 
+  group('凭据按"认出来的那台机器"共用（D11）', () {
+    // 自建条目地址与内置 175 相同 → 快照 id 认成 tencent175
+    const mine = ServerOpsServer(
+      id: 'srv1',
+      label: '我的构建机',
+      baseUrl: 'https://box.hpa888.top/dav175',
+      user: 'phone-175',
+    );
+    final settings = const ServerOpsSettings(
+      servers: [mine],
+      selectedServerId: 'srv1',
+      passwords: {'tencent175': '  内置那台的口令  '},
+      apiTokens: {'tencent175': 'tok-175'},
+    ).normalized();
+
+    test('条目自己没填 → 用认出来那台机器的口令（不 trim）', () {
+      expect(settings.passwordFor('srv1'), '  内置那台的口令  ');
+      expect(settings.hasPasswordFor('srv1'), isTrue);
+      // effectivePassword 走的是"判空"那个口子，会 trim（与 passwordFor 的区别就在这里）
+      expect(settings.effectivePassword, '内置那台的口令');
+    });
+
+    test('条目自己填了 → 以自己为准（不许被覆盖）', () {
+      final s = const ServerOpsSettings(
+        servers: [mine],
+        selectedServerId: 'srv1',
+        passwords: {'srv1': '自己填的'},
+      ).normalized();
+      expect(s.passwordFor('srv1'), '自己填的');
+    });
+
+    test('设备令牌同理：条目没填就用那台机器的', () {
+      expect(settings.apiTokenFor('srv1'), 'tok-175');
+      expect(settings.hasApiTokenFor('srv1'), isTrue);
+    });
+
+    test('对不上任何一台的条目不许乱借（仍然是空）', () {
+      const other = ServerOpsServer(
+          id: 'srv9', label: '别的机器', baseUrl: 'https://elsewhere.test/dav');
+      final s = const ServerOpsSettings(
+        servers: [other],
+        selectedServerId: 'srv9',
+        passwords: {'tencent175': '别人的'},
+      ).normalized();
+      expect(s.passwordFor('srv9'), '');
+      expect(s.passwordFor('srv1'), '', reason: '列表里没有这条 → 不许拿到任何口令');
+    });
+  });
 }
