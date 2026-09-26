@@ -738,6 +738,8 @@ class PluginMarketManifest {
   final PluginMarketChannel channel;
 
   final bool signatureVerified;
+  /// 信任等级：UI 只认这一个字段（见 PluginMarketTrustLevel 的注释）。
+  final PluginMarketTrustLevel trustLevel;
   final PluginMarketSignMode signatureMode;
   final String signatureMessage;
   final String signatureValue;
@@ -749,6 +751,7 @@ class PluginMarketManifest {
     required this.fetchedAt,
     required this.channel,
     required this.signatureVerified,
+    this.trustLevel = PluginMarketTrustLevel.unverified,
     required this.signatureMode,
     required this.signatureMessage,
     required this.signatureValue,
@@ -761,6 +764,7 @@ class PluginMarketManifest {
     DateTime? fetchedAt,
     PluginMarketChannel? channel,
     bool? signatureVerified,
+    PluginMarketTrustLevel? trustLevel,
     PluginMarketSignMode? signatureMode,
     String? signatureMessage,
     String? signatureValue,
@@ -772,6 +776,7 @@ class PluginMarketManifest {
       fetchedAt: fetchedAt ?? this.fetchedAt,
       channel: channel ?? this.channel,
       signatureVerified: signatureVerified ?? this.signatureVerified,
+      trustLevel: trustLevel ?? this.trustLevel,
       signatureMode: signatureMode ?? this.signatureMode,
       signatureMessage: signatureMessage ?? this.signatureMessage,
       signatureValue: signatureValue ?? this.signatureValue,
@@ -785,6 +790,7 @@ class PluginMarketManifest {
       'fetchedAt': fetchedAt.toIso8601String(),
       'channel': channel.name,
       'signatureVerified': signatureVerified,
+      'trustLevel': trustLevel.wireName,
       'signatureMode': pluginMarketSignModeWireName(signatureMode),
       'signatureMessage': signatureMessage,
       'signatureValue': signatureValue,
@@ -821,6 +827,10 @@ class PluginMarketManifest {
         safeMarketString(json['channel'], defaultChannel.name),
       ),
       signatureVerified: safeMarketBool(json['signatureVerified'], false),
+      // 老缓存里没有 trustLevel：**不能**只看 signatureVerified 推（写它的是
+      // 谎报那版代码，平台清单会被推成「已验签」）—— 按来源判才如实：
+      // 平台来源 = 服务端审核；其余按验签位。
+      trustLevel: _trustLevelFromCache(json),
       signatureMode: pluginMarketSignModeFromWireName(
         safeMarketString(json['signatureMode'], 'none'),
       ),
@@ -829,3 +839,16 @@ class PluginMarketManifest {
     );
   }
 }
+
+/// 老缓存（没有 trustLevel 字段）的如实推断。
+PluginMarketTrustLevel _trustLevelFromCache(Map<String, dynamic> json) {
+  final raw = safeMarketString(json['trustLevel']);
+  if (raw.isNotEmpty) return pluginMarketTrustLevelFromWireName(raw);
+  if (safeMarketString(json['source']) == 'platform') {
+    return PluginMarketTrustLevel.serverReviewed;
+  }
+  return safeMarketBool(json['signatureVerified'], false)
+      ? PluginMarketTrustLevel.signed
+      : PluginMarketTrustLevel.unverified;
+}
+

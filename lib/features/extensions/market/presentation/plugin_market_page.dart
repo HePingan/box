@@ -82,7 +82,8 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
   int _marketVersion = 1;
   DateTime? _marketFetchedAt;
 
-  bool _signatureVerified = false;
+  /// 信任等级：界面只认它（服务端审核 / 已验签 / 内置 / 未验签）。
+  PluginMarketTrustLevel _trustLevel = PluginMarketTrustLevel.unverified;
   PluginMarketSignMode _signatureMode = PluginMarketSignMode.none;
   String _signatureMessage = '';
 
@@ -139,7 +140,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
         _marketSource = manifest.source;
         _marketVersion = manifest.version;
         _marketFetchedAt = manifest.fetchedAt;
-        _signatureVerified = manifest.signatureVerified;
+        _trustLevel = manifest.trustLevel;
         _signatureMode = manifest.signatureMode;
         _signatureMessage = manifest.signatureMessage;
         _currentChannel = manifest.channel;
@@ -152,8 +153,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       }
 
       if (manifest.source == 'remote' &&
-          widget.securityConfig.mode != PluginMarketSignMode.none &&
-          !manifest.signatureVerified) {
+          manifest.trustLevel == PluginMarketTrustLevel.unverified) {
         _showSnack('远程清单验签未通过：${manifest.signatureMessage}');
       }
     } catch (e) {
@@ -263,10 +263,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     return '${dt.year}-${two(dt.month)}-${two(dt.day)} ${two(dt.hour)}:${two(dt.minute)}';
   }
 
-  String _verifyLabel() {
-    if (_signatureMode == PluginMarketSignMode.none) return '关闭';
-    return _signatureVerified ? '通过' : '未通过';
-  }
+  String _verifyLabel() => _trustLevel.label;
 
   // 区域/动作标签统一走单一事实源（home_plugin_core.dart 的枚举），
   // 此前各页硬编码副本已真实漂移（video：影视/视频，toast：提示动作/弹出提示）。
@@ -725,7 +722,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
           MarketTagChip(text: '来源：${_sourceLabel(_marketSource)}'),
           MarketTagChip(text: '频道：${_currentChannel.label}'),
           MarketTagChip(text: '版本：v$_marketVersion'),
-          MarketTagChip(text: '验签：${_verifyLabel()}'),
+          MarketTagChip(text: '信任：${_verifyLabel()}'),
           MarketTagChip(
             text: '模式：${pluginMarketSignModeWireName(_signatureMode)}',
           ),
@@ -738,10 +735,11 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
   }
 
   Widget _buildSignatureWarning() {
+    // 只看信任等级：平台审核清单（serverReviewed）与内置清单都不该弹告警，
+    // 而"远程清单未验签"仍必须弹 —— 判据是 unverified，不是签名模式。
     final shouldWarn =
         _marketSource == 'remote' &&
-        widget.securityConfig.mode != PluginMarketSignMode.none &&
-        !_signatureVerified;
+        _trustLevel == PluginMarketTrustLevel.unverified;
 
     if (!shouldWarn) return const SizedBox.shrink();
 
@@ -764,7 +762,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '远程清单验签未通过：$_signatureMessage'
+              '远程清单未验签：$_signatureMessage'
               '\n策略：${widget.securityConfig.allowUnsigned ? '允许放行' : '严格拒绝'}',
               style: const TextStyle(fontSize: 12, color: Color(0xFF92400E)),
             ),

@@ -40,6 +40,7 @@ class PluginMarketManifestRepository {
       fetchedAt: DateTime.now(),
       channel: channel,
       signatureVerified: security.mode == PluginMarketSignMode.none,
+      trustLevel: PluginMarketTrustLevel.builtIn,
       signatureMode: security.mode,
       signatureMessage: security.mode == PluginMarketSignMode.none
           ? '验签关闭'
@@ -85,12 +86,16 @@ class PluginMarketManifestRepository {
       fetchedAt: DateTime.now(),
       channel: channel,
       signatureVerified: platform != null
-          ? true
+          ? false
           : (remote?.signatureVerified ??
               security.mode == PluginMarketSignMode.none),
+      trustLevel: platform != null
+          ? PluginMarketTrustLevel.serverReviewed
+          : (remote?.trustLevel ?? PluginMarketTrustLevel.builtIn),
       signatureMode: security.mode,
+      // 界面显示的是合并后这份 message —— 这里也得如实，不然前面改的是白改。
       signatureMessage: platform != null
-          ? '平台商店清单'
+          ? '平台商店清单（服务端审核，未做密码学验签）'
           : (remote?.signatureMessage ?? builtin.signatureMessage),
       signatureValue: remote?.signatureValue ?? '',
     );
@@ -126,9 +131,12 @@ class PluginMarketManifestRepository {
         source: 'platform',
         fetchedAt: remote.updatedAt ?? DateTime.now(),
         channel: channel,
-        signatureVerified: true,
+        // 这个响应里**没有** signature 字段，没做任何密码学验签：
+        // 此前写 true，界面就显示「验签：通过」= 谎报。如实标注为服务端审核。
+        signatureVerified: false,
+        trustLevel: PluginMarketTrustLevel.serverReviewed,
         signatureMode: security.mode,
-        signatureMessage: '平台审核商店',
+        signatureMessage: '平台审核商店（服务端审核，未做密码学验签）',
         signatureValue: '',
       );
     } catch (e) {
@@ -175,6 +183,9 @@ class PluginMarketManifestRepository {
           fetchedAt: DateTime.now(),
           channel: requestedChannel,
           signatureVerified: verify.passed,
+          trustLevel: verify.passed
+              ? PluginMarketTrustLevel.signed
+              : PluginMarketTrustLevel.unverified,
           signatureMode: security.mode,
           signatureMessage: verify.passed
               ? verify.message
@@ -252,6 +263,9 @@ class PluginMarketManifestRepository {
         fetchedAt: fetchedAt,
         channel: actualChannel,
         signatureVerified: verify.passed,
+        trustLevel: verify.passed
+            ? PluginMarketTrustLevel.signed
+            : PluginMarketTrustLevel.unverified,
         signatureMode: security.mode,
         signatureMessage: verify.passed
             ? verify.message

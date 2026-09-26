@@ -228,4 +228,72 @@ void main() {
     expect(installCalls, 1);
     expect(find.textContaining('安装成功：废弃插件'), findsOneWidget);
   });
+
+  testWidgets('平台审核清单不弹「未验签」告警（服务端审核 ≠ 未验签）', (tester) async {
+    final template = MarketPluginTemplate.tryFromJson({
+      'id': 'platform_plugin',
+      'title': '平台插件',
+      'subtitle': '服务端审核',
+      'areaCode': 'recommend',
+      'actionCode': 'toast',
+    })!;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PluginMarketPage(
+          initialInstalledIds: const {},
+          onInstall: (_, {onProgress}) async {},
+          onUninstall: (_) async {},
+          manifestRepository: _FakePluginMarketManifestRepository(
+            _manifest([template]).copyWith(
+              source: 'platform',
+              signatureVerified: false,
+              trustLevel: PluginMarketTrustLevel.serverReviewed,
+              signatureMessage: '平台商店清单（服务端审核，未做密码学验签）',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('未验签'),
+      findsNothing,
+      reason: '服务端审核是如实的弱标签，不是失败；对它报警会把正常状态说成异常',
+    );
+  });
+
+  testWidgets('远程清单未验签仍然要弹告警（控制组）', (tester) async {
+    final template = MarketPluginTemplate.tryFromJson({
+      'id': 'remote_plugin',
+      'title': '远程插件',
+      'subtitle': '未验签',
+      'areaCode': 'recommend',
+      'actionCode': 'toast',
+    })!;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PluginMarketPage(
+          initialInstalledIds: const {},
+          onInstall: (_, {onProgress}) async {},
+          onUninstall: (_) async {},
+          manifestRepository: _FakePluginMarketManifestRepository(
+            _manifest([template]).copyWith(
+              source: 'remote',
+              signatureVerified: false,
+              trustLevel: PluginMarketTrustLevel.unverified,
+              signatureMessage: 'HMAC 校验不通过',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('未验签'), findsWidgets);
+  });
 }

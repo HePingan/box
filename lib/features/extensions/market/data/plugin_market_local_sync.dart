@@ -237,9 +237,12 @@ class PluginMarketLocalSync {
           retries: retries,
         );
         final actual = sha256.convert(pkg.bytes).toString();
-        final expected = pkg.sha256.isNotEmpty
-            ? pkg.sha256
-            : template.packageSha256;
+        // 响应头里的 sha256 与包体来自**同一个响应**，拿它当判据等于自己验自己：
+        // 改了包再改头一样通过。清单里的 packageSha256 与包体不同源，以它为准；
+        // 清单没给才退回响应头（弱一档，但比不验强）。
+        final fromManifest = template.packageSha256.trim();
+        final fromResponse = pkg.sha256.trim();
+        final expected = fromManifest.isNotEmpty ? fromManifest : fromResponse;
         if (expected.isNotEmpty && actual != expected) {
           throw const PluginMarketApiException('插件包校验失败（sha256 不匹配）');
         }
