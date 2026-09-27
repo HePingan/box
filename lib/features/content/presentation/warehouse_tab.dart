@@ -11,6 +11,7 @@ import 'package:box/features/comic/presentation/comic_library_page.dart';
 import 'package:box/features/comic/domain/comic_book.dart';
 import 'package:box/features/comic/domain/comic_library_store.dart';
 import 'package:box/features/comic/presentation/comic_reader_page.dart';
+import 'package:box/features/comic/presentation/comic_online_page.dart';
 import 'package:box/novel/core/models.dart';
 import 'package:box/novel/pages/reader_page.dart';
 import 'package:box/features/content/domain/warehouse_adapters.dart';
@@ -602,10 +603,14 @@ class _WarehouseTabState extends State<WarehouseTab>
         if (await _openVideoFavorite(item)) return;
       case WarehouseCategory.comics:
         if (item.raw is ComicBook) {
+          final book = item.raw as ComicBook;
+          // 在线书不能进本地阅读器（那边读的是本地文件）——按书链进在线页
           await Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => ComicReaderPage(comicBook: item.raw as ComicBook),
+              builder: (_) => book.isOnline
+                  ? ComicOnlinePage(initialBookUrl: book.onlineUrl)
+                  : ComicReaderPage(comicBook: book),
             ),
           );
           if (mounted) await _loadComics();

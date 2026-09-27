@@ -4,18 +4,30 @@ import 'package:flutter/material.dart';
 
 import 'package:box/features/comic/domain/comic_book.dart';
 import 'package:box/features/comic/domain/comic_library_store.dart';
+import 'package:box/features/comic/domain/comic_online_progress.dart';
+import 'package:box/features/comic/presentation/comic_online_page.dart';
 import 'package:box/features/comic/domain/comic_reader_state.dart';
 import 'package:box/features/comic/infrastructure/comic_importer_widget.dart';
 import 'package:box/features/comic/presentation/comic_reader_page.dart';
-import 'package:box/features/comic/presentation/comic_online_page.dart';
 import 'package:box/features/comic/presentation/comic_source_check_page.dart';
 
 /// 书架一行的展示数据：漫画本体 + 它的真实阅读进度（没读过就是 null）。
 class _ShelfEntry {
-  const _ShelfEntry({required this.book, this.progress});
+  const _ShelfEntry({required this.book, this.progress, this.onlineProgress});
 
   final ComicBook book;
   final ComicReaderState? progress;
+
+  /// 在线书的阅读进度（读到哪一话）；本地书为 null。
+  final ComicOnlineProgress? onlineProgress;
+
+  /// 在线书的进度文案（有进度才给；没有就说"还没看过"，不编造）。
+  String? get onlineLabel {
+    final p = onlineProgress;
+    if (p == null) return null;
+    final t = p.chapterTitle.trim();
+    return t.isEmpty ? '读到第 ${p.index + 1} 张' : '读到 $t';
+  }
 
   /// 读到的百分比；无进度或总页数未知时返回 null，绝不凭空造 0%。
   int? get percent {
@@ -33,10 +45,13 @@ class _ShelfEntry {
 /// 本页只管本地导入的漫画（CBZ/ZIP/文件夹）。在线漫画源不内置在 App 里，
 /// 由用户通过插件市场自行安装。
 class ComicLibraryPage extends StatefulWidget {
-  const ComicLibraryPage({super.key, this.libraryStore});
+  const ComicLibraryPage({super.key, this.libraryStore, this.onlineProgressStore});
 
   /// 可注入存储（测试用）；生产省略即走默认实例。
   final ComicLibraryStore? libraryStore;
+
+  /// 在线阅读进度的存储（测试用内存版）；生产省略即走默认实例。
+  final ComicOnlineProgressStore? onlineProgressStore;
 
   @override
   State<ComicLibraryPage> createState() => _ComicLibraryPageState();
@@ -56,9 +71,16 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
   Future<List<_ShelfEntry>> _load() async {
     final books = await _store.fetch();
     final entries = <_ShelfEntry>[];
+    final onlineStore = widget.onlineProgressStore ?? ComicOnlineProgressStore();
     for (final book in books) {
+      final isOnline = book.isOnline;
       entries.add(
-        _ShelfEntry(book: book, progress: await _store.loadProgress(book.id)),
+        _ShelfEntry(
+          book: book,
+          progress: isOnline ? null : await _store.loadProgress(book.id),
+          onlineProgress:
+              isOnline ? await onlineStore.load(book.onlineUrl!) : null,
+        ),
       );
     }
     return entries;
@@ -81,6 +103,18 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
   }
 
   Future<void> _openReader(ComicBook book) async {
+    final url = book.onlineUrl ?? '';
+    if (book.isOnline) {
+      // 在线书：进在线页并直接打开这本书（进度在那边按书链记，回来刷新角标）
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ComicOnlinePage(initialBookUrl: url),
+        ),
+      );
+      if (mounted) _reload();
+      return;
+    }
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -192,8 +226,9 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 32),
             child: Text(
-              '支持导入本地 CBZ / ZIP 文件或图片文件夹。\n'
-              '在线漫画：点右上角「地球」图标搜索阅读；「盾牌」图标是源的自检。',
+              '本地：导入 CBZ / ZIP 或图片文件夹。\n'
+              '在线：点右上角「地球」搜索阅读，在书的详情里点「加入书架」就会出现在这里；\n'
+              '「盾牌」图标是源的自检。',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
@@ -224,6 +259,7 @@ class _ComicBookCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final book = entry.book;
     final percent = entry.percent;
+    final onlineLabel = entry.onlineLabel;
 
     return GestureDetector(
       onTap: onTap,
@@ -238,7 +274,15 @@ class _ComicBookCard extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (book.coverPath != null)
+                  if (book.isOnline && (book.coverPath ?? '').isNotEmpty)
+                    Image.network(
+                      book.coverPath!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stack) => const Center(
+                        child: Icon(Icons.broken_image, size: 48),
+                      ),
+                    )
+                  else if (book.coverPath != null)
                     Image.file(
                       File(book.coverPath!),
                       fit: BoxFit.cover,
@@ -250,6 +294,28 @@ class _ComicBookCard extends StatelessWidget {
                     const Center(
                       child:
                           Icon(Icons.collections_bookmark_outlined, size: 48),
+                    ),
+                  if (onlineLabel != null)
+                    Positioned(
+                      left: 6,
+                      bottom: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          onlineLabel,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
                     ),
                   if (percent != null)
                     Positioned(

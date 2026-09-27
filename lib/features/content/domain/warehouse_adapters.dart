@@ -61,6 +61,8 @@ WarehouseItem warehouseItemFromComicBook(ComicBook book) {
     switch (book.sourceType) {
       ComicSourceType.file => '本地文件',
       ComicSourceType.folder => '本地文件夹',
+      // 在线书：页数取不到（不是"0 页"），标签直接说是在线
+      ComicSourceType.online => '在线',
     },
     if (pageCount > 0) '$pageCount 页',
   ];

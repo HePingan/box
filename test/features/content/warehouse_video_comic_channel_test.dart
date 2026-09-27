@@ -155,4 +155,21 @@ void main() {
       expect(warehouseCoverIsLocalFile('   '), isFalse);
     });
   });
+
+  test('在线漫画收藏：标签写「在线」，不编造页数（跨模块连带影响，被全量 CI 抓过一次）', () {
+    const book = ComicBook(
+      id: 'https://cn.baozimhcn.com/comic/hanghaiwang',
+      title: '航海王',
+      sourceType: ComicSourceType.online,
+      onlineUrl: 'https://cn.baozimhcn.com/comic/hanghaiwang',
+      coverPath: 'https://static-tw.baozimhcn.com/cover/hanghaiwang.jpg',
+      createdAt: 1000,
+    );
+    final item = warehouseItemFromComicBook(book);
+    expect(item.subtitle, '在线');
+    expect(item.subtitle, isNot(contains('页')), reason: '在线书取不到页数，不能写"0 页"');
+    expect(item.title, '航海王');
+    // 封面是网络地址 → UI 侧要走 Image.network
+    expect(warehouseCoverIsLocalFile(item.coverUrl), isFalse);
+  });
 }

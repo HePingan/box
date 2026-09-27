@@ -12,7 +12,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:box/core/storage/cache_store.dart';
 import 'package:box/features/comic/domain/comic_image_cache.dart';
+import 'package:box/features/comic/domain/comic_library_store.dart';
 import 'package:box/features/comic/domain/comic_online_progress.dart';
+import 'package:box/features/comic/domain/comic_reader_prefs.dart';
 import 'package:box/features/comic/domain/comic_source.dart';
 import 'package:box/features/comic/domain/sources/seed_comic_source.dart';
 import 'package:box/features/comic/presentation/comic_online_page.dart';
@@ -45,7 +47,14 @@ class _FakeCache extends ComicImageCache {
 ComicSource _seed() => ComicSource.tryParse(kSeedComicSourceJson)!;
 
 /// 造一个上传好假数据的页面。
-Widget _page(FakeComicTarget target, _FakeCache cache) {
+Widget _page(
+  FakeComicTarget target,
+  _FakeCache cache, {
+  ComicLibraryStore? libraryStore,
+  ComicOnlineProgressStore? progressStore,
+  ComicReaderPrefs? readerPrefs,
+  String? initialBookUrl,
+}) {
   return MaterialApp(
     home: ComicOnlinePage(
       source: _seed(),
@@ -54,9 +63,22 @@ Widget _page(FakeComicTarget target, _FakeCache cache) {
       waitTimeout: const Duration(milliseconds: 20),
       listTimeout: const Duration(milliseconds: 20),
       openTimeout: const Duration(milliseconds: 20),
-      progressStore: ComicOnlineProgressStore(
-        cacheStore: CacheStore.inMemory('online_page_test'),
-      ),
+      libraryStore:
+          libraryStore ??
+          ComicLibraryStore(
+            cacheStore: CacheStore.inMemory('online_page_shelf_default'),
+          ),
+      readerPrefs:
+          readerPrefs ??
+          ComicReaderPrefs(
+            cacheStore: CacheStore.inMemory('online_page_prefs_default'),
+          ),
+      initialBookUrl: initialBookUrl,
+      progressStore:
+          progressStore ??
+          ComicOnlineProgressStore(
+            cacheStore: CacheStore.inMemory('online_page_test'),
+          ),
     ),
   );
 }
@@ -163,17 +185,11 @@ void main() {
     );
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: ComicOnlinePage(
-          source: _seed(),
-          targetBuilder: () => target,
-          imageCache: _FakeCache(png),
-          waitTimeout: const Duration(milliseconds: 20),
-          listTimeout: const Duration(milliseconds: 20),
-          openTimeout: const Duration(milliseconds: 20),
-          progressStore: ComicOnlineProgressStore(
-            cacheStore: CacheStore.inMemory('online_page_test2'),
-          ),
+      _page(
+        target,
+        _FakeCache(png),
+        progressStore: ComicOnlineProgressStore(
+          cacheStore: CacheStore.inMemory('online_page_test2'),
         ),
       ),
     );
@@ -227,5 +243,185 @@ void main() {
     // 取数的地址是分类地址，而且是**在页面里发请求**（不走打开页面）
     expect(target.fetched, contains(allUrl));
     expect(target.opened, isNot(contains(allUrl)));
+  });
+
+  testWidgets('从书架点进来：直接打开这本书（不用再搜一次）', (tester) async {
+    final source = _seed();
+    final card = source.searchRules['bookList']!;
+    final container = firstSelectorRule(source.bookInfoRules['tocUrl']!)!;
+    final target = FakeComicTarget(
+      counts: {card: 1, container: 1},
+      perElement: {
+        '$card|${source.searchRules['name']}': ['海贼王'],
+        '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
+        '$container|${source.tocRules['chapterName']}': ['第1186话'],
+        '$container|${source.tocRules['chapterUrl']}': ['/c/1186'],
+      },
+      values: {
+        source.bookInfoRules['name']!: ['航海王'],
+        source.bookInfoRules['author']!: ['尾田荣一郎'],
+      },
+    );
+    final png = File('${Directory.systemTemp.path}/comic_online_init_${DateTime.now().microsecondsSinceEpoch}.png')
+      ..writeAsBytesSync(_pngBytes);
+
+    await tester.pumpWidget(
+      _page(
+        target,
+        _FakeCache(png),
+        initialBookUrl: 'https://cn.baozimhcn.com/comic/haizeiwang',
+      ),
+    );
+    await _settle(tester);
+
+    expect(find.text('航海王'), findsWidgets);
+    expect(find.text('共 1 话'), findsOneWidget);
+    // 直接打开，没有经过搜索列表
+    expect(find.text('搜索'), findsNothing);
+  });
+
+  testWidgets('加入书架：点了之后变成「已在书架」，并真的落进书架存储', (tester) async {
+    final source = _seed();
+    final card = source.searchRules['bookList']!;
+    final container = firstSelectorRule(source.bookInfoRules['tocUrl']!)!;
+    final target = FakeComicTarget(
+      counts: {card: 1, container: 1},
+      perElement: {
+        '$card|${source.searchRules['name']}': ['海贼王'],
+        '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
+        '$card|${source.searchRules['author']}': ['尾田荣一郎'],
+        '$container|${source.tocRules['chapterName']}': ['第1186话'],
+        '$container|${source.tocRules['chapterUrl']}': ['/c/1186'],
+      },
+      values: {
+        source.bookInfoRules['name']!: ['航海王'],
+        source.bookInfoRules['author']!: ['尾田荣一郎'],
+      },
+    );
+    final lib = ComicLibraryStore(
+      cacheStore: CacheStore.inMemory('online_page_shelf'),
+    );
+    final png = File('${Directory.systemTemp.path}/comic_online_shelf_${DateTime.now().microsecondsSinceEpoch}.png')
+      ..writeAsBytesSync(_pngBytes);
+
+    await tester.pumpWidget(_page(target, _FakeCache(png), libraryStore: lib));
+    await _settle(tester);
+    await tester.enterText(find.byType(TextField).first, '海贼');
+    await tester.tap(find.text('搜索'));
+    await _settle(tester);
+    await tester.tap(find.text('海贼王'));
+    await _settle(tester);
+
+    expect(find.text('加入书架'), findsOneWidget);
+    await tester.tap(find.text('加入书架'));
+    await _settle(tester);
+
+    expect(find.text('已在书架'), findsOneWidget);
+    final books = await lib.fetch();
+    expect(books.length, 1);
+    expect(books.single.title, '航海王');
+    expect(books.single.onlineUrl, 'https://cn.baozimhcn.com/comic/haizeiwang');
+    expect(books.single.isOnline, isTrue);
+  });
+
+  testWidgets('有阅读进度时给「继续看 <那一话>」（没有就不显示）', (tester) async {
+    final source = _seed();
+    final card = source.searchRules['bookList']!;
+    final container = firstSelectorRule(source.bookInfoRules['tocUrl']!)!;
+    const bookUrl = 'https://cn.baozimhcn.com/comic/haizeiwang';
+    final target = FakeComicTarget(
+      counts: {card: 1, container: 1},
+      perElement: {
+        '$card|${source.searchRules['name']}': ['海贼王'],
+        '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
+        '$container|${source.tocRules['chapterName']}': ['第1186话'],
+        '$container|${source.tocRules['chapterUrl']}': ['/c/1186'],
+      },
+      values: {
+        source.bookInfoRules['name']!: ['航海王'],
+        source.bookInfoRules['author']!: ['尾田荣一郎'],
+      },
+    );
+    final progress = ComicOnlineProgressStore(
+      cacheStore: CacheStore.inMemory('online_page_resume'),
+    );
+    await progress.save(
+      const ComicOnlineProgress(
+        bookUrl: bookUrl,
+        chapterUrl: 'https://cn.baozimhcn.com/c/1186',
+        chapterTitle: '第1186话',
+        index: 2,
+      ),
+    );
+    final png = File('${Directory.systemTemp.path}/comic_online_resume_${DateTime.now().microsecondsSinceEpoch}.png')
+      ..writeAsBytesSync(_pngBytes);
+
+    await tester.pumpWidget(
+      _page(target, _FakeCache(png), progressStore: progress),
+    );
+    await _settle(tester);
+    await tester.enterText(find.byType(TextField).first, '海贼');
+    await tester.tap(find.text('搜索'));
+    await _settle(tester);
+    await tester.tap(find.text('海贼王'));
+    await _settle(tester);
+
+    expect(find.text('继续看 第1186话'), findsOneWidget);
+  });
+
+  testWidgets('阅读器：默认竖向连续，点按钮换成左右翻页并记住', (tester) async {
+    final source = _seed();
+    final card = source.searchRules['bookList']!;
+    final container = firstSelectorRule(source.bookInfoRules['tocUrl']!)!;
+    final target = FakeComicTarget(
+      counts: {card: 1, container: 1},
+      perElement: {
+        '$card|${source.searchRules['name']}': ['海贼王'],
+        '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
+        '$container|${source.tocRules['chapterName']}': ['第1186话'],
+        '$container|${source.tocRules['chapterUrl']}': ['/c/1186'],
+      },
+      values: {
+        source.bookInfoRules['name']!: ['航海王'],
+        source.bookInfoRules['author']!: ['尾田荣一郎'],
+      },
+      jsSegment: '<img src="https://s1.bzcdn.net/a/1.jpg">',
+    );
+    final prefs = ComicReaderPrefs(
+      cacheStore: CacheStore.inMemory('online_page_prefs_test'),
+    );
+    final png = File('${Directory.systemTemp.path}/comic_online_turn_${DateTime.now().microsecondsSinceEpoch}.png')
+      ..writeAsBytesSync(_pngBytes);
+
+    await tester.pumpWidget(
+      _page(target, _FakeCache(png), readerPrefs: prefs),
+    );
+    await _settle(tester);
+    await tester.enterText(find.byType(TextField).first, '海贼');
+    await tester.tap(find.text('搜索'));
+    await _settle(tester);
+    await tester.tap(find.text('海贼王'));
+    await _settle(tester);
+    await tester.tap(find.text('第1186话'));
+    await _settle(tester);
+
+    // 默认竖向：没有分页控件
+    expect(find.byType(PageView), findsNothing);
+    expect(find.text('1 / 1 张'), findsOneWidget);
+
+    // 点切换 → 变成左右翻页
+    await tester.tap(find.byIcon(Icons.view_carousel_outlined));
+    await _settle(tester);
+    expect(find.byType(PageView), findsOneWidget);
+    expect(find.text('1 / 1 张'), findsOneWidget);
+
+    // 偏好被记住（下次进来还是左右翻页）
+    expect(await prefs.pageTurn(), isTrue);
+
+    // 再点回来
+    await tester.tap(find.byIcon(Icons.view_day_outlined));
+    await _settle(tester);
+    expect(find.byType(PageView), findsNothing);
+    expect(await prefs.pageTurn(), isFalse);
   });
 }

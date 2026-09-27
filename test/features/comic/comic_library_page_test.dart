@@ -10,6 +10,7 @@ library;
 import 'package:box/core/storage/cache_store.dart';
 import 'package:box/features/comic/domain/comic_book.dart';
 import 'package:box/features/comic/domain/comic_library_store.dart';
+import 'package:box/features/comic/domain/comic_online_progress.dart';
 import 'package:box/features/comic/domain/comic_reader_state.dart';
 import 'package:box/features/comic/presentation/comic_library_page.dart';
 import 'package:flutter/material.dart';
@@ -40,9 +41,17 @@ void main() {
     );
   });
 
-  Future<void> pumpPage(WidgetTester tester) async {
+  Future<void> pumpPage(
+    WidgetTester tester, {
+    ComicOnlineProgressStore? onlineProgressStore,
+  }) async {
     await tester.pumpWidget(
-      MaterialApp(home: ComicLibraryPage(libraryStore: store)),
+      MaterialApp(
+        home: ComicLibraryPage(
+          libraryStore: store,
+          onlineProgressStore: onlineProgressStore,
+        ),
+      ),
     );
     await tester.pumpAndSettle();
   }
@@ -119,5 +128,53 @@ void main() {
 
     expect((await store.fetch()), isEmpty, reason: '确认后应真的删掉');
     expect(find.text('还没有漫画'), findsOneWidget);
+  });
+
+  testWidgets('在线书进书架：显示"读到哪一话"，而不是假的百分比', (tester) async {
+    // 在线进度按**书链**存（与本地书按 id 存不是一回事）
+    final progressStore = ComicOnlineProgressStore(
+      cacheStore: CacheStore.inMemory('comic_library_online_progress'),
+    );
+    const bookUrl = 'https://cn.baozimhcn.com/comic/hanghaiwang';
+    await progressStore.save(
+      const ComicOnlineProgress(
+        bookUrl: bookUrl,
+        chapterUrl: 'https://cn.dzmanga.com/comic/chapter/x/0_1186.html',
+        chapterTitle: '第1186话 再一次',
+        index: 3,
+      ),
+    );
+    await store.add(
+      ComicBook(
+        id: bookUrl,
+        title: '航海王',
+        sourceType: ComicSourceType.online,
+        onlineUrl: bookUrl,
+        coverPath: 'https://static-tw.baozimhcn.com/cover/hanghaiwang.jpg',
+        author: '尾田荣一郎',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+
+    await pumpPage(tester, onlineProgressStore: progressStore);
+
+    expect(find.text('航海王'), findsOneWidget);
+    expect(find.text('读到 第1186话 再一次'), findsOneWidget);
+    // 在线书不该凭空显示一个百分比（本地进度读不到）
+    expect(find.textContaining('%'), findsNothing);
+  });
+
+  test('在线书判定：有书链才算在线书（缺书链点进去无从可去）', () {
+    ComicBook mk(ComicSourceType type, String? url) => ComicBook(
+      id: 'x',
+      title: 'x',
+      sourceType: type,
+      onlineUrl: url,
+      createdAt: 1,
+    );
+    expect(mk(ComicSourceType.online, 'https://a/book').isOnline, isTrue);
+    expect(mk(ComicSourceType.online, null).isOnline, isFalse);
+    expect(mk(ComicSourceType.online, '').isOnline, isFalse);
+    expect(mk(ComicSourceType.folder, 'https://a/book').isOnline, isFalse);
   });
 }

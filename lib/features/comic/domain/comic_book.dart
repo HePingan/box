@@ -5,6 +5,9 @@ enum ComicSourceType {
 
   /// 本地文件夹
   folder,
+
+  /// 在线书源（书在站点上，读的时候现取）
+  online,
 }
 
 /// 漫画书实体
@@ -18,6 +21,8 @@ class ComicBook {
     this.folderPath,
     this.pageCount,
     this.pages = const [],
+    this.onlineUrl,
+    this.author,
     required this.createdAt,
     this.lastReadAt,
     this.currentChapterIndex = 0,
@@ -42,6 +47,12 @@ class ComicBook {
   /// 文件夹路径（folder 类型）
   final String? folderPath;
 
+  /// 在线书的书链（`online` 类型用）
+  final String? onlineUrl;
+
+  /// 作者（在线书能取到就存下来；本地书为空）
+  final String? author;
+
   /// 总页数
   final int? pageCount;
 
@@ -62,6 +73,10 @@ class ComicBook {
 
   bool get isRead => currentPageIndex > 0;
 
+  /// 是不是"能点开读的在线书"（有书链才算；缺书链的条目点进去无从可去）。
+  bool get isOnline =>
+      sourceType == ComicSourceType.online && (onlineUrl ?? '').isNotEmpty;
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'title': title,
@@ -71,6 +86,8 @@ class ComicBook {
         'folderPath': folderPath,
         'pageCount': pageCount,
         'pages': pages,
+        'onlineUrl': onlineUrl,
+        'author': author,
         'createdAt': createdAt,
         'lastReadAt': lastReadAt,
         'currentChapterIndex': currentChapterIndex,
@@ -89,6 +106,8 @@ class ComicBook {
                 ?.map((e) => e as String)
                 .toList() ??
             [],
+        onlineUrl: json['onlineUrl'] as String?,
+        author: json['author'] as String?,
         createdAt: json['createdAt'] as int,
         lastReadAt: json['lastReadAt'] as int?,
         currentChapterIndex: json['currentChapterIndex'] as int? ?? 0,

@@ -13,8 +13,11 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../domain/comic_book.dart';
 import '../domain/comic_image_cache.dart';
+import '../domain/comic_library_store.dart';
 import '../domain/comic_online_progress.dart';
+import '../domain/comic_reader_prefs.dart';
 import '../domain/comic_online_service.dart';
 import '../domain/comic_source.dart';
 import '../domain/comic_source_diagnostics.dart'
@@ -31,6 +34,9 @@ class ComicOnlinePage extends StatefulWidget {
     this.targetBuilder,
     this.imageCache,
     this.progressStore,
+    this.libraryStore,
+    this.readerPrefs,
+    this.initialBookUrl,
     this.waitTimeout = const Duration(seconds: 15),
     this.listTimeout = const Duration(seconds: 12),
     this.openTimeout = const Duration(seconds: 20),
@@ -44,6 +50,15 @@ class ComicOnlinePage extends StatefulWidget {
 
   final ComicImageCache? imageCache;
   final ComicOnlineProgressStore? progressStore;
+
+  /// 从书架点进来时直接打开这本书（省掉再搜一次）。
+  final String? initialBookUrl;
+
+  /// 书架的存储（「加入书架」用；测试里注入内存版）。
+  final ComicLibraryStore? libraryStore;
+
+  /// 阅读器偏好（翻页方式；测试里注入内存版）。
+  final ComicReaderPrefs? readerPrefs;
 
   /// 等图地址 / 等列表 / 等页面打开 的时间上限（测试里调小，生产用默认）。
   final Duration waitTimeout;
@@ -62,6 +77,8 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   late final ComicOnlineService _service;
   late final ComicImageCache _cache;
   late final ComicOnlineProgressStore _progress;
+  late final ComicLibraryStore _library;
+  late final ComicReaderPrefs _prefs;
 
   ComicSourceWebViewController? _webController;
 
@@ -86,6 +103,21 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   /// 分类列表没取到时的说明（不静默 —— 但也不挡住搜索）。
   String? _categoryNote;
   ComicBookDetail? _book;
+
+  /// 这本书在不在书架里（界面按实际状态显示「已在书架」）。
+  bool _inShelf = false;
+
+  /// 左右翻页（true）/ 竖向连续长条（false）。竖向是默认，条漫更顺。
+  bool _pageTurn = false;
+
+  /// 左右翻页的分页控制器（只在 `_pageTurn` 时用）。
+  final _pageController = PageController();
+
+  /// 上次读到哪一话（有才显示「继续看」，没有就不显示）。
+  ComicOnlineProgress? _resume;
+
+  /// 书架状态读不出来时的说明（不挡住看书）。
+  String? _shelfNote;
   ComicChapterRef? _chapter;
   List<String> _images = const [];
   int _imageIndex = 0;
@@ -112,11 +144,20 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     _cache = widget.imageCache ?? ComicImageCache();
     // 分类列表要等 WebView 就绪，放到第一帧之后（失败不挡搜索，只写在界面上一行）。
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadCategories());
+    // 从书架点进来的：直接打开这本书（省掉再搜一次）
+    final initial = widget.initialBookUrl;
+    if (initial != null && initial.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _openBookUrl(initial));
+    }
+    _library = widget.libraryStore ?? ComicLibraryStore();
+    _prefs = widget.readerPrefs ?? ComicReaderPrefs();
     _progress = widget.progressStore ?? ComicOnlineProgressStore();
+    _loadPrefs();
   }
 
   @override
   void dispose() {
+    _pageController.dispose();
     _keyController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -199,15 +240,83 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     }, '正在取「${cat.title}」…（最多等 ${_service.openTimeout.inSeconds} 秒）');
   }
 
-  Future<void> _openBook(ComicSearchHit hit) async {
+  Future<void> _openBook(ComicSearchHit hit) =>
+      _openBookUrl(hit.bookUrl, name: hit.name);
+
+  Future<void> _openBookUrl(String url, {String? name}) async {
     await _run(() async {
-      final book = await _service.bookInfo(hit.bookUrl);
+      final book = await _service.bookInfo(url);
       if (!mounted) return;
       setState(() {
         _book = book;
         _mode = _Mode.book;
       });
     }, '正在打开这本书…（最多等 ${_service.openTimeout.inSeconds} 秒）');
+    // 书架/进度是**装饰**：放在取数之外读，读的时候也不让页面按钮变灰。
+    await _refreshShelfFlags();
+  }
+
+  /// 读翻页偏好（读不出来就用默认的竖向连续）。
+  Future<void> _loadPrefs() async {
+    bool v = false;
+    try {
+      v = await _prefs.pageTurn();
+    } catch (_) {
+      v = false;
+    }
+    if (!mounted) return;
+    setState(() => _pageTurn = v);
+  }
+
+  /// 切换翻页方式（记下来，下次进来还是这个）。
+  Future<void> _togglePageTurn() async {
+    final next = !_pageTurn;
+    setState(() => _pageTurn = next);
+    try {
+      await _prefs.setPageTurn(next);
+    } catch (_) {
+      // 记不住不算错：这次先按用户点的显示，下次进来会回到默认。
+    }
+  }
+
+  /// 这本书在不在书架里 + 上次读到哪一话（两个都读真的，不猜）。
+  Future<void> _refreshShelfFlags() async {
+    final book = _book;
+    if (book == null) return;
+    bool inShelf = false;
+    ComicOnlineProgress? progress;
+    String? note;
+    try {
+      inShelf = (await _library.fetch()).any((b) => b.onlineUrl == book.bookUrl);
+      progress = await _progress.load(book.bookUrl);
+    } catch (e) {
+      // 书架/进度读不出来是**存储**的问题，不该挡住看书 —— 单独写一行说明。
+      note = '书架状态读不出来：${_describe(e)}';
+    }
+    if (!mounted) return;
+    setState(() {
+      _inShelf = inShelf;
+      _resume = progress;
+      _shelfNote = note;
+    });
+  }
+
+  /// 加入书架（同一本书重复加会覆盖，不会出现两条）。
+  Future<void> _addToShelf() async {
+    final book = _book;
+    if (book == null) return;
+    await _library.add(
+      ComicBook(
+        id: book.bookUrl,
+        title: book.name,
+        coverPath: book.cover,
+        sourceType: ComicSourceType.online,
+        onlineUrl: book.bookUrl,
+        author: book.author,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+    await _refreshShelfFlags();
   }
 
   Future<void> _openChapter(ComicChapterRef chapter, {int atIndex = 0}) async {
@@ -238,8 +347,31 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     }, '正在取「${chapter.title}」的图…（最多等 ${_service.waitTimeout.inSeconds} 秒）');
   }
 
+  /// 进度随手记；失败不影响阅读（不弹错、不中断，下次再存）。
+  void _saveProgress(int index) {
+    final book = _book;
+    final chapter = _chapter;
+    if (book == null || chapter == null) return;
+    _progress
+        .save(
+          ComicOnlineProgress(
+            bookUrl: book.bookUrl,
+            chapterUrl: chapter.url,
+            chapterTitle: chapter.title,
+            index: index,
+          ),
+        )
+        .catchError((_) {});
+  }
+
   void _jumpTo(int index) {
-    if (!_scrollController.hasClients || _images.isEmpty) return;
+    if (_images.isEmpty) return;
+    if (_pageTurn && _pageController.hasClients) {
+      _pageController.jumpToPage(index);
+      setState(() => _imageIndex = index);
+      return;
+    }
+    if (!_scrollController.hasClients) return;
     // 每张都按"屏宽等比"显示，高度要靠布局算；这里用按张滚动的稳妥做法。
     _scrollController.jumpTo(0);
     setState(() => _imageIndex = index);
@@ -511,12 +643,46 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
                             : () => _openChapter(book.chapters.first),
                         child: const Text('从最新一话开始读'),
                       ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        if (_resume != null)
+                          FilledButton(
+                            onPressed: _busy
+                                ? null
+                                : () => _openChapter(
+                                    ComicChapterRef(
+                                      title: _resume!.chapterTitle,
+                                      url: _resume!.chapterUrl,
+                                    ),
+                                  ),
+                            child: Text(
+                              _resume!.chapterTitle.trim().isEmpty
+                                  ? '继续看（第 ${_resume!.index + 1} 张）'
+                                  : '继续看 ${_resume!.chapterTitle}',
+                            ),
+                          ),
+                        OutlinedButton(
+                          onPressed: _busy || _inShelf ? null : _addToShelf,
+                          child: Text(_inShelf ? '已在书架' : '加入书架'),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
             ],
           ),
         ),
+        if (_shelfNote != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              _shelfNote!,
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ),
         if (book.intro != null && book.intro!.isNotEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -597,6 +763,29 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         ),
       );
     }
+    if (_pageTurn) {
+      // 左右翻页：一屏一张，左右滑（页漫用这个顺）
+      return Stack(
+        children: [
+          PageView.builder(
+            controller: _pageController,
+            itemCount: _images.length,
+            onPageChanged: (i) {
+              setState(() => _imageIndex = i);
+              _saveProgress(i);
+            },
+            itemBuilder: (context, i) => Center(
+              child: _CachedImage(
+                url: _images[i],
+                cache: _cache,
+                fit: BoxFit.contain,
+              ),
+            ),
+          ),
+          Positioned(left: 0, right: 0, bottom: 0, child: _readerBar()),
+        ],
+      );
+    }
     return Stack(
       children: [
         NotificationListener<ScrollNotification>(
@@ -607,21 +796,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             final idx = per <= 0 ? 0 : (px / per).round();
             if (idx != _imageIndex) {
               setState(() => _imageIndex = idx);
-              final book = _book;
-              final chapter = _chapter;
-              if (book != null && chapter != null) {
-                // 进度随手记；失败不影响阅读（不弹错，下次再存）。
-                _progress
-                    .save(
-                      ComicOnlineProgress(
-                        bookUrl: book.bookUrl,
-                        chapterUrl: chapter.url,
-                        chapterTitle: chapter.title,
-                        index: idx,
-                      ),
-                    )
-                    .catchError((_) {});
-              }
+              _saveProgress(idx);
             }
             return false;
           },
@@ -657,6 +832,15 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           TextButton(
             onPressed: prev == null || _busy ? null : () => _openChapter(prev),
             child: const Text('下一话', style: TextStyle(color: Colors.white)),
+          ),
+          IconButton(
+            tooltip: _pageTurn ? '换成竖向连续（条漫）' : '换成左右翻页（页漫）',
+            onPressed: _togglePageTurn,
+            icon: Icon(
+              _pageTurn ? Icons.view_day_outlined : Icons.view_carousel_outlined,
+              color: Colors.white,
+              size: 20,
+            ),
           ),
           Expanded(
             child: Text(
