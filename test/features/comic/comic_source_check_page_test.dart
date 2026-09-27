@@ -18,6 +18,9 @@ class _FakeTarget implements ComicSourceTarget {
   final int cards;
 
   @override
+  ComicLoadFailure? get lastLoadError => null;
+
+  @override
   Future<void> open(String url, {Map<String, String>? headers}) async {}
 
   @override

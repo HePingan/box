@@ -35,6 +35,17 @@ abstract class ComicSourceTarget {
 
   /// 取某个 CSS 命中的第一个元素的属性值（页面查询，不走书源规则）。
   Future<String?> attrOf(String css, String attr);
+
+  /// 上一次打开时**主文档**的加载错误（子资源错误不算；没有就 null）。
+  ComicLoadFailure? get lastLoadError;
+}
+
+/// 主文档加载失败的信息（子资源失败不在这里）。
+class ComicLoadFailure {
+  const ComicLoadFailure({required this.code, required this.description});
+
+  final int? code;
+  final String description;
 }
 
 /// 自检的一步。
@@ -139,7 +150,15 @@ Future<ComicProbeReport> runComicSourceProbe({
       onStep?.call(step);
     } else {
       try {
-        await target.open(url, headers: headers());
+        final nav = await openComicWithFallback(
+          target,
+          source,
+          url,
+          headers: headers(),
+        );
+        if (!nav.ok) {
+          throw ComicProbeException(comicNavFailureNote(nav, '搜索页'));
+        }
         final cardCss = cssFromComicRule(source.searchRules['bookList'] ?? '');
         if (cardCss == null) {
           final step = ComicProbeStep(
@@ -190,9 +209,10 @@ Future<ComicProbeReport> runComicSourceProbe({
             name: '搜索',
             ok: urls.isNotEmpty,
             elapsedMs: stepSw.elapsedMilliseconds,
-            note: urls.isNotEmpty
-                ? '命中 ${waited.count} 条，取到书名 ${names.length} 个、链接 ${urls.length} 个'
-                : '卡片命中 ${waited.count} 条，但书链规则一条都没取到（站点可能改版）',
+            note: (urls.isNotEmpty
+                    ? '命中 ${waited.count} 条，取到书名 ${names.length} 个、链接 ${urls.length} 个'
+                    : '卡片命中 ${waited.count} 条，但书链规则一条都没取到（站点可能改版）') +
+                navSuffix(nav),
             samples: names.take(3).toList(),
             finalUrl: finalUrl,
             pageTitle: title,
@@ -230,7 +250,15 @@ Future<ComicProbeReport> runComicSourceProbe({
   } else {
     final stepSw = Stopwatch()..start();
     try {
-      await target.open(firstBookUrl, headers: headers());
+      final nav = await openComicWithFallback(
+        target,
+        source,
+        firstBookUrl,
+        headers: headers(),
+      );
+      if (!nav.ok) {
+        throw ComicProbeException(comicNavFailureNote(nav, '详情页'));
+      }
       final titleCss = cssFromComicRule(source.bookInfoRules['name'] ?? '');
       final waited = await _waitForCount(
         target,
@@ -287,7 +315,8 @@ Future<ComicProbeReport> runComicSourceProbe({
           note: '书名「${names.isEmpty ? '—' : names.first}」'
               '${authors.isEmpty ? '' : ' · 作者 ${authors.first}'}'
               ' · 章节 $count 条'
-              '${count == 0 ? '（章节选择器 0 命中）' : ''}',
+              '${count == 0 ? '（章节选择器 0 命中）' : ''}'
+              '${navSuffix(nav)}',
           samples: [
             if (names.isNotEmpty) names.first,
             if (authors.isNotEmpty) authors.first,
@@ -328,7 +357,15 @@ Future<ComicProbeReport> runComicSourceProbe({
   } else {
     final stepSw = Stopwatch()..start();
     try {
-      await target.open(firstChapterUrl, headers: headers());
+      final nav = await openComicWithFallback(
+        target,
+        source,
+        firstChapterUrl,
+        headers: headers(),
+      );
+      if (!nav.ok) {
+        throw ComicProbeException(comicNavFailureNote(nav, '章节页'));
+      }
       final imageRule = _imageRuleFromContentJs(source.contentRules['content'] ?? '');
       if (imageRule == null) {
         throw ComicProbeException(
@@ -361,13 +398,14 @@ Future<ComicProbeReport> runComicSourceProbe({
         name: '章节取图',
         ok: imageUrls.isNotEmpty,
         elapsedMs: stepSw.elapsedMilliseconds,
-        note: imageUrls.isNotEmpty
-            ? '取到 ${imageUrls.length} 张图，首张来自 ${Uri.tryParse(firstImageUrl!)?.host ?? '—'}'
-            : _zeroHitNote(
-                selector: imageRule,
-                waitedSeconds: waited.seconds,
-                pageTitle: pageTitle,
-              ),
+        note: (imageUrls.isNotEmpty
+                ? '取到 ${imageUrls.length} 张图，首张来自 ${Uri.tryParse(firstImageUrl!)?.host ?? '—'}'
+                : _zeroHitNote(
+                    selector: imageRule,
+                    waitedSeconds: waited.seconds,
+                    pageTitle: pageTitle,
+                  )) +
+            navSuffix(nav),
         samples: imageUrls.take(2).toList(),
         finalUrl: finalUrl,
         pageTitle: pageTitle,
@@ -403,6 +441,90 @@ class _WaitResult {
   const _WaitResult(this.count, this.seconds);
   final int count;
   final int seconds;
+}
+
+/// 打开结果：成不成、用的哪个地址、以及**每一条尝试的说明**。
+class ComicNavOutcome {
+  const ComicNavOutcome({required this.ok, this.usedUrl, this.attempts = const []});
+
+  final bool ok;
+  final String? usedUrl;
+
+  /// 形如 `cn.baozimhcn.com：连接被重置（net::ERR_CONNECTION_RESET）`，
+  /// 只放失败的和"重试后才成功"的 —— 一次就成功不留噪音。
+  final List<String> attempts;
+
+  bool get hadTrouble => attempts.isNotEmpty;
+}
+
+/// 打不开时的说明：把每一条尝试都列出来（哪个镜像什么错，一目了然）。
+String comicNavFailureNote(ComicNavOutcome outcome, String what) {
+  if (outcome.attempts.isEmpty) return '$what打不开（没有可用的地址）';
+  return '$what打不开，每个地址都试过：${outcome.attempts.join('；')}';
+}
+
+/// 打开一个地址：**主站优先**，失败按 `mirrors` 顺序换镜像；每个地址最多试 2 次
+/// （连接被重置这种多半是这一跳被打断，重试一次经常就好了）。
+///
+/// 换镜像/重试都**如实记在 [ComicNavOutcome.attempts] 里报给用户** —— 不静默兜底。
+Future<ComicNavOutcome> openComicWithFallback(
+  ComicSourceTarget target,
+  ComicSource source,
+  String pathOrUrl, {
+  Map<String, String>? headers,
+  int attemptsPerHost = 2,
+  Duration retryDelay = const Duration(milliseconds: 700),
+  Future<void> Function(Duration)? sleep,
+}) async {
+  final candidates = comicMirrorCandidates(source, pathOrUrl);
+  if (candidates.isEmpty) {
+    return const ComicNavOutcome(ok: false);
+  }
+  final attempts = <String>[];
+  final wait = sleep ?? (d) => Future<void>.delayed(d);
+
+  for (final url in candidates) {
+    final host = Uri.tryParse(url)?.host ?? url;
+    for (var i = 0; i < attemptsPerHost; i++) {
+      try {
+        await target.open(url, headers: headers);
+      } catch (e) {
+        attempts.add('$host：${_short(e)}');
+        if (i + 1 < attemptsPerHost) await wait(retryDelay);
+        continue;
+      }
+      final err = target.lastLoadError;
+      if (err == null) {
+        if (i > 0) attempts.add('$host：第 ${i + 1} 次才成功');
+        return ComicNavOutcome(ok: true, usedUrl: url, attempts: attempts);
+      }
+      final kind = classifyComicLoadError(
+        code: err.code,
+        description: err.description,
+      );
+      attempts.add('$host：${comicLoadErrorText(code: err.code, description: err.description)}');
+      if (!comicLoadErrorRetryable(kind)) {
+        // 手机没网这种，换镜像也没意义 —— 直接停，别浪费用户时间。
+        return ComicNavOutcome(ok: false, attempts: attempts);
+      }
+      if (i + 1 < attemptsPerHost) await wait(retryDelay);
+    }
+  }
+  return ComicNavOutcome(ok: false, attempts: attempts);
+}
+
+/// 打开时有波折（重试后才成功 / 换了镜像）就在结论里点出来：
+/// 先列失败原因，再说最后是从哪个地址打开的 —— 不静默兜底。
+String navSuffix(ComicNavOutcome nav) {
+  if (!nav.hadTrouble) return '';
+  final host = nav.usedUrl == null ? null : Uri.tryParse(nav.usedUrl!)?.host;
+  final detail = nav.attempts.join('；');
+  return host == null ? ' · $detail' : ' · $detail；最后用 $host 打开成功';
+}
+
+String _short(Object e) {
+  final t = e.toString().replaceFirst('ComicProbeException: ', '').trim();
+  return t.length > 80 ? '${t.substring(0, 80)}…' : t;
 }
 
 /// 轮询等到选择器命中；超时返回最后的命中数（**不抛**，由调用方判断并说明）。

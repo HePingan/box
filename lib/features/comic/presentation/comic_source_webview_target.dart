@@ -29,8 +29,18 @@ class ComicSourceWebViewController {
             _pageDone?.complete();
           },
           onWebResourceError: (error) {
-            _lastLoadError = '${error.errorCode}'
-                '${error.description.isEmpty ? '' : ' ${error.description}'}';
+            // 只认**主文档**的失败：图片/统计脚本这类子资源失败不该让整步判死
+            // （站点的广告位天天挂）。null 表示平台没说清，按"不是主文档"处理，
+            // 最终仍由"选择器有没有命中"来判 —— 不让一个不确定的错误码背锅。
+            final isMain = error.isForMainFrame ?? false;
+            if (!isMain) {
+              _subResourceErrors++;
+              return;
+            }
+            _lastLoadError = ComicLoadFailure(
+              code: error.errorCode,
+              description: error.description,
+            );
           },
         ),
       );
@@ -38,7 +48,13 @@ class ComicSourceWebViewController {
 
   late final WebViewController controller;
   Completer<void>? _pageDone;
-  String? _lastLoadError;
+  ComicLoadFailure? _lastLoadError;
+
+  /// 子资源（图片/脚本）失败次数：不影响判定，只在需要时说明。
+  int _subResourceErrors = 0;
+
+  ComicLoadFailure? get lastLoadError => _lastLoadError;
+  int get subResourceErrorCount => _subResourceErrors;
 
   WebViewComicSourceTarget get target => WebViewComicSourceTarget(this);
 
@@ -85,11 +101,12 @@ class WebViewComicSourceTarget implements ComicSourceTarget {
     } on TimeoutException {
       // 继续往下走：真正的判据是选择器有没有命中。
     }
-    final lastError = _owner._lastLoadError;
-    if (lastError != null) {
-      throw ComicProbeException('页面加载出错（$lastError）');
-    }
+    // 主文档加载错误**不在这里抛**：交给自检流程判种类（重试 / 换镜像 / 直接停），
+    // 由它决定下一步，并把每一条尝试如实报出来。
   }
+
+  @override
+  ComicLoadFailure? get lastLoadError => _owner.lastLoadError;
 
   @override
   Future<String> currentUrl() async {

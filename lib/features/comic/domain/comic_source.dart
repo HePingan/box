@@ -214,10 +214,15 @@ class ComicSource {
     this.bookInfoRules = const {},
     this.tocRules = const {},
     this.contentRules = const {},
+    this.mirrors = const [],
     this.comment,
   });
 
   final String name;
+
+  /// 备用镜像（**App 侧扩展字段**，Legado 没有这个键）：主站某一跳被重置/502 时按序试。
+  /// 顺序有意义：先主站、再镜像；镜像同样失败就如实报每一条尝试。
+  final List<String> mirrors;
   final String baseUrl;
 
   /// 搜索地址模板，含 `{{key}}`。
@@ -260,6 +265,7 @@ class ComicSource {
       bookInfoRules: _strMap(raw['ruleBookInfo']),
       tocRules: _strMap(raw['ruleToc']),
       contentRules: _strMap(raw['ruleContent']),
+      mirrors: _strList(raw['mirrors']),
       comment: _str(raw['bookSourceComment']),
     );
   }
@@ -334,4 +340,124 @@ Map<String, String> _strMap(Object? raw) {
     if (v is String && v.trim().isNotEmpty) out['$k'] = v.trim();
   });
   return out;
+}
+
+/// 把 `mirrors`（字符串数组）读出来；没有就是空表。
+List<String> _strList(Object? raw) {
+  if (raw is! List) return const [];
+  return raw
+      .whereType<Object>()
+      .map((e) => e.toString().trim())
+      .where((e) => e.isNotEmpty)
+      .toList();
+}
+
+/// 同一个路径在各镜像上的候选地址（**主站优先**，然后按配置顺序）。
+///
+/// [pathOrUrl] 可以是相对路径（`/comic/x`）也可以是完整地址；是完整地址时会把它
+/// 拆成路径再拼到各镜像上。去重并保序 —— 顺序就是尝试顺序。
+List<String> comicMirrorCandidates(ComicSource source, String pathOrUrl) {
+  final raw = pathOrUrl.trim();
+  if (raw.isEmpty) return const [];
+  String path = raw;
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    final u = Uri.tryParse(raw);
+    if (u == null || u.host.isEmpty) return [raw];
+    path = u.path + (u.hasQuery ? '?${u.query}' : '');
+    final self = <String>[raw];
+    for (final m in source.mirrors) {
+      final base = m.trim();
+      if (base.isEmpty) continue;
+      final built = _joinUrl(base, path);
+      if (built != null && !self.contains(built)) self.add(built);
+    }
+    return self;
+  }
+  final out = <String>[];
+  final host = source.baseUrl.trim();
+  final first = _joinUrl(host, path);
+  if (first != null) out.add(first);
+  for (final m in source.mirrors) {
+    final built = _joinUrl(m.trim(), path);
+    if (built != null && !out.contains(built)) out.add(built);
+  }
+  return out;
+}
+
+String? _joinUrl(String host, String path) {
+  final h = host.trim();
+  if (h.isEmpty) return null;
+  final base = h.endsWith('/') ? h.substring(0, h.length - 1) : h;
+  final p = path.startsWith('/') ? path : '/$path';
+  final merged = '$base$p';
+  return Uri.tryParse(merged) == null ? null : merged;
+}
+
+/// 打开页面时的错误种类 —— 决定"重试 / 换镜像 / 直接停"。
+enum ComicLoadErrorKind {
+  /// 连接被重置（最常见的"这一跳被打断"）。
+  connectionReset,
+
+  /// 其它连接层错误（拒绝、关闭、未到达…）。
+  connectionOther,
+
+  /// 超时。
+  timeout,
+
+  /// 域名解析不了。
+  nameNotResolved,
+
+  /// 手机本身没网。
+  offline,
+
+  /// 说不清。
+  other,
+}
+
+/// 按**描述文本**判种类（Chromium 的 `net::ERR_*` 串最忠实；数字码各平台不一致）。
+ComicLoadErrorKind classifyComicLoadError({int? code, String? description}) {
+  final d = (description ?? '').toUpperCase();
+  if (d.contains('ERR_INTERNET_DISCONNECTED')) return ComicLoadErrorKind.offline;
+  if (d.contains('ERR_NAME_NOT_RESOLVED')) {
+    return ComicLoadErrorKind.nameNotResolved;
+  }
+  if (d.contains('ERR_CONNECTION_RESET') ||
+      d.contains('ERR_CONNECTION_ABORTED') ||
+      d.contains('ERR_CONNECTION_CLOSED')) {
+    return ComicLoadErrorKind.connectionReset;
+  }
+  if (d.contains('ERR_CONNECTION')) return ComicLoadErrorKind.connectionOther;
+  if (d.contains('ERR_TIMED_OUT') || d.contains('TIMEOUT')) {
+    return ComicLoadErrorKind.timeout;
+  }
+  // 描述读不出来时，退回数字码（Android 旧表：-6 连接失败、-8 超时）。
+  switch (code) {
+    case -6:
+      return ComicLoadErrorKind.connectionOther;
+    case -7:
+    case -8:
+      return ComicLoadErrorKind.timeout;
+    case -2:
+      return ComicLoadErrorKind.nameNotResolved;
+  }
+  return ComicLoadErrorKind.other;
+}
+
+/// 这种错误值不值得再试一次（同地址重试或换镜像）。
+bool comicLoadErrorRetryable(ComicLoadErrorKind kind) =>
+    kind != ComicLoadErrorKind.offline;
+
+/// 人话说明（报给用户的就是这句）。
+String comicLoadErrorText({int? code, String? description}) {
+  final kind = classifyComicLoadError(code: code, description: description);
+  final raw = (description ?? '').trim();
+  final suffix = raw.isEmpty ? '' : '（$raw）';
+  return switch (kind) {
+    ComicLoadErrorKind.connectionReset => '连接被重置$suffix',
+    ComicLoadErrorKind.connectionOther => '连接失败$suffix',
+    ComicLoadErrorKind.timeout => '超时$suffix',
+    ComicLoadErrorKind.nameNotResolved => '域名解析失败$suffix',
+    ComicLoadErrorKind.offline => '这台手机当前没有网络$suffix',
+    ComicLoadErrorKind.other => '加载失败${code == null ? '' : '（错误码 $code）'}$suffix',
+  };
 }

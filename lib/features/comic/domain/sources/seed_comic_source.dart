@@ -13,6 +13,7 @@
 //     章节链接（已实测 1211 章可读），不依赖这条规则。
 const String kSeedComicSourceJson = r'''
 {
+  "mirrors": ["https://cn.baozimhcn.com", "https://cn.bzmgcn.com", "https://www.baozimh.com"],
   "bookSourceName": "包子漫画（优）",
   "bookSourceUrl": "https://cn.baozimhcn.com",
   "bookSourceType": 2,

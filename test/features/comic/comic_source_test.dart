@@ -18,6 +18,8 @@ class _FakeTarget implements ComicSourceTarget {
     this.title = '🐴 某漫画页',
     List<String>? opened,
     this.hrefs = const {},
+    this.failHosts = const {},
+    this.failFirstNAttempts = 0,
   }) : opened = opened ?? [];
 
   final Map<String, int> counts;
@@ -27,12 +29,35 @@ class _FakeTarget implements ComicSourceTarget {
   final List<String> opened;
   final Map<String, String> hrefs;
 
+  /// 按**主机**配置的永久失败（模拟某一跳被重置/502）。
+  final Map<String, ComicLoadFailure> failHosts;
+
+  /// 同一地址前 N 次尝试失败、之后成功（模拟"重试一次就好了"）。
+  final int failFirstNAttempts;
+
+  final Map<String, int> hits = {};
+  ComicLoadFailure? _last;
+
   String currentUrlValue = '';
+
+  @override
+  ComicLoadFailure? get lastLoadError => _last;
 
   @override
   Future<void> open(String url, {Map<String, String>? headers}) async {
     currentUrlValue = url;
     opened.add(url);
+    final n = (hits[url] ?? 0) + 1;
+    hits[url] = n;
+    if (n <= failFirstNAttempts) {
+      _last = const ComicLoadFailure(
+        code: -6,
+        description: 'net::ERR_CONNECTION_RESET',
+      );
+      return;
+    }
+    final host = Uri.tryParse(url)?.host ?? '';
+    _last = failHosts[host];
   }
 
   @override
@@ -313,6 +338,134 @@ void main() {
       expect(search.note, isNot(contains('打不开')));
     });
 
+    test('主站这一跳被重置：自动换镜像打开，并把波折写进结论', () async {
+      final cardCss = cssFromComicRule(source().searchRules['bookList']!)!;
+      final detailCss = cssFromComicRule(source().bookInfoRules['name']!)!;
+      final tocCss = cssFromComicRule(source().bookInfoRules['tocUrl']!)!;
+      final openUrl = source().searchUrlFor('海贼')!;
+      const detailPath = '/comic/haizeiwang-weitianrongyilang';
+
+      final fake = _FakeTarget(
+        counts: {cardCss: 77, detailCss: 1, '$tocCss a[href]': 1211},
+        values: {
+          source().searchRules['name']!: ['海贼王'],
+          source().searchRules['bookUrl']!: [detailPath],
+          source().bookInfoRules['name']!: ['航海王'],
+        },
+        hrefs: {'$tocCss a[href]': '/user/page_direct?comic_id=x&chapter_slot=1186'},
+        // 主站被重置，镜像能开
+        failHosts: {
+          'cn.baozimhcn.com': const ComicLoadFailure(
+            code: -6,
+            description: 'net::ERR_CONNECTION_RESET',
+          ),
+        },
+        jsText: {'java.getElements': '<img src="https://static-tw.baozimhcn.com/1.jpg">'},
+      );
+
+      final report = await runComicSourceProbe(
+        target: fake,
+        source: source(),
+        key: '海贼',
+        waitTimeout: const Duration(seconds: 1),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+
+      final detail = report.steps[1];
+      expect(detail.ok, isTrue, reason: '换镜像后应该能打开详情页');
+      expect(detail.note, contains('连接被重置'), reason: '失败原因要说出来');
+      expect(detail.note, contains('cn.bzmgcn.com'), reason: '要说清最后用的哪个地址');
+      expect(
+        fake.opened.any((u) => u.contains('cn.bzmgcn.com')),
+        isTrue,
+        reason: '确实去试了镜像',
+      );
+      expect(openUrl, contains('%E6%B5%B7%E8%B4%BC'));
+    });
+
+    test('主站第一次被重置、重试就成功：如实说明"第 2 次才成功"', () async {
+      final cardCss = cssFromComicRule(source().searchRules['bookList']!)!;
+      final fake = _FakeTarget(
+        counts: {cardCss: 77},
+        values: {
+          source().searchRules['name']!: ['海贼王'],
+          source().searchRules['bookUrl']!: ['/comic/haizeiwang-weitianrongyilang'],
+        },
+        failFirstNAttempts: 1,
+      );
+      final report = await runComicSourceProbe(
+        target: fake,
+        source: source(),
+        waitTimeout: const Duration(seconds: 1),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+      final search = report.steps.first;
+      expect(search.ok, isTrue, reason: '重试后取到内容就算通过');
+      expect(search.note, contains('第 2 次才成功'));
+      expect(fake.opened.length, greaterThan(1), reason: '确实重试了');
+    });
+
+    test('手机没网：只试一次就停，并说清是没有网络', () async {
+      final fake = _FakeTarget(
+        failHosts: {
+          'cn.baozimhcn.com': const ComicLoadFailure(
+            code: -106,
+            description: 'net::ERR_INTERNET_DISCONNECTED',
+          ),
+          'cn.bzmgcn.com': const ComicLoadFailure(
+            code: -106,
+            description: 'net::ERR_INTERNET_DISCONNECTED',
+          ),
+        },
+      );
+      final report = await runComicSourceProbe(
+        target: fake,
+        source: source(),
+        waitTimeout: const Duration(milliseconds: 200),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+      final search = report.steps.first;
+      expect(search.ok, isFalse);
+      expect(search.note, contains('没有网络'));
+      expect(
+        fake.opened.length,
+        1,
+        reason: '没网时换镜像/重试都没意义，不该白等',
+      );
+    });
+
+    test('所有候选都打不开：把每个地址的错都列出来', () async {
+      final fake = _FakeTarget(
+        failHosts: {
+          'cn.baozimhcn.com': const ComicLoadFailure(
+            code: -6,
+            description: 'net::ERR_CONNECTION_RESET',
+          ),
+          'cn.bzmgcn.com': const ComicLoadFailure(
+            code: -502,
+            description: 'HTTP 502',
+          ),
+          'www.baozimh.com': const ComicLoadFailure(
+            code: -7,
+            description: 'net::ERR_TIMED_OUT',
+          ),
+        },
+      );
+      final report = await runComicSourceProbe(
+        target: fake,
+        source: source(),
+        waitTimeout: const Duration(milliseconds: 200),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+      final note = report.steps.first.note;
+      expect(report.steps.first.ok, isFalse);
+      expect(note, contains('cn.baozimhcn.com'));
+      expect(note, contains('cn.bzmgcn.com'));
+      expect(note, contains('www.baozimh.com'));
+      expect(note, contains('连接被重置'));
+      expect(note, contains('超时'), reason: '每个地址的错都要能区分');
+    });
+
     test('列表规则不认识：这一步直接说"配置问题"，不冒充"命中 0"', () async {
       const broken = ComicSource(
         name: '坏源',
@@ -329,6 +482,75 @@ void main() {
       expect(report.steps.first.ok, isFalse);
       expect(report.steps.first.note, contains('配置问题'));
       expect(report.steps.first.note, contains('bookList'));
+    });
+  });
+
+  group('加载错误分类与镜像候选', () {
+    test('按描述文本判种类（数字码各平台不一致，描述最忠实）', () {
+      expect(
+        classifyComicLoadError(description: 'net::ERR_CONNECTION_RESET'),
+        ComicLoadErrorKind.connectionReset,
+      );
+      expect(
+        classifyComicLoadError(description: 'net::ERR_TIMED_OUT'),
+        ComicLoadErrorKind.timeout,
+      );
+      expect(
+        classifyComicLoadError(description: 'net::ERR_NAME_NOT_RESOLVED'),
+        ComicLoadErrorKind.nameNotResolved,
+      );
+      expect(
+        classifyComicLoadError(description: 'net::ERR_INTERNET_DISCONNECTED'),
+        ComicLoadErrorKind.offline,
+      );
+      expect(
+        classifyComicLoadError(code: 42, description: '说不清'),
+        ComicLoadErrorKind.other,
+      );
+      // 描述读不出来时退回数字码：-6=连接失败、-7/-8=超时、-2=解析失败
+      expect(classifyComicLoadError(code: -6), ComicLoadErrorKind.connectionOther);
+      expect(classifyComicLoadError(code: -8), ComicLoadErrorKind.timeout);
+      expect(classifyComicLoadError(code: -2), ComicLoadErrorKind.nameNotResolved);
+    });
+
+    test('只有"没网"不值得再试', () {
+      expect(comicLoadErrorRetryable(ComicLoadErrorKind.connectionReset), isTrue);
+      expect(comicLoadErrorRetryable(ComicLoadErrorKind.timeout), isTrue);
+      expect(comicLoadErrorRetryable(ComicLoadErrorKind.offline), isFalse);
+    });
+
+    test('错误说明是人话（带原始串，便于对号入座）', () {
+      expect(
+        comicLoadErrorText(code: -6, description: 'net::ERR_CONNECTION_RESET'),
+        contains('连接被重置'),
+      );
+      expect(
+        comicLoadErrorText(code: -106, description: 'net::ERR_INTERNET_DISCONNECTED'),
+        contains('没有网络'),
+      );
+    });
+
+    test('候选地址：主站优先、镜像按序、去重；完整地址拆成路径再拼', () {
+      const src = ComicSource(
+        name: 'x',
+        baseUrl: 'https://a.example',
+        mirrors: ['https://b.example', 'https://a.example'],
+      );
+      expect(comicMirrorCandidates(src, '/comic/x'), [
+        'https://a.example/comic/x',
+        'https://b.example/comic/x',
+      ]);
+      expect(comicMirrorCandidates(src, 'https://a.example/comic/x?q=1'), [
+        'https://a.example/comic/x?q=1',
+        'https://b.example/comic/x?q=1',
+      ]);
+      expect(comicMirrorCandidates(src, ''), isEmpty);
+    });
+
+    test('内置源配了镜像，且第一个就是主站', () {
+      final src = ComicSource.tryParse(kSeedComicSourceJson)!;
+      expect(src.mirrors, isNotEmpty);
+      expect(src.mirrors.first, src.baseUrl);
     });
   });
 }
