@@ -175,6 +175,17 @@ String buildComicAttrsScript(String css, String attr) =>
     'for (var i=0;i<n.length;i++){ var v=n[i].getAttribute(${_jsString(attr)}); '
     'if (v) { out.push(String(v)); } } return JSON.stringify(out); } catch (e) { return "[]"; } })()';
 
+/// 构造"取某个 CSS 命中的第一个元素的外层 HTML（截断成一行）"的 JS。
+///
+/// 用途：失败时把**站点实际给的 DOM**带回来 —— 否则只能猜"站点改了取图方式"。
+String buildComicSampleScript(String css, {int maxChars = 240}) =>
+    'javascript:(function(){ try { var n=document.querySelector(${_jsString(css)}); '
+    'if (!n) { return ""; } '
+    'var h = n.outerHTML || ""; '
+    'h = h.replace(/\\s+/g, " "); '
+    'return h.length > $maxChars ? h.substring(0, $maxChars) + "…" : h; '
+    '} catch (e) { return ""; } })()';
+
 /// 构造"数一数某个 CSS 命中几个"的 JS（用于等待页面就绪与报命中数）。
 String buildComicCountScript(String css) =>
     'javascript:(function(){ try { return String(document.querySelectorAll(${_jsString(css)}).length); } '

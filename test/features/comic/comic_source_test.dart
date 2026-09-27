@@ -21,6 +21,7 @@ class _FakeTarget implements ComicSourceTarget {
     this.failHosts = const {},
     this.failFirstNAttempts = 0,
     Map<String, List<String>> attrs = const {},
+    this.attrsEmptyFirstNPolls = 0,
   }) : opened = opened ?? [] {
     this.attrs.addAll(attrs);
   }
@@ -34,6 +35,9 @@ class _FakeTarget implements ComicSourceTarget {
 
   /// 按 `CSS|属性名` 配置的属性值表（对应 target.attrsOf）。
   final Map<String, List<String>> attrs = {};
+
+  /// 失败诊断片段（对应 target.sampleHtml）。
+  String? sample;
 
   /// 按**主机**配置的永久失败（模拟某一跳被重置/502）。
   final Map<String, ComicLoadFailure> failHosts;
@@ -78,9 +82,21 @@ class _FakeTarget implements ComicSourceTarget {
   @override
   Future<String?> attrOf(String css, String attr) async => hrefs[css];
 
+  /// 属性值前 N 次轮询为空（模拟 AMP 懒加载：元素先出现、地址后填）。
+  int attrsEmptyFirstNPolls = 0;
+  final Map<String, int> _attrPolls = {};
+
   @override
-  Future<List<String>> attrsOf(String css, String attr) async =>
-      attrs['$css|$attr'] ?? const [];
+  Future<String?> sampleHtml(String css) async => sample;
+
+  @override
+  Future<List<String>> attrsOf(String css, String attr) async {
+    final key = '$css|$attr';
+    final n = (_attrPolls[key] ?? 0) + 1;
+    _attrPolls[key] = n;
+    if (n <= attrsEmptyFirstNPolls) return const [];
+    return attrs[key] ?? const [];
+  }
 
   @override
   Future<String> evalRaw(String script) async {
@@ -315,7 +331,7 @@ void main() {
 
       final search = report.steps.first;
       expect(search.ok, isFalse);
-      expect(search.note, contains('0 命中'));
+      expect(search.note, contains('命中 0 个'));
       expect(search.note, contains('502'), reason: '502 这种错误只看"命中 0"看不出来');
       expect(search.pageTitle, contains('502'));
     });
@@ -602,7 +618,7 @@ void main() {
         },
         hrefs: {'$tocCss a[href]': '/user/page_direct?comic_id=x&chapter_slot=1186'},
         jsText: const {},
-      );
+      )..sample = '<amp-img class="i-amphtml-element" layout="responsive"></amp-img>';
 
       final report = await runComicSourceProbe(
         target: fake,
@@ -614,8 +630,59 @@ void main() {
 
       final chapter = report.steps[2];
       expect(chapter.ok, isFalse);
-      expect(chapter.note, contains('0'), reason: '要给出真实的 0，不要沉默');
+      expect(chapter.note, contains('命中 3 个元素'), reason: '要说清元素是有的');
+      expect(
+        chapter.note,
+        contains('都没有地址'),
+        reason: '要区分"没有元素"和"有元素但没地址"',
+      );
+      expect(
+        chapter.note,
+        isNot(contains('命中 0 个')),
+        reason: '命中数必须按实际写，不许写死 0（真机被这句带偏过）',
+      );
       expect(report.firstImageUrl, isNull);
+      expect(
+        chapter.note,
+        contains('i-amphtml-element'),
+        reason: '要把站点实际给的元素片段带回来，别只让人猜',
+      );
+    });
+
+    test('AMP 懒加载：元素先出现、地址后填 —— 要等到地址才判', () async {
+      final cardCss = cssFromComicRule(seedSource().searchRules['bookList']!)!;
+      final detailCss = cssFromComicRule(seedSource().bookInfoRules['name']!)!;
+      final tocCss = firstSelectorCss(seedSource().bookInfoRules['tocUrl']!)!;
+      const imgCss = '.comic-contain amp-img';
+
+      final fake = _FakeTarget(
+        counts: {cardCss: 77, detailCss: 1, '$tocCss a[href]': 1211, imgCss: 4},
+        values: {
+          seedSource().searchRules['name']!: ['海贼王'],
+          seedSource().searchRules['bookUrl']!: ['/comic/haizeiwang-weitianrongyilang'],
+          seedSource().bookInfoRules['name']!: ['航海王'],
+        },
+        hrefs: {'$tocCss a[href]': '/user/page_direct?comic_id=x&chapter_slot=1186'},
+        attrs: const {
+          '$imgCss|data-src': ['https://static-tw.baozimhcn.com/lazy-1.jpg'],
+        },
+        // 前 3 次轮询属性是空的（地址还没填上）
+        attrsEmptyFirstNPolls: 3,
+        jsText: const {},
+      );
+
+      final report = await runComicSourceProbe(
+        target: fake,
+        source: seedSource(),
+        key: '海贼',
+        waitTimeout: const Duration(seconds: 2),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+
+      final chapter = report.steps[2];
+      expect(chapter.ok, isTrue, reason: '应该等到地址出现，而不是元素一出现就判死');
+      expect(report.firstImageUrl, contains('lazy-1.jpg'));
+      expect(chapter.note, contains('data-src 直读'));
     });
 
   group('加载错误分类与镜像候选', () {

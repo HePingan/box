@@ -152,6 +152,14 @@ class WebViewComicSourceTarget implements ComicSourceTarget {
   }
 
   @override
+  Future<String?> sampleHtml(String css) async {
+    final raw = await evalRaw(buildComicSampleScript(css));
+    final t = raw.replaceAll(r'"', '"').trim();
+    if (t.isEmpty || t == 'null' || t == '"null"') return null;
+    return t.replaceAll('"', '').trim();
+  }
+
+  @override
   Future<String> evalRaw(String script) async {
     // 类型上不可能是 null（webview_flutter 的返回是 Object）；
     // 页面里拿到 undefined 时会变成字符串 "null"，由调用方按"取不到"处理。

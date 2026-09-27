@@ -39,6 +39,9 @@ abstract class ComicSourceTarget {
   /// 取某个 CSS 命中的**所有**元素的属性值（空值丢掉）。
   Future<List<String>> attrsOf(String css, String attr);
 
+  /// 取第一个命中元素的 HTML 片段（失败诊断用；取不到就 null）。
+  Future<String?> sampleHtml(String css);
+
   /// 上一次打开时**主文档**的加载错误（子资源错误不算；没有就 null）。
   ComicLoadFailure? get lastLoadError;
 }
@@ -380,7 +383,8 @@ Future<ComicProbeReport> runComicSourceProbe({
           '「${source.contentRules['content'] ?? '(空)'}」',
         );
       }
-      final waited = await _waitForCount(
+      // 等到"真的有图地址"为止（元素出现 ≠ 地址出现；AMP 是懒加载）。
+      final urlWait = await _waitForImageUrls(
         target,
         imageRule,
         waitTimeout: waitTimeout,
@@ -388,36 +392,25 @@ Future<ComicProbeReport> runComicSourceProbe({
       );
       final pageTitle = await _safe(() => target.pageTitle());
       final finalUrl = await _safe(() => target.currentUrl());
+      // 失败诊断用：把站点实际给的元素片段带回来（不猜）。
+      final sample = await _safe(() => target.sampleHtml(imageRule));
+
+      // 先按书源的意图跑它的 JS 段（读 data-src），再退到直读属性。
       var imageUrls = const <String>[];
+      var imageSource = '';
       final jsBody = source.contentRules['content'] ?? '';
       if (isComicJsRule(jsBody)) {
         final raw = await target.evalRaw(
           buildComicJsBlockScript(comicJsBody(jsBody)),
         );
         imageUrls = _imageUrlsFromJsResult(raw);
+        if (imageUrls.isNotEmpty) imageSource = '（来自书源的 JS 段）';
       }
-      // 图片地址的来源要在结论里说清（JS 段 / data-src / src 三条路是不一样的）。
-      var imageSource = '';
-      if (imageUrls.isEmpty && waited.count > 0) {
-        // JS 段没给出图链，但页面上确实有图：退回**直读属性**。
-        // 注意这里传的是 **CSS**，不能拿去当书源规则解析（`class.` / `tag.` 那套语法）——
-        // 真机上就是因为拿 CSS 当规则解析而报"规则不认识"。
-        // 先 data-src（AMP 的惰性属性，书源规则用的就是它），没有再用 src（部分镜像直接写 src）
-        final viaDataSrc = (await _safe(() => target.attrsOf(imageRule, 'data-src')) ?? const [])
-            .where((u) => u.trim().isNotEmpty)
-            .toList();
-        if (viaDataSrc.isNotEmpty) {
-          imageUrls = viaDataSrc;
-          imageSource = '（JS 段没给图链，改用元素上的 data-src 直读）';
-        } else {
-          final viaSrc = (await _safe(() => target.attrsOf(imageRule, 'src')) ?? const [])
-              .where((u) => u.trim().isNotEmpty)
-              .toList();
-          if (viaSrc.isNotEmpty) {
-            imageUrls = viaSrc;
-            imageSource = '（JS 段没给图链、元素上也没有 data-src，改用 src 直读）';
-          }
-        }
+      if (imageUrls.isEmpty && urlWait.urls.isNotEmpty) {
+        imageUrls = urlWait.urls;
+        imageSource = urlWait.attr == 'data-src'
+            ? '（JS 段没给图链，改用元素上的 data-src 直读）'
+            : '（JS 段没给图链、元素上也没有 data-src，改用 src 直读）';
       }
       firstImageUrl = imageUrls.isEmpty ? null : source.absolute(imageUrls.first);
       final step = ComicProbeStep(
@@ -427,11 +420,18 @@ Future<ComicProbeReport> runComicSourceProbe({
         note: (imageUrls.isNotEmpty
                 ? '取到 ${imageUrls.length} 张图，首张来自 '
                     '${Uri.tryParse(firstImageUrl!)?.host ?? '—'}$imageSource'
-                : _zeroHitNote(
-                    selector: imageRule,
-                    waitedSeconds: waited.seconds,
-                    pageTitle: pageTitle,
-                  )) +
+                : urlWait.elementCount > 0
+                    ? '等了 ${urlWait.seconds} 秒，$imageRule 命中 '
+                        '${urlWait.elementCount} 个元素，但它们的 data-src / src 里都没有地址'
+                        '（图可能还没加载出来，或站点改了取图方式）'
+                        '（页面标题：${pageTitle ?? '读不到'}）'
+                        '${sample == null || sample.isEmpty ? '' : ' 元素实际长这样：$sample'}'
+                    : _zeroHitNote(
+                        selector: imageRule,
+                        waitedSeconds: urlWait.seconds,
+                        pageTitle: pageTitle,
+                        count: urlWait.elementCount,
+                      )) +
             navSuffix(nav),
         samples: imageUrls.take(2).toList(),
         finalUrl: finalUrl,
@@ -597,11 +597,101 @@ Future<_WaitResult> _waitForCount(
   return done.future;
 }
 
+/// 等图地址的结果。
+class _UrlWait {
+  const _UrlWait({
+    required this.urls,
+    required this.attr,
+    required this.seconds,
+    required this.elementCount,
+  });
+
+  final List<String> urls;
+
+  /// 地址取自哪个属性（`data-src` / `src`）；没等到就是空串。
+  final String attr;
+  final int seconds;
+
+  /// 期间看到的选择器命中数（用来区分"没有元素"和"有元素但没地址"）。
+  final int elementCount;
+}
+
+/// 等**图地址**出现 —— 元素出现不等于地址出现：AMP 是懒加载，先有 `amp-img` 占位，
+/// 之后（脚本跑完）才把 `data-src` / `src` 填上。真机上就是在这里栽的：
+/// 元素 1 秒内就命中了，于是"等元素"的判据当场通过，而地址还是空的。
+Future<_UrlWait> _waitForImageUrls(
+  ComicSourceTarget target,
+  String css, {
+  required Duration waitTimeout,
+  required Duration pollInterval,
+}) {
+  if (css.isEmpty) {
+    return Future.value(
+      const _UrlWait(urls: [], attr: '', seconds: 0, elementCount: 0),
+    );
+  }
+  final sw = Stopwatch()..start();
+  final done = Completer<_UrlWait>();
+  var elementCount = 0;
+  Timer? ticker;
+  Timer? deadline;
+
+  void finish(_UrlWait r) {
+    if (done.isCompleted) return;
+    ticker?.cancel();
+    deadline?.cancel();
+    done.complete(r);
+  }
+
+  Future<List<String>> urlsOf(String attr) async {
+    final raw = await _safe(() => target.attrsOf(css, attr)) ?? const <String>[];
+    return raw.where((u) => u.trim().isNotEmpty).toList();
+  }
+
+  Future<void> probeOnce() async {
+    if (done.isCompleted) return;
+    final data = await urlsOf('data-src');
+    if (data.isNotEmpty) {
+      finish(_UrlWait(
+        urls: data,
+        attr: 'data-src',
+        seconds: sw.elapsed.inSeconds,
+        elementCount: elementCount,
+      ));
+      return;
+    }
+    final plain = await urlsOf('src');
+    if (plain.isNotEmpty) {
+      finish(_UrlWait(
+        urls: plain,
+        attr: 'src',
+        seconds: sw.elapsed.inSeconds,
+        elementCount: elementCount,
+      ));
+      return;
+    }
+    elementCount = await _safe(() => target.countOf(css)) ?? elementCount;
+  }
+
+  unawaited(probeOnce());
+  ticker = Timer.periodic(pollInterval, (_) => unawaited(probeOnce()));
+  deadline = Timer(waitTimeout, () {
+    finish(_UrlWait(
+      urls: const [],
+      attr: '',
+      seconds: sw.elapsed.inSeconds,
+      elementCount: elementCount,
+    ));
+  });
+  return done.future;
+}
+
 /// 0 命中的说明：把页面标题带出来 —— 502/403 这类错误只看"命中 0"是看不出来的。
 String _zeroHitNote({
   required String? selector,
   required int waitedSeconds,
   required String? pageTitle,
+  int count = 0,
 }) {
   final t = pageTitle?.trim() ?? '';
   final hint = t.isEmpty
@@ -614,7 +704,9 @@ String _zeroHitNote({
               : t.contains('验证') || t.toLowerCase().contains('challenge')
                   ? '（还停在人机验证页）'
                   : '（页面标题：$t）';
-  return '等 $waitedSeconds 秒后选择器 ${selector ?? '—'} 仍 0 命中$hint';
+  // 命中数**按实际写**：这里以前写死"仍 0 命中"，于是在"元素在、属性空"的情况下
+  // 会说假话（真机上就是被这句话带偏过一次）。
+  return '等了 $waitedSeconds 秒，选择器 ${selector ?? '—'} 命中 $count 个$hint';
 }
 
 /// 从 `ruleContent.content` 的 JS 里抠出图片选择器（`java.getElements('class.comic-contain@amp-img')`）。
