@@ -398,19 +398,27 @@ Future<ComicProbeReport> runComicSourceProbe({
       // 先按书源的意图跑它的 JS 段（读 data-src），再退到直读属性。
       var imageUrls = const <String>[];
       var imageSource = '';
+      // 书源的 JS 段只是**一条路**：它自己写错了也不该把整步拖死 ——
+      // 记下它没跑通，再走"直读元素属性"那条路（真机上就是这么栽的：
+      // JS 段返回 undefined，兜底明明能取到图，却被这个错直接判成失败）。
+      var jsTrouble = '';
       final jsBody = source.contentRules['content'] ?? '';
       if (isComicJsRule(jsBody)) {
-        final raw = await target.evalRaw(
-          buildComicJsBlockScript(comicJsBody(jsBody)),
-        );
-        imageUrls = _imageUrlsFromJsResult(raw);
-        if (imageUrls.isNotEmpty) imageSource = '（来自书源的 JS 段）';
+        try {
+          final raw = await target.evalRaw(
+            buildComicJsBlockScript(comicJsBody(jsBody)),
+          );
+          imageUrls = _imageUrlsFromJsResult(raw);
+          if (imageUrls.isNotEmpty) imageSource = '（来自书源的 JS 段）';
+        } on ComicProbeException catch (e) {
+          jsTrouble = '书源 JS 段没跑通（${e.message}），改用元素属性直读；';
+        }
       }
       if (imageUrls.isEmpty && urlWait.urls.isNotEmpty) {
         imageUrls = urlWait.urls;
         imageSource = urlWait.attr == 'data-src'
-            ? '（JS 段没给图链，改用元素上的 data-src 直读）'
-            : '（JS 段没给图链、元素上也没有 data-src，改用 src 直读）';
+            ? '（$jsTrouble元素上的 data-src 直读）'
+            : '（$jsTrouble元素上也没有 data-src，改用 src 直读）';
       }
       firstImageUrl = imageUrls.isEmpty ? null : source.absolute(imageUrls.first);
       final step = ComicProbeStep(
@@ -421,7 +429,7 @@ Future<ComicProbeReport> runComicSourceProbe({
                 ? '取到 ${imageUrls.length} 张图，首张来自 '
                     '${Uri.tryParse(firstImageUrl!)?.host ?? '—'}$imageSource'
                 : urlWait.elementCount > 0
-                    ? '等了 ${urlWait.seconds} 秒，$imageRule 命中 '
+                    ? '$jsTrouble等了 ${urlWait.seconds} 秒，$imageRule 命中 '
                         '${urlWait.elementCount} 个元素，但它们的 data-src / src 里都没有地址'
                         '（图可能还没加载出来，或站点改了取图方式）'
                         '（页面标题：${pageTitle ?? '读不到'}）'

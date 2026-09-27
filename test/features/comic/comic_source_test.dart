@@ -701,6 +701,51 @@ void main() {
       expect(chapter.note, contains('data-src 直读'));
     });
 
+  group('书源 JS 段的两种写法（真机踩过）', () {
+    test('构造出来的脚本要同时支持"表达式结尾"与"return"两种写法', () {
+      final script = buildComicJsBlockScript('var a=1; a;');
+      // 表达式式（Legado 取最后一条表达式的值）→ 必须走 eval
+      expect(script, contains('eval(__body)'));
+      // return 式 → eval 会报 Illegal return statement，必须能退回 new Function
+      expect(script, contains('new Function(__body)()'));
+      // JS 段是自己传进来的，必须当**字符串**注入，不能被拼进代码里
+      expect(script, contains(r'var __body = "var a=1; a;";'));
+    });
+
+    test('JS 段没跑通，不该把整步判死 —— 属性直读能取到就算通过', () async {
+      final cardCss = cssFromComicRule(seedSource().searchRules['bookList']!)!;
+      final detailCss = cssFromComicRule(seedSource().bookInfoRules['name']!)!;
+      final tocCss = firstSelectorCss(seedSource().bookInfoRules['tocUrl']!)!;
+      const imgCss = '.comic-contain amp-img';
+
+      final fake = _FakeTarget(
+        counts: {cardCss: 77, detailCss: 1, '$tocCss a[href]': 1211, imgCss: 2},
+        values: {
+          seedSource().searchRules['name']!: ['海贼王'],
+          seedSource().searchRules['bookUrl']!: ['/comic/haizeiwang-weitianrongyilang'],
+          seedSource().bookInfoRules['name']!: ['航海王'],
+        },
+        hrefs: {'$tocCss a[href]': '/user/page_direct?comic_id=x&chapter_slot=1186'},
+        attrs: const {
+          '$imgCss|data-src': ['https://s1.bzcdn.net/ok.jpg'],
+        },
+      )..jsRawResult = androidEncode('{"error": "JS 段没有返回值"}');
+
+      final report = await runComicSourceProbe(
+        target: fake,
+        source: seedSource(),
+        key: '海贼',
+        waitTimeout: const Duration(seconds: 1),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+
+      final chapter = report.steps[2];
+      expect(chapter.ok, isTrue, reason: '兜底能取到图，就不该被 JS 段的错判死');
+      expect(chapter.note, contains('JS 段'));
+      expect(report.firstImageUrl, contains('ok.jpg'));
+    });
+  });
+
   group('WebView 返回值解析（Android 会再编码一层）', () {
     test('JSON.stringify 出来的数组：被转义过也要能解', () {
       // 真机上就是这个形状：外层是 JSON 字符串，引号是 \"，< 是 \u003C

@@ -384,3 +384,49 @@ Android 的 `runJavaScriptReturningResult` 返回的是**再编码一层**的 JS
 ### 用例
 
 未新增条数，但 77 条全部改在真机形状下跑（值路径 + JS 段路径都过 `androidEncode`）。
+
+---
+
+## 十三、书源 JS 段的两种写法都要支持（1.20.68 / 325）
+
+### 手机端第八次自检
+
+```
+关键字：猫
+· [通过] 搜索（519ms）命中 90 条、链接 180 个
+· [通过] 详情（279ms）书名「足球猫猫」· 作者 -土猫Feng- · 章节 1 条
+· [失败] 章节取图（1227ms）JS 段出错：JS 段没有返回值
+  最终地址：https://cn.dzmanga.com/comic/chapter/zuqiumaomaofeng/0_0.html   ← 页面是打开了的
+```
+
+### 第七处错
+
+书源的 `ruleContent.content` 结尾是 **表达式**：
+
+```js
+var imgTags = c.map(item => `<img src="${item.link}">`).join('\n');
+    imgTags;        // ← 一个表达式语句，没有 return
+```
+
+Legado（Rhino）取的是**最后一条表达式的值**；我却把 JS 段包成 `(function(){ … })()`
+—— 没有 `return` 就返回 `undefined` ⇒「JS 段没有返回值」。**这是书源的正常写法，是我的
+执行器不兼容**。
+
+### 修法
+
+- JS 段当**字符串**注入，两种写法都支持：
+  · `try { __r = eval(__body) }` —— eval 会返回最后一条语句的完成值（表达式式）；
+  · 报 `Illegal return statement` 时退回 `new Function(__body)()`（`return` 式）。
+- **JS 段失败不再拖死整步**：记下"书源 JS 段没跑通（…），改用元素属性直读"，
+  再走直读那条路 —— 真机上正是兜底明明能取到图、却被这个错直接判成失败。
+
+### 真浏览器验证（照手机上的 DOM 形状）
+
+| JS 段写法 | 结果 |
+|---|---|
+| 表达式式（`imgTags;`） | `<img src="…/1.jpg">` + `<img src="…/2.jpg">` ✅ |
+| `return` 式 | `RET-2` ✅ |
+
+### 用例（新增 2 条；漫画相关合计 79 条）
+
+含"脚本必须同时含 eval 与 new Function 两条路"、"JS 段没跑通也要靠属性直读通过"。

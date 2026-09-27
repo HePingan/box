@@ -155,8 +155,19 @@ String buildComicRuleScript(String rule) =>
 /// 构造"在页面里跑书源自带的 JS 段"的 JS（`<js>` / `@js:` 的脚本体）。
 String buildComicJsBlockScript(String body) =>
     'javascript:(function(){ $kComicSourceEngineJs '
-    'var __r = (function(){ $body })(); '
-    'if (__r === undefined || __r === null) { return JSON.stringify({error: "JS 段没有返回值"}); } '
+    // 书源的 JS 段有两种写法，**两种都要支持**：
+    //  ① 结尾是表达式（如 `imgTags;`）—— Legado 取"最后一条表达式的值"，所以用 eval
+    //     （eval 会返回最后一条语句的完成值）；
+    //  ② 里面有 `return` —— eval 会报 "Illegal return statement"，退回 new Function。
+    // 真机上踩过：只用函数包裹时，①这种写法永远返回 undefined ⇒「JS 段没有返回值」。
+    'var __body = ${_jsString(body)}; '
+    'var __r; '
+    'try { __r = eval(__body); } '
+    'catch (e1) { '
+    'try { __r = new Function(__body)(); } '
+    'catch (e2) { return JSON.stringify({error: "JS 段执行失败：" + String(e2)}); } '
+    '} '
+    'if (__r === undefined || __r === null) { __r = ""; } '
     'return JSON.stringify({text: String(__r)}); })()';
 
 /// 构造"取某个 CSS 命中的第一个元素的某个属性"的 JS。
