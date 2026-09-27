@@ -175,6 +175,23 @@ void main() {
       expect((p.steps.first as ComicSelectorStep).index, 0);
     });
 
+    test('章节容器只取第一段选择器（书源 tocUrl 那句笔误不许混进来）', () {
+      final src = ComicSource.tryParse(kSeedComicSourceJson)!;
+      final container = firstSelectorCss(src.bookInfoRules['tocUrl']!);
+      expect(
+        container,
+        '.pure-u-1-1.pure-u-sm-1-2.pure-u-md-1-3.pure-u-lg-1-4.comics-chapters',
+      );
+      // 真机上"章节 0 条"就是因为把 `harf` 当成了标签拼进 CSS：
+      expect(container, isNot(contains('harf')));
+      // 数章节真正用的 CSS（我在真浏览器上用它数到 1211 条）：
+      expect('$container a[href]',
+          '.pure-u-1-1.pure-u-sm-1-2.pure-u-md-1-3.pure-u-lg-1-4.comics-chapters a[href]');
+      // 已知限制（不装看不见）：中段的裸 token 分不清"标签"和"属性"，所以
+      // cssFromComicRule(tocUrl) 会把笔误段 harf 也拼进来 —— 正因如此数章节**不许**用它。
+      expect(cssFromComicRule(src.bookInfoRules['tocUrl']!), contains('harf'));
+    });
+
     test('不认识的段要报出来（不静默返回空）', () {
       final p = parseComicRule('class.a@@[bad]', valueRule: true);
       expect(p.ok, isFalse);
@@ -239,7 +256,7 @@ void main() {
     test('三步全通：给出服务名、章节数与首图地址', () async {
       final cardCss = cssFromComicRule(source().searchRules['bookList']!)!;
       final detailCss = cssFromComicRule(source().bookInfoRules['name']!)!;
-      final tocCss = cssFromComicRule(source().bookInfoRules['tocUrl']!)!;
+      final tocCss = firstSelectorCss(source().bookInfoRules['tocUrl']!)!;
 
       final fake = _FakeTarget(
         counts: {cardCss: 77, detailCss: 1, '$tocCss a[href]': 1211},
@@ -341,7 +358,7 @@ void main() {
     test('主站这一跳被重置：自动换镜像打开，并把波折写进结论', () async {
       final cardCss = cssFromComicRule(source().searchRules['bookList']!)!;
       final detailCss = cssFromComicRule(source().bookInfoRules['name']!)!;
-      final tocCss = cssFromComicRule(source().bookInfoRules['tocUrl']!)!;
+      final tocCss = firstSelectorCss(source().bookInfoRules['tocUrl']!)!;
       final openUrl = source().searchUrlFor('海贼')!;
       const detailPath = '/comic/haizeiwang-weitianrongyilang';
 

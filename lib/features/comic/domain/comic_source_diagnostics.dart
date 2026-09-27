@@ -289,16 +289,20 @@ Future<ComicProbeReport> runComicSourceProbe({
           target,
           source.bookInfoRules['author'] ?? '',
         );
-        // 章节列表：书源里 tocUrl 那条规则自带笔误（@harf@），所以用它的**选择器段**
-        // 直接数链接（实测 1211 章），并把规则笔误如实写进说明。
-        final tocCss = cssFromComicRule(source.bookInfoRules['tocUrl'] ?? '');
+        // 章节列表：书源里 tocUrl 那条规则自带笔误（@harf@），所以只取它的**容器段**
+        // 直接数链接（实测 1211 章），并把这条差异如实写进说明。
+        // 只用**容器那一段**：tocUrl 第 3 段 `harf` 是它自己的笔误，
+        // 照整条规则拼 CSS 会拼出永远匹配不到的选择器（真机上表现为"章节 0 条"）。
+        final tocCss = firstSelectorCss(source.bookInfoRules['tocUrl'] ?? '');
         final chapterCss = tocCss == null ? null : '$tocCss a[href]';
         final count = chapterCss == null
             ? 0
             : await _waitForCount(
                 target,
                 chapterCss,
-                waitTimeout: const Duration(seconds: 8),
+                // 别用 8 秒这种紧值：移动网络下整页响应偶尔要十几秒
+                // （实测：同一次导航重跑就是瞬时的），紧了会把"慢"误判成"没有"。
+                waitTimeout: waitTimeout,
                 pollInterval: pollInterval,
               ).then((w) => w.count);
         tocCount = count;

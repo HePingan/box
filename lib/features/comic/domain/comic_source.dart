@@ -324,11 +324,30 @@ class ComicSource {
 /// `class.comic-contain@amp-img` → `.comic-contain amp-img`；
 /// 规则里没有选择器段（纯 JS / 纯取值步）时返回 null。
 String? cssFromComicRule(String rule, {bool valueRule = false}) {
-  final parsed = parseComicRule(rule);
-  if (!parsed.ok) return null;
-  final parts = parsed.steps.whereType<ComicSelectorStep>().map((s) => s.css).toList();
+  final parts = _leadingSelectorCss(rule);
   if (parts.isEmpty) return null;
   return parts.join(' ');
+}
+
+/// **只有最前面那一段选择器**的 CSS（遇到取值步/认不出的段就停）。
+///
+/// 为什么要单独有这么个东西：书源的 `tocUrl` 里第 3 段 `harf` 是它自己的笔误
+/// （本意是 `href`），照整条规则拼 CSS 会拼出 `.容器 a harf .item` 这种**永远匹配不到**
+/// 的选择器 —— 看似"章节 0 条"，其实是我的拼接错了。数章节只用容器那一段。
+String? firstSelectorCss(String rule) {
+  final parts = _leadingSelectorCss(rule);
+  if (parts.isEmpty) return null;
+  return parts.first;
+}
+
+List<String> _leadingSelectorCss(String rule) {
+  final parsed = parseComicRule(rule);
+  final out = <String>[];
+  for (final step in parsed.steps) {
+    if (step is! ComicSelectorStep) break; // 取值步/认不出的段 = 选择器链到此为止
+    out.add(step.css);
+  }
+  return out;
 }
 
 String? _str(Object? v) => v is String ? v : null;
