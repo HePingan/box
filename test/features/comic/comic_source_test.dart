@@ -7,6 +7,8 @@ import 'package:box/features/comic/domain/comic_source.dart';
 import 'package:box/features/comic/domain/comic_source_diagnostics.dart';
 import 'package:box/features/comic/domain/comic_source_engine.dart';
 import 'package:box/features/comic/domain/sources/seed_comic_source.dart';
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 
 /// 假取数：按"规则文本 → 值"和"CSS → 命中数"作答，并记录打开过的地址。
@@ -38,6 +40,9 @@ class _FakeTarget implements ComicSourceTarget {
 
   /// 失败诊断片段（对应 target.sampleHtml）。
   String? sample;
+
+  /// JS 段的**原样**返回串（模拟 Android 的真实返回，含它的 JSON 转义）。
+  String? jsRawResult;
 
   /// 按**主机**配置的永久失败（模拟某一跳被重置/502）。
   final Map<String, ComicLoadFailure> failHosts;
@@ -109,7 +114,8 @@ class _FakeTarget implements ComicSourceTarget {
       if (list == null) return '{"values":[]}';
       return '{"values":[${list.map((v) => '"${v.replaceAll('"', r'\"')}"').join(',')}]}';
     }
-    // JS 段：返回 scripted 文本
+    // JS 段：原样返回（模拟 Android 的真实返回串，含它的 JSON 转义）
+    if (jsRawResult != null) return jsRawResult!;
     for (final entry in jsText.entries) {
       if (script.contains(entry.key)) return '{"text":${_json(entry.value)}}';
     }
@@ -684,6 +690,83 @@ void main() {
       expect(report.firstImageUrl, contains('lazy-1.jpg'));
       expect(chapter.note, contains('data-src 直读'));
     });
+
+  group('WebView 返回值解析（Android 会再编码一层）', () {
+    test('JSON.stringify 出来的数组：被转义过也要能解', () {
+      // 真机上就是这个形状：外层是 JSON 字符串，引号是 \"，< 是 \u003C
+      const raw = '"[\\"https://s1.bzcdn.net/1.jpg\\",\\"https://s1.bzcdn.net/2.jpg\\"]"';
+      expect(comicAttrList(raw), [
+        'https://s1.bzcdn.net/1.jpg',
+        'https://s1.bzcdn.net/2.jpg',
+      ]);
+    });
+
+    test('没被转义的数组 / 单个字符串 也要能吃（iOS 侧或已解码）', () {
+      expect(comicAttrList('["https://a.jpg"]'), ['https://a.jpg']);
+      expect(comicAttrList('"https://a.jpg"'), ['https://a.jpg']);
+    });
+
+    test('空值不许被编造成地址', () {
+      expect(comicAttrList('[]'), isEmpty);
+      expect(comicAttrList('null'), isEmpty);
+      expect(comicAttrList('""'), isEmpty);
+      expect(comicAttrList(''), isEmpty);
+    });
+
+    test('数字（命中数）：转义版与原版都要能读', () {
+      expect(parseComicJsValue('6'), 6);
+      // 多一层引号的数字也读成数字（宽容优先，别让每个调用方各写一份兜底）
+      expect(parseComicJsValue('"6"'), 6);
+      expect(parseComicJsValue('null'), isNull);
+    });
+
+    test('HTML 片段：引号要还原，不能删（片段是给人看的）', () {
+      const html = '<amp-img src="https://s1.bzcdn.net/1.jpg" width="1200">';
+      // 模拟 Android：整串再 JSON 编码一层（引号变 \" ，尖括号变 \u003C）
+      final raw = jsonEncode(html).replaceAll('<', r'\u003C').replaceAll('>', r'\u003E');
+      final t = comicText(raw)!;
+      expect(t, contains('<amp-img'));
+      expect(t, contains('src="https://s1.bzcdn.net/1.jpg"'));
+      expect(t, contains('width="1200"'));
+    });
+
+    test('JS 段结果被转义时，仍要能从 HTML 里抠出图链（真机形状）', () async {
+      final cardCss = cssFromComicRule(seedSource().searchRules['bookList']!)!;
+      final detailCss = cssFromComicRule(seedSource().bookInfoRules['name']!)!;
+      final tocCss = firstSelectorCss(seedSource().bookInfoRules['tocUrl']!)!;
+      const imgCss = '.comic-contain amp-img';
+
+      // 模拟 Android：整段 HTML 再 JSON 编码一层（引号变 \"、尖括号变 \u003C）
+      const html =
+          '<img src="https://s1.bzcdn.net/p1.jpg"><img src="https://s1.bzcdn.net/p2.jpg">';
+      final androidRaw = jsonEncode(html)
+          .replaceAll('<', r'\u003C')
+          .replaceAll('>', r'\u003E');
+
+      final fake = _FakeTarget(
+        counts: {cardCss: 77, detailCss: 1, '$tocCss a[href]': 1211, imgCss: 2},
+        values: {
+          seedSource().searchRules['name']!: ['海贼王'],
+          seedSource().searchRules['bookUrl']!: ['/comic/haizeiwang-weitianrongyilang'],
+          seedSource().bookInfoRules['name']!: ['航海王'],
+        },
+        hrefs: {'$tocCss a[href]': '/user/page_direct?comic_id=x&chapter_slot=1186'},
+      )..jsRawResult = androidRaw;
+
+      final report = await runComicSourceProbe(
+        target: fake,
+        source: seedSource(),
+        key: '海贼',
+        waitTimeout: const Duration(seconds: 1),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+
+      final chapter = report.steps[2];
+      expect(chapter.ok, isTrue, reason: '转义不该让图链抠不出来（真机踩过）');
+      expect(chapter.note, contains('JS 段'));
+      expect(report.firstImageUrl, contains('p1.jpg'));
+    });
+  });
 
   group('加载错误分类与镜像候选', () {
     test('按描述文本判种类（数字码各平台不一致，描述最忠实）', () {

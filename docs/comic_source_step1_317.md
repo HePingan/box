@@ -301,3 +301,48 @@ JS 段没图链→data-src 直读且写明来源 / 没有 data-src→退回 src 
 ### 用例（新增 1 条、更新 2 条；漫画相关合计 71 条）
 
 含"懒加载：前 3 次轮询属性为空、之后才填 → 必须等到地址"与"命中数不许写 0"两个控制组。
+
+---
+
+## 十一、WebView 返回值要"解掉一层转义"（1.20.66 / 323）
+
+### 手机端第六次自检给的关键证据
+
+```
+· [失败] 章节取图（26250ms）等了 25 秒，.comic-contain amp-img 命中 6 个元素，
+  但它们的 data-src / src 里都没有地址
+  元素实际长这样：\u003Camp-img id=\"chapter-img-0-0\" width=\"1200\" height=\"2133\"
+  src=\"https://s1.bzcdn.net/scomic/…/1.jpg\" [src]=\"chapter00Src\" layout=\"responsive\"
+  data-src=\"https://s1.bzcdn.n…
+```
+
+**这段片子本身就说明了问题**：那个 `amp-img` **明明带着地址**（`src` 和 `data-src` 都有真
+URL），而我读出"都没有地址" ⇒ 是我的**取值环节**坏了，不是站点没给。
+
+### 第六处错：WebView 的返回值会再 JSON 编码一层
+
+Android 的 `runJavaScriptReturningResult` 返回的是**再编码一层**的 JSON：字符串里的
+`<` 变 `\u003C`、`"` 变 `\"`（片子里的 `\u003C`、`\"` 就是它）。而我几处地方是
+`replaceAll('"', '')` 这种"删引号"式处理：
+
+- `JSON.stringify` 出来的数组因为引号被转义 → `jsonDecode` 解出的是**字符串**不是数组
+  → 我判 `is List` 失败 → 返回空表 ⇒ "元素有、地址没有"；
+- 反过来 JS 段给的 HTML 也因为引号成了 `\"` → 正则 `src\s*=\s*["']` 一律匹配不到。
+
+**根因**：同一个"取值"语义在四个地方各写了一份解析（target 里三份 + 诊断里一份），
+彼此对转义的处理还不一样。
+
+### 修法
+
+- 引擎里加**唯一**的解析器 `parseComicJsValue` / `comicAttrList` / `comicText`：
+  循环解 JSON（最多三层），字符串解到不是字符串为止；数组/数字/文本都能吃；
+  两种平台（Android 编码过 / iOS 直接给原值）**都兼容**。
+- target 的 `countOf` / `attrOf` / `attrsOf` / `pageTitle` / `sampleHtml` 全部改走它；
+  诊断里的 `_decodeJsonString` 也让它代理 —— 解析只剩一处。
+- **片段不再删引号**：`src="…"` 比 `src=…` 有用得多（失败诊断就是给人看的）。
+
+### 用例（新增 6 条；漫画相关合计 77 条）
+
+含"被转义过的数组/HTML"、"没转义的也要能吃"、"空值不许被编造成地址"、
+"多一层引号的数字也读成数字"、"片段里引号必须还原"，以及一条端到端：
+**JS 段返回被转义的 HTML 时仍要能抠出图链**。

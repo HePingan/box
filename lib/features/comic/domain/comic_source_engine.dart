@@ -10,6 +10,8 @@
 //     让"规则跑不动"当场暴露，而不是悄悄返回空。
 library;
 
+import 'dart:convert';
+
 /// 注入页面的引擎源码。用 `legadoExtract(rule)` 取数。
 const String kComicSourceEngineJs = r'''
 window.__comicSourceEngine = (function () {
@@ -174,6 +176,55 @@ String buildComicAttrsScript(String css, String attr) =>
     'javascript:(function(){ try { var out=[]; var n=document.querySelectorAll(${_jsString(css)}); '
     'for (var i=0;i<n.length;i++){ var v=n[i].getAttribute(${_jsString(attr)}); '
     'if (v) { out.push(String(v)); } } return JSON.stringify(out); } catch (e) { return "[]"; } })()';
+
+/// 把 WebView 回来的值解成"真正的文本 / 列表 / 数字"。
+///
+/// **为什么需要这个**：Android 的 `runJavaScriptReturningResult` 会把结果**再 JSON 编码
+/// 一层** —— 字符串里的 `<` 变 `\u003C`、`"` 变 `\"`；iOS 则直接给原值。
+/// 不处理这层转义，就会出现"元素里明明有地址，我却读出空"（真机上正是如此：
+/// `JSON.stringify` 出来的数组因为引号被转义而解不出来）。
+///
+/// 返回：`null`（取不到）/ 数字 / 列表 / 字符串（已还原转义）。
+Object? parseComicJsValue(String raw) {
+  var t = raw.trim();
+  for (var i = 0; i < 3; i++) {
+    if (t.isEmpty || t == 'null' || t == 'undefined') return null;
+    Object? v;
+    try {
+      v = jsonDecode(t);
+    } catch (_) {
+      // 不是合法 JSON：当普通文本（页面里直接取值的情况）
+      return t;
+    }
+    if (v is String) {
+      t = v.trim(); // 再解一层（Android 的转义就是这么来的）
+      continue;
+    }
+    return v;
+  }
+  return t;
+}
+
+/// 事件列表式的解析：`["a","b"]` / 被转义过的 / 单个字符串 都能吃。
+List<String> comicAttrList(String raw) {
+  final v = parseComicJsValue(raw);
+  if (v is List) {
+    return v
+        .map((e) => e?.toString() ?? '')
+        .where((e) => e.trim().isNotEmpty)
+        .toList();
+  }
+  if (v is String && v.trim().isNotEmpty) return [v.trim()];
+  return const [];
+}
+
+/// 文本式的解析（页面标题 / 地址 / HTML 片段）。
+String? comicText(String raw) {
+  final v = parseComicJsValue(raw);
+  if (v == null) return null;
+  final t = (v is String ? v : v.toString()).trim();
+  return t.isEmpty || t == 'null' ? null : t;
+}
 
 /// 构造"取某个 CSS 命中的第一个元素的外层 HTML（截断成一行）"的 JS。
 ///

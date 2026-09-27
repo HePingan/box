@@ -8,7 +8,6 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -117,46 +116,32 @@ class WebViewComicSourceTarget implements ComicSourceTarget {
 
   @override
   Future<String> pageTitle() async {
-    final raw = await evalRaw('javascript:document.title');
-    return raw.replaceAll('"', '').trim();
+    // 别用 replaceAll 删引号：Android 会把 `<` 之类转义（\u003C），得按 JSON 解层再还原。
+    return comicText(await evalRaw('javascript:document.title')) ?? '';
   }
 
   @override
   Future<int> countOf(String css) async {
-    final raw = await evalRaw(buildComicCountScript(css));
-    final t = raw.replaceAll('"', '').trim();
-    return int.tryParse(t) ?? 0;
+    final v = parseComicJsValue(await evalRaw(buildComicCountScript(css)));
+    if (v is num) return v.toInt();
+    return int.tryParse(v?.toString() ?? '') ?? 0;
   }
 
   @override
-  Future<String?> attrOf(String css, String attr) async {
-    final raw = await evalRaw(buildComicAttrScript(css, attr));
-    final t = raw.replaceAll('"', '').trim();
-    return t.isEmpty ? null : t;
-  }
+  Future<String?> attrOf(String css, String attr) async =>
+      comicText(await evalRaw(buildComicAttrScript(css, attr)));
 
   @override
   Future<List<String>> attrsOf(String css, String attr) async {
     final raw = await evalRaw(buildComicAttrsScript(css, attr));
-    final t = raw.trim();
-    if (t.isEmpty || t == 'null' || t == '"null"') return const [];
-    try {
-      final decoded = jsonDecode(t.replaceAll(r'\"', '"'));
-      if (decoded is List) {
-        return decoded.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
-      }
-    } catch (_) {
-      // 解析不了就返回空表：由调用方按"取不到"如实说明，不编造。
-    }
-    return const [];
+    // 转义由 parseComicJsValue 统一还原（Android 会再编码一层）。
+    return comicAttrList(raw);
   }
 
   @override
   Future<String?> sampleHtml(String css) async {
-    final raw = await evalRaw(buildComicSampleScript(css));
-    final t = raw.replaceAll(r'"', '"').trim();
-    if (t.isEmpty || t == 'null' || t == '"null"') return null;
-    return t.replaceAll('"', '').trim();
+    // 不要把引号删掉 —— 片段是给人看的，`src="…"` 比 `src=…` 有用得多。
+    return comicText(await evalRaw(buildComicSampleScript(css)));
   }
 
   @override

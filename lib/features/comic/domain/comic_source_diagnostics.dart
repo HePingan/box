@@ -767,7 +767,9 @@ String unescapeJsonString(String s) {
 /// 引擎返回的是 JSON 字符串；这里尽量宽容地取出 text 字段或原样返回。
 Object? _decodeJsonString(String raw) {
   final t = raw.trim();
-  if (!t.startsWith('{') && !t.startsWith('"')) return t;
+  // 字符串/数组/数字一律交给引擎里那个**唯一**的解析器
+  // （Android 的 runJavaScriptReturningResult 会再 JSON 编码一层，这里不能再各写一份）。
+  if (!t.startsWith('{')) return parseComicJsValue(t);
   if (t.startsWith('"') && t.endsWith('"')) {
     return unescapeJsonString(t.substring(1, t.length - 1));
   }
