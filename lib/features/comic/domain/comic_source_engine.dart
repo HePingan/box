@@ -38,7 +38,8 @@ window.__comicSourceEngine = (function () {
     if (!ok) { return { css: '', index: index, selCount: 0, ok: false }; }
     if (first === null && extras.length) { first = extras.shift(); }
     if (first === null || first === '') { return { css: '', index: index, selCount: 0, ok: false }; }
-    var css = type === 'tag' ? first : (type === 'id' ? '#' + first : '.' + first);
+    // type === null = 裸标签名开头（amp-img / a）→ 按**标签**算，不是类。
+    var css = type === 'id' ? '#' + first : (type === 'class' ? '.' + first : first);
     extras.forEach(function (c) { css += '.' + c; });
     return { css: css, index: index, selCount: 1, ok: true };
   }
@@ -113,22 +114,24 @@ window.__comicSourceEngine = (function () {
         nodes = nodes.slice(Number(im[1]), Number(im[1]) + 1);
         continue;
       }
-      var built = buildCss(step.split(/\s+/));
-      if (built.ok && built.selCount > 0) {
-        nodes = descend(nodes, built.css);
-        if (built.index !== null) { nodes = nodes.slice(built.index, built.index + 1); }
-        continue;
-      }
-      // 与 Dart 侧 parseComicRule(valueRule: true) 对齐：取值名、或写在**最后**的裸 token
-      // 才算取值（`text` 与 `amp-img` 长得一样，差别就在这两条上）。
+      // ⚠️ 取值步必须**先**判、再判选择器（顺序反过来就会把 `href` 当类选择器
+      // `.href` 去找，最后报"没有取值步" —— 真机上就是这么踩的）。
+      // 判据：单 token 且（是取值名 或 写在最后一段）。
+      var toks = step.split(/\s+/).filter(function (t) { return t; });
       var isLastStep = i === steps.length - 1;
-      if (step.split(/\s+/).length === 1 && /^[A-Za-z][A-Za-z0-9_-]*$/.test(step) &&
+      if (toks.length === 1 && /^[A-Za-z][A-Za-z0-9_-]*$/.test(step) &&
           (VALUE_HOLDERS.indexOf(step) >= 0 || isLastStep)) {
         values = nodes.map(function (n) {
           if (step === 'text') { return (n.innerText || n.textContent || '').trim(); }
           if (step === 'html') { return n.innerHTML || ''; }
           return n.getAttribute ? (n.getAttribute(step) || '') : '';
         }).filter(function (v) { return v !== ''; });
+        continue;
+      }
+      var built = buildCss(toks);
+      if (built.ok && built.selCount > 0) {
+        nodes = descend(nodes, built.css);
+        if (built.index !== null) { nodes = nodes.slice(built.index, built.index + 1); }
         continue;
       }
       return { error: '不认识的规则段: ' + step };

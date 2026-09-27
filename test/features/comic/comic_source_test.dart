@@ -178,6 +178,28 @@ void main() {
       expect(script, contains('.a b'));
     });
 
+    test('取值步必须先判、再判选择器（顺序反了会把 href 当类选择器 .href 找）', () {
+      // 真机上就是这么踩的：bookUrl 规则 `…@tag.a@href` 报"没有取值步"。
+      // 顺序是这段 JS 的正确性核心，所以锁在源码里，不只是锁行为。
+      final valueCheck = kComicSourceEngineJs.indexOf('VALUE_HOLDERS.indexOf(step)');
+      final selectorCheck = kComicSourceEngineJs.indexOf('var built = buildCss(toks);');
+      expect(valueCheck, greaterThan(0), reason: '要在引擎里找到取值判断');
+      expect(selectorCheck, greaterThan(0), reason: '要在引擎里找到选择器判断');
+      expect(
+        valueCheck,
+        lessThan(selectorCheck),
+        reason: '取值判断必须写在选择器判断前面',
+      );
+    });
+
+    test('裸 token 开头按标签算，不是按类算', () {
+      expect(
+        kComicSourceEngineJs,
+        contains("type === 'id' ? '#' + first : (type === 'class' ? '.' + first : first)"),
+        reason: '裸标签名（amp-img）不能变成 .amp-img',
+      );
+    });
+
     test('字符串转义覆盖引号、反斜杠、换行与控制字符', () {
       expect(jsonEncodeJs('a"b'), r'"a\"b"');
       expect(jsonEncodeJs(r'a\b'), r'"a\\b"');

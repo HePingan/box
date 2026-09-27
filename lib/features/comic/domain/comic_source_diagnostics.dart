@@ -456,7 +456,8 @@ String _zeroHitNote({
   final hint = t.isEmpty
       ? '（页面标题读不到）'
       : t.contains('502') || t.toLowerCase().contains('bad gateway')
-          ? '（页面是 502 Bad Gateway，站点这一路不可达）'
+          ? '（页面是 502 Bad Gateway —— 站点这一侧的上游挂了：实测三个镜像都一样，'
+              '换网络/换手机也一样，不是这台手机的问题）'
           : t.contains('403')
               ? '（被站点挡了，403）'
               : t.contains('验证') || t.toLowerCase().contains('challenge')
