@@ -7,6 +7,7 @@ import 'package:box/features/comic/domain/comic_library_store.dart';
 import 'package:box/features/comic/domain/comic_reader_state.dart';
 import 'package:box/features/comic/infrastructure/comic_importer_widget.dart';
 import 'package:box/features/comic/presentation/comic_reader_page.dart';
+import 'package:box/features/comic/presentation/comic_source_check_page.dart';
 
 /// 书架一行的展示数据：漫画本体 + 它的真实阅读进度（没读过就是 null）。
 class _ShelfEntry {
@@ -120,6 +121,14 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
         title: const Text('漫画收藏'),
         actions: [
           IconButton(
+            tooltip: '漫画源自检',
+            icon: const Icon(Icons.health_and_safety_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ComicSourceCheckPage()),
+            ),
+          ),
+          IconButton(
             tooltip: '导入漫画',
             icon: const Icon(Icons.add),
             onPressed: _importFlow,
@@ -174,7 +183,8 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 32),
             child: Text(
-              '支持导入本地 CBZ / ZIP 文件或图片文件夹。\n在线漫画源请到扩展页安装。',
+              '支持导入本地 CBZ / ZIP 文件或图片文件夹。\n'
+              '在线漫画源还没接入 —— 右上角「源自检」可以看看内置源在这台手机上通不通。',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
