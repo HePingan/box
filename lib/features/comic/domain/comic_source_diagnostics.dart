@@ -766,12 +766,13 @@ String unescapeJsonString(String s) {
 
 /// 引擎返回的是 JSON 字符串；这里尽量宽容地取出 text 字段或原样返回。
 Object? _decodeJsonString(String raw) {
-  final t = raw.trim();
-  // 字符串/数组/数字一律交给引擎里那个**唯一**的解析器
-  // （Android 的 runJavaScriptReturningResult 会再 JSON 编码一层，这里不能再各写一份）。
-  if (!t.startsWith('{')) return parseComicJsValue(t);
-  if (t.startsWith('"') && t.endsWith('"')) {
-    return unescapeJsonString(t.substring(1, t.length - 1));
+  // 这里是「JSON **文本**」解码，与引擎里的 parseComicJsValue（「取值」解码）**不是一回事**，
+  // 别合并：引擎脚本用 JSON.stringify 返回 JS 字符串，Android 会把整串再编码一层，
+  // 所以这里只需解**一层**，解完仍要当文本去抠字段。若一路解到底，
+  // `{"values":[…]}` 会变成 Map，按文本写的抠取就全落空（真机上回归过一次）。
+  var t = raw.trim();
+  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
+    t = unescapeJsonString(t.substring(1, t.length - 1)).trim();
   }
   final m = RegExp(r'"text"\s*:\s*"(.*)"\s*}', dotAll: true).firstMatch(t);
   if (m != null) return unescapeJsonString(m.group(1)!);

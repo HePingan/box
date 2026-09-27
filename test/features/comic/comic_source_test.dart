@@ -111,20 +111,30 @@ class _FakeTarget implements ComicSourceTarget {
       final rule = m.group(1)!.replaceAll(r'\"', '"');
       // 计数脚本（`…@href` 这种是页面里直取，这里按 values 提供）
       final list = values[rule];
-      if (list == null) return '{"values":[]}';
-      return '{"values":[${list.map((v) => '"${v.replaceAll('"', r'\"')}"').join(',')}]}';
+      if (list == null) return androidEncode('{"values":[]}');
+      return androidEncode(
+        '{"values":[${list.map((v) => '"${v.replaceAll('"', r'\"')}"').join(',')}]}',
+      );
     }
     // JS 段：原样返回（模拟 Android 的真实返回串，含它的 JSON 转义）
     if (jsRawResult != null) return jsRawResult!;
     for (final entry in jsText.entries) {
-      if (script.contains(entry.key)) return '{"text":${_json(entry.value)}}';
+      if (script.contains(entry.key)) {
+        return androidEncode('{"text":${_json(entry.value)}}');
+      }
     }
-    return '{"text":""}';
+    return androidEncode('{"text":""}');
   }
 
   static String _json(String s) =>
       '"${s.replaceAll(r'\', r'\\').replaceAll('"', r'\"').replaceAll('\n', r'\n')}"';
 }
+
+/// 模拟 Android 的返回：WebView 会把 JS 返回的**字符串**再 JSON 编码一层
+/// （引号变 \"、`<` 变 \u003C）。假目标必须按这个形状返回，否则测的是"我以为的形状"。
+String androidEncode(String jsonText) => jsonEncode(jsonText)
+    .replaceAll('<', r'\u003C')
+    .replaceAll('>', r'\u003E');
 
 /// 内置书源（顶层用例用；`自检流程` 组里另有一份局部写法）。
 ComicSource seedSource() => ComicSource.tryParse(kSeedComicSourceJson)!;

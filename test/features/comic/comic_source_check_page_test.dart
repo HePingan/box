@@ -9,6 +9,8 @@ import 'package:box/features/comic/domain/comic_source_diagnostics.dart';
 import 'package:box/features/comic/domain/sources/seed_comic_source.dart';
 import 'package:box/features/comic/presentation/comic_source_check_page.dart';
 import 'package:flutter/material.dart';
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeTarget implements ComicSourceTarget {
@@ -43,7 +45,9 @@ class _FakeTarget implements ComicSourceTarget {
   Future<String?> sampleHtml(String css) async => null;
 
   @override
-  Future<String> evalRaw(String script) async => '{"values":[]}';
+  Future<String> evalRaw(String script) async =>
+      // 与真机同形状：Android 会把 JS 返回的字符串再编码一层。
+      jsonEncode('{"values":[]}');
 }
 
 /// 判"自检跑完了"要看**按钮**回到「开始自检」（跑的时候是「自检中…」）。
