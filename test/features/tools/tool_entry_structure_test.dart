@@ -171,9 +171,10 @@ void main() {
     testWidgets('未接线条目默认收起，不占首屏', (tester) async {
       await _pumpToolPage(tester);
 
-      // 「每日早报」「在线翻译」属于旧结构里默认展开的「日常工具」分类，
+      // 「每日早报」属于旧结构里默认展开的「日常工具」分类，
       // 拿它们才能证明折叠区真的生效 —— 只挑本来就折叠的分类等于不测。
-      for (final name in ['每日早报', '在线翻译', '扬声器清灰', '舔狗日记', '扫雷']) {
+      // （原来是拿「在线翻译」当例子，它作为重复条目已随 2026-09-27 的清单修正删除。）
+      for (final name in ['每日早报', '菜谱大全', '扬声器清灰', '舔狗日记', '扫雷']) {
         expect(isToolAvailable(name), isFalse, reason: '$name 应是未接线条目');
         expect(
           find.text(name),

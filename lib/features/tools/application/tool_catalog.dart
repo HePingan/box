@@ -145,6 +145,8 @@ const Map<String, ToolTarget> kToolTargets = {
   '进制转换': LocalToolTarget('radix'),
   '大小写转换': LocalToolTarget('case_convert'),
   '随机密码': LocalToolTarget('password_gen'),
+  // 2026-09-27：BMI 面板与 domain 早已实现，只差这张表里的一条（见 registry 里的更正注释）。
+  'BMI计算': LocalToolTarget('bmi'),
 
   // ── 纯本地工具（批次 2，文本 / 编码 7 个）──
   'JSON格式化': LocalToolTarget('json'),
@@ -261,10 +263,8 @@ List<ToolCategory> createDefaultToolCategories() {
         '每日英语',
         '央视新闻',
         '步数修改',
-        '在线翻译',
         '菜谱大全',
         '全国降水量',
-        '历史上的今天',
         '节假日查询',
         '微博热搜',
         '知乎热榜',

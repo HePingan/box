@@ -48,11 +48,17 @@ final Map<String, LocalToolDef> kLocalTools = {
     icon: Icons.swap_horiz_rounded,
     builder: (_) => const _UnitConvertBody(),
   ),
-  // 注意：没有 'bmi' —— 目录里不存在「BMI计算」这个条目。用户原则是
-  // 「目录是全量清单，分类列表不得随意增删条目」，所以宁可先不接，也不
-  // 自造一个目录里没有的入口。domain 层的 bmiValue/bmiCategory 和
-  // BmiPanelBody 都已实现并通过单测，等哪天目录里加了条目，把 id 填回
-  // 来即可（配一条 kToolTargets 的 'BMI计算': LocalToolTarget('bmi')）。
+  // 注意（2026-09-27 更正）：这条注释曾写着「目录里不存在「BMI计算」这个条目」，
+  // 据此把已实现的能力一直摆在「计划中」。实际 `tool_catalog.dart` 的「计算工具」
+  // 分类里**一直有这个条目**，于是用户在 App 里看到「计划中」，而面板与 domain
+  // 早就写好了 —— 清单与代码脱节的一类典型。接线条件早该满足。
+  'bmi': LocalToolDef(
+    id: 'bmi',
+    title: 'BMI 计算',
+    subtitle: '体重身高算体质指数，附中国成人分级',
+    icon: Icons.monitor_weight_outlined,
+    builder: (_) => const BmiPanelBody(),
+  ),
   'mortgage': LocalToolDef(
     id: 'mortgage',
     title: '房贷计算器',
