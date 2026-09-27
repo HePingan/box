@@ -17,6 +17,7 @@ import 'comic_source_diagnostics.dart'
         openComicWithFallback;
 import 'dart:convert';
 
+import 'comic_html_engine.dart';
 import 'comic_json_rules.dart';
 import 'comic_source_engine.dart';
 import 'comic_source_diagnostics.dart' show ComicNavOutcome;
@@ -113,43 +114,120 @@ class ComicOnlineService {
 
   final Duration pollInterval;
 
+  /// 上一次取数**走的是哪条路**（快路 = 取 HTML 文本解析 / 老路 = 打开页面渲染）。
+  /// 界面与自检可以据此说清楚"为什么慢"。
+  String lastPath = '';
+
+  /// 快路没走通时的原因（为空表示快路成功或没试）。
+  String? lastPathNote;
+
   /// 搜索：返回书列表（书名/作者/封面/书链）。
   Future<List<ComicSearchHit>> search(String key) async {
     final url = source.searchUrlFor(key);
     if (url == null) {
       throw ComicProbeException('这个书源没给搜索地址（searchUrl 为空），没法搜');
     }
-    await _open(url, what: '搜索页');
-
     final card = source.searchRules['bookList'] ?? '';
     if (card.trim().isEmpty) {
       throw ComicProbeException('书源没给 bookList 规则，取不到卡片');
     }
-    await _waitForCount(card, listTimeout);
-    final names = await _perElement(card, source.searchRules['name'] ?? '');
-    final links = await _perElement(card, source.searchRules['bookUrl'] ?? '');
-    final covers = await _perElement(card, source.searchRules['coverUrl'] ?? '');
-    final authors = await _perElement(card, source.searchRules['author'] ?? '');
-    if (links.every((l) => l.trim().isEmpty)) {
-      throw ComicProbeException('卡片取到了，但书链一条都没取到（站点可能改版）');
+
+    // 快路：数据本来就在 HTML 里 → 取文本直接解析（不用打开页面、不用等渲染）
+    try {
+      await _ensureOnSite();
+    } on ComicProbeException catch (e) {
+      // 连站点都进不去：按"搜索页打不开"报，并把每条尝试带上
+      throw ComicProbeException('搜索页打不开：$e');
+    }
+    final html = await _tryHtml(url);
+    if (html != null) {
+      final hits = _buildHits(
+        names: comicHtmlPerElement(parseComicHtml(html), card, source.searchRules['name'] ?? ''),
+        links: comicHtmlPerElement(parseComicHtml(html), card, source.searchRules['bookUrl'] ?? ''),
+        covers: comicHtmlPerElement(parseComicHtml(html), card, source.searchRules['coverUrl'] ?? ''),
+        authors: comicHtmlPerElement(parseComicHtml(html), card, source.searchRules['author'] ?? ''),
+      );
+      if (hits.isNotEmpty) {
+        lastPath = '快路（取 HTML 文本解析）';
+        return hits;
+      }
+      lastPathNote = '${lastPathNote ?? ''}取到的 HTML 里没解析出卡片'.trim();
     }
 
+    // 老路：打开页面、等渲染、在 DOM 里查
+    lastPath = '老路（打开页面渲染后取）';
+    await _open(url, what: '搜索页');
+    await _waitForCount(card, listTimeout);
+    final hits = _buildHits(
+      names: await _perElement(card, source.searchRules['name'] ?? ''),
+      links: await _perElement(card, source.searchRules['bookUrl'] ?? ''),
+      covers: await _perElement(card, source.searchRules['coverUrl'] ?? ''),
+      authors: await _perElement(card, source.searchRules['author'] ?? ''),
+    );
+    if (hits.isEmpty) {
+      throw ComicProbeException('卡片取到了，但书链一条都没取到（站点可能改版）');
+    }
+    return hits;
+  }
+
+  /// 把四条字段拼成结果（快路与老路共用一份，避免两处各自演化）。
+  ///
+  /// 按序号配对：**共 1 条时对不齐的数据宁可丢掉，也不张冠李戴**。
+  List<ComicSearchHit> _buildHits({
+    required List<String> names,
+    required List<String> links,
+    required List<String> covers,
+    required List<String> authors,
+  }) {
     final out = <ComicSearchHit>[];
     for (var i = 0; i < links.length; i++) {
       final link = links[i].trim();
-      if (link.isEmpty) continue; // 共 1 条时对不齐的数据宁可丢掉，也不张冠李戴
-      final name = _at(names, i);
-      final cover = _at(covers, i);
+      if (link.isEmpty) continue;
       out.add(
         ComicSearchHit(
-          name: name ?? '（无书名）',
+          name: _at(names, i) ?? '（无书名）',
           bookUrl: source.absolute(link),
           author: _at(authors, i),
-          cover: cover == null ? null : source.absolute(cover),
+          cover: _absoluteOrNull(_at(covers, i)),
         ),
       );
     }
     return out;
+  }
+
+  /// 相对地址补成绝对；空/ null 就给 null（不拼半个地址）。
+  String? _absoluteOrNull(String? raw) {
+    final v = raw?.trim() ?? '';
+    return v.isEmpty ? null : source.absolute(v);
+  }
+
+  /// 把 WebView 停在站点上（快路要**同域**发请求才带站点 cookie；机房 IP 直连是 403）。
+  Future<void> _ensureOnSite() async {
+    final cur = await target.currentUrl();
+    final hosts = comicMirrorCandidates(source, source.baseUrl);
+    if (hosts.any((h) => cur.startsWith(h))) return;
+    await _open(source.baseUrl, what: '站点首页');
+  }
+
+  /// 取一个地址的 HTML 文本；取不到就返回 null 并把原因记在 [lastPathNote]。
+  Future<String?> _tryHtml(String url) async {
+    try {
+      final body = await target.fetchInPage(url, headers: _headers(), timeout: openTimeout);
+      if (body.trim().isEmpty) {
+        lastPathNote = '取回来的 HTML 是空的';
+        return null;
+      }
+      final head = body.trimLeft();
+      if (!head.startsWith('<')) {
+        lastPathNote = '取回来的不是网页（开头：${_head(body)}）';
+        return null;
+      }
+      lastPathNote = null;
+      return body;
+    } on ComicProbeException catch (e) {
+      lastPathNote = e.message;
+      return null;
+    }
   }
 
   /// 分类列表：跑源里 `exploreUrl` 的 JS（必须在**站点自己的页面**上跑）。
@@ -263,22 +341,106 @@ class ComicOnlineService {
 
   /// 详情 + 章节目录。
   Future<ComicBookDetail> bookInfo(String bookUrl) async {
+    // 快路：详情页的数据本来就在 HTML 里（真页面实测：目录 1212 处在 HTML 里）
+    try {
+      await _ensureOnSite();
+    } on ComicProbeException catch (e) {
+      throw ComicProbeException('详情页打不开：$e');
+    }
+    final html = await _tryHtml(bookUrl);
+    if (html != null) {
+      final doc = parseComicHtml(html);
+      final detail = _detailFromRules(
+        bookUrl: bookUrl,
+        name: comicHtmlExtract(doc, source.bookInfoRules['name'] ?? '').firstOrNull,
+        author: comicHtmlExtract(doc, source.bookInfoRules['author'] ?? '').firstOrNull,
+        cover: comicHtmlExtract(doc, source.bookInfoRules['coverUrl'] ?? '').firstOrNull,
+        intro: comicHtmlExtract(doc, source.bookInfoRules['intro'] ?? '').firstOrNull,
+        chapters: _chapterRefsFromRules(
+          titles: comicHtmlPerElement(
+            doc,
+            _tocContainerRule(),
+            source.tocRules['chapterName'] ?? '',
+          ),
+          urls: comicHtmlPerElement(
+            doc,
+            _tocContainerRule(),
+            source.tocRules['chapterUrl'] ?? '',
+          ),
+        ),
+      );
+      if (detail.name.isNotEmpty && detail.chapters.isNotEmpty) {
+        lastPath = '快路（取 HTML 文本解析）';
+        return detail;
+      }
+      lastPathNote = '${lastPathNote ?? ''}快路没解析出书名/目录'.trim();
+    }
+
+    // 老路：打开页面、等渲染、在 DOM 里查
+    lastPath = '老路（打开页面渲染后取）';
     await _open(bookUrl, what: '详情页');
+    return _detailFromRules(
+      bookUrl: bookUrl,
+      name: _firstNonNull(await _values(source.bookInfoRules['name'] ?? '')),
+      author: _firstNonNull(await _values(source.bookInfoRules['author'] ?? '')),
+      cover: _firstNonNull(await _values(source.bookInfoRules['coverUrl'] ?? '')),
+      intro: _firstNonNull(await _values(source.bookInfoRules['intro'] ?? '')),
+      chapters: await _chapters(),
+    );
+  }
 
-    final name = _firstNonNull(await _values(source.bookInfoRules['name'] ?? ''));
-    final author = _firstNonNull(await _values(source.bookInfoRules['author'] ?? ''));
-    final cover = _firstNonNull(await _values(source.bookInfoRules['coverUrl'] ?? ''));
-    final intro = _firstNonNull(await _values(source.bookInfoRules['intro'] ?? ''));
+  /// 目录容器规则：取 `tocUrl` 的**第一段选择器原文**（整条里有书源自己写的笔误段 `harf`）。
+  String _tocContainerRule() {
+    final tocRule = source.bookInfoRules['tocUrl'] ?? '';
+    final rule = firstSelectorRule(tocRule) ?? firstSelectorCss(tocRule) ?? cssFromComicRule(tocRule) ?? '';
+    if (rule.isEmpty) {
+      throw ComicProbeException('书源的 tocUrl 规则不认识：「$tocRule」');
+    }
+    return rule;
+  }
 
-    final chapters = await _chapters();
+  /// 把各字段拼成详情（快路与老路共用一份，避免两处各自演化）。
+  ComicBookDetail _detailFromRules({
+    required String bookUrl,
+    String? name,
+    String? author,
+    String? cover,
+    String? intro,
+    required List<ComicChapterRef> chapters,
+  }) {
+    final n = name?.trim() ?? '';
     return ComicBookDetail(
       bookUrl: bookUrl,
-      name: name ?? '（无书名）',
-      author: author,
-      cover: cover == null ? null : source.absolute(cover),
-      intro: intro,
+      name: n.isEmpty ? '（无书名）' : n,
+      author: _nonEmpty(author),
+      cover: _absoluteOrNull(cover),
+      intro: _nonEmpty(intro),
       chapters: chapters,
     );
+  }
+
+  /// 目录标题 + 链接按序号配对（**没有链接的那条丢掉**，不张冠李戴）。
+  List<ComicChapterRef> _chapterRefsFromRules({
+    required List<String> titles,
+    required List<String> urls,
+  }) {
+    final out = <ComicChapterRef>[];
+    for (var i = 0; i < urls.length; i++) {
+      final u = urls[i].trim();
+      if (u.isEmpty) continue;
+      out.add(
+        ComicChapterRef(
+          title: _at(titles, i) ?? '第 ${i + 1} 话',
+          url: source.absolute(u),
+        ),
+      );
+    }
+    return out;
+  }
+
+  String? _nonEmpty(String? raw) {
+    final v = raw?.trim() ?? '';
+    return v.isEmpty ? null : v;
   }
 
   /// 章节目录。容器取 `tocUrl` 规则的**第一段选择器**：
@@ -297,19 +459,7 @@ class ComicOnlineService {
     await _waitForCount(containerCss, listTimeout);
     final titles = await _perElement(containerRule, source.tocRules['chapterName'] ?? '');
     final urls = await _perElement(containerRule, source.tocRules['chapterUrl'] ?? '');
-    final out = <ComicChapterRef>[];
-    for (var i = 0; i < urls.length; i++) {
-      final u = urls[i].trim();
-      if (u.isEmpty) continue;
-      final t = _at(titles, i);
-      out.add(
-        ComicChapterRef(
-          title: t ?? '第 ${i + 1} 话',
-          url: source.absolute(u),
-        ),
-      );
-    }
-    return out;
+    return _chapterRefsFromRules(titles: titles, urls: urls);
   }
 
   /// 章节取图：返回图片地址列表（**先等"地址真的出现"**，再按书源 JS 段 → 直读属性两路取）。

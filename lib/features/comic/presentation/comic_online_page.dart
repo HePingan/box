@@ -102,6 +102,9 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
 
   /// 分类列表没取到时的说明（不静默 —— 但也不挡住搜索）。
   String? _categoryNote;
+
+  /// 这次取数走的是哪条路（快路省时间；退到老路时把原因写出来）。
+  String? _pathNote;
   ComicBookDetail? _book;
 
   /// 这本书在不在书架里（界面按实际状态显示「已在书架」）。
@@ -204,6 +207,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         _hits = hits;
         _category = null; // 搜索与分类共用这份列表；搜了就退出分类态
         _nextUrl = null;
+        _pathNote = _describePath();
         _mode = _Mode.search;
       });
     }, '正在搜索「$key」…（最多等 ${_service.openTimeout.inSeconds} 秒）');
@@ -250,6 +254,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       setState(() {
         _book = book;
         _mode = _Mode.book;
+        _pathNote = _describePath();
       });
     }, '正在打开这本书…（最多等 ${_service.openTimeout.inSeconds} 秒）');
     // 书架/进度是**装饰**：放在取数之外读，读的时候也不让页面按钮变灰。
@@ -488,6 +493,14 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             ),
           ),
         if (_categories.isNotEmpty) _categoryBar(),
+        if ((_pathNote ?? '').isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              _pathNote!,
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+          ),
         if (_error != null)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -564,6 +577,17 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       },
     ),
   );
+
+  /// 取数方式说明：快路就直说快路；退到老路时把原因带上（慢也要慢得明白）。
+  String _describePath() {
+    final path = _service.lastPath;
+    final note = _service.lastPathNote;
+    if (path.isEmpty) return '';
+    if (path.contains('快路')) return '取数方式：取 HTML 文本解析（快路）';
+    return note == null || note.isEmpty
+        ? '取数方式：$path'
+        : '取数方式：$path —— 快路没通：$note';
+  }
 
   /// 转圈**必须**带上"在做什么、最多等多久"；再久一点就提示站点可能不可达。
   Widget _busyView() => Center(

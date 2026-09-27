@@ -25,9 +25,9 @@ class FakeComicTarget implements ComicSourceTarget {
     this.attrs = const {},
     this.counts = const {},
     this.hrefs = const {},
-    this.responses = const {},
+    Map<String, String> responses = const {},
     this.failOpen = false,
-  });
+  }) : responses = {...responses}; // 可变副本：用例可以后面再补响应
 
   /// key: `卡片规则|字段规则` → 每卡片的值。
   final Map<String, List<String>> perElement;

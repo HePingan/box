@@ -52,7 +52,9 @@ void main() {
       expect(hits[1].bookUrl, contains('haizeiwangyellow'));
       expect(hits[1].cover, contains('b.jpg'));
       // 去重前缀那条规则（书源里 bookUrl 自带卡片选择器）必须仍然取到值
-      expect(fake.opened.single, contains('/search?q='));
+      // 假目标不给 HTML（fetchInPage 抛错）⇒ 快路走不通，退到老路：打开搜索页取
+      expect(fake.opened.first, source.baseUrl, reason: '快路要先把 WebView 停在站点上');
+      expect(fake.opened, anyElement(contains('/search?q=')));
     });
 
     test('书链为空的条目宁可丢掉，也不张冠李戴', () async {
@@ -350,6 +352,113 @@ void main() {
           ),
         ),
       );
+    });
+  });
+
+  group('快路：取 HTML 文本直接解析（不开页面、不等渲染）', () {
+    // 注意：规则是 `class.a b`，HTML 的 class 属性只写类名（真页面形状）
+    const card =
+        'class.comics-card pure-u-1-2 pure-u-sm-1-2 pure-u-md-1-4 pure-u-lg-1-6';
+    const cardClasses =
+        'comics-card pure-u-1-2 pure-u-sm-1-2 pure-u-md-1-4 pure-u-lg-1-6';
+    const html = '''
+<html><body>
+<div class="$cardClasses"><a href="/comic/haizeiwang" title="海贼王"><amp-img src="https://c/a.jpg"></amp-img></a>
+  <div class="comics-card__title text-truncate">海贼王</div>
+  <div class="tags text-truncate">尾田荣一郎</div></div>
+<div class="$cardClasses"><a href="/comic/yellow" title="海贼王yellow"><amp-img src="https://c/b.jpg"></amp-img></a>
+  <div class="comics-card__title text-truncate">海贼王yellow</div></div>
+</body></html>''';
+
+    test('搜索：HTML 文本里就能解析出卡片 → 不打开搜索页', () async {
+      final fake = FakeComicTarget();
+      final url = source.searchUrlFor('海贼')!;
+      fake.responses[url] = html;
+      final service = ComicOnlineService(
+        target: fake,
+        source: source,
+        listTimeout: const Duration(milliseconds: 20),
+      );
+
+      final hits = await service.search('海贼');
+      expect(hits.length, 2);
+      expect(hits[0].name, '海贼王');
+      expect(hits[0].cover, 'https://c/a.jpg');
+      expect(hits[1].name, '海贼王yellow');
+      expect(service.lastPath, contains('快路'));
+      // 关键：**没有打开搜索页**（只把 WebView 停在站点上）
+      expect(fake.opened, isNot(anyElement(contains('/search?q='))));
+      expect(fake.fetched.single, url);
+    });
+
+    test('快路拿到的 HTML 里没有卡片 → 退回老路（并记下原因）', () async {
+      final fake = FakeComicTarget(
+        perElement: {
+          '$card|${source.searchRules['name']}': ['海贼王'],
+          '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
+        },
+      );
+      fake.responses[source.searchUrlFor('海贼')!] = '<html><body>没有卡片</body></html>';
+      final service = ComicOnlineService(
+        target: fake,
+        source: source,
+        listTimeout: const Duration(milliseconds: 20),
+      );
+
+      final hits = await service.search('海贼');
+      expect(hits.single.name, '海贼王');
+      expect(service.lastPath, contains('老路'));
+      expect(service.lastPathNote, contains('没解析出卡片'));
+    });
+
+    test('详情：HTML 文本里就能解析出书名/作者/目录', () async {
+      const toc =
+          'pure-u-1-1 pure-u-sm-1-2 pure-u-md-1-3 pure-u-lg-1-4 comics-chapters';
+      const detailHtml = '''
+<html><body>
+<div class="comics-detail__title">航海王</div>
+<div class="comics-detail__author">尾田荣一郎</div>
+<amp-img src="https://c/cover.jpg"></amp-img>
+<div class="$toc"><a href="/user/page_direct?chapter_slot=1186"><div><span>第1186话 再一次</span></div></a></div>
+<div class="$toc"><a href="/user/page_direct?chapter_slot=1185"><div><span>第1185话 伙伴</span></div></a></div>
+</body></html>''';
+      final fake = FakeComicTarget();
+      fake.responses['https://cn.baozimhcn.com/comic/x'] = detailHtml;
+      final service = ComicOnlineService(
+        target: fake,
+        source: source,
+        listTimeout: const Duration(milliseconds: 20),
+      );
+
+      final book = await service.bookInfo('https://cn.baozimhcn.com/comic/x');
+      expect(book.name, '航海王');
+      expect(book.author, '尾田荣一郎');
+      expect(book.chapters.length, 2);
+      expect(book.chapters.first.title, '第1186话 再一次');
+      expect(book.chapters.first.url, contains('chapter_slot=1186'));
+      expect(service.lastPath, contains('快路'));
+      expect(fake.opened, isNot(anyElement(contains('/comic/x'))));
+    });
+
+    test('快路拿到的不是网页（被拦的挑战页）→ 记原因并退回老路', () async {
+      final fake = FakeComicTarget();
+      fake.responses[source.searchUrlFor('海贼')!] = '{"challenge_url":"https://x"}';
+      final service = ComicOnlineService(
+        target: fake,
+        source: source,
+        listTimeout: const Duration(milliseconds: 20),
+      );
+      await expectLater(
+        service.search('海贼'),
+        throwsA(
+          isA<ComicProbeException>().having(
+            (e) => e.message,
+            'message',
+            contains('书链一条都没取到'),
+          ),
+        ),
+      );
+      expect(service.lastPathNote, contains('不是网页'));
     });
   });
 }

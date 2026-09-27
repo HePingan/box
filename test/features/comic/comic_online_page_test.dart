@@ -424,4 +424,27 @@ void main() {
     expect(find.byType(PageView), findsNothing);
     expect(await prefs.pageTurn(), isFalse);
   });
+
+  testWidgets('取数方式要写在界面上：走快路就说快路', (tester) async {
+    final source = _seed();
+    final searchUrl = source.searchUrlFor('海贼')!;
+    const cardClasses =
+        'comics-card pure-u-1-2 pure-u-sm-1-2 pure-u-md-1-4 pure-u-lg-1-6';
+    const html =
+        '<html><body><div class="$cardClasses">'
+        '<a href="/comic/haizeiwang"><amp-img src="https://c/a.jpg"></amp-img></a>'
+        '<div class="comics-card__title text-truncate">海贼王</div></div></body></html>';
+    final target = FakeComicTarget(responses: {searchUrl: html});
+    final png = File('${Directory.systemTemp.path}/comic_online_path_${DateTime.now().microsecondsSinceEpoch}.png')
+      ..writeAsBytesSync(_pngBytes);
+
+    await tester.pumpWidget(_page(target, _FakeCache(png)));
+    await _settle(tester);
+    await tester.enterText(find.byType(TextField).first, '海贼');
+    await tester.tap(find.text('搜索'));
+    await _settle(tester);
+
+    expect(find.text('海贼王'), findsOneWidget);
+    expect(find.text('取数方式：取 HTML 文本解析（快路）'), findsOneWidget);
+  });
 }
