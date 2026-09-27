@@ -248,3 +248,49 @@ FIX-09 的占位治理用的是 `isPlaceholder = toast && payload 为空`，于�
 改完市场只剩 6 条内置模板。注意它**不等于**从用户眼前消失：插件快照是用户本地数据，
 已装过的条目仍会留在首页分区里（删目录不替用户卸载），所以撤下的收益有限。
 
+---
+
+## 十一、工具清单假缺口修复 + 网络诊断插件（2026-09-27，1.20.58/315）
+
+### A. 修掉「计划中」里其实已经有了的东西
+
+用户问「接下来可以写什么插件」时摸底发现：App 的「计划中」折叠区里混着**已经实现的能力**。
+
+| 项 | 事实（代码事实，非推断） | 处理 |
+|---|---|---|
+| **BMI 计算** | `BmiPanelBody`（`local_tool_panels.dart:506`）+ domain `bmiValue/bmiCategory`（`local_tool_math.dart:242/250`）+ 单测（`local_tool_math_test.dart` 的「BMI 计算」组）一直都在；但 `local_tools_registry.dart:51` 的注释写着「目录里不存在「BMI计算」这个条目」，而 `tool_catalog.dart:428` 明明有 → 据此把已实现的能力一直摆在「计划中」 | 接上 `'bmi'` 条目 + `kToolTargets` 一条；过期注释改成更正说明；「已实现不得标开发中」名单补上 `BMI计算` |
+| **在线翻译 / 历史上的今天** | 与已接线的「翻译」`translate`、「史上今日」`today_in_history` 是**同一能力的两条重复目录条目**（两个名字散在两处分类里） | 初次尝试指到同一面板，被仓库既有契约测试拦下（「没有两个目录条目指向同一个 API Hub 面板」）；按契约改为**同能力只留一条**：删掉这两条重复条目，能力仍可用（走已接线那条） |
+
+顺带更正两处过期注释：`local_tools_registry.dart` 那条（正文已改），以及
+`builtin_plugin_catalog.dart:26` 的「17 个内置插件」——实际早已 18，本轮加网络诊断后 **19**。
+
+### B. 网络诊断插件（新）
+
+**为什么是它**：App 此前**没有任何客户端探测能力**（全仓无 `Socket.connect`/`InternetAddress.lookup`），
+用户在路上只能看服务端探针给出的结论（`monitors.json`，且只覆盖自家两台）。补上这块 = 手机侧唯一的运维盲区。
+
+**形状**（`lib/features/extensions/plugins/net_diag/`，四层）：
+
+- `domain/net_diag_models.dart` —— 输入解析（认 `host` / `host:port` / `https://host/x` / `//host` /
+  `1.2.3.4:22` / `[::1]:443`，末尾点、大小写、带凭据都归一化；认不出返回 null，**不猜**）+ 结果模型 +
+  可复制的纯文本结论。
+- `domain/net_diag_probe.dart` —— 传输层接缝（`NetDiagTransport`，真机实现 `IoNetDiagTransport` 用 dart:io）
+  + 四项检测：域名解析 / TCP 连通 / TLS 证书（剩余天数、签发者、协商协议）/ HTTP 响应（只取响应头、不跟随跳转，
+  报告 3xx 的跳转目标）。**每项独立超时（默认 8 秒）**，一项失败不影响其它项，失败必须带原因。
+- `application/net_diag_service.dart` —— 门面 + 最近 5 次查询（本机 `shared_preferences`，零服务端）。
+- `presentation/net_diag_page.dart` —— 结果逐条冒出来、显示每项耗时、可复制结论；runtime 服务可注入（同 monitor 插件形状）。
+
+**三处如实说明（写在界面上，不藏在文档里）**：
+① 结论由手机直连得出、不经过 Box 服务器，换网络结果会变；② **不支持 ICMP ping**（Dart 发不了 ICMP），
+连通性用 TCP 连接测试代替 —— 不把「TCP 通」写成「ping 通」；③ 默认按 https:443 推断，未写明协议时界面会说明是推出来的。
+
+**验收**：
+
+- 单测 29 条（`net_diag_parse_test` 10 / `net_diag_probe_test` 13 / `net_diag_page_test` 6）：解析边界（含 `host:99999`、
+  `中文域名` 等拒绝用例）、四项的成功与失败路径（DNS 失败不拖垮其它项、连接被拒、超时、握手失败、证书 12 天内到期给提醒、
+  证书健康不给多余提醒＝控制组、证书过期判失败、明文 http 不查 TLS 且说明不适用、HTTP 404 判失败、3xx 说明跳转）、
+  失败项必须写出原因、报告文本含四项与来源说明。
+- **live 用例真跑过**（`--tags live`）：正面真连自家入口四项都出结论（含证书剩余天数、真实状态码），
+  反面真连 `127.0.0.1:9` 必须给出可读原因 —— 假传输层只能证明逻辑对，真机可用性由这条证明。
+- 接线：内置目录加 `builtin_net_diag`（工具区）+ 路由 `net_diag`/`openNetDiag`；快照测试的「不得丢失」名单同步补上。
+

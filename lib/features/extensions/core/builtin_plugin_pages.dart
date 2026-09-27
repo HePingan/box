@@ -12,6 +12,7 @@ import 'package:box/daily_news_page.dart';
 import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/extensions/plugins/github_accel/github_accel_sheet.dart';
 import 'package:box/features/extensions/plugins/monitor/monitor_page.dart';
+import 'package:box/features/extensions/plugins/net_diag/presentation/net_diag_page.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_page.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_page.dart';
 import 'package:box/features/image_generator/presentation/image_generator_page.dart';
@@ -66,6 +67,14 @@ void registerBuiltinRouteDefaults() {
   HomePluginRouteRegistry.register(
     'openServiceMonitor',
     (_) => const ServiceMonitorPage(),
+  );
+  HomePluginRouteRegistry.register(
+    'net_diag',
+    (_) => const NetDiagPage(),
+  );
+  HomePluginRouteRegistry.register(
+    'openNetDiag',
+    (_) => const NetDiagPage(),
   );
   HomePluginRouteRegistry.register(
     'server_ops',

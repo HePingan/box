@@ -44,6 +44,7 @@ void main() {
         'builtin_novel_search',
         'builtin_image_generator',
         'builtin_plugin_help',
+        'builtin_net_diag',
       ]) {
         expect(ids, contains(id), reason: '内置插件 $id 不应在拆分中丢失');
       }

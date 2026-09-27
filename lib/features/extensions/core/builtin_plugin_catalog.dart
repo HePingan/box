@@ -23,7 +23,8 @@ import 'package:box/video/video_compat_pages.dart';
 
 /// 内置插件目录（P2-2 从 home_plugin_core.dart 拆出）。
 ///
-/// 17 个内置插件的元数据 + onTap 装配入口（数量由 plugin_builtin_catalog_snapshot_test 守着）。拆分动机：core 原先同时承担
+/// 19 个内置插件的元数据 + onTap 装配入口（数量由 plugin_builtin_catalog_snapshot_test 守着）。
+/// 2026-09-27 更正：注释此前写 17，实际已是 18（本轮加网络诊断后 19）—— 数字本身也要跟着代码走。拆分动机：core 原先同时承担
 /// 注册表 / 内置目录 / 页面装配三职，胀到 1500+ 行，任何页面改路径都要动 core。
 List<HomePlugin> buildDefaultPlugins() {
   // 注册答题插件自动搜题的 MethodChannel handler
@@ -320,6 +321,22 @@ List<HomePlugin> buildDefaultPlugins() {
           context,
           MaterialPageRoute(builder: (_) => const ServerOpsPage()),
         );
+      },
+    ),
+    HomePlugin(
+      id: 'builtin_net_diag',
+      title: '网络诊断',
+      subtitle: '域名解析 / 连通性 / 证书到期 / 端口',
+      icon: Icons.network_check_rounded,
+      color: const Color(0xFF0EA5E9),
+      area: HomePluginArea.center,
+      builtIn: true,
+      sort: 26,
+      onTap: (context) async {
+        HomePluginRouteRegistry.registerDefaults();
+        final builder = HomePluginRouteRegistry.lookup('openNetDiag');
+        if (builder == null) return;
+        await Navigator.push(context, MaterialPageRoute(builder: builder));
       },
     ),
     HomePlugin(
