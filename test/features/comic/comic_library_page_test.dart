@@ -54,7 +54,9 @@ void main() {
     // 回归锁：这里以前写着"在线漫画源请到扩展页安装"—— 扩展页里根本没有漫画源可装，
     // 是"说了做不到"。现在指向真的能用的入口（源自检），不许再回到那种写法。
     expect(find.textContaining('扩展页安装'), findsNothing);
-    expect(find.textContaining('源自检'), findsWidgets);
+    // 两个入口都要指到：在线漫画（地球）与源自检（盾牌）
+    expect(find.textContaining('搜索阅读'), findsWidgets);
+    expect(find.textContaining('自检'), findsWidgets);
     expect(find.text('导入漫画'), findsOneWidget);
   });
 

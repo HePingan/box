@@ -726,8 +726,9 @@ String? _imageRuleFromContentJs(String js) {
 
 /// 从 JS 段返回的 `<img src="…">` 串里抽出图片地址。
 List<String> _imageUrlsFromJsResult(String raw) {
-  final json = _decodeJsonString(raw);
-  final text = json is String ? json : _textOf(json);
+  // 书源 JS 段的返回（`{"text":…}` / `{"error":…}`）→ 文本。
+  // 引擎报的错**抛出去**，由调用方决定"是判失败还是走兜底"，不在这里吞掉。
+  final text = comicJsSegmentText(raw);
   final out = <String>[];
   for (final m in RegExp(r'''src\s*=\s*["']([^"']+)["']''').allMatches(text)) {
     final u = m.group(1)!.trim();
@@ -735,61 +736,6 @@ List<String> _imageUrlsFromJsResult(String raw) {
   }
   return out;
 }
-
-/// JSON 字符串反转义。WebView 回来的字符串是**转义过**的（引号是 \"、换行是 \n）；
-/// 不还原的话，后面按引号匹配 `<img src="…">` 会一律匹配不到 —— 那就成了
-/// "取到 0 张图"的假结论，正好是要避免的那种假。
-String unescapeJsonString(String s) {
-  final sb = StringBuffer();
-  for (var i = 0; i < s.length; i++) {
-    final c = s[i];
-    if (c != r'\' || i + 1 >= s.length) {
-      sb.write(c);
-      continue;
-    }
-    final n = s[++i];
-    switch (n) {
-      case 'n':
-        sb.write('\n');
-      case 't':
-        sb.write('\t');
-      case 'r':
-        sb.write('\r');
-      case 'u':
-        if (i + 4 < s.length) {
-          final code = int.tryParse(s.substring(i + 1, i + 5), radix: 16);
-          if (code != null) {
-            sb.writeCharCode(code);
-            i += 4;
-            continue;
-          }
-        }
-        sb.write('u');
-      default:
-        sb.write(n);
-    }
-  }
-  return sb.toString();
-}
-
-/// 引擎返回的是 JSON 字符串；这里尽量宽容地取出 text 字段或原样返回。
-Object? _decodeJsonString(String raw) {
-  // 这里是「JSON **文本**」解码，与引擎里的 parseComicJsValue（「取值」解码）**不是一回事**，
-  // 别合并：引擎脚本用 JSON.stringify 返回 JS 字符串，Android 会把整串再编码一层，
-  // 所以这里只需解**一层**，解完仍要当文本去抠字段。若一路解到底，
-  // `{"values":[…]}` 会变成 Map，按文本写的抠取就全落空（真机上回归过一次）。
-  var t = raw.trim();
-  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
-    t = unescapeJsonString(t.substring(1, t.length - 1)).trim();
-  }
-  final m = RegExp(r'"text"\s*:\s*"(.*)"\s*}', dotAll: true).firstMatch(t);
-  if (m != null) return unescapeJsonString(m.group(1)!);
-  final e = RegExp(r'"error"\s*:\s*"(.*)"\s*}', dotAll: true).firstMatch(t);
-  if (e != null) throw ComicProbeException('JS 段出错：${e.group(1)}');
-  return t;
-}
-
-String _textOf(Object? v) => v == null ? '' : '$v';
 
 /// 用规则在页面上取值。取值失败**不抛**（返回空表），由调用方据空表说明情况；
 /// 规则本身不认识会抛，因为那是配置错误，不该被当成"站点没数据"。
@@ -804,21 +750,7 @@ Future<List<String>> _extractValues(ComicSourceTarget target, String rule) async
     return _imageUrlsFromJsResult(raw);
   }
   final raw = await target.evalRaw(buildComicRuleScript(rule));
-  return _valuesFromExtract(raw);
-}
-
-/// 解析引擎返回的 `{"values":[…]}` / `{"error":"…"}`。
-List<String> _valuesFromExtract(String raw) {
-  final decoded = _decodeJsonString(raw);
-  if (decoded is! String) return const [];
-  final t = decoded.trim();
-  final m = RegExp(r'"values"\s*:\s*\[(.*?)\]\s*}', dotAll: true).firstMatch(t);
-  if (m == null) return const [];
-  final body = m.group(1)!;
-  return RegExp(r'"((?:[^"\\]|\\.)*)"')
-      .allMatches(body)
-      .map((x) => unescapeJsonString(x.group(1)!))
-      .toList();
+  return comicValuesFromResult(raw);
 }
 
 Future<T?> _safe<T>(Future<T> Function() f) async {
@@ -827,14 +759,6 @@ Future<T?> _safe<T>(Future<T> Function() f) async {
   } catch (_) {
     return null;
   }
-}
-
-/// 自检里可以给人看的错误。
-class ComicProbeException implements Exception {
-  ComicProbeException(this.message);
-  final String message;
-  @override
-  String toString() => message;
 }
 
 /// 把取数层的异常翻成人话。

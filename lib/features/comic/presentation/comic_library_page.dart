@@ -7,6 +7,7 @@ import 'package:box/features/comic/domain/comic_library_store.dart';
 import 'package:box/features/comic/domain/comic_reader_state.dart';
 import 'package:box/features/comic/infrastructure/comic_importer_widget.dart';
 import 'package:box/features/comic/presentation/comic_reader_page.dart';
+import 'package:box/features/comic/presentation/comic_online_page.dart';
 import 'package:box/features/comic/presentation/comic_source_check_page.dart';
 
 /// 书架一行的展示数据：漫画本体 + 它的真实阅读进度（没读过就是 null）。
@@ -121,6 +122,14 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
         title: const Text('漫画收藏'),
         actions: [
           IconButton(
+            tooltip: '在线漫画（搜索/阅读）',
+            icon: const Icon(Icons.travel_explore_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ComicOnlinePage()),
+            ),
+          ),
+          IconButton(
             tooltip: '漫画源自检',
             icon: const Icon(Icons.health_and_safety_outlined),
             onPressed: () => Navigator.push(
@@ -184,7 +193,7 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
             padding: EdgeInsets.symmetric(horizontal: 32),
             child: Text(
               '支持导入本地 CBZ / ZIP 文件或图片文件夹。\n'
-              '在线漫画源还没接入 —— 右上角「源自检」可以看看内置源在这台手机上通不通。',
+              '在线漫画：点右上角「地球」图标搜索阅读；「盾牌」图标是源的自检。',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
