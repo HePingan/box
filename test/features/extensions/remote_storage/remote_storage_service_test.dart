@@ -521,6 +521,73 @@ void main() {
       expect(transport.requests.where((r) => r.method == 'PUT'), isEmpty);
     });
 
+    test('上传失败：目标原本不存在 → 清掉半成品（E1）', () async {
+      // 服务端边收边写，断开后留下的就是被截断的文件；它还在目录里、
+      // 看着像个完整文件。目标上传前不存在 = 远端此刻的同名文件只可能是我们写的。
+      var headCalls = 0;
+      transport.handler = (request) async {
+        switch (request.method) {
+          case 'HEAD':
+            headCalls += 1;
+            // 第 1 次：上传前探测（404，目标不存在）
+            // 第 2 次：失败后判定（200，PUT 已写下半截内容）
+            return headCalls == 1
+                ? headResponse(status: 404)
+                : headResponse();
+          case 'PUT':
+            return const WebdavResponse(statusCode: 507, headers: {});
+          case 'DELETE':
+            return const WebdavResponse(statusCode: 204, headers: {});
+          default:
+            return const WebdavResponse(statusCode: 200, headers: {});
+        }
+      };
+      final local = await writeLocal('big.bin', 'x' * 32);
+
+      await expectLater(
+        service.uploadFile(
+          testAccount(),
+          file: LocalUploadFile(path: local.path, name: 'big.bin', size: 32),
+          targetDir: '',
+          overwrite: false,
+        ),
+        throwsA(isA<RemoteStorageException>()),
+      );
+
+      expect(
+        transport.requests.where((r) => r.method == 'DELETE'),
+        hasLength(1),
+        reason: '半成品必须清掉，否则目录里留着一个看着完整的坏文件',
+      );
+    });
+
+    test('上传失败：目标原本有内容 → 绝不删（宁可漏掉也不误删）', () async {
+      // 覆盖模式 + 上传前目标已存在：PUT 可能一个字节都没写就失败了，
+      // 这时远端是用户的完整原文件 —— 删掉就是数据丢失。所以这条路径不清理。
+      transport.handler = (request) async => switch (request.method) {
+        'HEAD' => headResponse(), // 上传前探测：原文件在
+        'PUT' => const WebdavResponse(statusCode: 500, headers: {}),
+        _ => const WebdavResponse(statusCode: 200, headers: {}),
+      };
+      final local = await writeLocal('keep.bin', 'y' * 16);
+
+      await expectLater(
+        service.uploadFile(
+          testAccount(),
+          file: LocalUploadFile(path: local.path, name: 'keep.bin', size: 16),
+          targetDir: '',
+          overwrite: true,
+        ),
+        throwsA(isA<RemoteStorageException>()),
+      );
+
+      expect(
+        transport.requests.where((r) => r.method == 'DELETE'),
+        isEmpty,
+        reason: '目标原有内容可能完好无损，不允许顺手删',
+      );
+    });
+
     test('并发同名上传：第二个视为已存在，不静默覆盖（C7）', () async {
       // 队列现在会同时跑多个任务。`exists()` 在另一个同名上传写完之前返回 404，
       // 两个文件都会通过检查 → 后写的静默覆盖先写的。在途占位必须堵住这条路。

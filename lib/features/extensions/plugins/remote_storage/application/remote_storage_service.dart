@@ -1014,6 +1014,11 @@ class RemoteStorageService {
       }
     }
     _inFlightUploads.add(remotePath);
+    // 失败后能不能安全清理，取决于"上传前目标在不在"：只有目标原本不存在时，
+    // 远端此刻的同名文件才**只可能**是这次失败 PUT 写下的半截内容。目标原本有
+    // 内容的场合一律不删 —— PUT 可能一个字节都没写就失败了，那时远端是用户的
+    // 完整原文件，删掉就是数据丢失。
+    var targetExistedBefore = false;
     try {
       final src = File(file.path);
       if (!await src.exists()) {
@@ -1022,6 +1027,10 @@ class RemoteStorageService {
           '本地文件不存在：${file.name}',
         );
       }
+      if (overwrite) {
+        // 上一段（!overwrite）已经确认过目标不存在；覆盖模式要自己问一次。
+        targetExistedBefore = await client.exists(remotePath);
+      }
       await client.uploadFrom(
         src,
         remotePath,
@@ -1029,12 +1038,37 @@ class RemoteStorageService {
         cancel: cancel,
         throttle: _throttle,
       );
+    } catch (_) {
+      if (!targetExistedBefore) {
+        await _cleanupTornUpload(client, remotePath);
+      }
+      rethrow; // 失败/重试语义不变，仍由队列决定重试
     } finally {
       _inFlightUploads.remove(remotePath);
     }
     // 上传改变了目录内容：作废该目录缓存，避免"传完了列表里还没有"。
     invalidateListing(account, targetDir);
     return true;
+  }
+
+  /// 上传失败后的清理：删掉**确知只可能是我们写的**半成品。
+  ///
+  /// 判据很窄，宁可漏掉也不能误删：调用方必须先确认目标在上传前不存在，
+  /// 那么远端此刻若真有同名文件，内容只可能来自这次失败的 PUT（服务端边收边写，
+  /// 断开后留下的就是被截断的文件）。清理失败也不能盖住上传失败的真正原因，
+  /// 所以这里只留痕、不再抛。
+  Future<void> _cleanupTornUpload(
+    WebdavClient client,
+    String remotePath,
+  ) async {
+    try {
+      if (await client.exists(remotePath)) {
+        await client.delete(remotePath);
+        debugPrint('[remote-storage] 上传失败，已清掉半成品：$remotePath');
+      }
+    } catch (e) {
+      debugPrint('[remote-storage] 半成品清理失败（忽略，不影响报错）：$e');
+    }
   }
 
   /// 文本预览（拍板6：512KB 上限；超出显示前缀并提示）。

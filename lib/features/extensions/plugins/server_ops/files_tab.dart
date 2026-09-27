@@ -322,9 +322,13 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
           onProgress: (sent, total) {
             if (!mounted) return;
             final pct = total <= 0 ? 0 : sent * 100 ~/ total;
+            // 带字节数：只给百分比时，几十 MB 的包卡在 99% 和卡在 20% 看起来一样，
+            // 用户没法判断是"还在走"还是"卡死了"（远端存储那边的传输面板早就是这么显示的）。
             setState(
               () => _progressText =
-                  '上传中 第 ${i + 1}/${files.length} 项 $pct%',
+                  '上传中 第 ${i + 1}/${files.length} 项 '
+                  '${formatRemoteBytes(sent)} / ${formatRemoteBytes(total)}'
+                  '（$pct%）',
             );
           },
         );
@@ -669,7 +673,11 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
           onProgress: (received, total) {
             if (!mounted) return;
             final pct = total <= 0 ? 0 : received * 100 ~/ total;
-            setState(() => _progressText = '下载中 $pct%');
+            setState(
+              () => _progressText =
+                  '下载中 ${formatRemoteBytes(received)} / '
+                  '${formatRemoteBytes(total)}（$pct%）',
+            );
           },
         );
         if (!mounted) return;
