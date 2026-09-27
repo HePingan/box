@@ -19,6 +19,16 @@ class _ExplodingPersistence extends HomePluginPersistence {
   }
 }
 
+/// 读快照必炸的持久化，用来模拟"启动阶段读取异常"。
+class _ExplodingReadPersistence extends HomePluginPersistence {
+  _ExplodingReadPersistence({required super.cache});
+
+  @override
+  Future<HomePluginSnapshot> readSnapshot() async {
+    throw StateError('读取失败（测试模拟）');
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -99,6 +109,48 @@ void main() {
       persistence.lastCorruptBackupKey,
       isNull,
       reason: '没坏就别建备份键',
+    );
+  });
+
+  test('启动读快照失败：降级为默认插件但留痕（bootstrapFailed）', () async {
+    // 用户看到的是"我的插件没了"，以前日志里一个字都没有 —— 排查只能靠猜。
+    final logs = <String>[];
+    final prev = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message != null) logs.add(message);
+    };
+    addTearDown(() => debugPrint = prev);
+
+    final host = HomePluginHost(
+      persistence: _ExplodingReadPersistence(
+        cache: CacheStore.inMemory('read-boom'),
+      ),
+    );
+    await host.bootstrap();
+
+    expect(host.bootstrapFailed, isTrue, reason: '降级必须留痕');
+    expect(
+      logs.any((l) => l.contains('退回默认插件')),
+      isTrue,
+      reason: '日志里要有这条，否则等于没留痕',
+    );
+    expect(
+      host.pluginsOf(HomePluginArea.center).isNotEmpty ||
+          host.pluginsOf(HomePluginArea.recommend).isNotEmpty,
+      isTrue,
+      reason: '降级后仍要能用（不能因为读盘失败就白屏）',
+    );
+  });
+
+  test('正常启动不置位（控制组）', () async {
+    final host = HomePluginHost(
+      persistence: HomePluginPersistence(cache: CacheStore.inMemory('read-ok')),
+    );
+    await host.bootstrap();
+    expect(
+      host.bootstrapFailed,
+      isFalse,
+      reason: '控制组：没坏就不该触发降级标志，否则这个信号没有意义',
     );
   });
 }

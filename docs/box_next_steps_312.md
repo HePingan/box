@@ -41,7 +41,7 @@
 - **成本**：0.5–1 天。
 - **验收**：每条改动配"控制组"用例（先断言前提存在，再断言失败可见）；CI 数字回落基线。
 
-### B. 备份盲区：图片平台状态与旧 APK
+### B. 备份盲区：图片平台状态与旧 APK（**实施时修正：两半都已被覆盖，实际缺口是"没演练过恢复"**）
 
 - **现状**：`/home/update-server/backups/` 每天 03:20 有 `app.db` 的 gz 备份 ✅（实测今天的在）。
   但**没有**备份：
@@ -54,6 +54,17 @@
 - **收益**：把唯一一类"不可逆损失"关掉。
 - **成本**：0.5 天（含一次恢复演练）。
 - **验收**：备份产物带时间戳、`gzip -t` 通过、`python3 -m json.tool` 可解析；演练记录写进文档。
+
+> **实施时修正（2026-09-27）**：本项两半**都已被覆盖**，写稿时的判断有误：
+> - 图片平台 state：`/usr/local/sbin/box-image-platform-backup.sh`（cron 03:10）已在备份，
+>   带 gzip + JSON 双重校验、600 权限、14 天保留 → `/var/backups/box-image-platform/`；
+> - 旧 APK：`box-update-server-backup.sh`（cron 03:20）的 release tar 包含**全部 41 个条目**
+>   （含 `box-1.20.21-277.apk` 这类旧版本），保留 2 份 → `/var/backups/box-update-server/`。
+>
+> 所以真正剩下的缺口不是"没备份"，而是**从没演练过恢复** —— 一个没验证过能还原的备份等于没有。
+> **已执行（当日）**：三份备份各自还原到临时目录校验 —— ① state：`gzip -t` 通过、JSON 可解析、
+> `accounts 5 / quotas 7 / quizQuestions 3616`；② `app.db`：sqlite 可打开、`integrity_check = ok`、
+> 表 `app_release`/`audit_log` 在；③ release tar：41 条条目含多个历史 APK。演练产物用完即删。
 
 ### C. 陈旧备份清理（顺手）
 
@@ -141,3 +152,39 @@
    补这条的性价比最高（含一次恢复演练）。
 3. **组 3 的 E/F/G 要不要排？** 建议先 E 里挑一个做真 —— 市场里那 5 个占位是唯一"用户看得见"
    的欠账；F/G 看你的实际使用频率再定。
+
+---
+
+## 九、组 1 实施记录（2026-09-27）
+
+| 项 | 结果 |
+|---|---|
+| **B'（由 B 修正而来）恢复演练** | ✅ 三份备份都能还原（见上文修正块）—— 从"没演练过"变成"验证过" |
+| **C 陈旧备份清理** | ✅ `/opt/box-backend/data/` 的 7 个 `.bak*` → 保留最新 2 个 + 一个 600 权限的，删除中间 4 个，27M → 11M（先 dry 列清单、确认无引用再删） |
+| **D 巡检真机自检** | ✅ `env -i PATH=/usr/bin:/bin HOME=/root /usr/local/sbin/security-patrol.py --test` → `TEST_SENT`（飞书收到）。**顺带被它报了一条真信号**：边缘机 nginx 配置哈希变了 —— 查实是 `apply_channel_gate.py`（我们自己 C4 时的工具）改的，4 处 `auth_basic` 与两个只读闸门都在，属"正确但无害"；该巡检"一变报一次"，报完已写回新哈希，不会重复报。 |
+| **A 静默失败定向盘点** | ✅ 见下 |
+
+### A 的判定标准与结果
+
+**判据（收窄后）**：`catch` 吞掉异常 **且** 同函数里有"成功"类信号 **且** 没有留痕/理由注释 ——
+三类路径：写操作、网络传输、持久化。扫描器已入库：`tool/scan_silent_failures.py`
+（跑一次给出候选表：`文件:行 · 所在函数 · catch 体 · 成功信号`）。
+
+**结果**：全仓候选 **50 处**，逐条读高风险项后 —— **绝大多数是正当的**：
+
+- 错误写进界面状态的（`file_editor_page._save` 的 catch 里 `_error = serverOpsErrorMessage(e)`）；
+- 尽力清理 + 带理由注释 + `rethrow` 的（`server_ops_files_service` 里 MOVE 失败收拾临时文件）；
+- 读取类回默认值的（`monitor_service.cached`、`host_service.cached`、字号读取）。
+
+**真缺口 2 处（已修，都属于"降级但零痕迹"）**：
+
+1. `HomePluginHost._bootstrapInternal`：读快照 / 应用快照抛错时静默退回默认插件 ——
+   用户看到"我的插件没了"，日志里一个字都没有。现在留痕（`_logQuietly`）+ 可查标志
+   `bootstrapFailed`，配"降级留痕"与"正常启动不置位"两条用例（后者是控制组）。
+2. `loadTerminalFontSize`：存储异常与"首次安装没存过"都回默认值、无法区分。
+   现在存储异常留一行痕（`debugPrint`）。
+
+**修完复跑扫描器：50 → 48 处**（扫描器自身能证明改动生效）。
+余下 48 处已逐条判为正当，**不逐条改动** —— 为"看起来像"的问题改 48 处代码，
+只会在 diff 里制造噪声。
+

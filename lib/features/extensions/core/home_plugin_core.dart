@@ -1047,6 +1047,10 @@ class HomePluginHost {
   Future<void>? _bootFuture;
   bool _bootstrapped = false;
 
+  /// 启动时为 true 表示快照读取失败过、当前跑的是默认插件（供界面提示与测试断言）。
+  bool _bootstrapFailed = false;
+  bool get bootstrapFailed => _bootstrapFailed;
+
   ValueListenable<List<HomePlugin>> get listenable => _notifier;
 
   List<HomePlugin> get allPlugins => _sorted(_notifier.value);
@@ -1120,7 +1124,11 @@ class HomePluginHost {
       _notifier.value = _sorted(_buildDefaultPlugins());
       final snapshot = await _persistence.readSnapshot();
       _applySnapshot(snapshot);
-    } catch (_) {
+    } catch (e, st) {
+      // 降级要留痕：启动阶段读快照/应用快照失败时，用户看到的是"我的插件没了"，
+      // 但以前这里一个字都不记 —— 排查时只能靠猜。标志位供界面/测试查询。
+      _bootstrapFailed = true;
+      _logQuietly(e, st, '启动时读取插件快照失败，已退回默认插件');
       _notifier.value = _sorted(_buildDefaultPlugins());
     } finally {
       _bootstrapped = true;

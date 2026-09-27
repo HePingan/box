@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 // 服务器运维插件：「终端」页的**纯逻辑**——辅助键注入 / 字号 / 断线原因。
 //
 // 为什么单开这个文件：终端页的交互全靠 WebView，而 WebView 在单测里起不来
@@ -202,7 +203,10 @@ Future<double> loadTerminalFontSize() async {
   try {
     final prefs = await SharedPreferences.getInstance();
     return parseTerminalFontSize(prefs.getString(terminalFontSizeKey));
-  } catch (_) {
+  } catch (e) {
+    // 「没存过」走的是上面 parse(null) → 默认值这条路；走到这里说明**存储读不了**，
+    // 两者现象一样（都回默认值）但原因完全不同，所以留一行痕，别让它彻底不可见。
+    debugPrint('[server-ops] 终端字号读取失败，回默认值：$e');
     return terminalFontSizeDefault;
   }
 }
