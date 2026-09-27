@@ -25,6 +25,7 @@ class FakeComicTarget implements ComicSourceTarget {
     this.attrs = const {},
     this.counts = const {},
     this.hrefs = const {},
+    this.responses = const {},
     this.failOpen = false,
   });
 
@@ -46,6 +47,9 @@ class FakeComicTarget implements ComicSourceTarget {
   /// key: css → 链接（`a[href]` 直取）。
   final Map<String, List<String>> hrefs;
 
+  /// key: 请求地址 → 响应体（原样，未编码）。页面内请求（分类榜单一类）用。
+  final Map<String, String> responses;
+
   final bool failOpen;
 
   /// 前 N 次轮询返回命中数 0（模拟"列表还没渲染出来"）。
@@ -53,6 +57,9 @@ class FakeComicTarget implements ComicSourceTarget {
   final Map<String, int> _countPolls = {};
 
   final List<String> opened = [];
+
+  /// 在页面里**发过的请求**地址（页面内 fetch，不是打开页面）。
+  final List<String> fetched = [];
 
   @override
   Future<void> open(String url, {Map<String, String>? headers}) async {
@@ -87,6 +94,20 @@ class FakeComicTarget implements ComicSourceTarget {
 
   @override
   Future<String?> sampleHtml(String css) async => null;
+
+  @override
+  Future<String> fetchInPage(
+    String url, {
+    Map<String, String> headers = const {},
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    fetched.add(url);
+    final body = responses[url];
+    if (body == null) {
+      throw ComicProbeException('假目标没准备这个地址的响应：$url');
+    }
+    return body;
+  }
 
   @override
   Future<String> evalRaw(String script) async {

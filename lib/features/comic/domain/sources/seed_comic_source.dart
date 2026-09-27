@@ -39,6 +39,14 @@ const String kSeedComicSourceJson = r'''
     "name": "class.comics-detail__title@text",
     "tocUrl": "class.pure-u-1-1 pure-u-sm-1-2 pure-u-md-1-3 pure-u-lg-1-4 comics-chapters@tag.a@harf@class.comics-chapters__item@text"
   },
+  "ruleExplore": {
+    "author": "$.author",
+    "bookList": "$.items[*]",
+    "bookUrl": "https://cn.baozimhcn.com/comic/{{$.comic_id}}",
+    "coverUrl": "https://static-tw.baozimhcn.com/cover/{{$.topic_img}}",
+    "kind": "$.type_names",
+    "name": "$.name"
+  },
   "ruleToc": {
     "chapterList": "<js>java.t2s(result)</js>\nclass.pure-u-1-1 pure-u-sm-1-2 pure-u-md-1-3 pure-u-lg-1-4 comics-chapters",
     "chapterName": "tag.span@text",

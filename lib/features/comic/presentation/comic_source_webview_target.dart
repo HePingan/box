@@ -145,6 +145,33 @@ class WebViewComicSourceTarget implements ComicSourceTarget {
   }
 
   @override
+  Future<String> fetchInPage(
+    String url, {
+    Map<String, String> headers = const {},
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    await evalRaw(buildComicFetchStartScript(url, headers));
+    final sw = Stopwatch()..start();
+    while (sw.elapsed < timeout) {
+      final raw = await evalRaw(buildComicFetchStateScript());
+      final v = parseComicJsValue(raw);
+      final m = v is Map ? v : const {};
+      final state = m['state']?.toString() ?? '';
+      if (state == 'ok') return m['body']?.toString() ?? '';
+      if (state == 'err') {
+        throw ComicProbeException(
+          '在页面里取接口失败：${m['body']}（这样发请求被站点拒了的话，多半是它的反爬拦了）',
+        );
+      }
+      if (state == 'none') {
+        throw ComicProbeException('页面里没能发起请求（WebView 可能还没就绪）');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    throw ComicProbeException('在页面里取接口超时（等了 ${timeout.inSeconds} 秒）');
+  }
+
+  @override
   Future<String> evalRaw(String script) async {
     // 类型上不可能是 null（webview_flutter 的返回是 Object）；
     // 页面里拿到 undefined 时会变成字符串 "null"，由调用方按"取不到"处理。

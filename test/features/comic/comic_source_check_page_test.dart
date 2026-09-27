@@ -6,6 +6,7 @@
 //   ③ 跑的过程中不许出现"永远转圈"的假等待。
 import 'package:box/features/comic/domain/comic_source.dart';
 import 'package:box/features/comic/domain/comic_source_diagnostics.dart';
+import 'package:box/features/comic/domain/comic_source_engine.dart';
 import 'package:box/features/comic/domain/sources/seed_comic_source.dart';
 import 'package:box/features/comic/presentation/comic_source_check_page.dart';
 import 'package:flutter/material.dart';
@@ -43,6 +44,15 @@ class _FakeTarget implements ComicSourceTarget {
 
   @override
   Future<String?> sampleHtml(String css) async => null;
+
+  @override
+  Future<String> fetchInPage(
+    String url, {
+    Map<String, String> headers = const {},
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    throw ComicProbeException('自检流程不用在页面里发请求（$url）');
+  }
 
   @override
   Future<String> evalRaw(String script) async =>

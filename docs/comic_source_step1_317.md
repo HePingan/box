@@ -516,3 +516,47 @@ JS 段给图 / 退回属性直读 / 都取不到如实报）+ 页面 3 条（三
 ### 用例（新增 2 条；漫画相关合计 94 条）
 
 含"目录慢慢渲染出来时必须等"（假目标前两次轮询返回 0）与"规则/CSS 两种写法都认"。
+
+---
+
+## 十六、分类浏览（书源的 exploreUrl + ruleExplore，1.20.71 / 328）
+
+用户把书源原文发来后逐字段比过：我用的四段规则（搜索/详情/目录/正文）**逐字符一致**，
+16 处差异全是 ①Legado 元数据 ②`ruleExplore` + `exploreUrl`（分类浏览）。这一段之前没实现。
+
+### 书源给的是什么
+
+- `exploreUrl` 是一段 JS，生成 **26 个分类**（全部/恋爱/纯爱/…/其它），每类一个地址模板（含 `{{page}}`）
+- 地址指向的是 **JSON 接口**（`/api/bzmhq/amp_comic_list?type=…&page=…&limit=36`），不是网页
+- `ruleExplore` 用 `$` 写法：`$.items[*]`、`$.name`、`$.author`、`bookUrl` 模板 `{{$.comic_id}}`
+
+### 两件必须做对的事
+
+1. **必须在页面里发请求**：这个接口对**大机房 IP 直连是 403**（curl 实测 403 + 挑战）；
+   从站点自己的页面里 `fetch` 就带上了站点发的 cookie ⇒ **HTTP 200**。已实测：
+   `curl` 403 ✗ → 页面内 `fetch` **200 / 36 条** ✅
+2. **翻页用接口给的 `next`**：响应里有 `"next"`（下一页地址，会多带 `state`/`filter` 等参数），
+   自己按页码拼会漏参数 ⇒ 有 `next` 就显示「加载更多」，没有就不显示（不假装还有）。
+
+### 落地的三处
+
+| 文件 | 作用 |
+|---|---|
+| `comic_json_rules.dart`（新） | JSON 规则子集：`$.a.b` / `$.items[*]` / `$[0]` / `{{$.字段}}` 模板。**缺字段=空串（可选字段），规则写错=报错** |
+| `comic_source_engine.dart` | 页面内请求拆两段（发起 + 轮询）—— `runJavaScriptReturningResult` **不等 Promise** |
+| `comic_online_page.dart` | 搜索框下面一排分类按钮 + 「加载更多」（由 `next` 驱动） |
+
+### 真页面实测（机房 IP 视角）
+
+```
+exploreUrl JS        → 26 个分类 ✅（全部/恋爱/纯爱…）
+页面内 fetch 分类第 1 页 → HTTP 200，items 36 条 ✅（直接 curl 同一地址 = 403 ✗）
+样例                  → 武炼巅峰 / 噼咔噼 / wuliandianfeng-pikapi
+书链（模板填字段）      → https://cn.baozimhcn.com/comic/wuliandianfeng-pikapi ✅
+响应自带 next         → …&state=all&filter=*&page=2 ✅
+```
+
+### 用例（+14；漫画相关合计 108 条）
+
+JSON 规则 8 条（取值/报错/模板/严格与宽松的分界）+ 服务 5 条（分类列表、没跑出结果、
+取字段、next、非 JSON 响应）+ 页面 1 条（分类条 → 点分类出书，并断言走的是**页面内请求**）。

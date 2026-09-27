@@ -103,6 +103,16 @@ class _FakeTarget implements ComicSourceTarget {
     return attrs[key] ?? const [];
   }
 
+
+  @override
+  Future<String> fetchInPage(
+    String url, {
+    Map<String, String> headers = const {},
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    throw ComicProbeException('这个假目标不支持在页面里发请求（$url）');
+  }
+
   @override
   Future<String> evalRaw(String script) async {
     // 取值脚本：从 JS 里把规则文本抠出来（引擎在真机里跑，这里只做映射）。

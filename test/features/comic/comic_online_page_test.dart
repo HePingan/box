@@ -4,6 +4,7 @@
 // 三条底线各有一条用例：结果能点进去 / 失败说人话 / 取不到图时不假装成功。
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -185,5 +186,46 @@ void main() {
     await _settle(tester);
 
     expect(find.textContaining('一个图地址都没有'), findsWidgets);
+  });
+
+  testWidgets('分类浏览：顶部列出分类，点一下按分类出书（不用打字）', (tester) async {
+    final cats = [
+      {'title': '全部', 'url': 'https://cn.baozimhcn.com/api/list?type=all&page={{page}}'},
+      {'title': '恋爱', 'url': 'https://cn.baozimhcn.com/api/list?type=lianai&page={{page}}'},
+    ];
+    const allUrl = 'https://cn.baozimhcn.com/api/list?type=all&page=1';
+    final target = FakeComicTarget(
+      // exploreUrl 的 JS 段 → 分类列表
+      jsSegment: jsonEncode(cats),
+      responses: {
+        allUrl: jsonEncode({
+          'items': [
+            {'comic_id': 'hanghaiwang', 'name': '航海王', 'author': '尾田荣一郎'},
+            {'comic_id': 'zuqiumaomao', 'name': '足球猫猫'},
+          ],
+        }),
+      },
+    );
+    final png = File('${Directory.systemTemp.path}/comic_online_cat_${DateTime.now().microsecondsSinceEpoch}.png')
+      ..writeAsBytesSync(_pngBytes);
+
+    await tester.pumpWidget(_page(target, _FakeCache(png)));
+    await _settle(tester);
+
+    // 分类条出来了（书源给多少显示多少）
+    expect(find.text('全部'), findsWidgets);
+    expect(find.text('恋爱'), findsWidgets);
+    expect(find.textContaining('或点上面的分类翻榜单'), findsOneWidget);
+
+    await tester.tap(find.text('全部'));
+    await _settle(tester);
+
+    expect(find.text('航海王'), findsOneWidget);
+    expect(find.text('足球猫猫'), findsOneWidget);
+    // 响应里没给 next → 不显示「加载更多」（不假装还有）
+    expect(find.text('加载更多'), findsNothing);
+    // 取数的地址是分类地址，而且是**在页面里发请求**（不走打开页面）
+    expect(target.fetched, contains(allUrl));
+    expect(target.opened, isNot(contains(allUrl)));
   });
 }

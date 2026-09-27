@@ -15,8 +15,34 @@ import 'comic_source_diagnostics.dart'
         ComicSourceTarget,
         comicNavFailureNote,
         openComicWithFallback;
+import 'dart:convert';
+
+import 'comic_json_rules.dart';
 import 'comic_source_engine.dart';
 import 'comic_source_diagnostics.dart' show ComicNavOutcome;
+
+/// 分类浏览里的一个分类（书源的 exploreUrl 是 JS 生成的一整张列表）。
+class ComicCategory {
+  const ComicCategory({required this.title, required this.url});
+
+  final String title;
+
+  /// 第 1 页的地址（`{{page}}` 已经填成 1）。
+  ///
+  /// 后面翻页**不用自己算页码**：接口的响应里带 `next`（下一页地址），用它更准
+  /// （人家下一页会多带 `state`/`filter` 之类的参数，自己拼会漏）。
+  final String url;
+}
+
+/// 分类一页的结果：这一页的书 + 下一页地址（接口给的；没有就是到底了）。
+class ComicExplorePage {
+  const ComicExplorePage({required this.hits, this.nextUrl});
+
+  final List<ComicSearchHit> hits;
+
+  /// 接口给的下一页地址（我这边读响应里的 `next`，Legado 没这个口径）。
+  final String? nextUrl;
+}
 
 /// 搜索结果里的一条书。
 class ComicSearchHit {
@@ -124,6 +150,115 @@ class ComicOnlineService {
       );
     }
     return out;
+  }
+
+  /// 分类列表：跑源里 `exploreUrl` 的 JS（必须在**站点自己的页面**上跑）。
+  Future<List<ComicCategory>> categories() async {
+    final rule = source.exploreUrl ?? '';
+    if (!isComicJsRule(rule)) {
+      throw ComicProbeException('这份书源没有分类浏览（exploreUrl 不是 JS 列表）');
+    }
+    await _open(source.baseUrl, what: '站点首页');
+    final raw = await target.evalRaw(buildComicJsBlockScript(comicJsBody(rule)));
+    final v = parseComicJsValue(raw);
+    final text = v is Map ? (v['text']?.toString() ?? '') : (v?.toString() ?? '');
+    if (text.trim().isEmpty) {
+      throw ComicProbeException('书源的分类列表没跑出结果（exploreUrl 的 JS 段）');
+    }
+    final Object? data;
+    try {
+      data = jsonDecode(text);
+    } catch (_) {
+      throw ComicProbeException('分类列表不是 JSON（拿到的是：${_head(text)}）');
+    }
+    if (data is! List) {
+      throw ComicProbeException('分类列表不是数组（实际是 ${data.runtimeType}）');
+    }
+    final out = <ComicCategory>[];
+    for (final e in data) {
+      if (e is! Map) continue;
+      final title = e['title']?.toString().trim() ?? '';
+      final url = e['url']?.toString().trim() ?? '';
+      if (title.isEmpty || url.isEmpty) continue;
+      out.add(ComicCategory(title: title, url: url.replaceAll('{{page}}', '1')));
+    }
+    if (out.isEmpty) throw ComicProbeException('分类列表是空的（exploreUrl 跑出来没有分类）');
+    return out;
+  }
+
+  /// 按分类取书（规则是 JSON 写法：`$.items[*]` 等）。
+  Future<ComicExplorePage> explore(String url) async {
+    final rules = source.exploreRules;
+    final listRule = rules['bookList'] ?? '';
+    if (listRule.trim().isEmpty) {
+      throw ComicProbeException('这份书源没给分类取数规则（ruleExplore.bookList）');
+    }
+    // 必须在站点自己的页面上发请求：页面里发才带着站点发的 cookie（机房 IP 直连是 403）。
+    await _open(source.baseUrl, what: '站点首页');
+    final body = await target.fetchInPage(url, headers: _headers());
+    final Object? data;
+    try {
+      data = jsonDecode(body);
+    } catch (_) {
+      throw ComicProbeException('接口没返回 JSON（可能被站点拦了；开头：${_head(body)}）');
+    }
+    final items = comicJsonList(data, listRule);
+    final out = <ComicSearchHit>[];
+    for (final item in items) {
+      if (item is! Map) continue;
+      final name = _ruleText(item, rules['name']);
+      final link = _ruleText(item, rules['bookUrl']);
+      if (link.isEmpty) continue; // 没有书链的条目留着没用（点进去无从可去）
+      out.add(
+        ComicSearchHit(
+          name: name.isEmpty ? '（无书名）' : name,
+          bookUrl: source.absolute(link),
+          author: _optionalRuleText(item, rules['author']),
+          cover: _coverOf(item, rules['coverUrl']),
+        ),
+      );
+    }
+    if (out.isEmpty) throw ComicProbeException('这一页没取到任何书（站点可能改版）');
+    return ComicExplorePage(hits: out, nextUrl: _nextUrlOf(data));
+  }
+
+  /// 响应里的下一页地址（没有 / 不是字符串 → null，界面就不显示「加载更多」）。
+  String? _nextUrlOf(Object? data) {
+    if (data is! Map) return null;
+    final n = data['next'];
+    if (n is! String || n.trim().isEmpty) return null;
+    return n.trim();
+  }
+
+  /// 按 JSON 规则取一条记录的字段；规则缺失时返回空串（由调用方决定要不要报错）。
+  String _ruleText(Object? item, String? rule) {
+    if (rule == null || rule.trim().isEmpty) return '';
+    final r = rule.trim();
+    try {
+      return r.contains('{{') ? comicTemplate(r, item) : comicJsonFieldText(item, r);
+    } on ComicJsonMissingField {
+      // 这条记录没有这个字段（作者/封面常常没有）—— 空着，但**不报错、不编造**。
+      return '';
+    } on ComicJsonRuleException catch (e) {
+      // 规则写法本身有问题才算错（配置错要能看出来）。
+      throw ComicProbeException('分类规则没取到：$e');
+    }
+  }
+
+  /// 封面可能给的是相对地址或模板，都要补成完整地址。
+  String? _coverOf(Object? item, String? rule) {
+    final c = _ruleText(item, rule);
+    return c.isEmpty ? null : source.absolute(c);
+  }
+
+  String? _optionalRuleText(Object? item, String? rule) {
+    final t = _ruleText(item, rule);
+    return t.isEmpty ? null : t;
+  }
+
+  String _head(String s) {
+    final t = s.trim().replaceAll(RegExp(r'\s+'), ' ');
+    return t.length <= 120 ? t : '${t.substring(0, 120)}…';
   }
 
   /// 详情 + 章节目录。

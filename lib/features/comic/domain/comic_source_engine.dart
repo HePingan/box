@@ -235,6 +235,33 @@ String buildComicJsBlockScript(String body) =>
     'if (__r === undefined || __r === null) { __r = ""; } '
     'return JSON.stringify({text: String(__r)}); })()';
 
+/// 构造"在**页面里**发一个请求"的 JS（只负责发起；结果靠下面那个轮询取）。
+///
+/// 为什么必须在页面里发：这份源的榜单接口对**大机房 IP** 是 403 + JS 挑战，
+/// 直接 curl 拿不到；页面里发就带着站点自己发的 cookie，能过。
+/// 又因为 `runJavaScriptReturningResult` **不会等 Promise**，所以拆成"发起 + 轮询"两段。
+String buildComicFetchStartScript(String url, Map<String, String> headers) =>
+    'javascript:(function(){ '
+    'window.__boxFetch = {state:"pending", body:"", status:0}; '
+    'try { '
+    'fetch(${_jsString(url)}, {credentials:"include", headers:${_jsObj(headers)}}) '
+    '.then(function(r){ window.__boxFetch.status = r.status; return r.text(); }) '
+    '.then(function(t){ window.__boxFetch.body = String(t); window.__boxFetch.state = "ok"; }) '
+    '.catch(function(e){ window.__boxFetch.state = "err"; '
+    'window.__boxFetch.body = String(e && e.message ? e.message : e); }); '
+    '} catch (e) { window.__boxFetch.state = "err"; window.__boxFetch.body = String(e); } '
+    'return "started"; })()';
+
+/// 轮询上面那次请求的状态（`{state, status, body}`）。
+String buildComicFetchStateScript() =>
+    'javascript:(function(){ var s = window.__boxFetch; '
+    'if (!s) { return JSON.stringify({state:"none", status:0, body:""}); } '
+    'return JSON.stringify({state:s.state, status:s.status, body:s.body}); })()';
+
+/// 把请求头表拼成 JS 对象字面量。
+String _jsObj(Map<String, String> m) =>
+    '{${m.entries.map((e) => '${_jsString(e.key)}: ${_jsString(e.value)}').join(', ')}}';
+
 /// 构造"取某个 CSS 命中的第一个元素的某个属性"的 JS。
 ///
 /// 这是**页面查询**（我自己的等待/取链用），不走书源规则解析 —— 两件事分开：

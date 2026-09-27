@@ -42,6 +42,18 @@ abstract class ComicSourceTarget {
   /// 取第一个命中元素的 HTML 片段（失败诊断用；取不到就 null）。
   Future<String?> sampleHtml(String css);
 
+  /// 在**页面里**发一个 GET，把响应体当文本返回（用于 JSON 接口类规则）。
+  ///
+  /// 默认实现：如实说"这个目标不支持"—— 别静默返回空串（那会变成"接口没数据"的假结论）。
+  /// 真机目标（WebView）覆盖实现；自检流程用不到它，所以自检的假目标不必实现。
+  Future<String> fetchInPage(
+    String url, {
+    Map<String, String> headers = const {},
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    throw ComicProbeException('这个取数目标不支持在页面里发请求（$url）');
+  }
+
   /// 上一次打开时**主文档**的加载错误（子资源错误不算；没有就 null）。
   ComicLoadFailure? get lastLoadError;
 }

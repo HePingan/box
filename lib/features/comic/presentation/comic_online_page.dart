@@ -75,6 +75,16 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   String? _error;
 
   List<ComicSearchHit> _hits = const [];
+
+  /// 分类浏览：书源里的分类列表 + 当前分类 + 页码。
+  List<ComicCategory> _categories = const [];
+  ComicCategory? _category;
+
+  /// 接口给的下一页地址（null = 到底了，界面就不显示「加载更多」）。
+  String? _nextUrl;
+
+  /// 分类列表没取到时的说明（不静默 —— 但也不挡住搜索）。
+  String? _categoryNote;
   ComicBookDetail? _book;
   ComicChapterRef? _chapter;
   List<String> _images = const [];
@@ -100,6 +110,8 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       openTimeout: widget.openTimeout,
     );
     _cache = widget.imageCache ?? ComicImageCache();
+    // 分类列表要等 WebView 就绪，放到第一帧之后（失败不挡搜索，只写在界面上一行）。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadCategories());
     _progress = widget.progressStore ?? ComicOnlineProgressStore();
   }
 
@@ -149,9 +161,42 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       if (!mounted) return;
       setState(() {
         _hits = hits;
+        _category = null; // 搜索与分类共用这份列表；搜了就退出分类态
+        _nextUrl = null;
         _mode = _Mode.search;
       });
     }, '正在搜索「$key」…（最多等 ${_service.openTimeout.inSeconds} 秒）');
+  }
+
+  /// 分类列表（书源 exploreUrl 的 JS）。失败只记一行说明，不影响搜索。
+  Future<void> _loadCategories() async {
+    try {
+      final cats = await _service.categories();
+      if (!mounted) return;
+      setState(() {
+        _categories = cats;
+        _categoryNote = null;
+      });
+    } on ComicProbeException catch (e) {
+      if (!mounted) return;
+      setState(() => _categoryNote = '分类浏览不可用：${e.message}');
+    }
+  }
+
+  /// 按分类取书（[more] = 往列表后面追加下一页，地址用接口给的 `next`）。
+  Future<void> _openCategory(ComicCategory cat, {bool more = false}) async {
+    final url = more ? _nextUrl : cat.url;
+    if (url == null || url.isEmpty) return;
+    await _run(() async {
+      final page = await _service.explore(url);
+      if (!mounted) return;
+      setState(() {
+        _category = cat;
+        _nextUrl = page.nextUrl; // 到底了就是 null：不显示"加载更多"，也不假装还有
+        _hits = more ? [..._hits, ...page.hits] : page.hits;
+        _mode = _Mode.search;
+      });
+    }, '正在取「${cat.title}」…（最多等 ${_service.openTimeout.inSeconds} 秒）');
   }
 
   Future<void> _openBook(ComicSearchHit hit) async {
@@ -302,6 +347,15 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             ],
           ),
         ),
+        if (_categoryNote != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              _categoryNote!,
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ),
+        if (_categories.isNotEmpty) _categoryBar(),
         if (_error != null)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -309,8 +363,14 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           ),
         if (_busy && _hits.isEmpty) Expanded(child: _busyView()),
         if (!_busy && _hits.isEmpty && _error == null)
-          const Expanded(
-            child: Center(child: Text('输入关键字，点「搜索」')),
+          Expanded(
+            child: Center(
+              child: Text(
+                _categories.isEmpty
+                    ? '输入关键字，点「搜索」'
+                    : '输入关键字搜，或点上面的分类翻榜单',
+              ),
+            ),
           ),
         if (_hits.isNotEmpty)
           Expanded(
@@ -335,9 +395,43 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
               },
             ),
           ),
+        if (_nextUrl != null && !_busy)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: OutlinedButton(
+              onPressed: () => _openCategory(_category!, more: true),
+              child: const Text('加载更多'),
+            ),
+          ),
       ],
     );
   }
+
+  /// 分类条：横向滚动的分类按钮（书源给多少就显示多少）。
+  Widget _categoryBar() => SizedBox(
+    height: 44,
+    child: ListView.separated(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      itemCount: _categories.length,
+      separatorBuilder: (_, _) => const SizedBox(width: 8),
+      itemBuilder: (context, i) {
+        final cat = _categories[i];
+        final selected = _category?.title == cat.title;
+        return Center(
+          child: selected
+              ? FilledButton(
+                  onPressed: _busy ? null : () => _openCategory(cat),
+                  child: Text(cat.title),
+                )
+              : OutlinedButton(
+                  onPressed: _busy ? null : () => _openCategory(cat),
+                  child: Text(cat.title),
+                ),
+        );
+      },
+    ),
+  );
 
   /// 转圈**必须**带上"在做什么、最多等多久"；再久一点就提示站点可能不可达。
   Widget _busyView() => Center(

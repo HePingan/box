@@ -6,6 +6,8 @@ library;
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'dart:convert';
+
 import 'package:box/features/comic/domain/comic_online_service.dart';
 import 'package:box/features/comic/domain/comic_source.dart';
 import 'package:box/features/comic/domain/comic_source_engine.dart';
@@ -157,6 +159,129 @@ void main() {
         book.chapters.length,
         3,
         reason: '不等列表渲染就取，真机上就会"斗破苍穹共 1 话"',
+      );
+    });
+
+    test('分类列表：跑 exploreUrl 的 JS，拿回分类（标题 + 地址）', () async {
+      final cats = [
+        {'title': '全部', 'url': 'https://cn.baozimhcn.com/api/list?type=all&page={{page}}'},
+        {'title': '恋爱', 'url': 'https://cn.baozimhcn.com/api/list?type=lianai&page={{page}}'},
+      ];
+      final fake = FakeComicTarget(jsSegment: jsonEncode(cats));
+      final service = ComicOnlineService(
+        target: fake,
+        source: source,
+        listTimeout: const Duration(milliseconds: 20),
+      );
+
+      final list = await service.categories();
+      expect(list.map((c) => c.title), ['全部', '恋爱']);
+      // `{{page}}` 已填成第 1 页
+      expect(list.first.url, contains('page=1'));
+      // 必须在站点自己的页面上跑（页面里发请求才带站点 cookie）
+      expect(fake.opened.first, source.baseUrl);
+    });
+
+    test('分类列表：JS 段没跑出结果时如实报错（不静默当成"没有分类"）', () async {
+      final fake = FakeComicTarget(jsSegment: '');
+      final service = ComicOnlineService(
+        target: fake,
+        source: source,
+        listTimeout: const Duration(milliseconds: 20),
+      );
+      await expectLater(
+        service.categories(),
+        throwsA(
+          isA<ComicProbeException>().having(
+            (e) => e.message,
+            'message',
+            contains('没跑出结果'),
+          ),
+        ),
+      );
+    });
+
+    test('分类取书：JSON 规则取字段（名字/作者/封面/书链），封面补成绝对地址', () async {
+      const url = 'https://cn.baozimhcn.com/api/list?type=all&page=1';
+      final body = jsonEncode({
+        'items': [
+          {
+            'comic_id': 'hanghaiwang-weitianrongyilang',
+            'name': '航海王',
+            'author': '尾田荣一郎',
+            'topic_img': 'hanghaiwang.jpg',
+          },
+          {'comic_id': 'zuqiumaomao', 'name': '足球猫猫'},
+        ],
+      });
+      final fake = FakeComicTarget(responses: {url: body});
+      final service = ComicOnlineService(
+        target: fake,
+        source: source,
+        listTimeout: const Duration(milliseconds: 20),
+      );
+
+      final page = await service.explore(url);
+      final hits = page.hits;
+      expect(hits.length, 2);
+      expect(hits.first.name, '航海王');
+      expect(hits.first.author, '尾田荣一郎');
+      expect(
+        hits.first.bookUrl,
+        'https://cn.baozimhcn.com/comic/hanghaiwang-weitianrongyilang',
+      );
+      expect(
+        hits.first.cover,
+        'https://static-tw.baozimhcn.com/cover/hanghaiwang.jpg',
+      );
+      // 第二条没有作者/封面：允许空，但不能编造
+      expect(hits[1].author, isNull);
+      expect(hits[1].cover, isNull);
+      // 响应里没给 next → 不假装还有下一页
+      expect(page.nextUrl, isNull);
+    });
+
+    test('分类取书：接口给了 next 就带回来（翻页不自己算页码）', () async {
+      const url = 'https://cn.baozimhcn.com/api/list?type=all&page=1';
+      const next =
+          'https://cn.baozimhcn.com/api/list?type=all&state=all&filter=*&page=2';
+      final body = jsonEncode({
+        'next': next,
+        'items': [
+          {'comic_id': 'a', 'name': '甲'},
+        ],
+      });
+      final fake = FakeComicTarget(responses: {url: body});
+      final service = ComicOnlineService(
+        target: fake,
+        source: source,
+        listTimeout: const Duration(milliseconds: 20),
+      );
+      final page = await service.explore(url);
+      expect(page.nextUrl, next, reason: '下一页要用接口给的（自己拼会漏 state/filter 参数）');
+      // `items` 里没有 next 字段时也不能被当成列表项字段
+      expect(page.hits.single.name, '甲');
+    });
+
+    test('分类取书：接口没给 JSON（被拦/出错页）时把开头片段带回来', () async {
+      const url = 'https://cn.baozimhcn.com/api/list?type=all&page=1';
+      final fake = FakeComicTarget(
+        responses: {url: '<html><body>403 Forbidden</body></html>'},
+      );
+      final service = ComicOnlineService(
+        target: fake,
+        source: source,
+        listTimeout: const Duration(milliseconds: 20),
+      );
+      await expectLater(
+        service.explore(url),
+        throwsA(
+          isA<ComicProbeException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('没返回 JSON'), contains('403 Forbidden')),
+          ),
+        ),
       );
     });
 

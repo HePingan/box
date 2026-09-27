@@ -226,6 +226,7 @@ class ComicSource {
     this.bookInfoRules = const {},
     this.tocRules = const {},
     this.contentRules = const {},
+    this.exploreRules = const {},
     this.mirrors = const [],
     this.comment,
   });
@@ -250,6 +251,9 @@ class ComicSource {
   final Map<String, String> bookInfoRules;
   final Map<String, String> tocRules;
   final Map<String, String> contentRules;
+
+  /// 分类浏览的取数规则（这份源取的是 **JSON 接口**，规则是 `$.items[*]` 这种写法）。
+  final Map<String, String> exploreRules;
 
   /// 书源自带的备注（可能包含作者对可用性的观察）。
   final String? comment;
@@ -277,6 +281,7 @@ class ComicSource {
       bookInfoRules: _strMap(raw['ruleBookInfo']),
       tocRules: _strMap(raw['ruleToc']),
       contentRules: _strMap(raw['ruleContent']),
+      exploreRules: _strMap(raw['ruleExplore']),
       mirrors: _strList(raw['mirrors']),
       comment: _str(raw['bookSourceComment']),
     );
