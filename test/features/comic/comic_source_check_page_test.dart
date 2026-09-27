@@ -37,6 +37,9 @@ class _FakeTarget implements ComicSourceTarget {
   Future<String?> attrOf(String css, String attr) async => null;
 
   @override
+  Future<List<String>> attrsOf(String css, String attr) async => const [];
+
+  @override
   Future<String> evalRaw(String script) async => '{"values":[]}';
 }
 

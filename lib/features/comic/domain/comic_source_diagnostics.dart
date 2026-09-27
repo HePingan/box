@@ -36,6 +36,9 @@ abstract class ComicSourceTarget {
   /// 取某个 CSS 命中的第一个元素的属性值（页面查询，不走书源规则）。
   Future<String?> attrOf(String css, String attr);
 
+  /// 取某个 CSS 命中的**所有**元素的属性值（空值丢掉）。
+  Future<List<String>> attrsOf(String css, String attr);
+
   /// 上一次打开时**主文档**的加载错误（子资源错误不算；没有就 null）。
   ComicLoadFailure? get lastLoadError;
 }
@@ -393,9 +396,28 @@ Future<ComicProbeReport> runComicSourceProbe({
         );
         imageUrls = _imageUrlsFromJsResult(raw);
       }
+      // 图片地址的来源要在结论里说清（JS 段 / data-src / src 三条路是不一样的）。
+      var imageSource = '';
       if (imageUrls.isEmpty && waited.count > 0) {
-        // JS 段没给出图链，但页面上确实有 amp-img：退回读属性（同样如实说明来源）。
-        imageUrls = await _extractValues(target, imageRule);
+        // JS 段没给出图链，但页面上确实有图：退回**直读属性**。
+        // 注意这里传的是 **CSS**，不能拿去当书源规则解析（`class.` / `tag.` 那套语法）——
+        // 真机上就是因为拿 CSS 当规则解析而报"规则不认识"。
+        // 先 data-src（AMP 的惰性属性，书源规则用的就是它），没有再用 src（部分镜像直接写 src）
+        final viaDataSrc = (await _safe(() => target.attrsOf(imageRule, 'data-src')) ?? const [])
+            .where((u) => u.trim().isNotEmpty)
+            .toList();
+        if (viaDataSrc.isNotEmpty) {
+          imageUrls = viaDataSrc;
+          imageSource = '（JS 段没给图链，改用元素上的 data-src 直读）';
+        } else {
+          final viaSrc = (await _safe(() => target.attrsOf(imageRule, 'src')) ?? const [])
+              .where((u) => u.trim().isNotEmpty)
+              .toList();
+          if (viaSrc.isNotEmpty) {
+            imageUrls = viaSrc;
+            imageSource = '（JS 段没给图链、元素上也没有 data-src，改用 src 直读）';
+          }
+        }
       }
       firstImageUrl = imageUrls.isEmpty ? null : source.absolute(imageUrls.first);
       final step = ComicProbeStep(
@@ -403,7 +425,8 @@ Future<ComicProbeReport> runComicSourceProbe({
         ok: imageUrls.isNotEmpty,
         elapsedMs: stepSw.elapsedMilliseconds,
         note: (imageUrls.isNotEmpty
-                ? '取到 ${imageUrls.length} 张图，首张来自 ${Uri.tryParse(firstImageUrl!)?.host ?? '—'}'
+                ? '取到 ${imageUrls.length} 张图，首张来自 '
+                    '${Uri.tryParse(firstImageUrl!)?.host ?? '—'}$imageSource'
                 : _zeroHitNote(
                     selector: imageRule,
                     waitedSeconds: waited.seconds,
@@ -421,7 +444,9 @@ Future<ComicProbeReport> runComicSourceProbe({
         name: '章节取图',
         ok: false,
         elapsedMs: stepSw.elapsedMilliseconds,
-        note: '打不开章节页：${describeComicProbeError(e)}',
+        note: e is ComicProbeException
+            ? e.message
+            : '打不开章节页：${describeComicProbeError(e)}',
         finalUrl: await _safe(() => target.currentUrl()),
       );
       steps.add(step);

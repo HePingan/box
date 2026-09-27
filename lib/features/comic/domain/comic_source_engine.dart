@@ -167,6 +167,14 @@ String buildComicAttrScript(String css, String attr) =>
     'var v = n[0].getAttribute(${_jsString(attr)}); '
     'return v === null ? "" : String(v); } catch (e) { return ""; } })()';
 
+/// 构造"取某个 CSS 命中的所有元素的某个属性"的 JS（返回 JSON 数组字符串）。
+///
+/// 页面查询（不走书源规则）—— 与 [buildComicAttrScript] 同一类，只是取全部。
+String buildComicAttrsScript(String css, String attr) =>
+    'javascript:(function(){ try { var out=[]; var n=document.querySelectorAll(${_jsString(css)}); '
+    'for (var i=0;i<n.length;i++){ var v=n[i].getAttribute(${_jsString(attr)}); '
+    'if (v) { out.push(String(v)); } } return JSON.stringify(out); } catch (e) { return "[]"; } })()';
+
 /// 构造"数一数某个 CSS 命中几个"的 JS（用于等待页面就绪与报命中数）。
 String buildComicCountScript(String css) =>
     'javascript:(function(){ try { return String(document.querySelectorAll(${_jsString(css)}).length); } '

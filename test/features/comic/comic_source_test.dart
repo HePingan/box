@@ -20,7 +20,10 @@ class _FakeTarget implements ComicSourceTarget {
     this.hrefs = const {},
     this.failHosts = const {},
     this.failFirstNAttempts = 0,
-  }) : opened = opened ?? [];
+    Map<String, List<String>> attrs = const {},
+  }) : opened = opened ?? [] {
+    this.attrs.addAll(attrs);
+  }
 
   final Map<String, int> counts;
   final Map<String, List<String>> values;
@@ -28,6 +31,9 @@ class _FakeTarget implements ComicSourceTarget {
   final String title;
   final List<String> opened;
   final Map<String, String> hrefs;
+
+  /// 按 `CSS|属性名` 配置的属性值表（对应 target.attrsOf）。
+  final Map<String, List<String>> attrs = {};
 
   /// 按**主机**配置的永久失败（模拟某一跳被重置/502）。
   final Map<String, ComicLoadFailure> failHosts;
@@ -73,6 +79,10 @@ class _FakeTarget implements ComicSourceTarget {
   Future<String?> attrOf(String css, String attr) async => hrefs[css];
 
   @override
+  Future<List<String>> attrsOf(String css, String attr) async =>
+      attrs['$css|$attr'] ?? const [];
+
+  @override
   Future<String> evalRaw(String script) async {
     // 取值脚本：从 JS 里把规则文本抠出来（引擎在真机里跑，这里只做映射）。
     final m = RegExp(r'legadoExtract\("((?:[^"\\]|\\.)*)"\)').firstMatch(script);
@@ -93,6 +103,9 @@ class _FakeTarget implements ComicSourceTarget {
   static String _json(String s) =>
       '"${s.replaceAll(r'\', r'\\').replaceAll('"', r'\"').replaceAll('\n', r'\n')}"';
 }
+
+/// 内置书源（顶层用例用；`自检流程` 组里另有一份局部写法）。
+ComicSource seedSource() => ComicSource.tryParse(kSeedComicSourceJson)!;
 
 void main() {
   group('书源解析', () {
@@ -501,6 +514,109 @@ void main() {
       expect(report.steps.first.note, contains('bookList'));
     });
   });
+
+    test('JS 段没给图链时退回 data-src 直读，并说明来源', () async {
+      final cardCss = cssFromComicRule(seedSource().searchRules['bookList']!)!;
+      final detailCss = cssFromComicRule(seedSource().bookInfoRules['name']!)!;
+      final tocCss = firstSelectorCss(seedSource().bookInfoRules['tocUrl']!)!;
+      const imgCss = '.comic-contain amp-img';
+
+      final fake = _FakeTarget(
+        counts: {cardCss: 77, detailCss: 1, '$tocCss a[href]': 1211, imgCss: 2},
+        values: {
+          seedSource().searchRules['name']!: ['海贼王'],
+          seedSource().searchRules['bookUrl']!: ['/comic/haizeiwang-weitianrongyilang'],
+          seedSource().bookInfoRules['name']!: ['航海王'],
+        },
+        hrefs: {'$tocCss a[href]': '/user/page_direct?comic_id=x&chapter_slot=1186'},
+        attrs: const {
+          '$imgCss|data-src': [
+            'https://static-tw.baozimhcn.com/1.jpg',
+            'https://static-tw.baozimhcn.com/2.jpg',
+          ],
+        },
+        // content 的 JS 段不给图链（真机上就是这么走的）
+        jsText: const {},
+      );
+
+      final report = await runComicSourceProbe(
+        target: fake,
+        source: seedSource(),
+        key: '海贼',
+        waitTimeout: const Duration(seconds: 1),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+
+      final chapter = report.steps[2];
+      expect(chapter.ok, isTrue);
+      expect(chapter.note, contains('data-src 直读'), reason: '来源要说清');
+      expect(report.firstImageUrl, contains('static-tw.baozimhcn.com'));
+    });
+
+    test('元素上没有 data-src 就用 src（部分镜像直接写 src），同样说明来源', () async {
+      final cardCss = cssFromComicRule(seedSource().searchRules['bookList']!)!;
+      final detailCss = cssFromComicRule(seedSource().bookInfoRules['name']!)!;
+      final tocCss = firstSelectorCss(seedSource().bookInfoRules['tocUrl']!)!;
+      const imgCss = '.comic-contain amp-img';
+
+      final fake = _FakeTarget(
+        counts: {cardCss: 77, detailCss: 1, '$tocCss a[href]': 1211, imgCss: 1},
+        values: {
+          seedSource().searchRules['name']!: ['海贼王'],
+          seedSource().searchRules['bookUrl']!: ['/comic/haizeiwang-weitianrongyilang'],
+          seedSource().bookInfoRules['name']!: ['航海王'],
+        },
+        hrefs: {'$tocCss a[href]': '/user/page_direct?comic_id=x&chapter_slot=1186'},
+        attrs: const {
+          '$imgCss|src': ['https://static-tw.baozimhcn.com/only-src.jpg'],
+        },
+        jsText: const {},
+      );
+
+      final report = await runComicSourceProbe(
+        target: fake,
+        source: seedSource(),
+        key: '海贼',
+        waitTimeout: const Duration(seconds: 1),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+
+      final chapter = report.steps[2];
+      expect(chapter.ok, isTrue);
+      expect(chapter.note, contains('src 直读'));
+      expect(chapter.note, contains('没有 data-src'), reason: '要说清是为什么退回 src');
+    });
+
+    test('章节页 CSS 有命中、两种属性都取不到：如实说 0 张，不编造', () async {
+      final cardCss = cssFromComicRule(seedSource().searchRules['bookList']!)!;
+      final detailCss = cssFromComicRule(seedSource().bookInfoRules['name']!)!;
+      final tocCss = firstSelectorCss(seedSource().bookInfoRules['tocUrl']!)!;
+      const imgCss = '.comic-contain amp-img';
+
+      final fake = _FakeTarget(
+        counts: {cardCss: 77, detailCss: 1, '$tocCss a[href]': 1211, imgCss: 3},
+        values: {
+          seedSource().searchRules['name']!: ['海贼王'],
+          seedSource().searchRules['bookUrl']!: ['/comic/haizeiwang-weitianrongyilang'],
+          seedSource().bookInfoRules['name']!: ['航海王'],
+        },
+        hrefs: {'$tocCss a[href]': '/user/page_direct?comic_id=x&chapter_slot=1186'},
+        jsText: const {},
+      );
+
+      final report = await runComicSourceProbe(
+        target: fake,
+        source: seedSource(),
+        key: '海贼',
+        waitTimeout: const Duration(seconds: 1),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+
+      final chapter = report.steps[2];
+      expect(chapter.ok, isFalse);
+      expect(chapter.note, contains('0'), reason: '要给出真实的 0，不要沉默');
+      expect(report.firstImageUrl, isNull);
+    });
 
   group('加载错误分类与镜像候选', () {
     test('按描述文本判种类（数字码各平台不一致，描述最忠实）', () {

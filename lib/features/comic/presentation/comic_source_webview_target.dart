@@ -8,6 +8,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -132,6 +133,22 @@ class WebViewComicSourceTarget implements ComicSourceTarget {
     final raw = await evalRaw(buildComicAttrScript(css, attr));
     final t = raw.replaceAll('"', '').trim();
     return t.isEmpty ? null : t;
+  }
+
+  @override
+  Future<List<String>> attrsOf(String css, String attr) async {
+    final raw = await evalRaw(buildComicAttrsScript(css, attr));
+    final t = raw.trim();
+    if (t.isEmpty || t == 'null' || t == '"null"') return const [];
+    try {
+      final decoded = jsonDecode(t.replaceAll(r'\"', '"'));
+      if (decoded is List) {
+        return decoded.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+      }
+    } catch (_) {
+      // 解析不了就返回空表：由调用方按"取不到"如实说明，不编造。
+    }
+    return const [];
   }
 
   @override
