@@ -409,4 +409,96 @@ void main() {
       expect(hostAgeText(null, now: now), isNull);
     });
   });
+
+  group('备份健康（2026-09-27）', () {
+    String body({required List<Map<String, Object?>> backup}) => jsonEncode({
+      'generatedAt': '2026-09-27T11:30:00+08:00',
+      'hosts': [
+        {
+          'id': 'hpa888',
+          'name': '阿里云 · 主服务端',
+          'online': true,
+          'backup': backup,
+        },
+      ],
+    });
+
+    Map<String, Object?> dir({
+      bool stale = false,
+      bool withDrill = true,
+      bool drillOk = true,
+    }) => {
+      'name': 'box-update-server',
+      'path': '/var/backups/box-update-server',
+      'staleHours': 36,
+      'families': [
+        {
+          'family': 'box-release-<时间>.tar.gz',
+          'file': 'box-release-20260927_032001.tar.gz',
+          'at': 1789100000,
+          'bytes': 518863865,
+          'ageHours': 8.5,
+          'stale': stale,
+        },
+      ],
+      if (withDrill)
+        'drill': {'at': 1789110000, 'ok': drillOk, 'note': drillOk ? null : 'gzip -t 失败'},
+    };
+
+    test('每类备份只报最新一份，并给出人话文案', () {
+      final snap = HostSnapshot.parse(body(backup: [dir()]));
+      final d = snap.hosts.single.backup.single;
+
+      expect(d.name, 'box-update-server');
+      expect(d.families, hasLength(1));
+      expect(d.families.single.family, 'box-release-<时间>.tar.gz');
+      expect(d.families.single.label, contains('最新 '));
+      expect(d.families.single.label, contains('494.8 MB'));
+      expect(d.families.single.label, contains('8.5 小时前'));
+      expect(d.families.single.label, isNot(contains('⚠')), reason: '没过期不该带告警标记');
+    });
+
+    test('老快照没有 backup 字段：空列表，且不判定为"备份有问题"', () {
+      final snap = HostSnapshot.parse(jsonEncode({
+        'hosts': [
+          {'id': 'hpa888', 'name': '主服务端', 'online': true, 'diskPercent': 66.6},
+        ],
+      }));
+      final host = snap.hosts.single;
+
+      expect(host.backup, isEmpty);
+      expect(
+        host.backupProblem,
+        isFalse,
+        reason: '缺数据 ≠ 有问题 —— 老快照不该被标成红色',
+      );
+    });
+
+    test('过期的一类带 ⚠，并让这个目录算"有情况"', () {
+      final snap = HostSnapshot.parse(body(backup: [dir(stale: true)]));
+      final host = snap.hosts.single;
+
+      expect(host.backup.single.families.single.label, startsWith('⚠ '));
+      expect(host.backup.single.staleCount, 1);
+      expect(host.backupProblem, isTrue);
+    });
+
+    test('没演练过就说"还没演练过"，不冒充"已校验"', () {
+      final snap = HostSnapshot.parse(body(backup: [dir(withDrill: false)]));
+      final d = snap.hosts.single.backup.single;
+
+      expect(d.drillLabel, '恢复演练：还没演练过');
+      expect(d.drillOk, isNull);
+      expect(d.hasProblem, isFalse, reason: '没演练过是"未知"，不是"失败"');
+    });
+
+    test('演练失败：文案带原因，并算"有情况"', () {
+      final snap = HostSnapshot.parse(body(backup: [dir(drillOk: false)]));
+      final d = snap.hosts.single.backup.single;
+
+      expect(d.drillLabel, contains('失败'));
+      expect(d.drillLabel, contains('gzip -t 失败'));
+      expect(d.hasProblem, isTrue);
+    });
+  });
 }

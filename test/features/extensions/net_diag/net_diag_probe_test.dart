@@ -29,6 +29,12 @@ class _FakeTransport implements NetDiagTransport {
   int httpStatus;
   String? httpLocation;
 
+  /// 各步的可控延迟，用来证明四项是并发而不是串行。
+  Duration dnsDelay = Duration.zero;
+  Duration tcpDelay = Duration.zero;
+  Duration tlsDelay = Duration.zero;
+  Duration httpDelay = Duration.zero;
+
   int lookupCalls = 0;
   int tcpCalls = 0;
   int tlsCalls = 0;
@@ -36,6 +42,7 @@ class _FakeTransport implements NetDiagTransport {
 
   @override
   Future<List<String>> lookupHost(String host) async {
+    if (dnsDelay > Duration.zero) await Future<void>.delayed(dnsDelay);
     lookupCalls++;
     if (dnsError != null) throw dnsError!;
     return addresses;
@@ -43,6 +50,7 @@ class _FakeTransport implements NetDiagTransport {
 
   @override
   Future<TcpProbeResult> connectTcp(String host, int port, Duration timeout) async {
+    if (tcpDelay > Duration.zero) await Future<void>.delayed(tcpDelay);
     tcpCalls++;
     if (tcpError != null) throw tcpError!;
     return const TcpProbeResult(connected: true);
@@ -50,6 +58,7 @@ class _FakeTransport implements NetDiagTransport {
 
   @override
   Future<TlsProbeResult> handshakeTls(String host, int port, Duration timeout) async {
+    if (tlsDelay > Duration.zero) await Future<void>.delayed(tlsDelay);
     tlsCalls++;
     if (tlsError != null) throw tlsError!;
     return TlsProbeResult(
@@ -63,6 +72,7 @@ class _FakeTransport implements NetDiagTransport {
 
   @override
   Future<HttpProbeResult> getHttp(String url, Duration timeout) async {
+    if (httpDelay > Duration.zero) await Future<void>.delayed(httpDelay);
     httpCalls++;
     return HttpProbeResult(
       statusCode: httpStatus,
@@ -214,6 +224,54 @@ void main() {
     expect(moved.ok, isTrue);
     expect(moved.summary, contains('跳转'));
     expect(moved.details.join(), contains('https://www.example.com/'));
+  });
+
+  test('四项是并发跑的：总耗时≈最慢的一项，不是四项之和', () async {
+    final fake = _FakeTransport()
+      ..dnsDelay = const Duration(milliseconds: 120)
+      ..tcpDelay = const Duration(milliseconds: 120)
+      ..tlsDelay = const Duration(milliseconds: 120)
+      ..httpDelay = const Duration(milliseconds: 120);
+
+    final sw = Stopwatch()..start();
+    final rs = await NetDiagProbe(transport: fake).runAll(target);
+    sw.stop();
+
+    expect(rs, hasLength(4));
+    expect(
+      sw.elapsedMilliseconds,
+      lessThan(400),
+      reason: '串行会是 480ms 左右；并发应当接近 120ms。实测 ${sw.elapsedMilliseconds}ms',
+    );
+  });
+
+  test('回调顺序＝完成顺序（界面据此逐行填），返回值仍是固定顺序', () async {
+    final fake = _FakeTransport()
+      ..httpDelay = const Duration(milliseconds: 10)
+      ..dnsDelay = const Duration(milliseconds: 60)
+      ..tcpDelay = const Duration(milliseconds: 120)
+      ..tlsDelay = const Duration(milliseconds: 180);
+
+    final arrival = <NetDiagCheckKind>[];
+    final rs = await NetDiagProbe(
+      transport: fake,
+    ).runAll(target, onResult: (r) => arrival.add(r.kind));
+
+    expect(
+      arrival,
+      [
+        NetDiagCheckKind.http,
+        NetDiagCheckKind.dns,
+        NetDiagCheckKind.tcp,
+        NetDiagCheckKind.tls,
+      ],
+      reason: '谁先回来谁先回调（延迟就是这么设的）',
+    );
+    expect(
+      rs.map((r) => r.kind).toList(),
+      NetDiagCheckKind.values,
+      reason: '返回列表要按固定顺序，方便复制文本与断言',
+    );
   });
 
   test('报告文本包含四项结论与来源说明（用户要能复制走）', () async {

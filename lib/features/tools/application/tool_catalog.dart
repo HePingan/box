@@ -55,6 +55,15 @@ class LocalToolTarget extends ToolTarget {
   final String localId;
 }
 
+/// 拉取一个网址的**源码文本**来看（不是浏览器渲染）。
+///
+/// 和 [WebToolTarget] 的区别：那个是把页面"打开"给人看（渲染、可点），
+/// 这个是拿服务端返回的第一手文本（找 meta、看接口返回、确认部署内容）。
+/// 也和 [LocalToolTarget] 区别开：它要联网，放进"纯本地工具"契约里是错的。
+class SourceFetchToolTarget extends ToolTarget {
+  const SourceFetchToolTarget();
+}
+
 /// 工具名 → 点击去向。**这是可用性的唯一事实源。**
 ///
 /// 之前这里是一份手抄的 `Set<String>`，派发逻辑另在 `tool_widgets.dart` 里写成
@@ -124,6 +133,9 @@ const Map<String, ToolTarget> kToolTargets = {
   // 今日诗词（jinrishici 域名）→ 404 下线；
   // 某聚合站 oick 全系 → 返回「缺少 apikey」，非免密钥；
   // 境外 IP 归属站 ip-api → 国内直连 3/3 失败；60s 的成语/日报两个子路径 → 404。
+
+    // —— 拉源码（服务端第一手文本，不做渲染）——
+  '网页源码获取': SourceFetchToolTarget(),
 
   // —— 内置 WebView ——
   '在线PS': WebToolTarget(title: '在线PS', url: 'https://www.photopea.com/'),

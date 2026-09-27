@@ -59,6 +59,7 @@ class HostEntry {
     this.netRxBytesPerSec,
     this.netTxBytesPerSec,
     this.temperatureC,
+    this.backup = const <BackupDirHealth>[],
   });
 
   /// 机器标识：服务端 id 缺失时退化成名字（名字在 hosts.json 里是人写的，够稳定）。
@@ -99,6 +100,13 @@ class HostEntry {
   /// 温度（℃）；**云主机通常没有温度传感器 → null**，界面整行不显示。
   /// 0 不是"很凉"，是没传感器，所以这里绝不用 0 兜底。
   final double? temperatureC;
+
+  /// 备份健康（每台机器上各备份目录的最新一份 + 演练结论）。
+  /// 老快照没有这个字段 → 空列表，界面就不显示这一段（不是"备份有问题"）。
+  final List<BackupDirHealth> backup;
+
+  /// 备份是不是有情况（有类过期 / 最近演练失败）。没数据时 false。
+  bool get backupProblem => backup.any((b) => b.hasProblem);
 
   /// 从一条记录里尽力取值；**名字缺失返回 null（调用方丢掉这条）**。
   ///
@@ -144,8 +152,153 @@ class HostEntry {
       netRxBytesPerSec: _asInt(raw['netRxBytesPerSec']),
       netTxBytesPerSec: _asInt(raw['netTxBytesPerSec']),
       temperatureC: _temperature(raw['temperatureC']),
+      backup: _backupList(raw['backup']),
     );
   }
+}
+
+/// 一类备份里最新的一份。
+///
+/// 服务端按「文件名去掉时间戳」归并成类：`app.db.20260927_032001` 与
+/// `app.db.20260926_032001` 是同一类，只报最新那份。
+class BackupFamily {
+  const BackupFamily({
+    required this.family,
+    required this.file,
+    this.at,
+    this.bytes,
+    this.ageHours,
+    this.stale = false,
+  });
+
+  final String family;
+  final String file;
+  final DateTime? at;
+  final int? bytes;
+
+  /// 距采集时刻多少小时（服务端算好的）。
+  final double? ageHours;
+
+  /// 服务端按目录阈值判的「太久没出新备份」。
+  final bool stale;
+
+  static BackupFamily? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    final family = _asString(raw['family'])?.trim();
+    if (family == null || family.isEmpty) return null;
+    final atSeconds = _asInt(raw['at']);
+    return BackupFamily(
+      family: family,
+      file: _asString(raw['file'])?.trim() ?? family,
+      at: atSeconds == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(atSeconds * 1000),
+      bytes: _asInt(raw['bytes']),
+      ageHours: _asDouble(raw['ageHours']),
+      stale: _asBool(raw['stale']) ?? false,
+    );
+  }
+
+  /// 一行文案：`最新 09-27 03:20 · 494.8 MB · 8.5 小时前`；过期时打头一个 ⚠。
+  String get label {
+    final parts = <String>['最新 ${_stampText(at)}'];
+    final b = bytes;
+    if (b != null) parts.add(hostBytesText(b));
+    parts.add(_ageText());
+    return '${stale ? '⚠ ' : ''}${parts.join(' · ')}';
+  }
+
+  String _ageText() {
+    final h = ageHours;
+    if (h == null) return '时间未知';
+    if (h < 1) return '${(h * 60).round()} 分钟前';
+    if (h < 48) return '${h.toStringAsFixed(1)} 小时前';
+    return '${(h / 24).toStringAsFixed(1)} 天前';
+  }
+}
+
+/// 一个备份目录的健康状况。
+class BackupDirHealth {
+  const BackupDirHealth({
+    required this.name,
+    this.staleHours,
+    this.families = const <BackupFamily>[],
+    this.drillAt,
+    this.drillOk,
+    this.drillNote,
+  });
+
+  final String name;
+
+  /// 服务端判过期的阈值（小时）。
+  final double? staleHours;
+
+  final List<BackupFamily> families;
+
+  /// 最近一次**恢复演练**的结论（由演练脚本落盘，服务端只读）。
+  /// null = 还没演练过 —— 界面就得这么写，不能伪装成"已校验"。
+  final DateTime? drillAt;
+  final bool? drillOk;
+  final String? drillNote;
+
+  static BackupDirHealth? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    final name = _asString(raw['name'])?.trim();
+    if (name == null || name.isEmpty) return null;
+    final drillRaw = raw['drill'];
+    final drill = drillRaw is Map ? drillRaw : const <String, Object?>{};
+    final drillAtSeconds = _asInt(drill['at']);
+    final fams = <BackupFamily>[];
+    final rawFams = raw['families'];
+    if (rawFams is List) {
+      for (final f in rawFams) {
+        final parsed = BackupFamily.tryParse(f);
+        if (parsed != null) fams.add(parsed);
+      }
+    }
+    return BackupDirHealth(
+      name: name,
+      staleHours: _asDouble(raw['staleHours']),
+      families: fams,
+      drillAt: drillAtSeconds == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(drillAtSeconds * 1000),
+      drillOk: _asBool(drill['ok']),
+      drillNote: _asString(drill['note'])?.trim(),
+    );
+  }
+
+  int get staleCount => families.where((f) => f.stale).length;
+
+  /// 有情况：有类过期，或最近一次演练失败。
+  bool get hasProblem => staleCount > 0 || drillOk == false;
+
+  /// 演练结论一行。
+  String get drillLabel {
+    if (drillOk == null) return '恢复演练：还没演练过';
+    final when = _stampText(drillAt);
+    if (drillOk == true) return '恢复演练：$when 通过';
+    final note = drillNote;
+    return '恢复演练：$when 失败${note == null || note.isEmpty ? '' : '（$note）'}';
+  }
+}
+
+/// 备份列表：非列表 / 空都返回空列表（老快照）。
+List<BackupDirHealth> _backupList(Object? raw) {
+  if (raw is! List) return const <BackupDirHealth>[];
+  final out = <BackupDirHealth>[];
+  for (final item in raw) {
+    final parsed = BackupDirHealth.tryParse(item);
+    if (parsed != null) out.add(parsed);
+  }
+  return out;
+}
+
+/// `MM-dd HH:mm`；null 时给 `时间未知`（不猜）。
+String _stampText(DateTime? t) {
+  if (t == null) return '时间未知';
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '${two(t.month)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)}';
 }
 
 class HostSnapshot {

@@ -34,7 +34,8 @@ class NetDiagPage extends StatefulWidget {
 
 class _NetDiagPageState extends State<NetDiagPage> {
   final _input = TextEditingController();
-  List<NetDiagCheckResult> _results = [];
+  /// 按检测项存结果：四项并发，谁先回来谁先填上（行位置固定，不会乱跳）。
+  final Map<NetDiagCheckKind, NetDiagCheckResult> _byKind = {};
   List<String> _recent = const [];
   NetDiagReport? _report;
   NetDiagTarget? _lastTarget;
@@ -74,7 +75,7 @@ class _NetDiagPageState extends State<NetDiagPage> {
     setState(() {
       _inputError = null;
       _running = true;
-      _results = [];
+      _byKind.clear();
       _report = null;
       _lastTarget = target;
     });
@@ -84,7 +85,7 @@ class _NetDiagPageState extends State<NetDiagPage> {
       target,
       onResult: (r) {
         if (!mounted) return;
-        setState(() => _results = [..._results, r]);
+        setState(() => _byKind[r.kind] = r);
       },
     );
 
@@ -159,8 +160,9 @@ class _NetDiagPageState extends State<NetDiagPage> {
                         style: const TextStyle(fontSize: 12),
                       ),
                     ),
-                  if (_running && _results.isEmpty) _runningHint(),
-                  for (final r in _results) _resultCard(r),
+                  if (_running || _byKind.isNotEmpty)
+                    for (final kind in NetDiagCheckKind.values)
+                      _resultCard(kind, _byKind[kind]),
                   if (_report != null) ...[
                     const SizedBox(height: 8),
                     SizedBox(
@@ -254,24 +256,37 @@ class _NetDiagPageState extends State<NetDiagPage> {
     );
   }
 
-  Widget _runningHint() {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 24),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          SizedBox(width: 10),
-          Text('正在检测…（每项最多 8 秒）'),
-        ],
-      ),
-    );
-  }
-
-  Widget _resultCard(NetDiagCheckResult r) {
+  /// 一行结果卡。`r == null` 表示这一项还在跑（行位置固定，先占位再填）。
+  Widget _resultCard(NetDiagCheckKind kind, NetDiagCheckResult? r) {
+    if (r == null) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppTokens.surface,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            // 只在「这一轮还在跑」时转圈：跑完还没有结论的行要是也跟着转，
+            // 用户就分不清「还在查」和「查完了但没结果」——那正是这个插件要消灭的东西。
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: _running
+                  ? const CircularProgressIndicator(strokeWidth: 2)
+                  : const Icon(Icons.remove_circle_outline, size: 16),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _running ? '${kind.label}：检测中…' : '${kind.label}：这一项没有结论（异常）',
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     final color = !r.ok
         ? AppTokens.rose
         : (r.warning != null ? AppTokens.amber : AppTokens.emerald);

@@ -230,31 +230,13 @@ List<HomePlugin> buildDefaultPlugins() {
       builtIn: true,
       sort: 10,
       onTap: (context) async {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => Scaffold(
-              appBar: AppBar(title: const Text('漫画收藏')),
-              body: const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.collections_bookmark_outlined,
-                      size: 64,
-                      color: Colors.grey,
-                    ),
-                    SizedBox(height: 16),
-                    Text(
-                      '漫画功能将在后续版本上线',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
+        // 2026-09-27：这里原先自造了一个 inline 占位页，写「漫画功能将在后续版本上线」
+        // —— 而漫画库（ComicLibraryPage，含阅读器）早已实现且从内容仓库可达。
+        // 入口指向真页面，那句对用户不实的话随之消失。
+        HomePluginRouteRegistry.registerDefaults();
+        final builder = HomePluginRouteRegistry.lookup('openComicLibrary');
+        if (builder == null) return;
+        await Navigator.push(context, MaterialPageRoute(builder: builder));
       },
     ),
     HomePlugin(

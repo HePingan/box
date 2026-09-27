@@ -21,6 +21,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -47,6 +48,18 @@ SERIES_FIELDS = (("cpuPercent", "cpu"), ("memPercent", "mem"),
                  ("diskPercent", "disk"), ("load1", "load"))
 
 # 要监控的机器：id 是稳定标识（插件按它做曲线历史的键），name 是显示名。
+# 备份健康：每台机器上要看的备份目录 + 「多久没出新备份就算过期（小时）」。
+# 175 上这两个目录不存在，就会报空列表（不编数据）。
+BACKUP_DIRS = [
+    ("box-image-platform", "/var/backups/box-image-platform", 36),
+    ("box-update-server", "/var/backups/box-update-server", 36),
+]
+
+# 演练脚本（backup-drill.sh）写下的校验结论。**校验不在本采集里做** ——
+# release 备份单份 500MB+，cron 每 2 分钟跑一次 gzip -t 是不现实的；
+# 这里只报元数据与新鲜度，校验结论取演练的落盘结果（没有就是 null，不冒充"已校验"）。
+BACKUP_HEALTH_FILE = "/var/lib/box-backup-health.json"
+
 # ssh=None 表示"就是跑本脚本的这台"（本脚本部署在 175）。
 HOSTS = [
     {"id": "hpa888", "name": "阿里云 · 主服务端", "ip": "47.109.97.1", "ssh": "hpa888"},
@@ -226,7 +239,84 @@ def collect() -> dict:
         "diskReadBytesPerSec": _rate(io1, io2, 0),
         "diskWriteBytesPerSec": _rate(io1, io2, 1),
         "temperatureC": _temperature_celsius(),
+        "backup": _backup_snapshot(),
     }
+
+
+_TS_IN_NAME = re.compile(r"\d{8}[_T-]?\d{6}")
+
+
+def _backup_families(path: str) -> list[dict]:
+    """按「家族」归并备份文件：文件名里的时间戳换成占位符即同一类。
+
+    `app.db.20260927_032001` 与 `app.db.20260926_032001` 是同一类；只取最新那份。
+    """
+    newest: dict[str, dict] = {}
+    with os.scandir(path) as it:
+        for entry in it:
+            # 只认「带时间戳的备份文件」：隐藏文件与不带时间戳的标记文件
+            # （如 .last_release_fingerprint）不是备份，不列出来充数。
+            if not entry.is_file() or entry.name.startswith("."):
+                continue
+            if not _TS_IN_NAME.search(entry.name):
+                continue
+            fam = _TS_IN_NAME.sub("<时间>", entry.name)
+            st = entry.stat()
+            prev = newest.get(fam)
+            if prev is None or st.st_mtime > prev["mtime"]:
+                newest[fam] = {
+                    "family": fam,
+                    "file": entry.name,
+                    "at": int(st.st_mtime),
+                    "bytes": st.st_size,
+                    "mtime": st.st_mtime,
+                }
+    out = []
+    now = time.time()
+    for v in sorted(newest.values(), key=lambda x: -x["mtime"]):
+        out.append(
+            {
+                "family": v["family"],
+                "file": v["file"],
+                "at": v["at"],
+                "bytes": v["bytes"],
+                "ageHours": round((now - v["mtime"]) / 3600, 1),
+            }
+        )
+    return out
+
+
+def _drill_verdict(dir_name: str) -> dict | None:
+    try:
+        with open(BACKUP_HEALTH_FILE, "r") as f:
+            doc = json.load(f)
+        v = (doc.get("dirs") or {}).get(dir_name)
+        return v if isinstance(v, dict) else None
+    except Exception:
+        return None
+
+
+def _backup_snapshot() -> list[dict]:
+    """本机各备份目录的健康快照。目录不存在就跳过（不编数据）。"""
+    out = []
+    now = time.time()
+    for name, path, stale_hours in BACKUP_DIRS:
+        if not os.path.isdir(path):
+            continue
+        fams = _backup_families(path)
+        for f in fams:
+            f["stale"] = f["ageHours"] > stale_hours
+        out.append(
+            {
+                "name": name,
+                "path": path,
+                "staleHours": stale_hours,
+                "families": fams,
+                "drill": _drill_verdict(name),
+                "checkedAt": int(now),
+            }
+        )
+    return out
 
 
 def collect_remote(ssh_alias: str) -> dict | None:

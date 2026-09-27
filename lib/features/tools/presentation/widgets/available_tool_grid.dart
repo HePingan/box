@@ -4,6 +4,7 @@ import 'package:box/design_system/app_tokens.dart';
 import 'package:box/features/api_hub/presentation/api_hub_page.dart';
 import 'package:box/features/local_tools/presentation/local_tools_registry.dart';
 import 'package:box/features/tools/application/tool_catalog.dart';
+import 'package:box/features/tools/presentation/source_fetch_page.dart';
 import 'package:box/tool_web_page.dart';
 
 /// 打开一个 [ToolEntry] 的去向。
@@ -21,6 +22,11 @@ void openToolTarget(BuildContext context, String toolName, ToolTarget? target) {
       Navigator.push(
         context,
         MaterialPageRoute(builder: (_) => ToolWebPage(title: title, url: url)),
+      );
+    case SourceFetchToolTarget():
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const SourceFetchPage()),
       );
     case LocalToolTarget(:final localId):
       // 纯本地工具：不走 ApiHubPage。那条路会先拉一次公共 API 索引，
@@ -43,7 +49,8 @@ void openToolTarget(BuildContext context, String toolName, ToolTarget? target) {
 
 /// 可用能力平铺网格。
 ///
-/// 结构上的取舍：112 个目录条目里只有 [availableToolEntries] 这十几个真能用，
+/// 结构上的取舍：122 个目录条目里只有 [availableToolEntries] 这 65 个真能用
+/// （2026-09-27 按 App 自己的函数数出来的：`allToolEntries().length` / `availableToolEntries().length`），
 /// 旧版把两者混在同一批折叠分类里，用户要点开 10 张卡、在一堆「开发中」徽标里
 /// 逐个找。这里把能用的直接平铺到首屏 —— 不用展开、不用搜索、不看徽标。
 ///
@@ -189,6 +196,7 @@ class _AvailableToolCard extends StatelessWidget {
 
   IconData _iconFor(ToolTarget? target) => switch (target) {
     WebToolTarget() => Icons.public_rounded,
+    SourceFetchToolTarget() => Icons.code_rounded,
     // 本地工具的图标不在这里再抄一份 —— 从 kLocalTools 取，图标定义
     // 只有一处（registry），加新工具不会出现网格图标和页面图标不一致。
     LocalToolTarget(:final localId) =>

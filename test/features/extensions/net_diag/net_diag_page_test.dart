@@ -37,6 +37,37 @@ class _FakeService extends NetDiagService {
   }
 }
 
+
+/// 逐项带延迟返回的假服务：用来观察「四项并发、谁先回来谁先填」的中间状态。
+class _GatedService extends NetDiagService {
+  _GatedService(this.results, this.delays);
+
+  final List<NetDiagCheckResult> results;
+  final List<Duration> delays;
+
+  @override
+  Future<List<String>> loadRecent() async => const [];
+
+  @override
+  Future<void> rememberTarget(String raw) async {}
+
+  @override
+  Future<NetDiagReport> diagnose(
+    NetDiagTarget target, {
+    void Function(NetDiagCheckResult)? onResult,
+  }) async {
+    for (var i = 0; i < results.length; i++) {
+      await Future<void>.delayed(delays[i]);
+      onResult?.call(results[i]);
+    }
+    return NetDiagReport(
+      target: target,
+      results: results,
+      startedAt: DateTime(2026, 9, 27, 12),
+    );
+  }
+}
+
 Future<void> _pump(WidgetTester tester, NetDiagService service) async {
   debugSetNetDiagRuntime(service: service);
   addTearDown(() => debugSetNetDiagRuntime());
@@ -167,5 +198,48 @@ void main() {
     await _pump(tester, _FakeService(const []));
     expect(find.textContaining('不支持 ICMP ping'), findsOneWidget);
     expect(find.textContaining('不经过 Box 服务器'), findsOneWidget);
+  });
+
+  testWidgets('四项并发：行位置固定，没回来的显示「检测中」，回来一个填一个', (tester) async {
+    NetDiagCheckResult r(NetDiagCheckKind k, String s) => NetDiagCheckResult(
+      kind: k,
+      ok: true,
+      summary: s,
+      details: const [],
+      elapsedMs: 10,
+    );
+    final service = _GatedService(
+      [
+        r(NetDiagCheckKind.dns, '解析出 1 个地址'),
+        r(NetDiagCheckKind.tcp, '端口 443 可连接'),
+        r(NetDiagCheckKind.tls, '证书还剩 82 天'),
+        r(NetDiagCheckKind.http, 'HTTP 200'),
+      ],
+      const [
+        Duration(milliseconds: 50),
+        Duration(milliseconds: 80),
+        Duration(milliseconds: 120),
+        Duration(milliseconds: 160),
+      ],
+    );
+    await _pump(tester, service);
+
+    await tester.enterText(find.byType(TextField), 'box.hpa888.top');
+    await tester.tap(find.text('检测'));
+    await tester.pump();
+
+    expect(
+      find.textContaining('：检测中'),
+      findsNWidgets(4),
+      reason: '四项同时开跑，谁都没回来时四行都在占位（而不是空白或转圈到看不出在干什么）',
+    );
+
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(find.textContaining('：检测中'), findsNWidgets(3));
+    expect(find.textContaining('解析出 1 个地址'), findsOneWidget, reason: '最先回来的那项先填上');
+
+    await tester.pumpAndSettle();
+    expect(find.textContaining('：检测中'), findsNothing);
+    expect(find.textContaining('HTTP 200'), findsOneWidget);
   });
 }

@@ -402,4 +402,98 @@ void main() {
     expect(find.textContaining('本机记录'), findsWidgets);
     expect(find.textContaining('最近 3 个点'), findsWidgets);
   });
+
+  testWidgets('备份健康：有数据才显示这一段，并逐类列出最新一份', (tester) async {
+    final service = _FakeHostService(
+      snapshotBody: jsonEncode({
+        'generatedAt': '2026-09-27T11:30:00+08:00',
+        'hosts': [
+          {
+            'id': 'hpa888',
+            'name': '阿里云 · 主服务端',
+            'online': true,
+            'diskPercent': 66.6,
+            'backup': [
+              {
+                'name': 'box-update-server',
+                'staleHours': 36,
+                'families': [
+                  {
+                    'family': 'box-release-<时间>.tar.gz',
+                    'at': 1789100000,
+                    'bytes': 518863865,
+                    'ageHours': 8.5,
+                    'stale': false,
+                  },
+                  {
+                    'family': 'app.db.<时间>',
+                    'at': 1789100000,
+                    'bytes': 286720,
+                    'ageHours': 8.5,
+                    'stale': false,
+                  },
+                ],
+                'drill': {'at': 1789110000, 'ok': true},
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    await _pumpHostTab(tester, service);
+
+    expect(find.textContaining('备份 · box-update-server'), findsOneWidget);
+    expect(find.textContaining('box-release-<时间>.tar.gz：最新'), findsOneWidget);
+    expect(find.textContaining('app.db.<时间>：最新'), findsOneWidget);
+    expect(find.textContaining('494.8 MB'), findsOneWidget);
+    expect(find.textContaining('恢复演练：'), findsOneWidget);
+    expect(find.textContaining('通过'), findsOneWidget);
+  });
+
+  testWidgets('老快照没有备份字段：整段不显示（缺数据不是"备份有问题"）', (tester) async {
+    final service = _FakeHostService(snapshotBody: _body());
+    await _pumpHostTab(tester, service);
+
+    expect(find.textContaining('备份 · '), findsNothing);
+    expect(find.textContaining('恢复演练'), findsNothing);
+  });
+
+  testWidgets('备份过期时：那一行带 ⚠，目录标题用告警色', (tester) async {
+    final service = _FakeHostService(
+      snapshotBody: jsonEncode({
+        'generatedAt': '2026-09-27T11:30:00+08:00',
+        'hosts': [
+          {
+            'id': 'hpa888',
+            'name': '阿里云 · 主服务端',
+            'online': true,
+            'backup': [
+              {
+                'name': 'box-update-server',
+                'staleHours': 36,
+                'families': [
+                  {
+                    'family': 'box-release-<时间>.tar.gz',
+                    'at': 1789100000,
+                    'bytes': 518863865,
+                    'ageHours': 50.0,
+                    'stale': true,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    await _pumpHostTab(tester, service);
+
+    expect(
+      find.textContaining('box-release-<时间>.tar.gz：⚠ '),
+      findsOneWidget,
+      reason: '过期的一类要带告警标记（⚠ 在类别名之后，状态之前）',
+    );
+    expect(find.textContaining('2.1 天前'), findsOneWidget);
+    expect(find.text('恢复演练：还没演练过'), findsOneWidget);
+  });
 }

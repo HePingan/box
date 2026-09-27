@@ -526,6 +526,32 @@ class _HostCard extends StatelessWidget {
                 icon: Icons.thermostat_rounded,
                 text: '温度 ${hostTempText(temperature)}',
               ),
+            // 备份健康：**只在快照带了这段时才显示** —— 老快照没有这个字段，
+            // 那就整段不出现（缺数据 ≠ 备份有问题）。过期的类已经带了 ⚠ 前缀，
+            // 目录标题在有情况时标红。
+            for (final dir in host.backup) ...[
+              const SizedBox(height: 8),
+              Text(
+                '备份 · ${dir.name}',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: dir.hasProblem
+                      ? theme.colorScheme.error
+                      : theme.colorScheme.outline,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              for (final fam in dir.families)
+                _FactLine(
+                  icon: Icons.inventory_2_outlined,
+                  text: '${fam.family}：${fam.label}',
+                ),
+              _FactLine(
+                icon: dir.drillOk == false
+                    ? Icons.report_problem_outlined
+                    : Icons.verified_outlined,
+                text: dir.drillLabel,
+              ),
+            ],
             if (history.hasAny)
               Padding(
                 padding: const EdgeInsets.only(top: 6),

@@ -149,23 +149,34 @@ class NetDiagProbe {
   /// 证书剩余天数低于这个值就给提醒（不是失败）。
   static const int certWarnDays = 30;
 
-  /// 跑完全部四项；每项出结果就回调一次，界面可以逐条冒出来。
+  /// 跑完全部四项，**四项并发**。
+  ///
+  /// 串行的代价是实打实的：每项超时 8 秒，最坏要等 4×8=32 秒。并发后最坏 8 秒。
+  /// 每项一出结果就回调一次（回调顺序＝完成顺序，不固定），界面据此把固定四行逐行填上。
+  /// 返回的列表按 [NetDiagCheckKind] 固定顺序排好，便于复制文本与断言稳定。
   Future<List<NetDiagCheckResult>> runAll(
     NetDiagTarget target, {
     void Function(NetDiagCheckResult)? onResult,
   }) async {
-    final results = <NetDiagCheckResult>[];
-    for (final run in <Future<NetDiagCheckResult> Function(NetDiagTarget)>[
-      _dns,
-      _tcp,
-      _tls,
-      _http,
-    ]) {
-      final r = await run(target);
-      results.add(r);
-      onResult?.call(r);
-    }
-    return results;
+    final futures = <Future<NetDiagCheckResult>>[
+      _dns(target),
+      _tcp(target),
+      _tls(target),
+      _http(target),
+    ];
+
+    final collected = <NetDiagCheckResult>[];
+    await Future.wait(
+      futures.map((f) async {
+        final r = await f;
+        collected.add(r);
+        onResult?.call(r);
+        return r;
+      }),
+    );
+
+    collected.sort((a, b) => a.kind.index.compareTo(b.kind.index));
+    return collected;
   }
 
   Future<NetDiagCheckResult> _timed(
@@ -178,6 +189,8 @@ class NetDiagProbe {
       sw.stop();
       return r.copyWith(elapsedMs: sw.elapsedMilliseconds);
     } catch (e) {
+      // 故意吞：**这项的失败本身就是结论**（界面要显示"为什么不通"，而不是抛出去
+      // 让整轮诊断崩掉）。原因经 describeNetDiagError 翻译成人话后写进 error 字段。
       sw.stop();
       return NetDiagCheckResult(
         kind: kind,
