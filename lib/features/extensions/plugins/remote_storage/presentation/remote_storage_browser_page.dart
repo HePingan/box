@@ -346,6 +346,8 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     // 或者先取到局部变量。这里取局部变量，顺便避开 lint 的无谓大括号争议。
     var countText = usage.files;
     var bytesText = formatRemoteBytes(usage.bytes);
+    // 内存里那份也要显示：只报磁盘占用会让「清空」看着成功而内存没释放。
+    var memText = usage.memoryCount;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
@@ -357,7 +359,10 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('已缓存 $countText 张，占用 $bytesText'),
+                  Text(
+                    '已缓存 $countText 张，占用 $bytesText'
+                    '（内存 $memText 张，不占磁盘）',
+                  ),
                   const SizedBox(height: 8),
                   Text(
                     '上限 ${formatRemoteBytes(kThumbnailDiskMaxBytes)}'
@@ -393,6 +398,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
                             usage = fresh;
                             countText = fresh.files;
                             bytesText = formatRemoteBytes(fresh.bytes);
+                            memText = fresh.memoryCount;
                           });
                           if (!mounted) return;
                           ScaffoldMessenger.of(this.context).showSnackBar(

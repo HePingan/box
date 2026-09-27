@@ -2014,6 +2014,34 @@ void main() {
       expect(await store.load(), isEmpty, reason: '丢掉的记录要一起从盘里清掉');
     });
   });
+
+  group('缩略图缓存清理（黄灯接线：clearMemory 必须有生产调用点）', () {
+    test('「清空缓存」必须磁盘 + 内存一起清', () async {
+      final cache = RemoteThumbnailCache(root: thumbRoot);
+      final svc = RemoteStorageService(
+        transportFactory: (_) => transport,
+        docsDirProvider: () async => docsDir,
+        thumbnailCache: cache,
+      );
+      await cache.put('k1', Uint8List.fromList([1, 2, 3]));
+
+      // 控制组：先确认确实有东西可清，否则下面的 0/0 是空断言。
+      var usage = await svc.thumbnailCacheUsage();
+      expect(usage.files, 1, reason: '磁盘里有一张');
+      expect(usage.memoryCount, 1, reason: '内存里也有一张');
+
+      await svc.clearThumbnailCache();
+
+      usage = await svc.thumbnailCacheUsage();
+      expect(usage.files, 0, reason: '磁盘清掉了');
+      expect(
+        usage.memoryCount,
+        0,
+        reason: '内存也要清 —— 只清磁盘时这里仍是 1，用户看到数字归零但内存没释放',
+      );
+    });
+  });
+
 }
 
 /// 内存里的落盘替身（service 测试不碰真实文件系统）。

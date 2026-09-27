@@ -1356,7 +1356,17 @@ class RemoteStorageService {
       _thumbnails.cache.usage();
 
   /// 清空缩略图缓存（内存 + 磁盘）。
-  Future<void> clearThumbnailCache() => _thumbnails.cache.clear();
+  /// 清空缩略图缓存：**磁盘 + 内存一起清**。
+  ///
+  /// 只清磁盘是错的（界面上那个「清空」按钮原来就是这样）：面板读的是磁盘
+  /// 占用，数字掉到 0 了，内存里那份图（上限 32MB / 400 张）还攥着 —— 用户
+  /// 以为已经释放，其实没有。反过来，账户/机器切换时如果只清内存不清磁盘，
+  /// 又会在另一个入口的浏览页里命中上一个入口的缩略图。所以这里是"清缓存"
+  /// 的唯一入口，两处一起走。
+  Future<void> clearThumbnailCache() async {
+    _thumbnails.clearMemory();
+    await _thumbnails.cache.clear();
+  }
 
   /// 用恢复描述重建 runner（284 P1）。
   ///

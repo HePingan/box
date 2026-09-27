@@ -593,6 +593,11 @@ void main() {
         reason: '占用要能看到，缓存不该是黑盒',
       );
       expect(find.textContaining('5.00 MB'), findsOneWidget);
+      expect(
+        find.textContaining('内存'),
+        findsOneWidget,
+        reason: '内存里那份也要显示，否则「清空」看着成功而内存没释放',
+      );
     });
 
     testWidgets('有缓存时点「清空」→ 调用清空并刷新为 0', (tester) async {
