@@ -188,3 +188,56 @@
 余下 48 处已逐条判为正当，**不逐条改动** —— 为"看起来像"的问题改 48 处代码，
 只会在 diff 里制造噪声。
 
+---
+
+## 十、组 3 E 项实施记录（2026-09-27，1.20.57/314）
+
+### 先更正上一轮的一处误报
+
+上一轮汇报里说「4 个占位条目的提示文案与标题对不上」（举了「点『二次元壁纸入口』→ 弹『睡眠电台
+插件开发中』」）。**这是误报，撤回**：那是我自己写的正则把相邻条目的 title/subtitle/payload 串了行
+—— 逐条读原文（`lib/features/extensions/market/domain/plugin_market_manifest.dart:655-770`）后，
+7 个 `toast` 模板每条的 payload 与自己的标题都对得上：
+
+| id | 标题 | payload |
+|---|---|---|
+| `market_quick_note` | 快速便签 | 快速便签：后续可接入本地记事模块 |
+| `market_music_focus` | 专注白噪音 | 白噪音插件开发中... |
+| `market_music_sleep` | 睡眠电台 | 睡眠电台插件开发中... |
+| `market_video_watch_later` | 稍后再看 | 稍后再看功能开发中... |
+| `market_comic_wallpaper` | 动漫壁纸 | 动漫壁纸插件开发中... |
+| `market_comic_week_rank` | 本周漫画榜 | 本周漫画榜插件开发中... |
+| `market_novel_checkin` | 阅读打卡 | 阅读打卡功能开发中... |
+
+上一轮据此提的「① 先修错配文案」**不成立，不做**。
+
+### 真正的问题（成立，已修）
+
+那 7 条**本来就不该 advertised 成可安装**：它们的动作是 `toast`，装了只会弹一句「开发中」。
+FIX-09 的占位治理用的是 `isPlaceholder = toast && payload 为空`，于是这 7 条**带着 payload**
+的同类条目全部漏在判据之外 —— 用户照样能装，装完点一下还是只有一句话。
+
+**改法（检查：为什么不是靠文案反推）**：未完成与否是**目录的声明**，不该由 payload 猜。所以给
+`MarketPluginTemplate` 加显式字段 `comingSoon`（`plugin_market_manifest.dart`），7 条置 `true`；
+市场页三处判据统一改读 `isComingSoon`（= `comingSoon || isPlaceholder`，旧数据仍兜得住）。
+
+- 界面上这 7 条：**不给安装按钮**、标「即将上线」、沉到列表底部、不被「全部安装」带走（与 FIX-09 一致）。
+- 远端清单里没有该字段时不报错（`safeMarketBool` 缺省 false），老清单的「toast 且无 payload」仍按未上线处理。
+- 新用例 `test/plugin_market/plugin_market_coming_soon_test.dart`：① 内置目录里 7 条必须显式
+  `comingSoon`（锁住这份声明）+ 6 条真动作条目为控制组（不得被标未上线）；② 旧数据向后兼容；
+  ③ 带 payload 的未上线条目在界面上没有「安装」按钮、有「即将上线」。
+
+### 方案里的「② 入口类占位改成真跳转」：本轮做不了，原因在代码里
+
+`navigate` 动作是能跳的，但**路由表里没有音乐页与漫画页**（`builtin_plugin_pages.dart` 只注册了
+日报 / 小说 / 影视 / 生图 / 远程存储 / 服务监控 / 服务器运维），且 `music` 分区**连一个内置插件
+都没有**（`builtin_plugin_catalog.dart` 18 条里 area=music 的是 0 条，comic 只有「漫画收藏」）。
+所以「睡眠电台」「专注白噪音」「动漫壁纸」「本周漫画榜」要变成真跳转，前提是**先做音乐播放器 /
+漫画榜单这些新功能**，不是接线问题。这属于新功能立项，不在本轮做假接线。
+
+**所以 ② 收敛为 ③：本轮先把「装了只弹提示」这件事如实标出来**，不做假跳转（跳到影视列表冒充
+「稍后再看」= 换一种谎报）。
+
+**留给下一轮拍板**：这 7 条是继续挂着当路线图，还是从市场撤下（撤下要连 `defaults` 一起删，
+改完市场只剩 6 条内置模板）。
+

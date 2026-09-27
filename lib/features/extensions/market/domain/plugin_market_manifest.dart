@@ -458,6 +458,13 @@ class MarketPluginTemplate {
   final int packageSize;
   final int downloadCount;
   final String publishedAt;
+  /// 显式「尚未上线」声明：条目是规划中的功能，装了只会弹一句提示。
+  ///
+  /// 为什么不用 [isPlaceholder] 反推：那条判据是「toast 且 payload 为空」，于是
+  /// 「toast + 'XX插件开发中…'」这种同样未完成的条目会被判成可安装 —— 用户装完点一下
+  /// 只弹个「开发中」，失望与占位一模一样，却漏在判据之外（内置目录里实际有 7 条）。
+  /// 未完成与否是**目录的声明**，不该由文案反推。
+  final bool comingSoon;
 
   const MarketPluginTemplate({
     required this.id,
@@ -476,6 +483,7 @@ class MarketPluginTemplate {
     this.tags = const [],
     this.permissions = const [],
     this.deprecated = false,
+    this.comingSoon = false,
     this.changelog = '',
     this.packageUrl = '',
     this.packageSha256 = '',
@@ -505,6 +513,10 @@ class MarketPluginTemplate {
   bool get isPlaceholder =>
       actionCode.trim() == 'toast' && payloadData.isEmpty && payload.trim().isEmpty;
 
+  /// 未上线判据（单一事实源）：显式声明 [comingSoon]，或旧数据里的「toast 且无 payload」。
+  /// 界面一律用这个，不要再各处直接读 [isPlaceholder]。
+  bool get isComingSoon => comingSoon || isPlaceholder;
+
   Map<String, dynamic> toJson() {
     return {
       'id': id,
@@ -518,6 +530,7 @@ class MarketPluginTemplate {
       'iconFontPackage': icon.fontPackage,
       'colorValue': color.toARGB32(),
       'sort': sort,
+      'comingSoon': comingSoon,
       'version': version,
       'minAppVersion': minAppVersion,
       'author': author,
@@ -563,6 +576,7 @@ class MarketPluginTemplate {
     final tags = safeMarketStringList(json['tags']);
     final permissions = safeMarketStringList(json['permissions']);
     final deprecated = safeMarketBool(json['deprecated'], false);
+    final comingSoon = safeMarketBool(json['comingSoon'], false);
     final changelog = safeMarketString(json['changelog']);
     final packageUrl = safeMarketString(json['packageUrl']);
     final packageSha256 = safeMarketString(json['packageSha256']);
@@ -609,6 +623,7 @@ class MarketPluginTemplate {
       tags: tags,
       permissions: permissions,
       deprecated: deprecated,
+      comingSoon: comingSoon,
       changelog: changelog,
       packageUrl: packageUrl,
       packageSha256: packageSha256,
@@ -670,6 +685,7 @@ class MarketPluginTemplate {
       subtitle: '首页快捷记录灵感',
       areaCode: 'recommend',
       actionCode: 'toast',
+      comingSoon: true,
       payload: '快速便签：后续可接入本地记事模块',
       icon: Icons.edit_note_outlined,
       color: Color(0xFF7F56D9),
@@ -681,6 +697,7 @@ class MarketPluginTemplate {
       subtitle: '工作学习沉浸模式',
       areaCode: 'music',
       actionCode: 'toast',
+      comingSoon: true,
       payload: '白噪音插件开发中...',
       icon: Icons.graphic_eq,
       color: Color(0xFFEC4899),
@@ -692,6 +709,7 @@ class MarketPluginTemplate {
       subtitle: '夜间轻音乐播放入口',
       areaCode: 'music',
       actionCode: 'toast',
+      comingSoon: true,
       payload: '睡眠电台插件开发中...',
       icon: Icons.nightlight_round,
       color: Color(0xFFDB2777),
@@ -714,6 +732,7 @@ class MarketPluginTemplate {
       subtitle: '收藏稍后观看片单',
       areaCode: 'video',
       actionCode: 'toast',
+      comingSoon: true,
       payload: '稍后再看功能开发中...',
       icon: Icons.watch_later_outlined,
       color: Color(0xFF4338CA),
@@ -725,6 +744,7 @@ class MarketPluginTemplate {
       subtitle: '二次元壁纸入口',
       areaCode: 'comic',
       actionCode: 'toast',
+      comingSoon: true,
       payload: '动漫壁纸插件开发中...',
       icon: Icons.wallpaper_outlined,
       color: Color(0xFF0D9488),
@@ -736,6 +756,7 @@ class MarketPluginTemplate {
       subtitle: '热门漫画推荐',
       areaCode: 'comic',
       actionCode: 'toast',
+      comingSoon: true,
       payload: '本周漫画榜插件开发中...',
       icon: Icons.auto_stories_outlined,
       color: Color(0xFF0F766E),
@@ -758,6 +779,7 @@ class MarketPluginTemplate {
       subtitle: '保持每日阅读习惯',
       areaCode: 'novel',
       actionCode: 'toast',
+      comingSoon: true,
       payload: '阅读打卡功能开发中...',
       icon: Icons.task_alt_outlined,
       color: Color(0xFFD97706),

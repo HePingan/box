@@ -460,14 +460,14 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     }
   }
 
-  /// 展示顺序：可用条目在前，占位（即将上线）在后。稳定排序，不改变同组内相对次序。
+  /// 展示顺序：可用条目在前，未上线（即将上线）在后。稳定排序，不改变同组内相对次序。
   List<MarketPluginTemplate> _orderedForDisplay(
     List<MarketPluginTemplate> input,
   ) {
     final ready = <MarketPluginTemplate>[];
     final soon = <MarketPluginTemplate>[];
     for (final item in input) {
-      (item.isPlaceholder ? soon : ready).add(item);
+      (item.isComingSoon ? soon : ready).add(item);
     }
     return [...ready, ...soon];
   }
@@ -476,8 +476,8 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     if (_bulkRunning) return;
 
     final target = _visibleTemplates
-        // 占位条目不给安装（单个卡片没有入口，批量更不能漏）。
-        .where((e) => !e.isPlaceholder && !_installedIds.contains(e.id))
+        // 未上线条目不给安装（单个卡片没有入口，批量更不能漏）。
+        .where((e) => !e.isComingSoon && !_installedIds.contains(e.id))
         .toList();
 
     if (target.isEmpty) {
@@ -939,9 +939,9 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                           ),
                           child: const Text('卸载'),
                         )
-                      : item.isPlaceholder
-                      // 占位条目（toast 且无 payload）：装了也只会弹个提示，
-                      // 像是装坏了。不给安装入口，明确标「即将上线」。
+                      : item.isComingSoon
+                      // 未上线条目（显式声明 comingSoon，或旧的「toast 且无 payload」）：
+                      // 装了也只会弹个提示，像是装坏了。不给安装入口，明确标「即将上线」。
                       ? OutlinedButton(
                           onPressed: null,
                           style: OutlinedButton.styleFrom(
