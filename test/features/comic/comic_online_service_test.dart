@@ -39,7 +39,7 @@ void main() {
           '$card|$authorRule': ['尾田荣一郎', '-'],
         },
       );
-      final service = ComicOnlineService(target: fake, source: source);
+      final service = ComicOnlineService(target: fake, source: source, listTimeout: const Duration(milliseconds: 20));
       final hits = await service.search('海贼');
 
       expect(hits.length, 2);
@@ -60,7 +60,7 @@ void main() {
           '$card|$urlRule': ['/comic/jia', ''],
         },
       );
-      final service = ComicOnlineService(target: fake, source: source);
+      final service = ComicOnlineService(target: fake, source: source, listTimeout: const Duration(milliseconds: 20));
       final hits = await service.search('x');
       expect(hits.length, 1);
       expect(hits.single.name, '甲');
@@ -73,7 +73,7 @@ void main() {
           '$card|$urlRule': [''],
         },
       );
-      final service = ComicOnlineService(target: fake, source: source);
+      final service = ComicOnlineService(target: fake, source: source, listTimeout: const Duration(milliseconds: 20));
       await expectLater(
         service.search('x'),
         throwsA(
@@ -92,6 +92,8 @@ void main() {
         target: fake,
         source: source,
         waitTimeout: const Duration(milliseconds: 1),
+        listTimeout: const Duration(milliseconds: 20),
+        openTimeout: const Duration(milliseconds: 200),
       );
       await expectLater(
         service.search('x'),
@@ -109,7 +111,7 @@ void main() {
   group('详情与章节目录', () {
     test('书名/作者/封面 + 目录按卡片取（容器只取第一段选择器）', () async {
       final tocRule = source.bookInfoRules['tocUrl']!;
-      final container = firstSelectorCss(tocRule)!;
+      final container = firstSelectorRule(tocRule)!;
       final fake = FakeComicTarget(
         values: {
           source.bookInfoRules['name']!: ['航海王'],
@@ -121,7 +123,7 @@ void main() {
           '$container|${source.tocRules['chapterUrl']}': ['/user/page_direct?chapter_slot=1186', '/user/page_direct?chapter_slot=1185'],
         },
       );
-      final service = ComicOnlineService(target: fake, source: source);
+      final service = ComicOnlineService(target: fake, source: source, listTimeout: const Duration(milliseconds: 20));
       final book = await service.bookInfo('https://cn.baozimhcn.com/comic/x');
 
       expect(book.name, '航海王');
@@ -133,11 +135,36 @@ void main() {
       expect(book.chapters[0].url, contains('chapter_slot=1186'));
     });
 
+    test('目录是渲染出来的：一开始只数到 0/1 条，要等它出来再取', () async {
+      final tocRule = source.bookInfoRules['tocUrl']!;
+      final container = firstSelectorRule(tocRule)!;
+      final fake = FakeComicTarget(
+        counts: {container: 3},
+        perElement: {
+          '$container|${source.tocRules['chapterName']}': ['第1话', '第2话', '第3话'],
+          '$container|${source.tocRules['chapterUrl']}': ['/c/1', '/c/2', '/c/3'],
+        },
+      )..countsEmptyFirstNPolls = 2; // 前两次轮询：列表还没渲染出来
+
+      final service = ComicOnlineService(
+        target: fake,
+        source: source,
+        listTimeout: const Duration(milliseconds: 500),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+      final book = await service.bookInfo('https://cn.baozimhcn.com/comic/x');
+      expect(
+        book.chapters.length,
+        3,
+        reason: '不等列表渲染就取，真机上就会"斗破苍穹共 1 话"',
+      );
+    });
+
     test('目录取不到：章节为空表（界面按"没取到目录"显示，不编造）', () async {
       final fake = FakeComicTarget(
         values: {source.bookInfoRules['name']!: ['某书']},
       );
-      final service = ComicOnlineService(target: fake, source: source);
+      final service = ComicOnlineService(target: fake, source: source, listTimeout: const Duration(milliseconds: 20));
       final book = await service.bookInfo('https://cn.baozimhcn.com/comic/x');
       expect(book.chapters, isEmpty);
       expect(book.firstChapter, isNull);
@@ -154,6 +181,7 @@ void main() {
         target: fake,
         source: source,
         waitTimeout: const Duration(milliseconds: 50),
+        listTimeout: const Duration(milliseconds: 20),
       );
       final urls = await service.chapterImages('https://cn.dzmanga.com/ch/1.html');
       expect(urls, [
@@ -185,6 +213,7 @@ void main() {
         target: fake,
         source: source,
         waitTimeout: const Duration(milliseconds: 30),
+        listTimeout: const Duration(milliseconds: 20),
       );
       await expectLater(
         service.chapterImages('https://cn.dzmanga.com/ch/1.html'),

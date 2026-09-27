@@ -51,6 +51,8 @@ Widget _page(FakeComicTarget target, _FakeCache cache) {
       targetBuilder: () => target,
       imageCache: cache,
       waitTimeout: const Duration(milliseconds: 20),
+      listTimeout: const Duration(milliseconds: 20),
+      openTimeout: const Duration(milliseconds: 20),
       progressStore: ComicOnlineProgressStore(
         cacheStore: CacheStore.inMemory('online_page_test'),
       ),
@@ -60,7 +62,7 @@ Widget _page(FakeComicTarget target, _FakeCache cache) {
 
 /// 推够时间：假取数是一串 await，单次 pump 不一定够。
 Future<void> _settle(WidgetTester tester) async {
-  for (var i = 0; i < 40; i++) {
+  for (var i = 0; i < 80; i++) {
     await tester.pump(const Duration(milliseconds: 20));
   }
 }
@@ -77,9 +79,10 @@ void main() {
     final source = _seed();
     final card = source.searchRules['bookList']!;
     final tocRule = source.bookInfoRules['tocUrl']!;
-    final container = firstSelectorCss(tocRule)!;
+    final container = firstSelectorRule(tocRule)!;
 
     final target = FakeComicTarget(
+      counts: {card: 1, container: 1},
       perElement: {
         '$card|${source.searchRules['name']}': ['海贼王'],
         '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
@@ -125,6 +128,7 @@ void main() {
     final source = _seed();
     final card = source.searchRules['bookList']!;
     final target = FakeComicTarget(
+      counts: {card: 1},
       perElement: {
         '$card|${source.searchRules['name']}': ['甲'],
         '$card|${source.searchRules['bookUrl']}': [''],
@@ -143,9 +147,10 @@ void main() {
     final source = _seed();
     final card = source.searchRules['bookList']!;
     final tocRule = source.bookInfoRules['tocUrl']!;
-    final container = firstSelectorCss(tocRule)!;
+    final container = firstSelectorRule(tocRule)!;
 
     final target = FakeComicTarget(
+      counts: {card: 1, container: 1},
       perElement: {
         '$card|${source.searchRules['name']}': ['海贼王'],
         '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
@@ -163,6 +168,8 @@ void main() {
           targetBuilder: () => target,
           imageCache: _FakeCache(png),
           waitTimeout: const Duration(milliseconds: 20),
+          listTimeout: const Duration(milliseconds: 20),
+          openTimeout: const Duration(milliseconds: 20),
           progressStore: ComicOnlineProgressStore(
             cacheStore: CacheStore.inMemory('online_page_test2'),
           ),

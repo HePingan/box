@@ -31,7 +31,9 @@ class ComicOnlinePage extends StatefulWidget {
     this.targetBuilder,
     this.imageCache,
     this.progressStore,
-    this.waitTimeout = const Duration(seconds: 25),
+    this.waitTimeout = const Duration(seconds: 15),
+    this.listTimeout = const Duration(seconds: 12),
+    this.openTimeout = const Duration(seconds: 20),
   });
 
   /// 可注入（测试用）；生产走内置书源。
@@ -43,8 +45,10 @@ class ComicOnlinePage extends StatefulWidget {
   final ComicImageCache? imageCache;
   final ComicOnlineProgressStore? progressStore;
 
-  /// 等页面就绪/等图地址的时间上限（测试里调小，生产用默认）。
+  /// 等图地址 / 等列表 / 等页面打开 的时间上限（测试里调小，生产用默认）。
   final Duration waitTimeout;
+  final Duration listTimeout;
+  final Duration openTimeout;
 
   @override
   State<ComicOnlinePage> createState() => _ComicOnlinePageState();
@@ -65,6 +69,9 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   _Mode _mode = _Mode.search;
 
   bool _busy = false;
+
+  /// 正在做什么（转圈时必须写出来，否则用户只能看到"一直转圈"）。
+  String _busyLabel = '';
   String? _error;
 
   List<ComicSearchHit> _hits = const [];
@@ -89,6 +96,8 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       target: _target,
       source: _source,
       waitTimeout: widget.waitTimeout,
+      listTimeout: widget.listTimeout,
+      openTimeout: widget.openTimeout,
     );
     _cache = widget.imageCache ?? ComicImageCache();
     _progress = widget.progressStore ?? ComicOnlineProgressStore();
@@ -103,9 +112,10 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
 
   // ── 动作 ──────────────────────────────────────────────────────
 
-  Future<void> _run(Future<void> Function() action) async {
+  Future<void> _run(Future<void> Function() action, String label) async {
     setState(() {
       _busy = true;
+      _busyLabel = label;
       _error = null;
     });
     try {
@@ -114,7 +124,12 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       if (!mounted) return;
       setState(() => _error = _describe(e));
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _busyLabel = '';
+        });
+      }
     }
   }
 
@@ -136,7 +151,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         _hits = hits;
         _mode = _Mode.search;
       });
-    });
+    }, '正在搜索「$key」…（最多等 ${_service.openTimeout.inSeconds} 秒）');
   }
 
   Future<void> _openBook(ComicSearchHit hit) async {
@@ -147,7 +162,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         _book = book;
         _mode = _Mode.book;
       });
-    });
+    }, '正在打开这本书…（最多等 ${_service.openTimeout.inSeconds} 秒）');
   }
 
   Future<void> _openChapter(ComicChapterRef chapter, {int atIndex = 0}) async {
@@ -175,7 +190,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         } catch (_) {}
       }
       _jumpTo(_imageIndex);
-    });
+    }, '正在取「${chapter.title}」的图…（最多等 ${_service.waitTimeout.inSeconds} 秒）');
   }
 
   void _jumpTo(int index) {
@@ -292,8 +307,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: _inlineError(_error!),
           ),
-        if (_busy && _hits.isEmpty)
-          const Expanded(child: Center(child: CircularProgressIndicator())),
+        if (_busy && _hits.isEmpty) Expanded(child: _busyView()),
         if (!_busy && _hits.isEmpty && _error == null)
           const Expanded(
             child: Center(child: Text('输入关键字，点「搜索」')),
@@ -324,6 +338,30 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       ],
     );
   }
+
+  /// 转圈**必须**带上"在做什么、最多等多久"；再久一点就提示站点可能不可达。
+  Widget _busyView() => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(),
+          const SizedBox(height: 16),
+          Text(
+            _busyLabel.isEmpty ? '正在处理…' : _busyLabel,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '等的时间偏长时，多半是站点这一侧不肯给（不是这台手机的问题）。',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
+      ),
+    ),
+  );
 
   Widget _inlineError(String text) => Container(
     width: double.infinity,
@@ -402,7 +440,15 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           ),
         if (book.chapters.isEmpty)
           const Expanded(
-            child: Center(child: Text('这本书没取到章节目录（站点可能改版）')),
+            child: Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  '这本书没取到章节目录（站点可能改版；也可能是目录还没渲染出来）',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
           )
         else ...[
           const Divider(height: 1),
@@ -432,7 +478,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
 
   Widget _readerBody() {
     if (_busy && _images.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return _busyView();
     }
     if (_images.isEmpty) {
       return Center(

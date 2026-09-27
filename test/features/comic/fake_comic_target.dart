@@ -48,6 +48,10 @@ class FakeComicTarget implements ComicSourceTarget {
 
   final bool failOpen;
 
+  /// 前 N 次轮询返回命中数 0（模拟"列表还没渲染出来"）。
+  int countsEmptyFirstNPolls = 0;
+  final Map<String, int> _countPolls = {};
+
   final List<String> opened = [];
 
   @override
@@ -66,7 +70,12 @@ class FakeComicTarget implements ComicSourceTarget {
   Future<String> pageTitle() async => '假页面';
 
   @override
-  Future<int> countOf(String css) async => counts[css] ?? 0;
+  Future<int> countOf(String css) async {
+    final n = (_countPolls[css] ?? 0) + 1;
+    _countPolls[css] = n;
+    if (n <= countsEmptyFirstNPolls) return 0;
+    return counts[css] ?? 0;
+  }
 
   @override
   Future<String?> attrOf(String css, String attr) async =>

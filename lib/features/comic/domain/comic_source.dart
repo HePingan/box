@@ -124,6 +124,17 @@ ComicRuleParse parseComicRule(String raw, {bool valueRule = false}) {
     final extras = <String>[];
     var bad = false;
     for (final token in tokens) {
+      // 已经是 CSS 的整段（`.a.b` / `#id`）→ 直接当 CSS。
+      // 与页面里的 JS 引擎同一套判据：调用方很容易把"自己拼的 CSS"当"书源规则"传进来。
+      if (RegExp(r'^[.#][A-Za-z_][A-Za-z0-9_.\-#]*$').hasMatch(token)) {
+        if (type != null) {
+          bad = true;
+          break;
+        }
+        type = 'raw';
+        firstName = token;
+        continue;
+      }
       final indexOnly = _indexToken.firstMatch(token);
       if (indexOnly != null) {
         index = int.parse(indexOnly.group(1)!);
@@ -158,6 +169,7 @@ ComicRuleParse parseComicRule(String raw, {bool valueRule = false}) {
     }
     if (!bad && firstName != null && firstName.isNotEmpty) {
       final head = switch (type) {
+        'raw' => firstName,
         'tag' => firstName,
         'id' => '#$firstName',
         'class' => '.$firstName',
@@ -359,6 +371,21 @@ Map<String, String> _strMap(Object? raw) {
     if (v is String && v.trim().isNotEmpty) out['$k'] = v.trim();
   });
   return out;
+}
+
+/// 取规则的**第一段选择器原文**（保留 `class.` / `tag.` 写法）。
+///
+/// 与 [firstSelectorCss] 的区别：那个给"页面查询"用（`.a.b`），这个是给
+/// **书源规则求值**用（`class.a b`）—— 引擎按规则解析，两者写法不同，别混着传
+/// （真机上把 CSS 当规则传过一次：整段解析失败 → 只剩一个"卡片" → "共 1 话"）。
+String? firstSelectorRule(String rule) {
+  final t = rule.trim();
+  if (t.isEmpty || isComicJsRule(t)) return null;
+  final first = t.split('@').first.trim();
+  if (first.isEmpty) return null;
+  final parsed = parseComicRule(first, valueRule: false);
+  if (!parsed.ok || parsed.steps.isEmpty) return null;
+  return first;
 }
 
 /// 把 `mirrors`（字符串数组）读出来；没有就是空表。

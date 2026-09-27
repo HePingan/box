@@ -746,6 +746,47 @@ void main() {
     });
   });
 
+  group('选择器写法（规则 / CSS）', () {
+    test('规则写法与"已经是 CSS"的写法都要认（真机上把 CSS 当规则传过一次）', () {
+      final viaRule = parseComicRule(
+        'class.pure-u-1-1 pure-u-sm-1-2 comics-chapters',
+        valueRule: false,
+      );
+      expect(viaRule.ok, isTrue);
+      expect(viaRule.steps.first, isA<ComicSelectorStep>());
+      expect(
+        (viaRule.steps.first as ComicSelectorStep).css,
+        '.pure-u-1-1.pure-u-sm-1-2.comics-chapters',
+      );
+
+      // 直接给 CSS：也要认（否则整段解析失败 → 只剩 documentElement 一个"卡片"）
+      final viaCss = parseComicRule(
+        '.pure-u-1-1.pure-u-sm-1-2.comics-chapters',
+        valueRule: false,
+      );
+      expect(viaCss.ok, isTrue);
+      expect(
+        (viaCss.steps.first as ComicSelectorStep).css,
+        '.pure-u-1-1.pure-u-sm-1-2.comics-chapters',
+      );
+
+      // `#id` 同样
+      final viaId = parseComicRule('#main', valueRule: false);
+      expect(viaId.ok, isTrue);
+      expect((viaId.steps.first as ComicSelectorStep).css, '#main');
+    });
+
+    test('firstSelectorRule 给规则原文、firstSelectorCss 给 CSS', () {
+      const rule =
+          'class.pure-u-1-1 pure-u-sm-1-2 comics-chapters@tag.a@harf@text';
+      expect(firstSelectorRule(rule), 'class.pure-u-1-1 pure-u-sm-1-2 comics-chapters');
+      expect(
+        firstSelectorCss(rule),
+        '.pure-u-1-1.pure-u-sm-1-2.comics-chapters',
+      );
+    });
+  });
+
   group('WebView 返回值解析（Android 会再编码一层）', () {
     test('JSON.stringify 出来的数组：被转义过也要能解', () {
       // 真机上就是这个形状：外层是 JSON 字符串，引号是 \"，< 是 \u003C

@@ -33,6 +33,16 @@ window.__comicSourceEngine = (function () {
     for (var i = 0; i < tokens.length; i++) {
       var t = tokens[i];
       if (!t) { continue; }
+      // 已经是 CSS 的整段（`.a.b` / `#id`）—— 直接当 CSS 用。
+      // 为什么留着这条：调用方很容易把"我拼出来的 CSS"当成"书源规则"传进来
+      // （真机上就这么栽过：取目录时把 firstSelectorCss 的结果传进来，于是整段
+      //  解析失败 → 只剩 documentElement 一个"卡片" → "共 1 话"）。
+      if (/^[.#][A-Za-z_][A-Za-z0-9_.\-#]*$/.test(t)) {
+        if (type !== null) { ok = false; break; }
+        type = 'raw';
+        first = t;
+        continue;
+      }
       var im = t.match(/^\.(\d+)$/);
       if (im) { index = Number(im[1]); continue; }
       var m = t.match(/^(class|tag|id)\.(.+)$/);
@@ -52,7 +62,7 @@ window.__comicSourceEngine = (function () {
     if (first === null && extras.length) { first = extras.shift(); }
     if (first === null || first === '') { return { css: '', index: index, selCount: 0, ok: false }; }
     // type === null = 裸标签名开头（amp-img / a）→ 按**标签**算，不是类。
-    var css = type === 'id' ? '#' + first : (type === 'class' ? '.' + first : first);
+    var css = type === 'raw' ? first : (type === 'id' ? '#' + first : (type === 'class' ? '.' + first : first));
     extras.forEach(function (c) { css += '.' + c; });
     return { css: css, index: index, selCount: 1, ok: true };
   }

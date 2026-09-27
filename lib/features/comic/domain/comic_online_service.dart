@@ -16,6 +16,7 @@ import 'comic_source_diagnostics.dart'
         comicNavFailureNote,
         openComicWithFallback;
 import 'comic_source_engine.dart';
+import 'comic_source_diagnostics.dart' show ComicNavOutcome;
 
 /// 搜索结果里的一条书。
 class ComicSearchHit {
@@ -67,13 +68,23 @@ class ComicOnlineService {
   ComicOnlineService({
     required this.target,
     required this.source,
-    this.waitTimeout = const Duration(seconds: 25),
+    this.waitTimeout = const Duration(seconds: 15),
+    this.listTimeout = const Duration(seconds: 12),
+    this.openTimeout = const Duration(seconds: 20),
     this.pollInterval = const Duration(milliseconds: 250),
   });
 
   final ComicSourceTarget target;
   final ComicSource source;
+  /// 等**图片地址**出现的上限。
   final Duration waitTimeout;
+
+  /// 等**列表**（搜索结果 / 章节目录）出现的上限。
+  final Duration listTimeout;
+
+  /// 打开页面这一跳的上限（含镜像候选）。
+  final Duration openTimeout;
+
   final Duration pollInterval;
 
   /// 搜索：返回书列表（书名/作者/封面/书链）。
@@ -88,6 +99,7 @@ class ComicOnlineService {
     if (card.trim().isEmpty) {
       throw ComicProbeException('书源没给 bookList 规则，取不到卡片');
     }
+    await _waitForCount(card, listTimeout);
     final names = await _perElement(card, source.searchRules['name'] ?? '');
     final links = await _perElement(card, source.searchRules['bookUrl'] ?? '');
     final covers = await _perElement(card, source.searchRules['coverUrl'] ?? '');
@@ -138,13 +150,18 @@ class ComicOnlineService {
   /// 整条规则里有书源自己写的笔误段（`harf`），整条拼进去会生成永不匹配的 CSS。
   Future<List<ComicChapterRef>> _chapters() async {
     final tocRule = source.bookInfoRules['tocUrl'] ?? '';
-    final container =
-        firstSelectorCss(tocRule) ?? cssFromComicRule(tocRule) ?? '';
-    if (container.isEmpty) {
+    // 两条路各用各的写法（真机上把 CSS 当规则传过一次，整段解析失败 → "共 1 话"）：
+    //   * 等渲染：用 CSS（`.a.b`）给页面查询；
+    //   * 取字段：用**规则原文**（`class.a b`）给引擎按规则求值。
+    final containerCss = firstSelectorCss(tocRule) ?? cssFromComicRule(tocRule) ?? '';
+    final containerRule = firstSelectorRule(tocRule) ?? containerCss;
+    if (containerCss.isEmpty) {
       throw ComicProbeException('书源的 tocUrl 规则不认识：「$tocRule」');
     }
-    final titles = await _perElement(container, source.tocRules['chapterName'] ?? '');
-    final urls = await _perElement(container, source.tocRules['chapterUrl'] ?? '');
+    // 目录是渲染出来的，**必须等它出现**（不等就会在页面刚打开时数到 0/1 条）。
+    await _waitForCount(containerCss, listTimeout);
+    final titles = await _perElement(containerRule, source.tocRules['chapterName'] ?? '');
+    final urls = await _perElement(containerRule, source.tocRules['chapterUrl'] ?? '');
     final out = <ComicChapterRef>[];
     for (var i = 0; i < urls.length; i++) {
       final u = urls[i].trim();
@@ -216,13 +233,25 @@ class ComicOnlineService {
 
   /// 打开地址：主站优先、失败按 `mirrors` 换镜像、每个地址最多试 2 次；每次波折都报出来。
   Future<void> _open(String pathOrUrl, {required String what}) async {
+    // 每个地址**只试一轮**：镜像回退在自检里值得（要把每种错都试出来），
+    // 但在浏览/阅读里会把"等一次 20 秒"乘成好几分钟 —— 用户看到的就是"一直转圈"。
     final nav = await openComicWithFallback(
       target,
       source,
       pathOrUrl,
       headers: _headers(),
+      attemptsPerHost: 1,
+    ).timeout(
+      openTimeout,
+      onTimeout: () => const ComicNavOutcome(ok: false),
     );
-    if (!nav.ok) throw ComicProbeException(comicNavFailureNote(nav, what));
+    if (!nav.ok) {
+      throw ComicProbeException(
+        nav.attempts.isEmpty
+            ? '$what打开超时（等了 ${openTimeout.inSeconds} 秒还没出结果，站点这一侧可能不可达）'
+            : comicNavFailureNote(nav, what),
+      );
+    }
   }
 
   /// 请求头：书源的 header 是 JS 规则，这里不为其引入 JS 求值器（只保证中文站点能正常回）。
@@ -270,6 +299,24 @@ class ComicOnlineService {
       await Future<void>.delayed(pollInterval);
     }
     return const [];
+  }
+
+  /// 等到某个 CSS **至少命中一个**为止（列表是渲染出来的，早查只会得到 0/1 条）。
+  Future<int> _waitForCount(String css, Duration timeout) async {
+    final sw = Stopwatch()..start();
+    var count = 0;
+    while (sw.elapsed < timeout) {
+      try {
+        final raw = await target.evalRaw(buildComicCountScript(css));
+        final v = parseComicJsValue(raw);
+        count = v is num ? v.toInt() : int.tryParse(v?.toString() ?? '') ?? 0;
+      } catch (_) {
+        count = 0;
+      }
+      if (count > 0) return count;
+      await Future<void>.delayed(pollInterval);
+    }
+    return count;
   }
 
   Future<List<String>> _urlsOf(String css, String attr) async {
