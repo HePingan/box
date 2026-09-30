@@ -11,8 +11,29 @@ import 'update_download_plan.dart';
 import 'update_models.dart';
 import 'update_security.dart';
 
+/// 一个**已经下载完、并且校验过哈希**的更新包。
+class DownloadedUpdate {
+  const DownloadedUpdate({
+    required this.path,
+    required this.versionCode,
+    required this.sha256,
+    required this.fileSize,
+  });
+
+  final String path;
+  final int versionCode;
+  final String sha256;
+  final int fileSize;
+}
+
 class AppInstaller {
-  static Future<void> downloadAndInstall({
+  /// 只下载 + 校验，**不**拉系统安装界面（拉界面交给 [launchInstaller]）。
+  ///
+  /// 为什么拆成两步：下载完成的那一刻，用户很可能已经把 App 切到后台了。Android 10+
+  /// 会把**后台发起的 startActivity 静默丢掉** —— open_filex 照样返回 `done`，于是
+  /// 界面停在「下载中 100%」、什么也不弹，用户只能从头再下一遍（2026-09-29 用户报的
+  /// 就是这个）。拆开之后：后台只管下载，回到前台再拉安装界面。
+  static Future<DownloadedUpdate> downloadApk({
     required UpdateManifest manifest,
     void Function(double progress)? onProgress,
     UpdateManifestSecurityConfig security =
@@ -67,8 +88,12 @@ class AppInstaller {
           throw Exception('APK 校验失败，文件可能损坏或被篡改');
         }
 
-        await _launchInstaller(savePath);
-        return;
+        return DownloadedUpdate(
+          path: savePath,
+          versionCode: manifest.latestVersionCode,
+          sha256: expectedSha256,
+          fileSize: await File(savePath).length(),
+        );
       } on Object catch (e) {
         // 用户主动取消不该被当成线路故障去试备用地址。
         if (e is DioException && CancelToken.isCancel(e)) {
@@ -92,7 +117,11 @@ class AppInstaller {
     throw Exception('更新失败：${lastError ?? '未知错误'}');
   }
 
-  static Future<void> _launchInstaller(String savePath) async {
+  /// 拉起系统安装界面。
+  ///
+  /// **必须在前台调用**（原因见 [downloadApk]）：后台调用时这里看起来"成功"，
+  /// 但用户什么都看不到。
+  static Future<void> launchInstaller(String savePath) async {
     // 强行拉起系统安装器，并捕获它的返回状态
     final result = await OpenFilex.open(savePath);
     if (kDebugMode) {
