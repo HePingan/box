@@ -11,15 +11,17 @@
 //   即「开关开了」≠「读屏可用」，但 UI 从未提示这一点。
 //
 // 本测试锁定修复后的契约：开关开启即视为用户已授权读屏，
-// 端点走内置默认值，不得因为用户没手填 URL 就静默失效。
+// 凭证由 resolveQuizVisionEndpoint 解析（手填直连 / 平台代理），
+// 不得因为用户没手填 URL 就静默失效。
 
 import 'package:box/features/quiz_plugin/domain/quiz_config.dart';
+import 'package:box/features/quiz_plugin/domain/quiz_vision_endpoint.dart';
 import 'package:box/features/quiz_plugin/presentation/quiz_plugin_entry.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('AI 读屏可用性判定（开关开启即应工作）', () {
-    test('开启开关但未手填 apiUrl：应使用内置默认端点，判定为可用', () {
+    test('开启开关但未手填 apiUrl：仍应可用（凭证交给代理解析，不再看 apiUrl）', () {
       const config = QuizConfig(allowExternalApi: true);
       // 用户视角：开关拨开了，就该能搜。
       expect(
@@ -49,25 +51,38 @@ void main() {
       );
       expect(QuizPluginEntry.visionFallbackEnabled(config), isTrue);
       expect(
-        QuizPluginEntry.effectiveVisionApiUrl(config),
+        resolveQuizVisionEndpoint(
+          config,
+          serverUrl: 'https://background.hpa888.top',
+        ).baseUrl,
         'https://my-own-proxy.example.com/v1',
       );
     });
   });
 
-  group('默认端点常量（单一事实源）', () {
-    test('默认端点为空时用内置 B 档端点，且形态是 OpenAI 兼容 /v1', () {
-      const config = QuizConfig(allowExternalApi: true);
-      final url = QuizPluginEntry.effectiveVisionApiUrl(config);
-      expect(url, isNotEmpty);
-      expect(url, endsWith('/v1'), reason: '引擎会拼 /chat/completions');
+  group('直连兜底端点常量（单一事实源）', () {
+    test('未手填地址时的直连端点形态是 OpenAI 兼容 /v1（引擎会拼 /chat/completions）', () {
+      expect(defaultVisionApiUrl, isNotEmpty);
+      expect(defaultVisionApiUrl, endsWith('/v1'));
+      final r = resolveQuizVisionEndpoint(
+        const QuizConfig(apiKey: 'sk-user-self-key'),
+        serverUrl: 'https://background.hpa888.top',
+      );
+      expect(r.baseUrl, defaultVisionApiUrl);
     });
 
-    test('apiUrl 只有空白字符也视为未填，回落到默认端点', () {
-      const config = QuizConfig(allowExternalApi: true, apiUrl: '   ');
+    test('apiUrl 只有空白字符也视为未填（直连档回落到默认端点）', () {
+      const config = QuizConfig(
+        allowExternalApi: true,
+        apiKey: 'sk-user-self-key',
+        apiUrl: '   ',
+      );
       expect(
-        QuizPluginEntry.effectiveVisionApiUrl(config),
-        QuizPluginEntry.defaultVisionApiUrl,
+        resolveQuizVisionEndpoint(
+          config,
+          serverUrl: 'https://background.hpa888.top',
+        ).baseUrl,
+        defaultVisionApiUrl,
       );
     });
   });

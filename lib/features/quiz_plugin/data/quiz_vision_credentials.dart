@@ -1,0 +1,171 @@
+// 读屏凭证解析（quiz-vision 方案 A 第二轮：客户端零内置密钥）。
+//
+// 为什么需要这一层：读屏的基准档从「内置 key 直连」换成了「平台代理」，
+// 而代理需要一个 Bearer —— 已登录用 session token，未登录用服务端签发的
+// **匿名设备令牌**。取 token 涉及存储与网络，不能塞进展示层，
+// 于是把「读凭证」收敛到这里，展示层只拿一个纯数据结果
+// （[QuizVisionEndpoint]，分流规则在 domain 的 [resolveQuizVisionEndpoint]）。
+//
+// 口径：
+//   * **永不抛**：任何一步失败都翻成可读原因返回 unavailable 档 —— 上层必须
+//     如实展示，绝不静默退化成「未搜到答案」，也绝不回落内置 key（已删）；
+//   * 手填凭证的用户**完全不碰**这条链路（不读存储、不签发设备令牌）；
+//   * 令牌与设备标识只进安全存储，绝不进日志。
+//
+// 单测接缝：平台通道在单测里不存在，故构造器可注入 [store]/[client]/[accountStore]，
+// 全局实例亦可用 [debugSetQuizVisionCredentialResolver] 替换。
+import '../../../utils/app_logger.dart';
+import '../../../utils/log_channels.dart';
+import '../../account/data/account_store.dart';
+import '../../account/domain/account_models.dart';
+import '../domain/quiz_config.dart';
+import '../domain/quiz_vision_endpoint.dart';
+import 'quiz_vision_device_token_client.dart';
+import 'quiz_vision_device_token_store.dart';
+
+class QuizVisionCredentialResolver {
+  QuizVisionCredentialResolver({
+    QuizVisionDeviceTokenStore? store,
+    QuizVisionDeviceTokenClient? client,
+    BoxAccountStore? accountStore,
+  }) : _store = store ?? quizVisionDeviceTokenStore,
+       _client = client ?? QuizVisionDeviceTokenClient(),
+       _accountStore = accountStore ?? BoxAccountStore();
+
+  final QuizVisionDeviceTokenStore _store;
+  final QuizVisionDeviceTokenClient _client;
+  final BoxAccountStore _accountStore;
+
+  /// 解析本次读屏凭证。**不抛异常**：失败一律返回带可读原因的
+  /// [QuizVisionMode.unavailable]。
+  Future<QuizVisionEndpoint> resolve(QuizConfig config) async {
+    // 手填过 key 或端点：老直连逻辑原样，不读存储、不签发设备凭证。
+    final userConfigured =
+        config.apiUrl.trim().isNotEmpty || config.apiKey.trim().isNotEmpty;
+    final serverUrl = await _loadServerUrl();
+    if (userConfigured) {
+      return resolveQuizVisionEndpoint(config, serverUrl: serverUrl);
+    }
+
+    // 已登录：Bearer = session token（服务器持真 key 转发）。
+    final session = await _loadSession();
+    final sessionToken = session?.token.trim() ?? '';
+    if (sessionToken.isNotEmpty) {
+      final saved = session!.serverUrl.trim();
+      return resolveQuizVisionEndpoint(
+        config,
+        serverUrl: saved.isEmpty ? serverUrl : saved,
+        sessionToken: sessionToken,
+      );
+    }
+
+    // 未登录：本机设备令牌优先；没有就向账号服务器签发一次。
+    // 签发失败**不降级**（客户端已无内置 key），如实带原因返回。
+    final cached = await _readDeviceToken();
+    if (cached.isNotEmpty) {
+      return resolveQuizVisionEndpoint(
+        config,
+        serverUrl: serverUrl,
+        deviceToken: cached,
+      );
+    }
+
+    final deviceId = await _ensureDeviceId();
+    final issued = await _client.issue(serverUrl: serverUrl, deviceId: deviceId);
+    if (!issued.isSuccess) {
+      _log('读屏设备令牌签发失败：${issued.error}', warn: true);
+      return QuizVisionEndpoint.unavailable(issued.error);
+    }
+    final token = issued.token!;
+    // 落盘失败不影响本次读屏（本次直接用内存里的新令牌），只留痕。
+    try {
+      await _store.writeDeviceToken(token);
+    } catch (e) {
+      _log('读屏设备令牌落盘失败（本次仍用内存令牌）：$e', warn: true);
+    }
+    return resolveQuizVisionEndpoint(
+      config,
+      serverUrl: serverUrl,
+      deviceToken: token,
+    );
+  }
+
+  /// 设备令牌被服务端拒（代理 401）时调用：清掉本机令牌，
+  /// 下次 [resolve] 会自动重新签发（自愈），用户无需重装/重登。
+  ///
+  /// 只清令牌、保留设备标识：服务端按标识记账与限额，换标识等于换设备。
+  Future<void> invalidateDeviceToken() async {
+    try {
+      await _store.clearDeviceToken();
+      _log('读屏设备令牌被拒，已清除本机令牌，下次自动重新签发');
+    } catch (e) {
+      _log('读屏设备令牌清除失败：$e', warn: true);
+    }
+  }
+
+  /// 账号服务器地址：读失败回落线上默认地址（不是内置密钥，无凭证风险）。
+  Future<String> _loadServerUrl() async {
+    try {
+      return await _accountStore.loadServerUrl();
+    } catch (e) {
+      _log('账号服务器地址读取失败，回落默认地址：$e', warn: true);
+      return BoxAccountDefaults.serverUrl;
+    }
+  }
+
+  /// 登录态：读失败按未登录处理（会走设备令牌档，而不是静默停摆）。
+  Future<BoxAccountSession?> _loadSession() async {
+    try {
+      return await _accountStore.loadSession();
+    } catch (e) {
+      _log('登录态读取失败，按未登录处理：$e', warn: true);
+      return null;
+    }
+  }
+
+  Future<String> _readDeviceToken() async {
+    try {
+      return (await _store.readDeviceToken())?.trim() ?? '';
+    } catch (e) {
+      _log('读屏设备令牌读取失败，按未签发处理：$e', warn: true);
+      return '';
+    }
+  }
+
+  /// 设备标识：本机没有就生成一次并落盘（同一台设备复用同一个标识）。
+  Future<String> _ensureDeviceId() async {
+    try {
+      final existing = (await _store.readDeviceId())?.trim() ?? '';
+      if (existing.isNotEmpty) return existing;
+    } catch (e) {
+      _log('设备标识读取失败，重新生成：$e', warn: true);
+    }
+    final generated = generateQuizDeviceId();
+    try {
+      await _store.writeDeviceId(generated);
+    } catch (e) {
+      _log('设备标识落盘失败（本次仍用内存标识）：$e', warn: true);
+    }
+    return generated;
+  }
+
+  void _log(String message, {bool warn = false}) {
+    AppLogger.instance.logTo(
+      LogChannel.quiz,
+      message,
+      level: warn ? LogLevel.warn : LogLevel.info,
+    );
+  }
+}
+
+QuizVisionCredentialResolver _active = QuizVisionCredentialResolver();
+
+/// 当前生效的解析器（读屏路径唯一取用点；测试注入优先）。
+QuizVisionCredentialResolver get quizVisionCredentialResolver => _active;
+
+/// 测试接缝：不传参恢复默认实现（与 debugSetOpsSecretStore 同形状）。
+void debugSetQuizVisionCredentialResolver([
+  QuizVisionCredentialResolver? resolver,
+]) {
+  _active = resolver ?? QuizVisionCredentialResolver();
+}

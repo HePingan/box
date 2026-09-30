@@ -5,8 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../account/data/account_store.dart';
-import '../../account/domain/account_models.dart';
 import '../../../design_system/app_tokens.dart';
 import '../../../utils/app_logger.dart';
 import '../../policy/plugin_policy.dart';
@@ -17,6 +15,7 @@ import '../data/quiz_cloud_auto_sync.dart';
 import '../domain/quiz_capture_session.dart';
 import '../domain/quiz_config.dart';
 import '../data/quiz_engine.dart';
+import '../data/quiz_vision_credentials.dart';
 import '../data/quiz_ocr_client.dart';
 import '../data/quiz_vision_reporter.dart';
 import '../domain/quiz_diag.dart';
@@ -978,8 +977,13 @@ class QuizPluginEntry {
         // 文本未命中：若 OCR 开启则兜底，否则展示失败
         if (!config.ocrSearch) {
           // OCR 未开启也要给读屏一次机会（用户拍板：所有本地未命中的题）。
-          if (config.allowExternalApi && config.apiUrl.trim().isNotEmpty) {
-            final visionOnly = await _tryVisionFallback(
+          // ⚠ 这里**不再要求用户手填过 apiUrl**：留空即走平台代理（已登录用
+          // session token、未登录用服务端签发的设备令牌）。旧条件
+          // `apiUrl.trim().isNotEmpty` 会让没填地址的用户在这一支里静默跳过
+          // 读屏，正是「开关开了却没有工作」的老病灶。
+          QuizResult? visionOnly;
+          if (config.allowExternalApi) {
+            visionOnly = await _tryVisionFallback(
               config,
               _engineForAutoSearch ??= QuizEngine(config: config),
               hintQuestion: captured,
@@ -1017,7 +1021,9 @@ class QuizPluginEntry {
           }
           await _pushOverlay(
             question: captured,
-            answers: _visionFailureHint(null),
+            // 读屏发起过就带上它的失败原因（凭证拿不到 / 代理 401 / 模型没答出），
+            // 只有压根没发起（开关关着）才是空原因 —— 不吞错，也不编造。
+            answers: _visionFailureHint(visionOnly),
             displayMode: config.displayMode,
             status: 'miss',
           );
@@ -1457,110 +1463,11 @@ class QuizPluginEntry {
     );
   }
 
-  /// AI 读屏的**内置默认端点**（B 档 NewAPI 渠道）。
-  ///
-  /// 为什么要内置：用户报「大模型搜题开启了没有工作」（2026-09-13 真机
-  /// 截图），真因是 `QuizConfig.apiUrl` 默认空串 —— 用户只拨了
-  /// 「允许外部网络搜题」开关，没手填 URL，于是 `_tryVisionFallback`
-  /// 第一行就静默 `return null`，界面仍显示「未搜到答案（本地题库未命中）」，
-  /// 完全看不出是配置没生效。
-  ///
-  /// 修法：开关（`allowExternalApi`）就是**授权**，端点是**实现细节**，
-  /// 给可用默认值，用户拨开关即工作；高级用户仍可在设置里填自定义端点覆盖。
-  ///
-  /// 注意：这里只放端点，**不放密钥**。密钥从 [defaultVisionApiKey] 取，
-  /// 二者都由服务端下发/内置常量维护，改一处即可。
-  static const String defaultVisionApiUrl = 'https://newapi.hpa888.top/v1';
-
-  /// 内置默认密钥（B 档渠道）。用户不填时用它，填了就优先用用户的。
-  ///
-  /// ⚠ 这是客户端内置凭证，只用于本 App 自用渠道；轮换时机与方式须与
-  /// 服务端同步（改这一个常量 → 发版）。若日后要做「可远程吊销」，
-  /// 应改为登录后由服务端下发短期 token，而不是长期内置。
-  /// ⚠️ 实测（2026-09-19 二次反转）：这条是用户 newapi 后台「识别题目」key。
-  /// 当天上午曾 401，故 v270 短暂换用「kaixing」key；当天下午 kaixing 被服务端
-  /// 吊销（401 Invalid token，0/3），本 key 恢复可用 —— 复测 10/10（含 app 同款
-  /// PNG@960+真实prompt，均值 10.5s）。v271 换回本条。
-  /// 教训：newapi 渠道 key 后台随时可吊销，内置 key 任何时刻都可能失效；
-  /// 根治方向是「服务端下发/远程可换」（见上方凭证注释）。
-  /// 用户未手动填 key 时默认走这条，保证开箱即用。
-  static const String defaultVisionApiKey = 'sk-1XIBJuf5R7VR2UjKaMHGW6LUKD4VFylg235qReX2CkYmfiSC';
-
-  /// 用户没填（或只填空白）时回落到内置默认端点。
-  static String effectiveVisionApiUrl(QuizConfig config) {
-    final raw = config.apiUrl.trim();
-    return raw.isEmpty ? defaultVisionApiUrl : raw;
-  }
-
-  /// 用户没填时回落到内置默认密钥。
-  static String effectiveVisionApiKey(QuizConfig config) {
-    final raw = config.apiKey.trim();
-    return raw.isEmpty ? defaultVisionApiKey : raw;
-  }
-
-  /// 解析本次读屏请求的端点与凭证 —— 方案 A（服务端代理）单一入口。
-  ///
-  /// 分流（test/quiz_vision_endpoint_resolution_test.dart 逐条回归）：
-  ///   ① 手填 key 或端点 → 老直连逻辑**原样**（手填 > 内置兜底）；
-  ///   ② 全空 + 已登录 → 平台代理：base=账号服务器+/api/quiz/vision，
-  ///      apiKey=session token（服务器持真 key 转发，客户端零 key）；
-  ///   ③ 其余（未登录/存储异常/代理不可用）→ 内置兜底 key 直连（降级）。
-  ///
-  /// 纯静态便于单测；[session] 为 null 时自动按未登录降级。
-  static QuizVisionEndpoint resolveVisionEndpoint(
-    QuizConfig config, {
-    BoxAccountSession? session,
-    bool proxyAvailable = true,
-  }) {
-    final userUrl = config.apiUrl.trim();
-    final userKey = config.apiKey.trim();
-
-    // ① 手填过 key 或端点 → 老逻辑原样，绝不静默改道。
-    if (userKey.isNotEmpty || userUrl.isNotEmpty) {
-      return QuizVisionEndpoint(
-        mode: QuizVisionMode.ownKey,
-        baseUrl: userUrl.isEmpty ? defaultVisionApiUrl : userUrl,
-        apiKey: userKey.isEmpty ? defaultVisionApiKey : userKey,
-      );
-    }
-
-    // ② 全空 + 已登录 → 平台代理（客户端零 key，token 当 Bearer）。
-    final token = session?.token.trim() ?? '';
-    if (proxyAvailable && token.isNotEmpty) {
-      final base = session!.serverUrl.trim().replaceAll(RegExp(r'/+$'), '');
-      return QuizVisionEndpoint(
-        mode: QuizVisionMode.platformProxy,
-        baseUrl:
-            '$base${QuizVisionEndpoint.proxyPathSegment}',
-        apiKey: token,
-      );
-    }
-
-    // ③ 降级：内置兜底 key 直连（代理挂了读屏不全瘫）。
-    return const QuizVisionEndpoint(
-      mode: QuizVisionMode.ownKey,
-      baseUrl: defaultVisionApiUrl,
-      apiKey: defaultVisionApiKey,
-    );
-  }
-
-  /// [resolveVisionEndpoint] 的异步包装：加载登录 session（异常按未登录处理）。
-  static Future<QuizVisionEndpoint> resolveVisionEndpointAsync(
-    QuizConfig config,
-  ) async {
-    BoxAccountSession? session;
-    try {
-      session = await BoxAccountStore().loadSession();
-    } catch (_) {
-      session = null; // 存取异常一律按未登录降级，不阻塞读屏。
-    }
-    return resolveVisionEndpoint(config, session: session);
-  }
-
   /// 读屏是否可用 —— **单一判定入口**，UI 提示与执行路径共用，避免两处判据分叉。
   ///
   /// 只要用户明确打开了「允许外部网络搜题」即视为授权可用；
-  /// 端点缺失由 [effectiveVisionApiUrl] 兜底，不再视为「未开启」。
+  /// 凭证（手填 key/端点 / 登录 session / 匿名设备令牌）由
+  /// `QuizVisionCredentialResolver` 解析，缺失或失败一律如实上报，不再视为「未开启」。
   static bool visionFallbackEnabled(QuizConfig config) =>
       config.allowExternalApi;
 
@@ -1573,8 +1480,10 @@ class QuizPluginEntry {
   /// 「截图 → 大模型直接给答案」，后者能处理读图题（标志/手势图等
   /// 题干本身无区分度的题）。
   ///
-  /// 返回 null 表示未产出可用结果（未开启 / 无截图 / 失败），调用方应按
-  /// 普通 miss 处理。**失败绝不编造答案**。
+  /// 返回 null 表示**压根没发起**（未开启 / 没拿到截图），调用方按普通 miss 处理；
+  /// 一旦发起，成功失败都返回 [QuizResult] —— 失败带可读原因（凭证拿不到、
+  /// 代理 401/429、模型没答出来各有文案）。**零内置密钥**后绝不允许把
+  /// 「拿不到凭证」静默退化成「未搜到答案」。**失败绝不编造答案**。
   static Future<QuizResult?> _tryVisionFallback(
     QuizConfig config,
     QuizEngine engine, {
@@ -1602,18 +1511,34 @@ class QuizPluginEntry {
       return null;
     }
 
-    // 方案 A：端点/凭证单一入口解析（手填直连 / 登录走平台代理 / 内置兜底）。
-    // 代理模式：引擎仍 POST {base}/chat/completions + Bearer，base 指向
-    // /api/quiz/vision 别名路由，apiKey=session token，服务器持真 key 转发。
-    final endpoint = await resolveVisionEndpointAsync(config);
+    // 凭证解析（方案 A + 匿名设备令牌，客户端零内置密钥）：
+    //   手填 key/端点 → 原样直连；已登录 → 平台代理（Bearer = session token）；
+    //   未登录 → 同一条代理，Bearer = 服务端签发的匿名设备令牌。
+    // 解析不出凭证时**如实报错**（内置 key 已删除，不再有任何兜底直连）。
+    final endpoint = await quizVisionCredentialResolver.resolve(config);
+    if (!_isCurrentRequest(requestGeneration, requestFingerprint)) return null;
     QuizDiag.log(
       QuizDiagStage.result,
       '读屏凭证模式',
       fields: {
-        'mode': endpoint.mode == QuizVisionMode.platformProxy ? 'proxy' : 'direct',
+        'mode': endpoint.mode.name,
+        'proxy': endpoint.viaProxy,
         'base': endpoint.baseUrl,
       },
     );
+    if (endpoint.isUnavailable) {
+      // 凭证拿不到（未登录且签发失败 / 账号服务器地址缺失）：如实告知原因，
+      // 立刻返回，不把读屏整条链路卡死，也不退回「未搜到答案」。
+      QuizDiag.warn(
+        QuizDiagStage.result,
+        '读屏凭证不可用',
+        fields: {'why': endpoint.errorMessage},
+      );
+      return QuizResult(
+        question: hintQuestion.trim(),
+        error: endpoint.errorMessage,
+      );
+    }
     engine.config = config.copyWith(
       apiUrl: endpoint.baseUrl,
       apiKey: endpoint.apiKey,
@@ -1624,6 +1549,12 @@ class QuizPluginEntry {
     );
     if (!_isCurrentRequest(requestGeneration, requestFingerprint)) return null;
     if (!result.isSuccess) {
+      // 设备令牌被服务端拒（代理 401）：清掉本机令牌 → 下次自动重新签发（自愈）。
+      // 只对设备档做：登录档的 401 是「登录过期」，清设备令牌没有意义。
+      if (endpoint.mode == QuizVisionMode.deviceProxy &&
+          result.error == visionProxyCredentialExpiredText) {
+        await quizVisionCredentialResolver.invalidateDeviceToken();
+      }
       QuizDiag.warn(QuizDiagStage.result, '读屏未产出结果',
           fields: {'err': result.error ?? '-'});
     } else {

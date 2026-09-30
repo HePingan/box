@@ -303,7 +303,7 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                   title: const Text('允许外部网络搜题'),
                   subtitle: const Text(
                     '开启后，本地题库未命中的题会截图交给 AI 读屏作答（含读图题）。'
-                    '地址与密钥留空即用内置通道，无需填写。',
+                    '地址与密钥留空即走平台代理——密钥由服务端保管，客户端不内置。',
                   ),
                   value: _cfg.allowExternalApi,
                   onChanged: (v) =>
@@ -322,7 +322,7 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
-                            '当前使用内置通道（deepseek），填下方自定义地址可覆盖',
+                            '当前走平台代理（密钥在服务端，未登录也可用），填下方自定义地址可覆盖',
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                         ),
@@ -339,14 +339,14 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                     '自定义 API 通道（高级）',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
-                  subtitle: const Text('留空使用内置通道；自建代理时填写'),
+                  subtitle: const Text('留空走平台代理；自建通道时填写'),
                   children: [
                     TextField(
                       enabled: _cfg.allowExternalApi,
                       decoration: const InputDecoration(
                         labelText: 'API 地址（可选）',
                         hintText: 'https://newapi.hpa888.top/v1',
-                        helperText: 'OpenAI 兼容地址（不含 /chat/completions），留空用内置',
+                        helperText: 'OpenAI 兼容地址（不含 /chat/completions），留空走平台代理',
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
@@ -359,7 +359,7 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                       decoration: const InputDecoration(
                         labelText: 'API Key（可选）',
                         hintText: 'sk-...',
-                        helperText: '留空用内置密钥；模型固定 deepseek',
+                        helperText: '留空走平台代理（推荐）；填自己的 key 则直连、不经平台',
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
