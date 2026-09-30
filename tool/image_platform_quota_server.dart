@@ -62,6 +62,7 @@ Future<void> main(List<String> args) async {
 
     pruneDays(store.quizVisionUsage);
     pruneDays(store.quizVisionUpstreamFailures);
+    pruneDays(store.quizVisionDeviceIssueHits);
   });
   // 启动时确保插件包目录存在（以 root 运行可正常创建）
   try {
@@ -113,12 +114,14 @@ Future<void> main(List<String> args) async {
   stdout.writeln('  GET  /api/quiz/sync?cursor=<n>&category=<id>');
   stdout.writeln('  POST /api/quiz/submissions');
   stdout.writeln('  POST /api/quiz/vision');
+  stdout.writeln('  POST /api/quiz/vision/device-token');
   stdout.writeln('  GET  /api/policy/plugins');
   stdout.writeln('  GET  /admin/policy/plugins');
   stdout.writeln('  PUT  /admin/policy/plugins');
   stdout.writeln('  PUT  /admin/accounts/<userId>/plugins');
   stdout.writeln('  GET  /admin/quiz-vision/provider');
   stdout.writeln('  POST /admin/quiz-vision/provider');
+  stdout.writeln('  DELETE /api/quiz/vision/device/<deviceId>');
   stdout.writeln('Plugin market endpoints:');
   stdout.writeln('  GET  /api/plugin-market');
   stdout.writeln('  GET  /api/plugin-market/<id>');
@@ -356,19 +359,30 @@ class PlatformQuotaServer {
       await submitQuizQuestion(request, account);
       return;
     }
-    if (request.method == 'POST' && path == '/api/quiz/vision') {
-      final account = await requireUser(request);
-      if (account == null) return;
-      await quizVisionProxy(request, account);
+    // 读屏代理：账号会话与匿名设备令牌共走这两个路径，路径与语义不变。
+    if (request.method == 'POST' &&
+        (path == '/api/quiz/vision' ||
+            path == '/api/quiz/vision/chat/completions')) {
+      // 别名路由：客户端引擎统一 POST {base}/chat/completions，base 指向
+      // /api/quiz/vision 时正好落这里 —— 引擎零改动接入代理。
+      final subjectKey = await requireQuizVisionSubject(request);
+      if (subjectKey == null) return;
+      await quizVisionProxy(request, subjectKey);
       return;
     }
-    // 别名路由：客户端引擎统一 POST {base}/chat/completions，base 指向
-    // /api/quiz/vision 时正好落这里 —— 引擎零改动接入代理。
-    if (request.method == 'POST' &&
-        path == '/api/quiz/vision/chat/completions') {
-      final account = await requireUser(request);
-      if (account == null) return;
-      await quizVisionProxy(request, account);
+    if (request.method == 'POST' && path == '/api/quiz/vision/device-token') {
+      await quizVisionDeviceToken(request);
+      return;
+    }
+    final quizVisionDeviceMatch = RegExp(
+      r'^/api/quiz/vision/device/([^/]+)$',
+    ).firstMatch(path);
+    if (request.method == 'DELETE' && quizVisionDeviceMatch != null) {
+      if (!await requireAdmin(request)) return;
+      await revokeQuizVisionDevice(
+        request,
+        Uri.decodeComponent(quizVisionDeviceMatch.group(1)!),
+      );
       return;
     }
     if (request.method == 'GET' && path == '/admin/quiz-vision/provider') {
@@ -1367,19 +1381,37 @@ class PlatformQuotaServer {
   }
 
   /// A1 用量统计：只记账号 ID/次数/失败数，不记任何请求内容。
+  ///
+  /// 设备主体以 `device:` 前缀混在同一张用量表里，但**单列**统计：
+  /// total/failed/accounts/perAccount 仍是账号口径（内容与加设备前一致），
+  /// 设备另有 deviceCount/deviceTotal/deviceFailed/perDevice。
   Map<String, dynamic> quizVisionStatsJson() {
     final dayKey = DateTime.now().toUtc().toIso8601String().substring(0, 10);
     var total = 0;
     var failed = 0;
+    var deviceTotal = 0;
+    var deviceFailed = 0;
     final perAccount = <String, int>{};
-    store.quizVisionUsage.forEach((accountId, perDay) {
+    final perDevice = <String, int>{};
+    store.quizVisionUsage.forEach((subjectKey, perDay) {
       final today = perDay[dayKey] ?? 0;
       if (today <= 0) return;
+      if (subjectKey.startsWith(quizVisionDeviceUsagePrefix)) {
+        deviceTotal += today;
+        perDevice[subjectKey] = today;
+        return;
+      }
       total += today;
-      perAccount[accountId] = today;
+      perAccount[subjectKey] = today;
     });
-    store.quizVisionUpstreamFailures.forEach((accountId, perDay) {
-      failed += perDay[dayKey] ?? 0;
+    store.quizVisionUpstreamFailures.forEach((subjectKey, perDay) {
+      final today = perDay[dayKey] ?? 0;
+      if (today <= 0) return;
+      if (subjectKey.startsWith(quizVisionDeviceUsagePrefix)) {
+        deviceFailed += today;
+        return;
+      }
+      failed += today;
     });
     return {
       'day': dayKey,
@@ -1388,6 +1420,12 @@ class PlatformQuotaServer {
       'accounts': perAccount.length,
       'perAccount': perAccount,
       'dailyCapPerAccount': quizVisionDailyCap,
+      // 设备维度（新增字段，不动上面任何一项）。
+      'deviceCount': store.quizVisionDevices.length,
+      'deviceDailyCap': quizVisionDailyCap,
+      'deviceTotal': deviceTotal,
+      'deviceFailed': deviceFailed,
+      'perDevice': perDevice,
     };
   }
 
@@ -1444,7 +1482,11 @@ class PlatformQuotaServer {
     await jsonResponse(request.response, HttpStatus.ok, quizVisionPublicJson());
   }
 
-  Future<void> quizVisionProxy(HttpRequest request, Account account) async {
+  /// 读屏代理。subjectKey 是额度主体：账号 id 或 `device:` + deviceId。
+  ///
+  /// 计额度、突发限流、失败统计、日志全部按 subjectKey 走，账号主体的键
+  /// 与加设备前逐字一致（account.id），账号口径零回归。
+  Future<void> quizVisionProxy(HttpRequest request, String subjectKey) async {
     final provider = effectiveQuizVision;
     if (provider == null) {
       await jsonResponse(request.response, HttpStatus.serviceUnavailable, {
@@ -1456,17 +1498,17 @@ class PlatformQuotaServer {
     if (decoded == null) return;
 
     final dayKey = DateTime.now().toUtc().toIso8601String().substring(0, 10);
-    // A3 突发限流：每账号每分钟最多 quizVisionBurstCap 次（内存滑动窗口），
+    // A3 突发限流：每主体每分钟最多 quizVisionBurstCap 次（内存滑动窗口），
     // 防客户端死循环打爆上游渠道。
-    if (store.quizVisionBurstRejected(account.id, DateTime.now())) {
+    if (store.quizVisionBurstRejected(subjectKey, DateTime.now())) {
       await jsonResponse(request.response, HttpStatus.tooManyRequests, {
         'error': {'message': 'AI 读屏请求过于频繁，请稍等几秒再试。'},
       });
       return;
     }
-    // 每账号每日限额（UTC 日键）。
+    // 每主体每日限额（UTC 日键）。
     final userCounts =
-        store.quizVisionUsage.putIfAbsent(account.id, () => <String, int>{});
+        store.quizVisionUsage.putIfAbsent(subjectKey, () => <String, int>{});
     final usedToday = userCounts[dayKey] ?? 0;
     if (usedToday >= quizVisionDailyCap) {
       await jsonResponse(request.response, HttpStatus.tooManyRequests, {
@@ -1485,24 +1527,108 @@ class PlatformQuotaServer {
     try {
       upstream = await postChatCompletionUpstream(provider, decoded);
     } catch (error) {
-      store.quizVisionRecordUpstreamFailure(account.id, dayKey);
+      store.quizVisionRecordUpstreamFailure(subjectKey, dayKey);
       await jsonResponse(request.response, HttpStatus.serviceUnavailable, {
         'error': {'message': 'AI 读屏上游请求失败：${compactPreview('$error')}'},
       });
       return;
     }
     if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
-      store.quizVisionRecordUpstreamFailure(account.id, dayKey);
+      store.quizVisionRecordUpstreamFailure(subjectKey, dayKey);
     }
     userCounts[dayKey] = usedToday + 1;
     store.quizVisionDirty = true;
     store.scheduleQuizVisionFlush();
-    // 只记账号/状态/字节数，不记请求与响应内容，不记 key。
+    // 只记主体/状态/字节数，不记请求与响应内容，不记令牌。
     stdout.writeln(
-      '${DateTime.now().toIso8601String()} quiz-vision account=${account.id} '
+      '${DateTime.now().toIso8601String()} quiz-vision subject=$subjectKey '
       'upstream=${upstream.statusCode} bytes=${upstream.text.length}',
     );
     await jsonText(request.response, upstream.statusCode, upstream.text);
+  }
+
+  /// 匿名设备令牌签发（公开端点，无需登录）。
+  ///
+  /// 未登录客户端本来只能靠包内置 key，而 key 已随 APK 与公开仓库泄露；
+  /// 这里发一把「按设备计额度」的令牌，客户端下一版即可删掉内置 key。
+  /// 令牌只存哈希（与运维只读 API 同款：sha256 hex），明文只在本响应里回一次。
+  Future<void> quizVisionDeviceToken(HttpRequest request) async {
+    final decoded = await readJsonObject(request);
+    if (decoded == null) return;
+    final deviceId = decoded['deviceId']?.toString().trim() ?? '';
+    if (!isValidQuizVisionDeviceId(deviceId)) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {
+          'message': 'deviceId 不合法：需为 8-64 个字符的不透明标识，'
+              '只支持字母、数字与 . _ - 。',
+        },
+      });
+      return;
+    }
+    final dayKey = DateTime.now().toUtc().toIso8601String().substring(0, 10);
+    // 按 IP 每日签发上限（内存计数）：防用随机 deviceId 批量刷令牌。
+    // 放在形状校验之后、写库之前：非法请求不计数，真实签发也抢不到配额。
+    if (!store.noteQuizVisionDeviceIssue(clientIp(request), dayKey)) {
+      await jsonResponse(request.response, HttpStatus.tooManyRequests, {
+        'error': {'message': '签发过于频繁，请稍后再试。'},
+      });
+      return;
+    }
+    final existing = store.quizVisionDevices[deviceId];
+    if (existing != null && existing.revoked) {
+      // 撤销是粘性的：否则被撤销的设备重签一次就复活，DELETE 形同虚设。
+      await jsonResponse(request.response, HttpStatus.forbidden, {
+        'error': {'message': '该设备已被停用，无法重新签发令牌。'},
+      });
+      return;
+    }
+    final token = randomHex(32);
+    final now = DateTime.now();
+    // 同一 deviceId 重复签发＝轮换：旧哈希被覆盖，旧令牌立刻失效。
+    store.quizVisionDevices[deviceId] = QuizVisionDevice(
+      deviceId: deviceId,
+      tokenHash: hashQuizVisionDeviceToken(token),
+      createdAt: existing?.createdAt ?? now,
+      issuedAt: now,
+    );
+    // 立刻落盘：这是设备唯一的凭证，且服务端只存哈希、丢了无法找回。
+    await store.save();
+    stdout.writeln(
+      '${now.toIso8601String()} quiz-vision device-token issued '
+      'device=${compactPreview(deviceId, max: 24)}',
+    );
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'token': token,
+      'deviceId': deviceId,
+      'dailyCap': quizVisionDailyCap,
+      'expiresInDays': null,
+    });
+  }
+
+  /// 撤销某台设备的令牌（管理员）。撤销后该令牌立刻失效（下一次 401）。
+  Future<void> revokeQuizVisionDevice(
+    HttpRequest request,
+    String deviceId,
+  ) async {
+    final device = store.quizVisionDevices[deviceId];
+    if (device == null) {
+      await jsonResponse(request.response, HttpStatus.notFound, {
+        'error': {'message': '设备不存在。'},
+      });
+      return;
+    }
+    if (!device.revoked) {
+      device.revokedAt = DateTime.now();
+      await store.save();
+    }
+    stdout.writeln(
+      '${DateTime.now().toIso8601String()} quiz-vision device revoked '
+      'device=${compactPreview(deviceId, max: 24)}',
+    );
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'deviceId': deviceId,
+      'revoked': true,
+    });
   }
 
   Future<UpstreamResponse> postChatCompletionUpstream(
@@ -3323,6 +3449,53 @@ class PlatformQuotaServer {
       return null;
     }
     return account;
+  }
+
+  /// 解析读屏请求的额度主体，返回额度键（账号 id 或 `device:` + deviceId）。
+  ///
+  /// 账号分支与 requireUser 逐条对齐（过期会话清理 + 落盘、停用账号 403），
+  /// 保证老客户端行为不变；只有当令牌根本不是有效会话时才按设备令牌重试，
+  /// 避免设备令牌被误判成「会话过期」。
+  /// 返回 null 表示已经写好 401/403 响应。
+  Future<String?> requireQuizVisionSubject(HttpRequest request) async {
+    final token = bearerToken(request);
+    if (token == null || token.isEmpty) {
+      await jsonResponse(request.response, HttpStatus.unauthorized, {
+        'error': {'message': '请先登录 Box 账号，或携带有效的设备令牌。'},
+      });
+      return null;
+    }
+    final session = store.sessions[token];
+    if (session != null) {
+      if (session.expiresAt.isBefore(DateTime.now())) {
+        store.sessions.remove(token);
+        await store.save();
+        await jsonResponse(request.response, HttpStatus.unauthorized, {
+          'error': {'message': '登录已失效，请重新登录。'},
+        });
+        return null;
+      }
+      final account = store.accounts[session.userId];
+      if (account == null || account.status != 'normal') {
+        store.sessions.remove(token);
+        await store.save();
+        await jsonResponse(request.response, HttpStatus.forbidden, {
+          'error': {'message': '账号不可用。'},
+        });
+        return null;
+      }
+      return account.id;
+    }
+    final device = store.quizVisionDeviceByToken(token);
+    if (device != null) {
+      return '$quizVisionDeviceUsagePrefix${device.deviceId}';
+    }
+    await jsonResponse(request.response, HttpStatus.unauthorized, {
+      'error': {
+        'message': '登录已失效或设备令牌无效，请重新登录或重新获取设备令牌。',
+      },
+    });
+    return null;
   }
 
   Future<bool> requireAdmin(HttpRequest request) async {
@@ -5383,6 +5556,13 @@ class StateStore {
   final quizVisionUpstreamFailures = <String, Map<String, int>>{};
   // A3：突发限流窗口（仅内存，重启清零）。
   final quizVisionBurstHits = <String, List<DateTime>>{};
+  // 匿名设备令牌：deviceId -> 记录。**只存 sha256 哈希**，明文令牌不落盘、
+  // 不打印、不记审计。设备主体的额度键是 `device:` + deviceId，与账号共用
+  // quizVisionUsage/quizVisionUpstreamFailures（同一张表、同一套 pruneDays/flush）。
+  final quizVisionDevices = <String, QuizVisionDevice>{};
+  // 设备令牌按 IP 的每日签发计数（仅内存，重启清零，与突发限流同档）：
+  // 这是防滥用的限流器、不是事实来源，重启丢失不影响客户端已有令牌。
+  final quizVisionDeviceIssueHits = <String, Map<String, int>>{};
   bool quizVisionDirty = false;
   DateTime? quizVisionLastPersistedAt;
   Timer? quizVisionFlushTimer;
@@ -5434,6 +5614,20 @@ class StateStore {
           quizVisionUpstreamFailures[key.toString()] = value.map(
             (k, v) => MapEntry(k.toString(), (v is num ? v.toInt() : 0)),
           );
+        }
+      });
+    }
+    // 设备令牌表：旧 state 文件里没有这个键 → 读成空表（不报错、不拒启动）。
+    final rawQuizVisionDevices = decoded['quizVisionDevices'];
+    if (rawQuizVisionDevices is Map) {
+      rawQuizVisionDevices.forEach((key, value) {
+        if (value is Map) {
+          final device = QuizVisionDevice.fromJson(
+            Map<String, dynamic>.from(value),
+          );
+          if (device.deviceId.isNotEmpty && device.tokenHash.isNotEmpty) {
+            quizVisionDevices[key.toString()] = device;
+          }
         }
       });
     }
@@ -5749,6 +5943,10 @@ class StateStore {
           'quizVisionUsage': quizVisionUsage,
         if (quizVisionUpstreamFailures.isNotEmpty)
           'quizVisionUpstreamFailures': quizVisionUpstreamFailures,
+        if (quizVisionDevices.isNotEmpty)
+          'quizVisionDevices': quizVisionDevices.map(
+            (key, value) => MapEntry(key, value.toJson()),
+          ),
         'accounts': accounts.map((key, value) => MapEntry(key, value.toJson())),
         'quotas': quotas.map((key, value) => MapEntry(key, value.toJson())),
         'sessions': sessions.map((key, value) => MapEntry(key, value.toJson())),
@@ -5840,21 +6038,46 @@ class StateStore {
     });
   }
 
-  void quizVisionRecordUpstreamFailure(String accountId, String dayKey) {
+  void quizVisionRecordUpstreamFailure(String subjectKey, String dayKey) {
     final perDay = quizVisionUpstreamFailures.putIfAbsent(
-      accountId,
+      subjectKey,
       () => <String, int>{},
     );
     perDay[dayKey] = (perDay[dayKey] ?? 0) + 1;
     scheduleQuizVisionFlush();
   }
 
+  /// 按设备令牌**明文**找设备：先算 sha256 再比哈希（明文从不落盘）。
+  /// 已撤销的设备一律返回 null，撤销立即生效。
+  /// 线性扫设备表：设备数量受「每 IP 每日签发上限」约束，且读屏单次上游
+  /// 就要 3-16s，这点比较开销可忽略；换来的是不必维护反向索引的一致性。
+  QuizVisionDevice? quizVisionDeviceByToken(String token) {
+    final hash = hashQuizVisionDeviceToken(token);
+    for (final device in quizVisionDevices.values) {
+      if (device.tokenHash == hash && !device.revoked) return device;
+    }
+    return null;
+  }
+
+  /// 记一次设备令牌签发（按 IP + UTC 日键）。返回 false 表示该 IP 今日
+  /// 已到上限（本次不计数，调用方回 429）。
+  bool noteQuizVisionDeviceIssue(String ip, String dayKey) {
+    final perDay = quizVisionDeviceIssueHits.putIfAbsent(
+      ip,
+      () => <String, int>{},
+    );
+    final used = perDay[dayKey] ?? 0;
+    if (used >= quizVisionDeviceIssueDailyCap) return false;
+    perDay[dayKey] = used + 1;
+    return true;
+  }
+
   /// A3：滑动窗口突发限流。窗口 60s、上限 quizVisionBurstCap，
   /// 调大=更宽松；拒绝的请求不记窗口（不惩罚重试者）。
-  bool quizVisionBurstRejected(String accountId, DateTime now) {
+  bool quizVisionBurstRejected(String subjectKey, DateTime now) {
     final windowStart = now.subtract(const Duration(minutes: 1));
     final hits = quizVisionBurstHits.putIfAbsent(
-      accountId,
+      subjectKey,
       () => <DateTime>[],
     );
     hits.removeWhere((t) => t.isBefore(windowStart));
@@ -7646,6 +7869,76 @@ const int quizVisionDailyCap = 100;
 /// A3 突发限流：每账号每分钟允许的读屏请求数（滑动窗口）。
 /// 读屏单次 3–16s，正常使用远低于此；调大=更宽松。
 const int quizVisionBurstCap = 20;
+
+/// 匿名设备令牌：同一来源 IP 每天最多签发次数（防用随机 deviceId 批量刷）。
+/// 调大=更容易批量白嫖；调小=同一出口 IP 下的多台设备可能互相顶。
+const int quizVisionDeviceIssueDailyCap = 5;
+
+/// 设备主体的额度键前缀：设备用量以「前缀 + deviceId」入 quizVisionUsage，
+/// 与账号 id（形如 u_xxx）同表共存、分开统计。
+const String quizVisionDeviceUsagePrefix = 'device:';
+
+/// 设备令牌哈希：明文令牌 32 字节随机数（64 位 hex），熵足够，无需加盐。
+/// 不加盐才能「哈希 → 设备」直接比对，避免每次请求遍历时重算带盐哈希。
+/// 与运维只读 API（tool/ops_api/box_ops_api.py）同款：sha256 hex。
+String hashQuizVisionDeviceToken(String token) =>
+    sha256.convert(utf8.encode(token)).toString();
+
+/// deviceId 形状校验：8-64 字符的不透明标识，只收 URL 安全字符。
+/// 收紧形状是为了防日志注入，也避免超长键撑大状态文件。
+bool isValidQuizVisionDeviceId(String deviceId) =>
+    RegExp(r'^[A-Za-z0-9._-]{8,64}$').hasMatch(deviceId);
+
+/// 生成 n 字节随机 hex（设备令牌用 32 字节 = 64 位 hex）。
+String randomHex(int bytes) {
+  final random = Random.secure();
+  return List<int>.generate(bytes, (_) => random.nextInt(256))
+      .map((b) => b.toRadixString(16).padLeft(2, '0'))
+      .join();
+}
+
+/// 匿名设备令牌记录。
+///
+/// **只存哈希**：明文令牌只在签发响应里回给持有者一次，之后服务端也拿不到。
+class QuizVisionDevice {
+  QuizVisionDevice({
+    required this.deviceId,
+    required this.tokenHash,
+    required this.createdAt,
+    required this.issuedAt,
+    this.revokedAt,
+  });
+
+  factory QuizVisionDevice.fromJson(Map<String, dynamic> json) =>
+      QuizVisionDevice(
+        deviceId: json['deviceId']?.toString() ?? '',
+        tokenHash: json['tokenHash']?.toString() ?? '',
+        createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+            DateTime.now(),
+        issuedAt:
+            DateTime.tryParse(json['issuedAt']?.toString() ?? '') ??
+                DateTime.now(),
+        revokedAt: DateTime.tryParse(json['revokedAt']?.toString() ?? ''),
+      );
+
+  final String deviceId;
+
+  /// sha256(token) 的 hex；换令牌时被覆盖，撤销后仍保留（供统计）。
+  String tokenHash;
+  final DateTime createdAt;
+  DateTime issuedAt;
+  DateTime? revokedAt;
+
+  bool get revoked => revokedAt != null;
+
+  Map<String, dynamic> toJson() => {
+        'deviceId': deviceId,
+        'tokenHash': tokenHash,
+        'createdAt': createdAt.toIso8601String(),
+        'issuedAt': issuedAt.toIso8601String(),
+        if (revokedAt != null) 'revokedAt': revokedAt!.toIso8601String(),
+      };
+}
 
 class QuizVisionProviderConfig {
   const QuizVisionProviderConfig({
