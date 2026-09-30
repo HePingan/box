@@ -12,16 +12,25 @@ import 'package:flutter/services.dart';
 
 import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_back_button.dart';
+import '../domain/comic_fetcher.dart';
 import '../domain/comic_source.dart';
 import '../domain/comic_source_diagnostics.dart';
 import '../domain/sources/seed_comic_source.dart';
+import 'comic_cover_image.dart';
 import 'comic_source_webview_target.dart';
 
 class ComicSourceCheckPage extends StatefulWidget {
-  const ComicSourceCheckPage({super.key, this.targetOverride});
+  const ComicSourceCheckPage({
+    super.key,
+    this.targetOverride,
+    this.fetcherOverride,
+  });
 
   /// 单测注入假取数（真机省略即用 WebView）。
   final ComicSourceTarget? targetOverride;
+
+  /// 接口型源的「章节取图」要真发 HTTP（直连站点 + 取图接口）；单测注入假的。
+  final ComicFetcher? fetcherOverride;
 
   @override
   State<ComicSourceCheckPage> createState() => _ComicSourceCheckPageState();
@@ -34,7 +43,20 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
   late final ComicSourceWebViewController? _webView =
       widget.targetOverride == null ? ComicSourceWebViewController() : null;
 
-  late final ComicSource? _source = ComicSource.tryParse(kSeedComicSourceJson);
+  /// 当前选中的源（跟着 [_sourceIndex] 走，所以是 getter 不是缓存字段）。
+  ComicSource? get _source => _sources.isEmpty ? null : _sources[_sourceIndex];
+
+  /// 可自检的源清单：**跟 App 实际用的同一份清单**（`kSeedComicSourcesJson`，
+  /// 第一份就是 App 默认用的那个）。
+  ///
+  /// 为什么不写死某一份：写死就会漏源。用户报过「自检里没有野蛮漫画」（2026-09-29）
+  /// —— 而野蛮漫画正是 App 默认在用的那个，最该能被自检。
+  late final List<ComicSource> _sources = kSeedComicSourcesJson
+      .map(ComicSource.tryParse)
+      .whereType<ComicSource>()
+      .toList(growable: false);
+
+  int _sourceIndex = 0;
 
   ComicProbeReport? _report;
   List<ComicProbeStep> _live = const [];
@@ -48,6 +70,17 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
   }
 
   ComicSourceTarget get _target => widget.targetOverride ?? _webView!.target;
+
+  /// 换源：清掉上一份源的报告/进度 —— 结论只对刚跑过的那份源成立，混着显示会误导。
+  void _selectSource(int index) {
+    if (index == _sourceIndex) return;
+    setState(() {
+      _sourceIndex = index;
+      _report = null;
+      _live = const [];
+      _runningStep = null;
+    });
+  }
 
   Future<void> _run() async {
     final source = _source;
@@ -65,6 +98,7 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
       target: _target,
       source: source,
       key: _key.text.trim().isEmpty ? '海贼' : _key.text.trim(),
+      fetcher: widget.fetcherOverride,
       onStep: (step) {
         if (!mounted) return;
         setState(() {
@@ -120,10 +154,25 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
               if (source == null)
                 const Text('书源配置解析失败（内置 JSON 不完整）——这是 App 自身的问题，不是站点的问题。')
               else ...[
-                Text(
-                  source.name,
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                const Text(
+                  '要自检哪个源（App 默认用的那个排第一）：',
+                  style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
                 ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (var i = 0; i < _sources.length; i++)
+                      ChoiceChip(
+                        label: Text(_sources[i].name),
+                        selected: i == _sourceIndex,
+                        // 跑的过程中不给换源：报告会跟跑的东西对不上。
+                        onSelected: _running ? null : (_) => _selectSource(i),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 10),
                 Text(
                   source.baseUrl,
                   style: const TextStyle(
@@ -131,6 +180,16 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
                     color: AppTokens.textSecondary,
                   ),
                 ),
+                if (kSeedComicSourceNotes[source.name] case final note?) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    note,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppTokens.textSecondary,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 10),
                 const Text(
                   '这一步用这台手机上的真 WebView 跑三件事：搜索 → 打开一本书 → 打开第一章取图。'
@@ -190,8 +249,8 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
       const Divider(height: 28),
       Text(
         r.allOk
-            ? '结论：三步全通 ✅ 这个源在这台手机上可用'
-            : '结论：${r.steps.length - r.okCount} 步没过 ❌ 上面每一步后面写了原因',
+            ? '结论：「${r.sourceName}」三步全通 ✅ 在这台手机上可用'
+            : '结论：「${r.sourceName}」${r.steps.length - r.okCount} 步没过 ❌ 上面每一步后面写了原因',
         style: TextStyle(
           fontSize: 14,
           fontWeight: FontWeight.w600,
@@ -210,23 +269,19 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
           style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
         ),
         const SizedBox(height: 8),
-        ClipRRect(
+        // 以前这里用 `Image.network`：一份请求头都不带 → 图床（看客户端特征）把请求丢掉，
+        // 就算链路是通的也显示"取不到"，把人往错的方向带。走同一个封面组件（带手机 UA，
+        // 下不来说明原因）就对了（2026-09-29）。
+        ComicCoverImage(
+          url: r.firstImageUrl!,
+          height: 240,
+          fit: BoxFit.contain,
           borderRadius: BorderRadius.circular(10),
-          child: Image.network(
-            r.firstImageUrl!,
-            height: 240,
-            fit: BoxFit.contain,
-            errorBuilder: (_, _, _) => const Text(
-              '这张图没加载出来（地址拿到了但取不到）',
-              style: TextStyle(fontSize: 12, color: AppTokens.rose),
-            ),
-          ),
         ),
       ],
       const SizedBox(height: 14),
       const Text(
-        '已知差异（不藏着）：书源里的「繁转简」本 App 未实现，繁体章节会显示为繁体；'
-        '书源 ruleBookInfo.tocUrl 第 3 段是它自身的笔误，本 App 用详情页的章节链接。',
+        '已知差异（不藏着）：书源里的「繁转简」本 App 未实现，繁体章节会显示为繁体。',
         style: TextStyle(fontSize: 11, color: AppTokens.textTertiary),
       ),
     ];

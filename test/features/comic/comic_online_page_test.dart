@@ -18,8 +18,42 @@ import 'package:box/features/comic/domain/comic_reader_prefs.dart';
 import 'package:box/features/comic/domain/comic_source.dart';
 import 'package:box/features/comic/domain/sources/seed_comic_source.dart';
 import 'package:box/features/comic/presentation/comic_online_page.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_secret_store.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'fake_comic_target.dart';
+
+/// 只关心设备令牌的内存版加密存储（其余方法按接口补空实现）。
+///
+/// 单测里没有平台通道，所以走 `debugSetOpsSecretStore` 这道接缝。
+class _FakeOpsSecretStore implements OpsSecretStore {
+  final Map<String, String> tokens = <String, String>{};
+
+  @override
+  Future<String?> readApiToken(String serverId) async => tokens[serverId];
+
+  @override
+  Future<void> writeApiToken(String serverId, String token) async =>
+      tokens[serverId] = token;
+
+  @override
+  Future<void> clearApiToken(String serverId) async => tokens.remove(serverId);
+
+  @override
+  Future<String?> readPassword(String serverId) async => null;
+
+  @override
+  Future<void> writePassword(String serverId, String password) async {}
+
+  @override
+  Future<void> clearPassword(String serverId) async {}
+
+  @override
+  Future<String?> readLegacyPassword() async => null;
+
+  @override
+  Future<void> clearLegacyPassword() async {}
+}
 
 /// 1×1 的透明 PNG（够 Image.file 解码）。
 const List<int> _pngBytes = [
@@ -47,9 +81,15 @@ class _FakeCache extends ComicImageCache {
 ComicSource _seed() => ComicSource.tryParse(kSeedComicSourceJson)!;
 
 /// 造一个上传好假数据的页面。
+///
+/// 默认注入「包子漫画」（老路的用例都基于它）。
+/// [builtinDefault] = true 时不注入书源，用页面自己的默认源（内置第一份 = 野蛮漫画）。
 Widget _page(
   FakeComicTarget target,
   _FakeCache cache, {
+  ComicSource? source,
+  bool builtinDefault = false,
+  String? relayToken,
   ComicLibraryStore? libraryStore,
   ComicOnlineProgressStore? progressStore,
   ComicReaderPrefs? readerPrefs,
@@ -57,9 +97,10 @@ Widget _page(
 }) {
   return MaterialApp(
     home: ComicOnlinePage(
-      source: _seed(),
+      source: builtinDefault ? null : (source ?? _seed()),
       targetBuilder: () => target,
       imageCache: cache,
+      relayToken: relayToken,
       waitTimeout: const Duration(milliseconds: 20),
       listTimeout: const Duration(milliseconds: 20),
       openTimeout: const Duration(milliseconds: 20),
@@ -83,12 +124,72 @@ Widget _page(
   );
 }
 
+/// 带「上一层」的宿主：先有"书库"那一层，再 push 在线页 —— 这样才能验证
+/// 「返回是一层层退，还是一跳跳到最上层」。[_page] 把在线页当第一个路由，
+/// 本来就 pop 不动，测不了这个。
+Widget _host(
+  FakeComicTarget target,
+  _FakeCache cache, {
+  ComicSource? source,
+  String? relayToken,
+  String? initialBookUrl,
+}) {
+  return MaterialApp(
+    home: Scaffold(
+      body: Builder(
+        builder: (context) => Center(
+          child: ElevatedButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => ComicOnlinePage(
+                  source: source ?? _seed(),
+                  targetBuilder: () => target,
+                  imageCache: cache,
+                  relayToken: relayToken,
+                  waitTimeout: const Duration(milliseconds: 20),
+                  listTimeout: const Duration(milliseconds: 20),
+                  openTimeout: const Duration(milliseconds: 20),
+                  initialBookUrl: initialBookUrl,
+                  libraryStore: ComicLibraryStore(
+                    cacheStore: CacheStore.inMemory('host_shelf'),
+                  ),
+                  readerPrefs: ComicReaderPrefs(
+                    cacheStore: CacheStore.inMemory('host_prefs'),
+                  ),
+                  progressStore: ComicOnlineProgressStore(
+                    cacheStore: CacheStore.inMemory('host_progress'),
+                  ),
+                ),
+              ),
+            ),
+            child: const Text('书库'),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 /// 推够时间：假取数是一串 await，单次 pump 不一定够。
 Future<void> _settle(WidgetTester tester) async {
   for (var i = 0; i < 80; i++) {
     await tester.pump(const Duration(milliseconds: 20));
   }
 }
+
+/// 野蛮漫画搜索页的真形状（照实测 HTML 写：`li.item.comic-item` → `p.title` / `a[href]` / `img[src]`）。
+/// 直连那条路（快路 = 页内取这份 HTML）用它；规则改了这里会红。
+const String _yemanSearchHtml = '''
+<html><body>
+<ul class="comic-sort col3" id="js_comicSortList">
+  <li class="item comic-item">
+    <a href="/book/7530/" title="海贼王~,海贼王~漫画">
+      <div class="thumbnail"><img class="img" src="https://tuer.justpic01pt.com:666/picbed/CPMH/haizeiwang/a.jpg" alt="海贼王~"></div>
+      <p class="title">海贼王~</p>
+    </a>
+  </li>
+</ul>
+</body></html>''';
 
 void main() {
   late File png;
@@ -446,5 +547,211 @@ void main() {
 
     expect(find.text('海贼王'), findsOneWidget);
     expect(find.text('取数方式：取 HTML 文本解析（快路）'), findsOneWidget);
+  });
+
+  testWidgets('切换书源：从「野蛮漫画」切到「包子漫画」后按老路走', (tester) async {
+    final baozimh = _seed();
+    final card = baozimh.searchRules['bookList']!;
+    final target = FakeComicTarget(
+      counts: {card: 1},
+      perElement: {
+        '$card|${baozimh.searchRules['name']}': ['海贼王'],
+        '$card|${baozimh.searchRules['bookUrl']}': ['/comic/haizeiwang'],
+      },
+    );
+    final png = File(
+      '${Directory.systemTemp.path}/comic_online_src_'
+      '${DateTime.now().microsecondsSinceEpoch}.png',
+    )..writeAsBytesSync(_pngBytes);
+
+    // 不注入书源（用内置第一份 = 野蛮漫画）；显式给"没有令牌"，免得测试里去读设置。
+    await tester.pumpWidget(
+      _page(target, _FakeCache(png), builtinDefault: true, relayToken: ''),
+    );
+    await _settle(tester);
+
+    // 默认源是野蛮漫画：没配令牌就是**直连**，不再要求先去填令牌（也不是错误页）
+    expect(find.textContaining('设备令牌'), findsNothing);
+
+    // 两个内置源都列在菜单里，包子那份带着"连不上"的备注
+    await tester.tap(find.byIcon(Icons.source_outlined));
+    await _settle(tester);
+    expect(find.text('野蛮漫画'), findsOneWidget);
+    expect(find.text('包子漫画（优）'), findsOneWidget);
+    expect(find.textContaining('连接被重置'), findsOneWidget);
+
+    await tester.tap(find.text('包子漫画（优）'));
+    await _settle(tester);
+
+    // 换源之后同样没有"设备令牌"这类提示
+    expect(find.textContaining('设备令牌'), findsNothing);
+
+    await tester.enterText(find.byType(TextField).first, '海贼');
+    await tester.tap(find.text('搜索'));
+    await _settle(tester);
+
+    expect(find.text('海贼王'), findsOneWidget);
+    // 老路：真的去打开了站点的搜索页（快路在假目标里取不到响应，必然退到这条）
+    expect(target.opened, anyElement(contains('/search?q=')));
+  });
+
+  testWidgets('默认「野蛮漫画」但没有设备令牌 → 直连站点就能搜（不提示去填、不是错误页）', (tester) async {
+    final yeman = ComicSource.tryParse(kSeedComicSourceYemanJson)!;
+    final searchUrl = yeman.searchUrlFor('海贼')!;
+    // 快路（直连：页内取这份 HTML）—— 全程不经任何服务器
+    final target = FakeComicTarget(responses: {searchUrl: _yemanSearchHtml});
+    final png = File(
+      '${Directory.systemTemp.path}/comic_online_notoken_'
+      '${DateTime.now().microsecondsSinceEpoch}.png',
+    )..writeAsBytesSync(_pngBytes);
+
+    await tester.pumpWidget(
+      _page(target, _FakeCache(png), builtinDefault: true, relayToken: ''),
+    );
+    await _settle(tester);
+
+    // 没有令牌不再拦人：不提「设备令牌」，也没有错误页
+    expect(find.textContaining('设备令牌'), findsNothing);
+    expect(find.text('重试'), findsNothing);
+    expect(find.textContaining('输入关键字'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).first, '海贼');
+    await tester.tap(find.text('搜索'));
+    await _settle(tester);
+
+    // 直连真的发了请求、结果出来了 —— 不需要任何令牌 / 中转
+    expect(target.fetched, contains(searchUrl));
+    expect(find.textContaining('海贼王'), findsWidgets);
+  });
+
+  // 中转令牌**取哪一台**：服务在 175，`box.hpa888.top` 只是边缘机反代。
+  // 取错那台（hpa888）的令牌 → 每个请求都 401（公网入口实测过），所以要有护栏。
+  group('中转令牌取哪一台', () {
+    late _FakeOpsSecretStore store;
+
+    setUp(() {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      store = _FakeOpsSecretStore();
+      debugSetOpsSecretStore(store);
+    });
+
+    tearDown(() => debugSetOpsSecretStore());
+
+    test('两台都填了 → 取中转所在那台（175），不是入口域名那台', () async {
+      store.tokens['hpa888'] = 'tok-hpa888';
+      store.tokens['tencent175'] = 'tok-175';
+
+      expect(await loadComicRelayToken(), 'tok-175');
+    });
+
+    test('只填了 hpa888 那把 → 空串：宁可走直连，也不把另一台的令牌发给 175', () async {
+      store.tokens['hpa888'] = 'tok-hpa888';
+
+      expect(await loadComicRelayToken(), '');
+    });
+
+    test('没填 → 空串（不抛：走直连就是了，不是错误）', () async {
+      expect(await loadComicRelayToken(), '');
+    });
+  });
+
+  // 返回必须**一层层退**（2026-09-29 用户报：「返回直接回到最上层页面」）。
+  // 两个坑：① 从书库直接进详情时后面本来没有"搜索"这一层，照写死的阶梯退会退到一个
+  // 空搜索页；② 系统返回（手势/返回键）没接住，在阅读里一按就退出整个页面。
+  group('返回：一层层退', () {
+    FakeComicTarget fullTarget() {
+      final source = _seed();
+      final card = source.searchRules['bookList']!;
+      final container = firstSelectorRule(source.bookInfoRules['tocUrl']!)!;
+      return FakeComicTarget(
+        counts: {card: 1, container: 1},
+        perElement: {
+          '$card|${source.searchRules['name']}': ['海贼王'],
+          '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
+          '$container|${source.tocRules['chapterName']}': ['第1186话'],
+          '$container|${source.tocRules['chapterUrl']}': [
+            '/user/page_direct?slot=1186',
+          ],
+        },
+        values: {
+          source.bookInfoRules['name']!: ['航海王'],
+          source.bookInfoRules['author']!: ['尾田荣一郎'],
+        },
+        jsSegment: '<img src="https://s1.bzcdn.net/a/1.jpg">',
+      );
+    }
+
+    Future<void> openHost(WidgetTester tester, Widget app) async {
+      await tester.pumpWidget(app);
+      await tester.tap(find.text('书库'));
+      await _settle(tester);
+    }
+
+    Future<void> searchToReader(WidgetTester tester) async {
+      await tester.enterText(find.byType(TextField), '海贼');
+      await tester.tap(find.text('搜索'));
+      await _settle(tester);
+      await tester.tap(find.text('海贼王'));
+      await _settle(tester);
+      await tester.tap(find.text('第1186话'));
+      await _settle(tester);
+      expect(find.text('1 / 1 张'), findsOneWidget, reason: '先进到阅读里');
+    }
+
+    testWidgets('阅读 → 详情 → 列表 → 退出：一层层退，不跳到底', (tester) async {
+      await openHost(tester, _host(fullTarget(), _FakeCache(png)));
+      await searchToReader(tester);
+
+      // ① 阅读里按返回 → 回详情（不是直接退出本页）
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await _settle(tester);
+      expect(find.text('1 / 1 张'), findsNothing);
+      expect(find.text('共 1 话'), findsOneWidget);
+      expect(find.text('书库'), findsNothing, reason: '不该跳回最上层');
+
+      // ② 详情里按返回 → 回列表
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await _settle(tester);
+      expect(find.text('共 1 话'), findsNothing);
+      expect(find.text('海贼王'), findsOneWidget);
+      expect(find.text('书库'), findsNothing);
+
+      // ③ 列表里按返回 → 这才真的退出本页，回到书库那一层
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await _settle(tester);
+      expect(find.text('书库'), findsOneWidget);
+      expect(find.text('海贼王'), findsNothing);
+    });
+
+    testWidgets('从书库直接进一本：返回就退出本页，不经过空搜索页', (tester) async {
+      await openHost(
+        tester,
+        _host(
+          fullTarget(),
+          _FakeCache(png),
+          initialBookUrl: 'https://cn.baozimhcn.com/comic/haizeiwang',
+        ),
+      );
+      expect(find.text('共 1 话'), findsOneWidget, reason: '从书库进来直接是详情');
+
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await _settle(tester);
+
+      expect(find.text('书库'), findsOneWidget);
+      expect(find.textContaining('输入关键字'), findsNothing, reason: '别停在空搜索页');
+    });
+
+    testWidgets('系统返回键与箭头同一个口径：阅读里退到详情，不退到最上层', (tester) async {
+      await openHost(tester, _host(fullTarget(), _FakeCache(png)));
+      await searchToReader(tester);
+
+      // Android 返回键 / 手势返回走的就是这条（flutter/navigation → popRoute）
+      await tester.binding.handlePopRoute();
+      await _settle(tester);
+
+      expect(find.text('1 / 1 张'), findsNothing);
+      expect(find.text('共 1 话'), findsOneWidget);
+      expect(find.text('书库'), findsNothing, reason: '系统返回也得一层层退');
+    });
   });
 }

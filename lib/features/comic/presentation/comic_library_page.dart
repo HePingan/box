@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import 'package:box/features/comic/domain/comic_book.dart';
+import 'package:box/features/comic/domain/comic_fetcher.dart';
+import 'package:box/features/comic/domain/comic_image_cache.dart';
 import 'package:box/features/comic/domain/comic_library_store.dart';
 import 'package:box/features/comic/domain/comic_online_progress.dart';
 import 'package:box/features/comic/presentation/comic_online_page.dart';
@@ -10,6 +12,7 @@ import 'package:box/features/comic/domain/comic_reader_state.dart';
 import 'package:box/features/comic/infrastructure/comic_importer_widget.dart';
 import 'package:box/features/comic/presentation/comic_reader_page.dart';
 import 'package:box/features/comic/presentation/comic_source_check_page.dart';
+import 'package:box/features/comic/presentation/comic_cover_image.dart';
 
 /// 书架一行的展示数据：漫画本体 + 它的真实阅读进度（没读过就是 null）。
 class _ShelfEntry {
@@ -45,10 +48,18 @@ class _ShelfEntry {
 /// 本页只管本地导入的漫画（CBZ/ZIP/文件夹）。在线漫画源不内置在 App 里，
 /// 由用户通过插件市场自行安装。
 class ComicLibraryPage extends StatefulWidget {
-  const ComicLibraryPage({super.key, this.libraryStore, this.onlineProgressStore});
+  const ComicLibraryPage({
+    super.key,
+    this.libraryStore,
+    this.onlineProgressStore,
+    this.coverCache,
+  });
 
   /// 可注入存储（测试用）；生产省略即走默认实例。
   final ComicLibraryStore? libraryStore;
+
+  /// 可注入的封面缓存（测试用）；生产省略即走"带手机 UA"的默认缓存。
+  final ComicImageCache? coverCache;
 
   /// 在线阅读进度的存储（测试用内存版）；生产省略即走默认实例。
   final ComicOnlineProgressStore? onlineProgressStore;
@@ -61,11 +72,30 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
   late final ComicLibraryStore _store;
   late Future<List<_ShelfEntry>> _future;
 
+  /// 中转要用的设备令牌（在线页读中转时带上）。null = 还没读到，让在线页自己去读。
+  /// **可选**：没配就是直连站点（手机能到），不是错误。
+  String? _relayToken;
+
+  /// 封面缓存（带请求头 + 落本地）。
+  ///
+  /// 封面地址都在直连图床上，跟章节图一样**要带手机 UA** 才下得来；以前这里用
+  /// Flutter 自带的 `Image.network`（一份头都不带），图床把请求丢掉，界面上只剩一个
+  /// 破图标 —— 用户只能说"封面加载不出来"，我这边也无从判断（2026-09-29）。
+  /// 这里**不带设备令牌**：令牌只发给自己的中转，发给第三方图床就是泄露。
+  late final ComicImageCache _coverCache =
+      widget.coverCache ??
+      ComicImageCache(headerFor: (url) => comicDirectHeaders());
+
   @override
   void initState() {
     super.initState();
     _store = widget.libraryStore ?? ComicLibraryStore();
     _future = _load();
+    // 令牌读一次就够（用户改了设置再进本页也会重新读）。读不出来保持 null：
+    // 在线页会自己去读，读不到就直连站点（不是错误）。
+    loadComicRelayToken().then((t) {
+      if (mounted && t.isNotEmpty) setState(() => _relayToken = t);
+    });
   }
 
   Future<List<_ShelfEntry>> _load() async {
@@ -109,7 +139,10 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
       await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => ComicOnlinePage(initialBookUrl: url),
+          builder: (_) => ComicOnlinePage(
+            initialBookUrl: url,
+            relayToken: _relayToken,
+          ),
         ),
       );
       if (mounted) _reload();
@@ -160,7 +193,9 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
             icon: const Icon(Icons.travel_explore_outlined),
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const ComicOnlinePage()),
+              MaterialPageRoute(
+                builder: (_) => ComicOnlinePage(relayToken: _relayToken),
+              ),
             ),
           ),
           IconButton(
@@ -204,6 +239,7 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
               final entry = entries[index];
               return _ComicBookCard(
                 entry: entry,
+                cache: _coverCache,
                 onTap: () => _openReader(entry.book),
                 onDelete: () => _confirmDelete(entry.book),
               );
@@ -247,11 +283,15 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
 class _ComicBookCard extends StatelessWidget {
   const _ComicBookCard({
     required this.entry,
+    required this.cache,
     required this.onTap,
     required this.onDelete,
   });
 
   final _ShelfEntry entry;
+
+  /// 封面走的缓存（带请求头；失败会把原因显示出来）。
+  final ComicImageCache cache;
   final VoidCallback onTap;
   final VoidCallback onDelete;
 
@@ -275,13 +315,7 @@ class _ComicBookCard extends StatelessWidget {
                 fit: StackFit.expand,
                 children: [
                   if (book.isOnline && (book.coverPath ?? '').isNotEmpty)
-                    Image.network(
-                      book.coverPath!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stack) => const Center(
-                        child: Icon(Icons.broken_image, size: 48),
-                      ),
-                    )
+                    ComicCoverImage(url: book.coverPath!, cache: cache)
                   else if (book.coverPath != null)
                     Image.file(
                       File(book.coverPath!),

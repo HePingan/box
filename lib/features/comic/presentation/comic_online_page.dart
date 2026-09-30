@@ -19,12 +19,50 @@ import '../domain/comic_library_store.dart';
 import '../domain/comic_online_progress.dart';
 import '../domain/comic_reader_prefs.dart';
 import '../domain/comic_online_service.dart';
+import '../domain/comic_relay.dart';
 import '../domain/comic_source.dart';
 import '../domain/comic_source_diagnostics.dart'
     show ComicSourceTarget, describeComicProbeError;
 import '../domain/comic_source_engine.dart' show ComicProbeException;
 import '../domain/sources/seed_comic_source.dart';
 import 'comic_source_webview_target.dart';
+
+import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart'
+    show ServerOpsSettings;
+
+/// 读中转要用的**设备令牌**（与只读运维 API 共用同一份）。
+///
+/// **取哪一台的令牌 = 中转服务真正跑在哪台**（175，`builtInTencent175Id`）。
+/// 入口域名是 `box.hpa888.top`，但那只是边缘机的 nginx 反代
+/// （`location ^~ /comicrelay/` → 隧道 8099 → 175:8098）；**中转进程在 175**，按
+/// **175 的**令牌库校验（单元里没有 `BOX_OPS_TOKENS` 覆盖 → 读 175 的
+/// `/root/.secrets/box-ops-api-tokens.json`，里面只有 `box-app-175`，没有 hpa888 那把）。
+/// 按域名直觉取 hpa888 那把会**每次都 401**（实测：错令牌打公网入口拿到
+/// `401 {"error":"令牌无效…"}`）。
+///
+/// 最小侵入：读不出来一律返回空串（**不抛**）。界面据此给「先去设置里填」的引导，
+/// 而不是把整个页面变成错误页 —— 没填令牌只是"这个源现在读不了"，不是 App 坏了。
+Future<String> loadComicRelayToken() async {
+  try {
+    final settings = await ServerOpsSettings.load();
+    return settings.apiTokenFor(ServerOpsSettings.builtInTencent175Id).trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+/// 内置书源（第一份是默认）。解析不出来的**跳过**：坏一份源不该让页面打不开。
+List<ComicSource> _builtinComicSources() {
+  final out = <ComicSource>[];
+  for (final json in kSeedComicSourcesJson) {
+    final s = ComicSource.tryParse(json);
+    if (s != null) out.add(s);
+  }
+  return out;
+}
+
+/// 内置源在界面上的备注（键 = 书源名；没有就是没有）。
+String? _noteForComicSource(ComicSource s) => kSeedComicSourceNotes[s.name];
 
 /// 在线漫画页面（搜索 / 详情 / 阅读三合一）。
 class ComicOnlinePage extends StatefulWidget {
@@ -37,6 +75,7 @@ class ComicOnlinePage extends StatefulWidget {
     this.libraryStore,
     this.readerPrefs,
     this.initialBookUrl,
+    this.relayToken,
     this.waitTimeout = const Duration(seconds: 15),
     this.listTimeout = const Duration(seconds: 12),
     this.openTimeout = const Duration(seconds: 20),
@@ -53,6 +92,13 @@ class ComicOnlinePage extends StatefulWidget {
 
   /// 从书架点进来时直接打开这本书（省掉再搜一次）。
   final String? initialBookUrl;
+
+  /// 中转要用的**设备令牌**（**可选**：没有它就直连站点，功能照样可用）。
+  ///
+  /// 生产里由书库页从设置里取好传进来（[loadComicRelayToken]）；
+  /// **测试注入假值**；传 null = 页面自己去设置里读一次。
+  /// 传空串 = "明确没有令牌"（测试用，避免真的去读设置；也就是走直连）。
+  final String? relayToken;
 
   /// 书架的存储（「加入书架」用；测试里注入内存版）。
   final ComicLibraryStore? libraryStore;
@@ -72,18 +118,42 @@ class ComicOnlinePage extends StatefulWidget {
 enum _Mode { search, book, reader }
 
 class _ComicOnlinePageState extends State<ComicOnlinePage> {
-  late final ComicSource _source;
+  late final List<ComicSource> _sources;
+  late ComicSource _source;
   late final ComicSourceTarget _target;
-  late final ComicOnlineService _service;
-  late final ComicImageCache _cache;
+  late ComicOnlineService _service;
+  late ComicImageCache _cache;
   late final ComicOnlineProgressStore _progress;
   late final ComicLibraryStore _library;
   late final ComicReaderPrefs _prefs;
+
+  /// 当前生效的中转（源带 relay + 有令牌才有；否则 null = 老路）。
+  ComicRelay? _relay;
+
+  /// 中转令牌（注入的优先；没有就去设置里读一次）。
+  String _relayToken = '';
 
   ComicSourceWebViewController? _webController;
 
   final _keyController = TextEditingController();
   _Mode _mode = _Mode.search;
+
+  /// 真实走过的层级（返回时按它一层层退，不照写死的阶梯退）。
+  ///
+  /// 为什么需要：从书架点一本直接进「详情」时，后面**并没有**"搜索"这一层。照阶梯退
+  /// 会退到一个空搜索页 —— 用户看到的就是"返回一跳跳到最上层，不是一层层退"（2026-09-29）。
+  final List<_Mode> _levels = <_Mode>[];
+
+  /// 一层层返回：退到了返回 true；没有上一层（该退出本页）返回 false。
+  ///
+  /// 左上角箭头与**系统返回**（手势 / 返回键）都走这里，两条路同一个口径。
+  void _back() {
+    if (_levels.isEmpty) {
+      Navigator.of(context).maybePop();
+      return;
+    }
+    setState(() => _mode = _levels.removeLast());
+  }
 
   bool _busy = false;
 
@@ -130,32 +200,86 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   @override
   void initState() {
     super.initState();
-    _source = widget.source ?? ComicSource.tryParse(kSeedComicSourceJson)!;
+    _sources = _builtinComicSources();
+    _source = widget.source ??
+        (_sources.isNotEmpty
+            ? _sources.first
+            : ComicSource.tryParse(kSeedComicSourceJson)!);
+    _relayToken = widget.relayToken?.trim() ?? '';
     if (widget.targetBuilder != null) {
       _target = widget.targetBuilder!();
     } else {
       _webController = ComicSourceWebViewController();
       _target = _webController!.target;
     }
-    _service = ComicOnlineService(
-      target: _target,
-      source: _source,
-      waitTimeout: widget.waitTimeout,
-      listTimeout: widget.listTimeout,
-      openTimeout: widget.openTimeout,
-    );
     _cache = widget.imageCache ?? ComicImageCache();
-    // 分类列表要等 WebView 就绪，放到第一帧之后（失败不挡搜索，只写在界面上一行）。
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadCategories());
-    // 从书架点进来的：直接打开这本书（省掉再搜一次）
-    final initial = widget.initialBookUrl;
-    if (initial != null && initial.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _openBookUrl(initial));
-    }
+    // 服务按"当前源 + 当前令牌"组：令牌可能是异步读出来的（设置里），
+    // 先按注入的值组一次，读到之后再重建 —— 界面不必为这一步卡住。
+    _service = _makeService();
     _library = widget.libraryStore ?? ComicLibraryStore();
     _prefs = widget.readerPrefs ?? ComicReaderPrefs();
     _progress = widget.progressStore ?? ComicOnlineProgressStore();
     _loadPrefs();
+    // 分类列表要等 WebView 就绪，放到第一帧之后（失败不挡搜索，只写在界面上一行）。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _boot());
+  }
+
+  /// 第一帧之后的开场：先把令牌拿到手（**有**令牌才走中转，没有就直连站点），
+  /// 再取分类、再打开指定的书。
+  Future<void> _boot() async {
+    await _resolveRelayToken();
+    if (!mounted) return;
+    _swapService();
+    await _loadCategories();
+    final initial = widget.initialBookUrl;
+    if (initial != null && initial.isNotEmpty) {
+      // 从书架直接进来的：后面**没有**"搜索"这一层，所以不记进层级栈 ——
+      // 否则按返回会退到一个空搜索页（看起来就是"返回跳到最上层"）。
+      await _openBookUrl(initial, fromList: false);
+    }
+  }
+
+  /// 组一次服务：中转按**当前源 + 当前令牌**算（切源 / 拿到令牌后都要重来一次）。
+  /// 图片缓存也要跟着换 —— 中转上的图没令牌就是一张都下不来（每张 401）。
+  ComicOnlineService _makeService() {
+    final spec = _source.relay;
+    _relay = (spec != null && _relayToken.isNotEmpty)
+        ? ComicRelay(endpoint: spec.endpoint, token: _relayToken)
+        : null;
+    final service = ComicOnlineService(
+      target: _target,
+      source: _source,
+      relay: _relay,
+      waitTimeout: widget.waitTimeout,
+      listTimeout: widget.listTimeout,
+      openTimeout: widget.openTimeout,
+    );
+    if (widget.imageCache == null) {
+      _cache = ComicImageCache(headerFor: service.headersFor);
+    }
+    return service;
+  }
+
+  /// 令牌从哪来：注入的优先（生产由书库页取好）；否则去设置里读一次。
+  /// 只在"这份源**配了中转**"时才去读 —— 没配 relay 的源用不上令牌，别白读一次。
+  ///
+  /// 令牌是**可选**的：有就经自己的服务器取（中转），**没有就直连站点**（默认那条）。
+  /// 拿到令牌要连服务一起换 —— `_relay` 是在 `_makeService()` 里按令牌算出来的，
+  /// 只改 `_relayToken` 不会换路（当初就漏了这一步）。
+  Future<void> _resolveRelayToken() async {
+    if (widget.relayToken != null) return;
+    if (!_source.hasRelay) return;
+    final token = await loadComicRelayToken();
+    if (!mounted || token.isEmpty) return;
+    _relayToken = token;
+    _swapService();
+  }
+
+  /// 换一次服务：**先把旧的关掉**（它可能握着 http 连接池），再按当前源 / 令牌建新的。
+  void _swapService() {
+    final old = _service;
+    setState(() => _service = _makeService());
+    old.close();
   }
 
   @override
@@ -163,6 +287,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     _pageController.dispose();
     _keyController.dispose();
     _scrollController.dispose();
+    _service.close();
     super.dispose();
   }
 
@@ -209,6 +334,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         _nextUrl = null;
         _pathNote = _describePath();
         _mode = _Mode.search;
+        _levels.clear(); // 回到顶层：层级栈一起清掉（新的一轮从列表开始）
       });
     }, '正在搜索「$key」…（最多等 ${_service.openTimeout.inSeconds} 秒）');
   }
@@ -228,6 +354,33 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     }
   }
 
+  /// 切换书源：清掉上一次的结果、按新源重建服务（中转要重算）、再把上一次的关键字重搜一遍。
+  Future<void> _selectSource(ComicSource s) async {
+    if (s.name == _source.name) return;
+    setState(() {
+      _source = s;
+      _hits = const [];
+      _book = null;
+      _chapter = null;
+      _images = const [];
+      _categories = const [];
+      _category = null;
+      _nextUrl = null;
+      _pathNote = null;
+      _categoryNote = null;
+      _error = null;
+      _mode = _Mode.search;
+      _levels.clear(); // 换源 = 从头开始
+    });
+    // 换到的源可能也走中转（比如从包子换回野蛮）——令牌按新源再确认一次。
+    await _resolveRelayToken();
+    if (!mounted) return;
+    _swapService();
+    await _loadCategories();
+    final key = _keyController.text.trim();
+    if (key.isNotEmpty) await _search();
+  }
+
   /// 按分类取书（[more] = 往列表后面追加下一页，地址用接口给的 `next`）。
   Future<void> _openCategory(ComicCategory cat, {bool more = false}) async {
     final url = more ? _nextUrl : cat.url;
@@ -240,6 +393,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         _nextUrl = page.nextUrl; // 到底了就是 null：不显示"加载更多"，也不假装还有
         _hits = more ? [..._hits, ...page.hits] : page.hits;
         _mode = _Mode.search;
+        if (!more) _levels.clear(); // 分类浏览也回到"列表"这一层
       });
     }, '正在取「${cat.title}」…（最多等 ${_service.openTimeout.inSeconds} 秒）');
   }
@@ -247,12 +401,15 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   Future<void> _openBook(ComicSearchHit hit) =>
       _openBookUrl(hit.bookUrl, name: hit.name);
 
-  Future<void> _openBookUrl(String url, {String? name}) async {
+  Future<void> _openBookUrl(String url, {String? name, bool fromList = true}) async {
     await _run(() async {
       final book = await _service.bookInfo(url);
       if (!mounted) return;
       setState(() {
         _book = book;
+        // 从列表点进来的记一层（返回能退回列表）；从书架直接进来的不记
+        // （后面本来就没有上一层，记了会退到一个空搜索页）。
+        if (fromList && _mode != _Mode.book) _levels.add(_mode);
         _mode = _Mode.book;
         _pathNote = _describePath();
       });
@@ -332,6 +489,8 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         _chapter = chapter;
         _images = images;
         _imageIndex = atIndex.clamp(0, images.isEmpty ? 0 : images.length - 1);
+        // 从"详情"进阅读记一层：阅读里按返回能退回详情（不是直接退出本页）。
+        if (_mode != _Mode.reader) _levels.add(_mode);
         _mode = _Mode.reader;
       });
       final book = _book;
@@ -396,34 +555,37 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          switch (_mode) {
-            _Mode.search => '在线漫画',
-            _Mode.book => _book?.name ?? '详情',
-            _Mode.reader => _chapter?.title ?? '阅读',
-          },
+    return PopScope(
+      // 系统返回（手势 / 返回键）跟左上角箭头走同一条路：**先一层层退**，实在没有
+      // 上一层了才退出本页。少了这一层，在阅读里按返回会直接回到书库 —— 看起来
+      // 就是"没一层层退"（2026-09-29 用户报的）。
+      canPop: _levels.isEmpty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _back();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(
+            switch (_mode) {
+              _Mode.search => '在线漫画',
+              _Mode.book => _book?.name ?? '详情',
+              _Mode.reader => _chapter?.title ?? '阅读',
+            },
+          ),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: _back,
+          ),
+          actions: [_sourceMenu()],
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            if (_mode == _Mode.reader && _book != null) {
-              setState(() => _mode = _Mode.book);
-            } else if (_mode == _Mode.book) {
-              setState(() => _mode = _Mode.search);
-            } else {
-              Navigator.of(context).maybePop();
-            }
-          },
+        body: Stack(
+          children: [
+            Positioned.fill(child: _body()),
+            // 离屏 WebView：取数在它里面跑，用户看不见（1×1、不可点）。
+            if (_webController != null) _webController!.buildOffscreen(),
+          ],
         ),
-      ),
-      body: Stack(
-        children: [
-          Positioned.fill(child: _body()),
-          // 离屏 WebView：取数在它里面跑，用户看不见（1×1、不可点）。
-          if (_webController != null) _webController!.buildOffscreen(),
-        ],
       ),
     );
   }
@@ -438,6 +600,36 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       _Mode.reader => _readerBody(),
     };
   }
+
+  /// 书源切换：内置的源都列出来（各自的备注写在名字下面，只作展示）。
+  Widget _sourceMenu() => PopupMenuButton<ComicSource>(
+    tooltip: '切换书源',
+    icon: const Icon(Icons.source_outlined),
+    onSelected: _selectSource,
+    itemBuilder: (context) => [
+      for (final s in _sources)
+        PopupMenuItem<ComicSource>(
+          value: s,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                s.name,
+                style: s.name == _source.name
+                    ? const TextStyle(fontWeight: FontWeight.bold)
+                    : null,
+              ),
+              if (_noteForComicSource(s) != null)
+                Text(
+                  _noteForComicSource(s)!,
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+            ],
+          ),
+        ),
+    ],
+  );
 
   Widget _errorBox() => Center(
     child: Padding(
@@ -779,7 +971,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
               ),
               const SizedBox(height: 16),
               FilledButton(
-                onPressed: () => Navigator.of(context).maybePop(),
+                onPressed: _back,
                 child: const Text('返回'),
               ),
             ],
