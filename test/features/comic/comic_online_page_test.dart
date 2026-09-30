@@ -65,14 +65,18 @@ const List<int> _pngBytes = [
   0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
 ];
 
-/// 假图片缓存：直接给一个真 PNG 文件（不下载）。
+/// 假图片缓存：直接给一个真 PNG 文件（不下载），并记下取过哪些图。
 class _FakeCache extends ComicImageCache {
   _FakeCache(this.file);
 
   final File file;
+  final List<String> fetched = <String>[];
 
   @override
-  Future<File> fetch(String url) async => file;
+  Future<File> fetch(String url) async {
+    fetched.add(url);
+    return file;
+  }
 
   @override
   Future<File?> cachedFile(String url) async => file;
@@ -841,6 +845,190 @@ void main() {
       expect(find.text('1 / 1 张'), findsNothing);
       expect(find.text('共 1 话'), findsOneWidget);
       expect(find.text('书库'), findsNothing, reason: '系统返回也得一层层退');
+    });
+  });
+
+  group('上一话 / 下一话（目录正序：index 大的更晚）', () {
+    /// 三话的书：槽位各不相同，好判断"到底碰了哪一话"。
+    FakeComicTarget threeChapters() {
+      final source = _seed();
+      final card = source.searchRules['bookList']!;
+      final container = firstSelectorRule(source.bookInfoRules['tocUrl']!)!;
+      return FakeComicTarget(
+        counts: {card: 1, container: 3},
+        perElement: {
+          '$card|${source.searchRules['name']}': ['海贼王'],
+          '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
+          '$container|${source.tocRules['chapterName']}': ['第1话', '第2话', '第3话'],
+          '$container|${source.tocRules['chapterUrl']}': [
+            '/user/page_direct?slot=11',
+            '/user/page_direct?slot=22',
+            '/user/page_direct?slot=33',
+          ],
+        },
+        values: {
+          source.bookInfoRules['name']!: ['航海王'],
+          source.bookInfoRules['author']!: ['尾田荣一郎'],
+        },
+        jsSegment: '<img src="https://s1.bzcdn.net/a/1.jpg">',
+      );
+    }
+
+    Future<void> openHost(WidgetTester tester, Widget app) async {
+      await tester.pumpWidget(app);
+      await tester.tap(find.text('书库'));
+      await _settle(tester);
+    }
+
+    /// 预取是异步的（`unawaited`）：跑全量时和其它用例文件抢 CPU，固定 pump 次数不够稳，
+    /// 要等到"某个请求真的发生了"再断言（单独跑这个文件时不稳的那次就是这么露出来的）。
+    Future<void> waitForRequest(
+      WidgetTester tester,
+      FakeComicTarget target,
+      String part,
+    ) async {
+      for (var i = 0; i < 300; i++) {
+        if (target.requests.any((r) => r.contains(part))) return;
+        await tester.pump(const Duration(milliseconds: 10));
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    Future<void> openChapterAt(WidgetTester tester, String title) async {
+      await tester.enterText(find.byType(TextField), '海贼');
+      await tester.tap(find.text('搜索'));
+      await _settle(tester);
+      await tester.tap(find.text('海贼王'));
+      await _settle(tester);
+      await tester.tap(find.text(title));
+      await _settle(tester);
+    }
+
+    testWidgets('「下一话」开目录里更晚的那一话（这曾经写反成上一话）', (tester) async {
+      final target = threeChapters();
+      await openHost(tester, _host(target, _FakeCache(png)));
+      await openChapterAt(tester, '第2话');
+
+      // 清掉进第2话时的请求（含预取），只看这一下点出来的效果
+      target.opened.clear();
+      target.fetched.clear();
+      await tester.tap(find.text('下一话'));
+      await waitForRequest(tester, target, 'slot=33');
+      // 等到之后还要把在途的收尾（服务里那 250ms 的取图轮询）走完：
+      // 测试结束得比它早，框架会以"有定时器还挂着"直接判失败。
+      await _settle(tester);
+
+      expect(
+        target.requests,
+        contains('https://cn.baozimhcn.com/user/page_direct?slot=33'),
+        reason: '「下一话」= 目录里 index 更大的那一话',
+      );
+    });
+
+    testWidgets('「上一话」开目录里更早的那一话', (tester) async {
+      final target = threeChapters();
+      await openHost(tester, _host(target, _FakeCache(png)));
+      await openChapterAt(tester, '第2话');
+
+      target.opened.clear();
+      target.fetched.clear();
+      await tester.tap(find.text('上一话'));
+      await waitForRequest(tester, target, 'slot=11');
+      // 等到之后还要把在途的收尾（服务里那 250ms 的取图轮询）走完：
+      // 测试结束得比它早，框架会以"有定时器还挂着"直接判失败。
+      await _settle(tester);
+
+      expect(
+        target.requests,
+        contains('https://cn.baozimhcn.com/user/page_direct?slot=11'),
+        reason: '「上一话」= 目录里 index 更小的那一话',
+      );
+    });
+
+    testWidgets('第1话没有上一话：按钮置灰，不乱跳', (tester) async {
+      final target = threeChapters();
+      await openHost(tester, _host(target, _FakeCache(png)));
+      await openChapterAt(tester, '第1话');
+
+      final back = tester.widget<TextButton>(
+        find.widgetWithText(TextButton, '上一话'),
+      );
+      expect(back.onPressed, isNull, reason: '第1话的上一话按钮该是灰的');
+
+      target.opened.clear();
+      target.fetched.clear();
+      await tester.tap(find.text('下一话'));
+      await waitForRequest(tester, target, 'slot=22');
+      // 等到之后还要把在途的收尾（服务里那 250ms 的取图轮询）走完：
+      // 测试结束得比它早，框架会以"有定时器还挂着"直接判失败。
+      await _settle(tester);
+      expect(
+        target.requests,
+        contains('https://cn.baozimhcn.com/user/page_direct?slot=22'),
+        reason: '第1话的下一话是第2话',
+      );
+    });
+
+    testWidgets('最后一话没有下一话：按钮置灰，不乱跳', (tester) async {
+      final target = threeChapters();
+      await openHost(tester, _host(target, _FakeCache(png)));
+      await openChapterAt(tester, '第3话');
+
+      final forward = tester.widget<TextButton>(
+        find.widgetWithText(TextButton, '下一话'),
+      );
+      expect(forward.onPressed, isNull, reason: '最后一话的下一话按钮该是灰的');
+    });
+
+    testWidgets('读到本话（只剩 2 张以内）：顺手把下一话开头几张取回来', (tester) async {
+      final target = threeChapters();
+      final cache = _FakeCache(png);
+      await openHost(tester, _host(target, cache));
+      await openChapterAt(tester, '第2话');
+      await waitForRequest(tester, target, 'slot=33');
+      // 等到之后还要把在途的收尾（服务里那 250ms 的取图轮询）走完：
+      // 测试结束得比它早，框架会以"有定时器还挂着"直接判失败。
+      await _settle(tester);
+
+      final req = target.requests.join(' ');
+      expect(req, contains('slot=33'), reason: '第2话里就该问第3话');
+      expect(req, isNot(contains('slot=11')), reason: '预取只认下一话，不往回取');
+      expect(find.text('1 / 1 张'), findsOneWidget, reason: '预取不该换掉正在看的这一话');
+    });
+
+    testWidgets('还早得很（没读到末尾）就不预取：别白费流量', (tester) async {
+      final source = _seed();
+      final card = source.searchRules['bookList']!;
+      final container = firstSelectorRule(source.bookInfoRules['tocUrl']!)!;
+      final target = FakeComicTarget(
+        counts: {card: 1, container: 2},
+        perElement: {
+          '$card|${source.searchRules['name']}': ['海贼王'],
+          '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
+          '$container|${source.tocRules['chapterName']}': ['第1话', '第2话'],
+          '$container|${source.tocRules['chapterUrl']}': [
+            '/user/page_direct?slot=11',
+            '/user/page_direct?slot=22',
+          ],
+        },
+        values: {
+          source.bookInfoRules['name']!: ['航海王'],
+          source.bookInfoRules['author']!: ['尾田荣一郎'],
+        },
+        // 一话 5 张：刚进来还在第 1 张，离末尾还差 4 张
+        jsSegment: [
+          for (var i = 1; i <= 5; i++) '<img src="https://s1.bzcdn.net/a/$i.jpg">',
+        ].join(),
+      );
+
+      await openHost(tester, _host(target, _FakeCache(png)));
+      await openChapterAt(tester, '第1话');
+
+      expect(
+        target.requests.join(' '),
+        isNot(contains('slot=22')),
+        reason: '才第 1 张就去取下一话 = 白费流量',
+      );
     });
   });
 }

@@ -9,6 +9,7 @@
 //   * 翻页用本地缓存，缓存里没有才下载；某张没下来时给可点的"重试"。
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -17,6 +18,7 @@ import '../domain/comic_book.dart';
 import '../domain/comic_image_cache.dart';
 import '../domain/comic_library_store.dart';
 import '../domain/comic_online_progress.dart';
+import '../domain/comic_prefetch.dart';
 import '../domain/comic_reader_prefs.dart';
 import '../domain/comic_online_service.dart';
 import '../domain/comic_relay.dart';
@@ -34,6 +36,10 @@ import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.d
 /// 书源菜单里「自检这份源」那一项的取值：菜单值的类型是 `Object`
 /// （既能装一份源，也能装这一项），命中它就开自检页。
 const Object _kSelfCheckItem = 'comicSourceSelfCheck';
+
+/// 读到"还剩几张"就值得开始预取下一话：留 2 张的余量，够用户在翻页时把下一话开头
+/// 那几张图下完。设成 0（读到最后一张才取）就来不及了 —— 那时候用户已经在点了。
+const int _kPrefetchTriggerPages = 2;
 
 /// 读中转要用的**设备令牌**（与只读运维 API 共用同一份）。
 ///
@@ -207,6 +213,9 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   List<String> _images = const [];
   int _imageIndex = 0;
 
+  /// 下一话预取（只在本话快读完时才动手，见 `_maybePrefetchNext`）。
+  late final ComicChapterPrefetcher _prefetcher;
+
   final _scrollController = ScrollController();
 
   @override
@@ -228,6 +237,10 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     // 服务按"当前源 + 当前令牌"组：令牌可能是异步读出来的（设置里），
     // 先按注入的值组一次，读到之后再重建 —— 界面不必为这一步卡住。
     _service = _makeService();
+    _prefetcher = ComicChapterPrefetcher(
+      loadImages: (chapterUrl) => _service.chapterImages(chapterUrl),
+      cache: _cache,
+    );
     _library = widget.libraryStore ?? ComicLibraryStore();
     _prefs = widget.readerPrefs ?? ComicReaderPrefs();
     _progress = widget.progressStore ?? ComicOnlineProgressStore();
@@ -507,6 +520,8 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       });
       final book = _book;
       if (book != null) {
+        // 一话很短（一两张图）时不会触发翻页回调 —— 进来就先判一次要不要预取下一话。
+        _maybePrefetchNext(book, chapter, _imageIndex);
         // 进度存不上不该影响看书（不弹错、不中断）。
         try {
           await _progress.save(
@@ -538,6 +553,20 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           ),
         )
         .catchError((_) {});
+    _maybePrefetchNext(book, chapter, index);
+  }
+
+  /// 快读到本话末尾时，顺手把**下一话**开头几张图取回来缓存。
+  ///
+  /// 触发点就挂在进度上报上（两种翻页模式都走这里），省得多处各挂一次。
+  /// 只认"还剩 2 张以内"：早于这个点去取，很可能用户下一话根本不看，白费流量。
+  void _maybePrefetchNext(ComicBookDetail book, ComicChapterRef chapter, int index) {
+    if (_images.isEmpty) return;
+    if (_images.length - index > _kPrefetchTriggerPages) return;
+    final i = book.chapters.indexWhere((c) => c.url == chapter.url);
+    if (i < 0) return;
+    // 预取本身不 await：它抢的是"用户在读最后几页"这段时间，不能挡住翻页。
+    unawaited(_prefetcher.prefetchNext(book.chapters, i));
   }
 
   void _jumpTo(int index) {
@@ -553,7 +582,13 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     setState(() => _imageIndex = index);
   }
 
-  /// 上一话 / 下一话（目录是倒序的：index 大的更早）。
+  /// 上一话 / 下一话。
+  ///
+  /// 目录是**正序**的（index 大的更晚）：实测 `https://yemancomic.com/book/7530/`
+  /// 页面里第 1 条是「1卷」、最后一条是「第1193话」，规则引擎按文档顺序取，所以
+  /// App 拿到的 `book.chapters` 也是第 1 话在前。
+  ///
+  /// 这里曾经按"倒序"写反过：左边那颗按钮标着「下一话」却打开上一话（2026-09-30 修）。
   ComicChapterRef? _neighbor(int delta) {
     final book = _book;
     final chapter = _chapter;
@@ -1097,9 +1132,10 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       child: Row(
         children: [
+          // 左边 = 上一话，右边 = 下一话（跟翻页方向、常见阅读器一致）。
           TextButton(
             onPressed: prev == null || _busy ? null : () => _openChapter(prev),
-            child: const Text('下一话', style: TextStyle(color: Colors.white)),
+            child: const Text('上一话', style: TextStyle(color: Colors.white)),
           ),
           IconButton(
             tooltip: _pageTurn ? '换成竖向连续（条漫）' : '换成左右翻页（页漫）',
@@ -1119,7 +1155,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           ),
           TextButton(
             onPressed: next == null || _busy ? null : () => _openChapter(next),
-            child: const Text('上一话', style: TextStyle(color: Colors.white)),
+            child: const Text('下一话', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),

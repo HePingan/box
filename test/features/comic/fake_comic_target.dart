@@ -61,6 +61,9 @@ class FakeComicTarget implements ComicSourceTarget {
   /// 在页面里**发过的请求**地址（页面内 fetch，不是打开页面）。
   final List<String> fetched = [];
 
+  /// 打开过的页面 + 页面内发过的请求（判断"到底碰了哪一话"时两者一起看）。
+  List<String> get requests => [...opened, ...fetched];
+
   @override
   Future<void> open(String url, {Map<String, String>? headers}) async {
     if (failOpen) throw ComicProbeException('打不开：$url');
