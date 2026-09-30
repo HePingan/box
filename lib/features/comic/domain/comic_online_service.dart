@@ -16,9 +16,13 @@ import 'comic_source_diagnostics.dart'
         comicNavFailureNote,
         openComicWithFallback;
 import 'dart:convert';
+import 'package:http/http.dart' as http;
 
+import 'comic_chapter_api.dart';
+import 'comic_fetcher.dart';
 import 'comic_html_engine.dart';
 import 'comic_json_rules.dart';
+import 'comic_relay.dart';
 import 'comic_source_engine.dart';
 import 'comic_source_diagnostics.dart' show ComicNavOutcome;
 
@@ -95,6 +99,8 @@ class ComicOnlineService {
   ComicOnlineService({
     required this.target,
     required this.source,
+    this.relay,
+    this.directClient,
     this.waitTimeout = const Duration(seconds: 15),
     this.listTimeout = const Duration(seconds: 12),
     this.openTimeout = const Duration(seconds: 20),
@@ -103,6 +109,38 @@ class ComicOnlineService {
 
   final ComicSourceTarget target;
   final ComicSource source;
+
+  /// 中转（**退路**：手机那条网真到不了站点时才走它）。非 null 时不再需要 WebView：
+  /// 取 HTML、搜索、详情、分类、章节取图全经自己的服务器。
+  final ComicRelay? relay;
+
+  /// 直连用的 HTTP 客户端（测试注入；为空就自己建一个）。
+  final http.Client? directClient;
+
+  ComicFetcher? _direct;
+
+  /// 这次取数**走哪条**：配了中转就走中转，否则**直连站点**（默认那条）。
+  ///
+  /// 直连不是"降级"：手机本来就能打开站点（站点挑的是客户端特征，直连会带手机 UA，
+  /// 见 comic_fetcher.dart）。源没配 relay 时返回 null —— 那是完全另一条老路（WebView 渲染）。
+  ComicFetcher? get _fetcher =>
+      relay ??
+      (source.hasRelay
+          ? _direct ??= ComicDirectFetcher(client: directClient)
+          : null);
+
+  /// 取**这个地址**要带的请求头（图片缓存与封面用）：中转地址带令牌、图床地址带手机 UA；
+  /// 没有取数器（老路 WebView 渲染那类源）就是空表。
+  Map<String, String> headersFor(String url) =>
+      _fetcher?.headersFor(url) ?? const <String, String>{};
+
+  /// 关掉取数器（页面销毁时调，别把连接池漏在那儿）。
+  void close() {
+    relay?.close();
+    _direct?.close();
+    _direct = null;
+  }
+
   /// 等**图片地址**出现的上限。
   final Duration waitTimeout;
 
@@ -148,7 +186,7 @@ class ComicOnlineService {
         authors: comicHtmlPerElement(parseComicHtml(html), card, source.searchRules['author'] ?? ''),
       );
       if (hits.isNotEmpty) {
-        lastPath = '快路（取 HTML 文本解析）';
+        lastPath = _fastPathLabel;
         return hits;
       }
       lastPathNote = '${lastPathNote ?? ''}取到的 HTML 里没解析出卡片'.trim();
@@ -202,7 +240,11 @@ class ComicOnlineService {
   }
 
   /// 把 WebView 停在站点上（快路要**同域**发请求才带站点 cookie；机房 IP 直连是 403）。
+  ///
+  /// 走中转时**直接返回**：请求是服务器替我们发的，跟这台手机的 WebView 在哪没关系
+  /// —— 那时候硬去"停在站点上"只会白等一轮（直连那条才需要停在站点上）。
   Future<void> _ensureOnSite() async {
+    if (relay != null) return;
     final cur = await target.currentUrl();
     final hosts = comicMirrorCandidates(source, source.baseUrl);
     if (hosts.any((h) => cur.startsWith(h))) return;
@@ -210,7 +252,22 @@ class ComicOnlineService {
   }
 
   /// 取一个地址的 HTML 文本；取不到就返回 null 并把原因记在 [lastPathNote]。
+  ///
+  /// 走中转时**不返回 null**：没有 WebView 那条路可退，取不到就如实抛出
+  /// （悄悄换一条走不通的路，用户只会看到"一直转圈"，查不出是谁的问题）。
   Future<String?> _tryHtml(String url) async {
+    final r = relay;
+    if (r != null) {
+      final body = await r.getText(url);
+      if (body.trim().isEmpty) {
+        throw ComicProbeException('中转取回来的 HTML 是空的（$url）');
+      }
+      if (!body.trimLeft().startsWith('<')) {
+        throw ComicProbeException('中转取回来的不是网页（开头：${_head(body)}）');
+      }
+      lastPathNote = null;
+      return body;
+    }
     try {
       final body = await target.fetchInPage(url, headers: _headers(), timeout: openTimeout);
       if (body.trim().isEmpty) {
@@ -230,13 +287,47 @@ class ComicOnlineService {
     }
   }
 
+  /// 快路的说明文案：走中转时直说是中转，别让用户以为手机自己去站点取过。
+  String get _fastPathLabel => relay == null
+      ? '快路（直连站点取 HTML 解析）'
+      : '中转（经自己的服务器取 HTML）';
+
+  /// 接口取文本（分类榜单这类 JSON 接口）：走中转时不碰 WebView。
+  Future<String> _fetchText(String url) async {
+    final r = relay;
+    if (r != null) return r.getText(url);
+    return target.fetchInPage(url, headers: _headers());
+  }
+
   /// 分类列表：跑源里 `exploreUrl` 的 JS（必须在**站点自己的页面**上跑）。
+  ///
+  /// 两种写法各有各的路：
+  ///   * 纯文本（`名称::地址` 每行一条）—— 直接就是清单，不用跑 JS、不用打开页面；
+  ///   * `<js>` —— 必须打开站点页面在页面里跑（挑战/站点 JS 都在那个环境里）。
   Future<List<ComicCategory>> categories() async {
+    final plain = source.plainExplore;
+    if (plain != null) {
+      if (plain.isEmpty) {
+        throw ComicProbeException('书源的分类清单是空的（exploreUrl 里没有一条 `名称::地址`）');
+      }
+      return plain
+          .map(
+            (e) => ComicCategory(
+              title: e.title,
+              url: e.url.replaceAll('{{page}}', '1'),
+            ),
+          )
+          .toList();
+    }
     final rule = source.exploreUrl ?? '';
     if (!isComicJsRule(rule)) {
-      throw ComicProbeException('这份书源没有分类浏览（exploreUrl 不是 JS 列表）');
+      throw ComicProbeException('这份书源没有分类浏览（exploreUrl 不是 JS 列表，也不是 `名称::地址` 清单）');
     }
-    await _open(source.baseUrl, what: '站点首页');
+    // 中转模式下不打开站点页面：JS 段仍需页面环境，这里的 WebView 只当"JS 求值器"用，
+    // 取数本身走中转（直连那条才需要先停在站点上）。
+    if (relay == null) {
+      await _open(source.baseUrl, what: '站点首页');
+    }
     final raw = await target.evalRaw(buildComicJsBlockScript(comicJsBody(rule)));
     final v = parseComicJsValue(raw);
     final text = v is Map ? (v['text']?.toString() ?? '') : (v?.toString() ?? '');
@@ -272,8 +363,11 @@ class ComicOnlineService {
       throw ComicProbeException('这份书源没给分类取数规则（ruleExplore.bookList）');
     }
     // 必须在站点自己的页面上发请求：页面里发才带着站点发的 cookie（机房 IP 直连是 403）。
-    await _open(source.baseUrl, what: '站点首页');
-    final body = await target.fetchInPage(url, headers: _headers());
+    // 走中转时由服务器代发，不用碰 WebView。
+    if (relay == null) {
+      await _open(source.baseUrl, what: '站点首页');
+    }
+    final body = await _fetchText(url);
     final Object? data;
     try {
       data = jsonDecode(body);
@@ -370,7 +464,7 @@ class ComicOnlineService {
         ),
       );
       if (detail.name.isNotEmpty && detail.chapters.isNotEmpty) {
-        lastPath = '快路（取 HTML 文本解析）';
+        lastPath = _fastPathLabel;
         return detail;
       }
       lastPathNote = '${lastPathNote ?? ''}快路没解析出书名/目录'.trim();
@@ -462,8 +556,26 @@ class ComicOnlineService {
     return _chapterRefsFromRules(titles: titles, urls: urls);
   }
 
-  /// 章节取图：返回图片地址列表（**先等"地址真的出现"**，再按书源 JS 段 → 直读属性两路取）。
+  /// 章节取图：返回图片地址列表。
+  ///
+  /// 两条互不相干的路：
+  ///   * **取图接口**（源带 `relay` 段 = 图不在 HTML 里）：先取章节页拿到
+  ///     `aid/cid/picCount`，再用站点的取图接口分批取。**默认直连**（手机能到站点），
+  ///     配了设备令牌才经自己的服务器；两条走法共用同一套分批逻辑（[ComicFetcher]）。
+  ///     这一路失败**如实报错**，不悄悄退回"打开页面"那条 —— HTML 里根本没有图地址，
+  ///     退了只会白等一轮；
+  ///   * 老路：打开章节页、等图片地址真的出现，再按书源 JS 段 → 直读属性两路取。
   Future<List<String>> chapterImages(String chapterUrl) async {
+    final fetcher = _fetcher;
+    if (fetcher != null) {
+      final picsPath = source.relay?.picsPath;
+      if (picsPath == null) {
+        throw ComicProbeException(
+          '这份书源没配取图接口（relay.chapterApi.pics）—— 取不到图',
+        );
+      }
+      return _chapterImagesViaApi(chapterUrl, fetcher, picsPath);
+    }
     await _open(chapterUrl, what: '章节页');
 
     final css = _imageCss();
@@ -498,6 +610,25 @@ class ComicOnlineService {
       );
     }
     return urls.map(source.absolute).toList();
+  }
+
+  /// 取一话的图：章节页拿 `aid/cid` → 取图接口按 offset 分批 → 地址交给取数器
+  /// （中转会包成中转地址；直连原样返回，图片由图片缓存带着手机 UA 去取）。
+  ///
+  /// 分批那套逻辑在 `comic_chapter_api.dart` 里 —— 自检页的「章节取图」跑的是**同一份**
+  /// （以前只有这里实现，自检页对接口型源会误报「找不到图片选择器」）。
+  Future<List<String>> _chapterImagesViaApi(
+    String chapterUrl,
+    ComicFetcher fetcher,
+    String picsPath,
+  ) async {
+    lastPath = relay == null ? '直连（章节取图接口）' : '中转（章节取图接口）';
+    return fetchComicChapterPicsViaApi(
+      fetcher: fetcher,
+      source: source,
+      chapterUrl: chapterUrl,
+      picsPath: picsPath,
+    );
   }
 
   // ── 内部 ──────────────────────────────────────────────────────

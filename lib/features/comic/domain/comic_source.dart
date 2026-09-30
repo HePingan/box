@@ -214,6 +214,35 @@ String comicJsBody(String raw) {
   return t.trim();
 }
 
+/// 分类清单里的一条（纯文本 exploreUrl 用；`名称::地址`）。
+class ComicExploreEntry {
+  const ComicExploreEntry({required this.title, required this.url});
+
+  final String title;
+  final String url;
+}
+
+/// 书源里的**中转**段（App 侧扩展字段，Legado 没有这个键）。
+///
+/// 为什么放在书源里而不是写死在代码里：**取数默认直连站点**，配了设备令牌才经自己的
+/// 服务器（退路）；但"哪个服务器、哪个入口、取图接口叫什么路径"是**站点相关**的数据，
+/// 跟规则同源最省事 —— 站点换域名/换接口时改数据，不用等发版。
+class ComicRelaySpec {
+  const ComicRelaySpec({required this.endpoint, this.chapterApi = const {}});
+
+  /// 中转入口（如 `https://box.hpa888.top/comicrelay/fetch`）。
+  final String endpoint;
+
+  /// 章节取图的接口路径（键：`pics` / `index`），相对站点根或完整地址。
+  final Map<String, String> chapterApi;
+
+  /// 章节取图接口（本站的图不在 HTML 里，要按批取）。没有就返回 null。
+  String? get picsPath {
+    final p = chapterApi['pics']?.trim() ?? '';
+    return p.isEmpty ? null : p;
+  }
+}
+
 /// 一个漫画源（Legado 书源格式的子集）。
 class ComicSource {
   const ComicSource({
@@ -228,6 +257,7 @@ class ComicSource {
     this.contentRules = const {},
     this.exploreRules = const {},
     this.mirrors = const [],
+    this.relay,
     this.comment,
   });
 
@@ -255,8 +285,14 @@ class ComicSource {
   /// 分类浏览的取数规则（这份源取的是 **JSON 接口**，规则是 `$.items[*]` 这种写法）。
   final Map<String, String> exploreRules;
 
+  /// 中转段（**退路**：配了设备令牌才用；没有就是 null = 直连站点）；没有就是 null。
+  final ComicRelaySpec? relay;
+
   /// 书源自带的备注（可能包含作者对可用性的观察）。
   final String? comment;
+
+  /// 这份源要不要走中转。
+  bool get hasRelay => (relay?.endpoint.trim() ?? '').isNotEmpty;
 
   /// 解析一份书源 JSON。**名字或域名为空即失败** —— 缺了它们后面没法取数，
   /// 与其带一个半残的源往下跑，不如当场说不认识。
@@ -283,6 +319,7 @@ class ComicSource {
       contentRules: _strMap(raw['ruleContent']),
       exploreRules: _strMap(raw['ruleExplore']),
       mirrors: _strList(raw['mirrors']),
+      relay: _relaySpec(raw['relay']),
       comment: _str(raw['bookSourceComment']),
     );
   }
@@ -295,6 +332,28 @@ class ComicSource {
     return tpl.replaceAll('{{key}}', encoded).replaceAll('{{page}}', '1');
   }
 
+  /// exploreUrl 的**纯文本**写法（Legado 也支持）：每行 `名称::地址`，一行一个分类。
+  ///
+  /// 现有解析只认 `<js>` 与 JSON，这里补上纯文本 —— 有 `::` 就按纯文本（`{`/`[` 开头的
+  /// 当 JSON，不当纯文本）。返回 null 表示"这不是纯文本写法"（空 / JS / JSON）。
+  List<ComicExploreEntry>? get plainExplore {
+    final raw = exploreUrl?.trim() ?? '';
+    if (raw.isEmpty || isComicJsRule(raw)) return null;
+    if (raw.startsWith('{') || raw.startsWith('[')) return null; // JSON 另一条路
+    if (!raw.contains('::')) return null;
+    final out = <ComicExploreEntry>[];
+    for (final line in raw.split('\n')) {
+      final s = line.trim();
+      if (s.isEmpty) continue;
+      final at = s.indexOf('::');
+      final title = s.substring(0, at).trim();
+      final url = s.substring(at + 2).trim();
+      if (title.isEmpty || url.isEmpty) continue;
+      out.add(ComicExploreEntry(title: title, url: url));
+    }
+    return out;
+  }
+
   /// 分类地址：把 `{{page}}` 换成页码。
   String? exploreUrlFor(int page) {
     final tpl = exploreUrl;
@@ -304,6 +363,8 @@ class ComicSource {
       // 自检阶段只需要知道"它是 JS 生成的"，由取数层去跑。
       return null;
     }
+    // 纯文本写法是一张**清单**，没有单一地址可返（各分类的地址在 plainExplore 里）。
+    if (plainExplore != null) return null;
     return tpl.replaceAll('{{page}}', '$page');
   }
 
@@ -401,6 +462,17 @@ List<String> _strList(Object? raw) {
       .map((e) => e.toString().trim())
       .where((e) => e.isNotEmpty)
       .toList();
+}
+
+/// 读书源里的 `relay` 段；endpoint 缺失就当没有（宁可退回"没中转"，也不要半个中转）。
+ComicRelaySpec? _relaySpec(Object? raw) {
+  if (raw is! Map) return null;
+  final endpoint = _str(raw['endpoint'])?.trim() ?? '';
+  if (endpoint.isEmpty) return null;
+  return ComicRelaySpec(
+    endpoint: endpoint,
+    chapterApi: _strMap(raw['chapterApi']),
+  );
 }
 
 /// 同一个路径在各镜像上的候选地址（**主站优先**，然后按配置顺序）。

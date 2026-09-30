@@ -55,6 +55,9 @@ List<String> comicHtmlExtract(Document doc, String rule) {
 List<String> comicHtmlPerElement(Document doc, String cardRule, String fieldRule) {
   final cards = comicHtmlNodes(doc, cardRule);
   if (cards.isEmpty) return const [];
+  // 字段规则缺省（这份源没写 author 这类字段）→ 每张卡补一个空值，**卡片数不变**：
+  // 与页面引擎那边"取不到就给空、不报错"的口径一致，`_at` 会把它当"没有"。
+  if (fieldRule.trim().isEmpty) return List<String>.filled(cards.length, '');
   final scoped = stripComicRootPrefix(cardRule, fieldRule);
   final out = <String>[];
   for (final card in cards) {

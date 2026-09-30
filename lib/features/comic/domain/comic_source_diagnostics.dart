@@ -11,6 +11,8 @@ library;
 
 import 'dart:async';
 
+import 'comic_chapter_api.dart';
+import 'comic_fetcher.dart';
 import 'comic_source.dart';
 import 'comic_source_engine.dart';
 
@@ -131,6 +133,10 @@ const Duration kComicProbeWaitTimeout = Duration(seconds: 25);
 const Duration kComicProbePollInterval = Duration(milliseconds: 400);
 
 /// 跑一次自检。[key] 是搜索关键字。
+///
+/// [fetcher] 只在**接口型源**（图不在 HTML 里，如野蛮漫画）的「章节取图」那一步用到 ——
+/// 那种源必须按 App 实际的路走（直连站点 + 取图接口）。不传就现造一个
+/// [ComicDirectFetcher]（真机上的正常情况）；测试里注入假的即可。
 Future<ComicProbeReport> runComicSourceProbe({
   required ComicSourceTarget target,
   required ComicSource source,
@@ -138,6 +144,7 @@ Future<ComicProbeReport> runComicSourceProbe({
   Duration waitTimeout = kComicProbeWaitTimeout,
   Duration pollInterval = kComicProbePollInterval,
   void Function(ComicProbeStep step)? onStep,
+  ComicFetcher? fetcher,
 }) async {
   final steps = <ComicProbeStep>[];
   final sw = Stopwatch()..start();
@@ -367,6 +374,7 @@ Future<ComicProbeReport> runComicSourceProbe({
   }
 
   // ── 第 3 步：章节取图 ───────────────────────────────────────────
+  final picsPath = source.relay?.picsPath;
   if (firstChapterUrl == null) {
     const step = ComicProbeStep(
       name: '章节取图',
@@ -376,6 +384,50 @@ Future<ComicProbeReport> runComicSourceProbe({
     );
     steps.add(step);
     onStep?.call(step);
+  } else if (picsPath != null) {
+    // 接口型源：**图不在 HTML 里**（野蛮漫画就是），网页里根本扒不出图地址。
+    // 所以按 App 实际走的那条路验证：直连站点取章节页拿到 aid/cid，再打站点自己的
+    // 取图接口分批取图（带手机 UA）。
+    //
+    // 以前这一步只会打开章节页扒 HTML，对这类源必然报「content 规则里找不到图片选择器」
+    // —— 源明明是好的，看着却像坏了（2026-09-29 把野蛮漫画加进自检时才暴露）。
+    final stepSw = Stopwatch()..start();
+    try {
+      final api = fetcher ?? ComicDirectFetcher();
+      final urls = await fetchComicChapterPicsViaApi(
+        fetcher: api,
+        source: source,
+        chapterUrl: firstChapterUrl,
+        picsPath: picsPath,
+      );
+      firstImageUrl = urls.first;
+      final step = ComicProbeStep(
+        name: '章节取图',
+        ok: true,
+        elapsedMs: stepSw.elapsedMilliseconds,
+        note: '取到 ${urls.length} 张图，首张来自 '
+            '${Uri.tryParse(firstImageUrl)?.host ?? '—'}'
+            '（这份源的图不在网页里，走站点自己的取图接口'
+            '${source.relay!.endpoint}$picsPath，'
+            '分 ${(urls.length / kComicPicBatchSize).ceil()} 批取完，直连 + 手机 UA）',
+        samples: urls.take(2).toList(),
+        finalUrl: firstChapterUrl,
+      );
+      steps.add(step);
+      onStep?.call(step);
+    } catch (e) {
+      final step = ComicProbeStep(
+        name: '章节取图',
+        ok: false,
+        elapsedMs: stepSw.elapsedMilliseconds,
+        note: e is ComicProbeException
+            ? e.message
+            : '取图接口没跑通：${describeComicProbeError(e)}',
+        finalUrl: firstChapterUrl,
+      );
+      steps.add(step);
+      onStep?.call(step);
+    }
   } else {
     final stepSw = Stopwatch()..start();
     try {

@@ -3,6 +3,7 @@
 // 说明：**引擎本身（页面里那段 JS）没法在 Dart 单测里执行** —— Dart 没有 JS 运行环境。
 // 它的正确性由真机上的「漫画源自检」当场证明（界面上会逐项给结论）。这里能锁的是：
 // 规则解析、生成出来的 JS 脚本形状、以及自检流程的判定与失败说明。
+import 'package:box/features/comic/domain/comic_fetcher.dart';
 import 'package:box/features/comic/domain/comic_source.dart';
 import 'package:box/features/comic/domain/comic_source_diagnostics.dart';
 import 'package:box/features/comic/domain/comic_source_engine.dart';
@@ -341,6 +342,125 @@ void main() {
       expect(report.firstImageUrl, contains('static-tw.baozimhcn.com'));
       expect(report.steps.map((s) => s.name), ['搜索', '详情', '章节取图']);
       expect(fake.opened.first, contains('%E6%B5%B7%E8%B4%BC'), reason: '搜索用编码后的关键字');
+    });
+
+    test('接口型源（图不在 HTML 里）：第三步按 App 实际那条路走取图接口，不报「找不到图片选择器」', () async {
+      final src = ComicSource.tryParse(kSeedComicSourceYemanJson)!;
+      final cardCss = cssFromComicRule(src.searchRules['bookList']!)!;
+      final detailCss = cssFromComicRule(src.bookInfoRules['name']!)!;
+      final tocCss = firstSelectorCss(src.bookInfoRules['tocUrl']!)!;
+
+      final fake = _FakeTarget(
+        counts: {cardCss: 20, detailCss: 1, '$tocCss a[href]': 209},
+        values: {
+          src.searchRules['name']!: ['海贼王'],
+          src.searchRules['bookUrl']!: ['/comic/7530/'],
+          src.bookInfoRules['name']!: ['航海王'],
+          src.bookInfoRules['author']!: ['尾田荣一郎'],
+        },
+        hrefs: {'$tocCss a[href]': '/chapter/7530/772668.html'},
+      );
+
+      // 章节页自报 aid/cid/picCount；取图接口一批 5 张，7 张就是两批。
+      final fetcher = _FakeApiFetcher(
+        chapterHtml: "var other=1;\nlet read={aid:'7530',cid:'772668',picCount:7};",
+        batches: [
+          _picsJson(5, total: 7, from: 1),
+          _picsJson(2, total: 7, from: 6),
+        ],
+      );
+
+      final report = await runComicSourceProbe(
+        target: fake,
+        source: src,
+        key: '海贼',
+        fetcher: fetcher,
+        waitTimeout: const Duration(seconds: 1),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+
+      expect(
+        report.allOk,
+        isTrue,
+        reason: '三步都该通过（这份源的图在接口里，不是 HTML 里没有图就等于源坏了）',
+      );
+      final step = report.steps.last;
+      expect(step.name, '章节取图');
+      expect(step.note, contains('取图接口'), reason: '说明要讲清走的是哪条路');
+      expect(step.note, isNot(contains('找不到图片选择器')));
+      expect(step.note, contains('7 张'));
+      expect(report.firstImageUrl, contains('justpic'), reason: '首图地址来自接口');
+      expect(
+        fetcher.posted.map((p) => p.offset),
+        ['0', '5'],
+        reason: '按 offset 分批：第一批 0，第二批从第 5 张接着取',
+      );
+      expect(fetcher.posted.first.form['id'], '772668');
+      expect(fetcher.posted.first.form['aid'], '7530');
+    });
+
+    test('接口型源取图接口返回空：如实报"一张都没取到"，不当成通过', () async {
+      final src = ComicSource.tryParse(kSeedComicSourceYemanJson)!;
+      final cardCss = cssFromComicRule(src.searchRules['bookList']!)!;
+      final detailCss = cssFromComicRule(src.bookInfoRules['name']!)!;
+      final tocCss = firstSelectorCss(src.bookInfoRules['tocUrl']!)!;
+      final fake = _FakeTarget(
+        counts: {cardCss: 20, detailCss: 1, '$tocCss a[href]': 209},
+        values: {
+          src.searchRules['name']!: ['海贼王'],
+          src.searchRules['bookUrl']!: ['/comic/7530/'],
+          src.bookInfoRules['name']!: ['航海王'],
+        },
+        hrefs: {'$tocCss a[href]': '/chapter/7530/772668.html'},
+      );
+      final fetcher = _FakeApiFetcher(
+        chapterHtml: "let read={aid:'7530',cid:'772668'};",
+        batches: [jsonEncode({'data': {'pic': <Object>[]}})],
+      );
+
+      final report = await runComicSourceProbe(
+        target: fake,
+        source: src,
+        fetcher: fetcher,
+        waitTimeout: const Duration(seconds: 1),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+
+      expect(report.allOk, isFalse);
+      expect(report.steps.last.note, contains('一张图都没取到'));
+      expect(report.firstImageUrl, isNull);
+    });
+
+    test('接口型源：章节页里没有 `let read={…}` 时，报站点可能改版（不猜参数）', () async {
+      final src = ComicSource.tryParse(kSeedComicSourceYemanJson)!;
+      final cardCss = cssFromComicRule(src.searchRules['bookList']!)!;
+      final detailCss = cssFromComicRule(src.bookInfoRules['name']!)!;
+      final tocCss = firstSelectorCss(src.bookInfoRules['tocUrl']!)!;
+      final fake = _FakeTarget(
+        counts: {cardCss: 20, detailCss: 1, '$tocCss a[href]': 209},
+        values: {
+          src.searchRules['name']!: ['海贼王'],
+          src.searchRules['bookUrl']!: ['/comic/7530/'],
+          src.bookInfoRules['name']!: ['航海王'],
+        },
+        hrefs: {'$tocCss a[href]': '/chapter/7530/772668.html'},
+      );
+      final fetcher = _FakeApiFetcher(
+        chapterHtml: '<html><body>什么都没有</body></html>',
+        batches: const [],
+      );
+
+      final report = await runComicSourceProbe(
+        target: fake,
+        source: src,
+        fetcher: fetcher,
+        waitTimeout: const Duration(seconds: 1),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+
+      expect(report.allOk, isFalse);
+      expect(report.steps.last.note, contains('找不到取图参数'));
+      expect(fetcher.posted, isEmpty, reason: '参数都没拿到就不该乱打接口');
     });
 
     test('卡片 0 命中且页面是 502：原因里必须说出来（不能只说"没数据"）', () async {
@@ -942,4 +1062,120 @@ void main() {
       expect(src.mirrors.first, src.baseUrl);
     });
   });
+
+  group('野蛮漫画（内置第二份源）+ 中转段', () {
+    ComicSource yeman() => ComicSource.tryParse(kSeedComicSourceYemanJson)!;
+
+    test('内置清单：野蛮漫画排第一（默认），两份都解析得出来', () {
+      expect(kSeedComicSourcesJson.length, 2);
+      final first = ComicSource.tryParse(kSeedComicSourcesJson.first)!;
+      expect(first.name, '野蛮漫画');
+      final names =
+          kSeedComicSourcesJson
+              .map((j) => ComicSource.tryParse(j)?.name)
+              .toList();
+      expect(names, contains('包子漫画（优）'));
+    });
+
+    test('relay 段解析出来：入口 + 取图接口路径', () {
+      final src = yeman();
+      expect(src.hasRelay, isTrue);
+      expect(src.relay!.endpoint, startsWith('https://'));
+      expect(src.relay!.picsPath, '/api/comic/read/pics');
+      expect(src.relay!.chapterApi['index'], '/api/comic/read/index');
+      // 包子那份没有 relay：不该凭空长出一个
+      expect(ComicSource.tryParse(kSeedComicSourceJson)!.hasRelay, isFalse);
+    });
+
+    test('relay 段缺入口 = 没有中转（不带着半个中转往下跑）', () {
+      const json =
+          '{"bookSourceName":"x","bookSourceUrl":"https://x.example",'
+          '"relay":{"chapterApi":{"pics":"/a"}}}';
+      final src = ComicSource.tryParse(json)!;
+      expect(src.relay, isNull);
+      expect(src.hasRelay, isFalse);
+    });
+
+    test('野蛮漫画的每条规则都认得出来（这是"这份源在 App 里可用"的锁）', () {
+      expect(
+        yeman().unknownRules(),
+        isEmpty,
+        reason: '有认不出来的规则段就等于这份源用不了，必须当场暴露',
+      );
+    });
+
+    test('exploreUrl 的纯文本写法：`名称::地址` 每行一条', () {
+      const json =
+          '{"bookSourceName":"x","bookSourceUrl":"https://x.example",'
+          r'"exploreUrl":"全部::https://x.example/list?page={{page}}\n'
+          r'恋爱::https://x.example/love?page={{page}}"}';
+      final src = ComicSource.tryParse(json)!;
+      final list = src.plainExplore!;
+      expect(list.map((e) => e.title), ['全部', '恋爱']);
+      expect(list.first.url, contains('{{page}}'));
+      // 纯文本是"一张清单"，没有单一地址可返
+      expect(src.exploreUrlFor(1), isNull);
+      // JS / JSON 的两条路不受影响
+      expect(ComicSource.tryParse(kSeedComicSourceJson)!.plainExplore, isNull);
+    });
+  });
 }
+
+/// 假的取数器：接口型源的自检要「取章节页 → 打取图接口」，这里按地址作答。
+///
+/// 每个 `batch` 就是**一批**的响应体（按调用顺序发），所以能锁住"按 offset 分批推进"。
+class _FakeApiFetcher implements ComicFetcher {
+  _FakeApiFetcher({required this.chapterHtml, required this.batches});
+
+  /// `getText` 一律返回它（章节页）。
+  final String chapterHtml;
+
+  /// 逐批的响应体；用完还继续要就是用例写错了，直接抛出来。
+  final List<String> batches;
+
+  final List<_Posted> posted = [];
+  int _n = 0;
+
+  @override
+  Map<String, String> get headers => const {'User-Agent': 'phone-ua'};
+
+  @override
+  Map<String, String> headersFor(String url) => headers;
+
+  @override
+  Future<String> getText(String url) async => chapterHtml;
+
+  @override
+  Future<String> postForm(String url, Map<String, String> form) async {
+    posted.add(_Posted(url: url, form: Map.of(form)));
+    if (_n >= batches.length) {
+      throw StateError('取图接口被多打了一批（第 ${_n + 1} 批），用例只准备了 ${batches.length} 批');
+    }
+    return batches[_n++];
+  }
+
+  @override
+  String wrap(String url) => url;
+
+  @override
+  void close() {}
+}
+
+class _Posted {
+  const _Posted({required this.url, required this.form});
+
+  final String url;
+  final Map<String, String> form;
+  String get offset => form['offset'] ?? '';
+}
+
+/// 造一批取图接口的响应：`from` 张起、要 `count` 张，站点自报共 `total` 张。
+String _picsJson(int count, {required int total, int from = 1}) => jsonEncode({
+  'data': {
+    'total': total,
+    'pic': [
+      for (var i = from; i < from + count; i++)
+        {'pic': 'https://tuer.justpic01pt.com:666/comic/$i.jpg'},
+    ],
+  },
+});

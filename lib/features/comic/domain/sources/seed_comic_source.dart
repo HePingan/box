@@ -1,10 +1,68 @@
-// 内置漫画源：包子漫画（Legado 书源格式，来源：用户提供的「包子漫画.json」，2026-09-27）。
+// 内置漫画源（Legado 书源格式的子集）。
 //
 // 为什么以「配置」形态放在 App 里而不是把站点逻辑写死在代码里：
-//   * 站点有 WAF，规则会随站点改版失效 —— 规则是数据，改数据不该等发版（Step 4 会做成
-//     从服务器热更新；本轮先内置，保证自检与后续在线的规则与这份书源逐字一致）。
+//   * 站点有 WAF，规则会随站点改版失效 —— 规则是数据，改数据不该等发版；
 //   * 只保留运行需要的字段：Legado 专有的 UI/统计字段（customOrder、weight、respondTime…）
 //     与本 App 无关，去掉以免误导读者以为它们生效。
+//
+// ── 一览 ─────────────────────────────────────────────────────────
+//   * 野蛮漫画（默认）：**手机能直连**（站点挑客户端特征 —— 桌面 UA 会被 307 掉，
+//     直连必须带手机 UA，见 comic_fetcher.dart）。取数默认直连；**配了设备令牌才走中转**
+//     （`relay` 段）。图片地址在取图接口里，不在 HTML 里 —— 直连与中转共用同一套分批取图。
+//   * 包子漫画：站点对手机与机房都丢连接（2026-09-27 起），保留配置仅供参考/自检。
+library;
+
+// ── 野蛮漫画（默认源） ─────────────────────────────────────────────
+//
+// 站点事实（2026-09-28 实测，规则就是照着这些写的，不要凭印象改）：
+//   * 搜索：`GET /search?searchkey=<关键字>` → `li.comic-item`（实测「海贼」21 条），
+//     书名 `p.title`、书链 `a[href]`（`/book/7530/`）、封面 `img[src]`
+//     （在 `tuer.justpic01pt.com:666`，**直连可取**：实测 200 / 48 KB / image/jpeg）。
+//   * 详情：`GET /book/<id>/` → 书名 `h1#js_comic-title`、作者 `span.author`、
+//     简介 `p#js_desc_content`、目录 `li.comic-chapter-item` 里的 `a`
+//     （实测 398 话，`/chapter/7530/772668.html`）。
+//     ⚠️ 书名**不能**用 `h1.name`：那个 h1 里嵌着 `<span class="author">`，
+//     取 text 会拼成「海贼王~尾田栄一郎」。
+//   * 章节取图：图片地址**不在 HTML 里**。章节页有一行 JS
+//     `let read={aid:'7530',cid:'772668',apiCid:'772668',picCount:209,…}`，
+//     再 `POST /api/comic/read/pics`（表单 `id=<cid>&aid=<aid>&offset=<起点>`）
+//     分批取，**一批 5 张**（响应里带 `total`）。所以这份源没有 `ruleContent`
+//     —— 用 HTML 规则根本取不到图，写了反而是假的。
+const String kSeedComicSourceYemanJson = r'''
+{
+  "bookSourceName": "野蛮漫画",
+  "bookSourceUrl": "https://yemancomic.com",
+  "bookSourceType": 2,
+  "searchUrl": "https://yemancomic.com/search?searchkey={{key}}",
+  "relay": {
+    "endpoint": "https://box.hpa888.top/comicrelay/fetch",
+    "chapterApi": {
+      "pics": "/api/comic/read/pics",
+      "index": "/api/comic/read/index"
+    }
+  },
+  "ruleSearch": {
+    "bookList": "class.comic-item",
+    "name": "class.title@text",
+    "bookUrl": "tag.a.0@href",
+    "coverUrl": "tag.img@src"
+  },
+  "ruleBookInfo": {
+    "name": "id.js_comic-title@text",
+    "author": "class.author@text",
+    "coverUrl": "tag.img.0@src",
+    "intro": "id.js_desc_content@text",
+    "tocUrl": "class.comic-chapter-item@tag.a@text"
+  },
+  "ruleToc": {
+    "chapterName": "tag.a@text",
+    "chapterUrl": "tag.a@href"
+  },
+  "bookSourceComment": "// 手机直接能访问本站（要带手机 UA，桌面 UA 会被 307 挡）；图在 /api/comic/read/pics（一批 5 张）；配了设备令牌才经自建中转"
+}
+''';
+
+// ── 包子漫画（保留；当前站点可达性已坏） ─────────────────────────────
 //
 // 已知边界（写在这里，免得后面靠猜）：
 //   * `init` / `chapterList` 里的 `java.t2s`（繁转简）本 App **不实现** —— 需要词表，
@@ -61,3 +119,20 @@ const String kSeedComicSourceJson = r'''
   "enabledExplore": true
 }
 ''';
+
+/// 内置书源清单：**野蛮漫画排第一**（在线页默认选中的就是第一份）。
+/// 顺序就是界面上的顺序，也是"默认用哪个源"的答案。
+const List<String> kSeedComicSourcesJson = <String>[
+  kSeedComicSourceYemanJson,
+  kSeedComicSourceJson,
+];
+
+/// 内置源的界面备注（键 = 书源名）。只用于**展示**，不影响取数。
+///
+/// 「漫画源自检」页与在线页的源菜单都读这里，所以每一条都要是**当前仍然成立**的事实，
+/// 别把已经过时的判断留在界面上（这类备注用户直接看得到）。
+const Map<String, String> kSeedComicSourceNotes = <String, String>{
+  '野蛮漫画': '取数默认直连（站点挑客户端特征：手机 UA 才给页面）；配了设备令牌才走中转',
+  '包子漫画（优）': '当前在手机网上连不上（连接被重置），列出来仅供参考；'
+      '它 ruleBookInfo.tocUrl 第 3 段是自身的笔误，本 App 用详情页的章节链接',
+};

@@ -15,10 +15,22 @@ import 'package:path_provider/path_provider.dart';
 
 /// 图片缓存：`url → 本地文件`。
 class ComicImageCache {
-  ComicImageCache({this.httpClientFactory});
+  ComicImageCache({
+    this.httpClientFactory,
+    Map<String, String> Function(String url)? headerFor,
+  }) : headerFor = headerFor ?? _noHeaders;
 
   /// 可注入（测试用）：默认走 `HttpClient()`。
   final HttpClient Function()? httpClientFactory;
+
+  /// 取**这个地址**的图要带的头（默认空表）。
+  ///
+  /// 为什么按地址给、而不是一张固定表：图片地址里既有图床（直连取，只要手机 UA），
+  /// 也有经自建中转包出来的地址（要 `X-Box-Token`，否则每张 401）。规则见
+  /// [comicImageHeadersFor]。令牌仍然**只在请求头**里，不进地址、不进日志。
+  final Map<String, String> Function(String url) headerFor;
+
+  static Map<String, String> _noHeaders(String url) => const <String, String>{};
 
   final Map<String, Future<File>> _inFlight = {};
   Directory? _dir;
@@ -63,6 +75,9 @@ class ComicImageCache {
     try {
       final req = await client.getUrl(uri);
       req.headers.set(HttpHeaders.acceptHeader, 'image/*,*/*;q=0.8');
+      headerFor(url).forEach((k, v) {
+        req.headers.set(k, v);
+      });
       final resp = await req.close();
       if (resp.statusCode != 200) {
         throw ComicImageException('这张图没下来（HTTP ${resp.statusCode}）');
