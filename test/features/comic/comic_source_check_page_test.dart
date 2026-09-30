@@ -98,6 +98,68 @@ void main() {
     expect(find.text('复制结论'), findsNothing, reason: '没跑之前没有报告可复制');
   });
 
+  testWidgets('从在线页失败态进来时预选那份源', (tester) async {
+    final second = ComicSource.tryParse(kSeedComicSourcesJson[1])!;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ComicSourceCheckPage(
+          targetOverride: _FakeTarget(),
+          initialSourceName: second.name,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<ChoiceChip>(
+            find.ancestor(
+              of: find.text(second.name),
+              matching: find.byType(ChoiceChip),
+            ),
+          )
+          .selected,
+      isTrue,
+      reason: '从哪份源点进来就自检哪份源（用户想问的就是"我现在这本读不了，是源的问题吗"）',
+    );
+    expect(
+      tester
+          .widget<ChoiceChip>(
+            find.ancestor(
+              of: find.text(ComicSource.tryParse(kSeedComicSourcesJson.first)!.name),
+              matching: find.byType(ChoiceChip),
+            ),
+          )
+          .selected,
+      isFalse,
+    );
+  });
+
+  testWidgets('预选的名字对不上（比如清单换了名字）→ 回落到清单第一份，不崩也不空选', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ComicSourceCheckPage(
+          targetOverride: _FakeTarget(),
+          initialSourceName: '没有这份源',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<ChoiceChip>(
+            find.ancestor(
+              of: find.text(ComicSource.tryParse(kSeedComicSourcesJson.first)!.name),
+              matching: find.byType(ChoiceChip),
+            ),
+          )
+          .selected,
+      isTrue,
+    );
+  });
+
   testWidgets('能换源；换源会把上一份源的结论清掉（不混着显示）', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -194,7 +256,13 @@ void main() {
     await drainRun(tester);
 
     expect(find.text('搜索'), findsOneWidget);
+    // 三步都是懒构建的列表项：新增了"快路没走通"的原因之后每格更高，
+    // 靠下滑一格一格把它们翻出来（不能假设三格同时在屏内）。
+    await tester.drag(find.byType(ListView), const Offset(0, -160));
+    await tester.pump();
     expect(find.text('详情'), findsOneWidget);
+    await tester.drag(find.byType(ListView), const Offset(0, -160));
+    await tester.pump();
     expect(find.text('章节取图'), findsOneWidget);
     expect(find.textContaining('502'), findsWidgets, reason: '502 要显示出来');
     // 结论段在列表下方（列表是懒构建的，屏幕外的 widget 根本不存在）→ 先滚下去。

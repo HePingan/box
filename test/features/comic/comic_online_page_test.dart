@@ -94,6 +94,7 @@ Widget _page(
   ComicOnlineProgressStore? progressStore,
   ComicReaderPrefs? readerPrefs,
   String? initialBookUrl,
+  Widget Function(String sourceName)? selfCheckPageBuilder,
 }) {
   return MaterialApp(
     home: ComicOnlinePage(
@@ -101,6 +102,7 @@ Widget _page(
       targetBuilder: () => target,
       imageCache: cache,
       relayToken: relayToken,
+      selfCheckPageBuilder: selfCheckPageBuilder,
       waitTimeout: const Duration(milliseconds: 20),
       listTimeout: const Duration(milliseconds: 20),
       openTimeout: const Duration(milliseconds: 20),
@@ -265,6 +267,93 @@ void main() {
     await _settle(tester);
 
     expect(find.textContaining('书链一条都没取到'), findsOneWidget);
+  });
+
+  testWidgets('搜索失败时给「自检这个源」，带的是**当前这份源**（用户只有手机，这是他拿结论的路）',
+      (tester) async {
+    final source = _seed(); // 包子漫画（优）—— 内置清单第二份，"预选"和"默认第一份"能区分开
+    final card = source.searchRules['bookList']!;
+    final target = FakeComicTarget(
+      counts: {card: 1},
+      perElement: {
+        '$card|${source.searchRules['name']}': ['甲'],
+        '$card|${source.searchRules['bookUrl']}': [''],
+      },
+    );
+    String? passedName;
+
+    await tester.pumpWidget(
+      _page(
+        target,
+        _FakeCache(png),
+        selfCheckPageBuilder: (name) {
+          passedName = name;
+          return Scaffold(body: Text('自检页：$name'));
+        },
+      ),
+    );
+    await tester.enterText(find.byType(TextField), 'x');
+    await tester.tap(find.text('搜索'));
+    await _settle(tester);
+
+    expect(find.text('重试'), findsOneWidget, reason: '原来的重试不能少');
+    await tester.tap(find.text('自检这个源'));
+    await _settle(tester);
+
+    expect(passedName, '包子漫画（优）', reason: '从哪份源进来就预选哪份源，别让人再挑一次');
+    expect(find.text('自检页：包子漫画（优）'), findsOneWidget);
+  });
+
+  testWidgets('书源菜单里也挂着「自检这份源」（源出问题时不用先跑回漫画库）', (tester) async {
+    final target = FakeComicTarget(
+      counts: {_seed().searchRules['bookList']!: 1},
+      perElement: {
+        '${_seed().searchRules['bookList']}|${_seed().searchRules['name']}': ['甲'],
+        '${_seed().searchRules['bookList']}|${_seed().searchRules['bookUrl']}': ['/comic/a'],
+      },
+    );
+    String? passedName;
+
+    await tester.pumpWidget(
+      _page(
+        target,
+        _FakeCache(png),
+        selfCheckPageBuilder: (name) {
+          passedName = name;
+          return Scaffold(body: Text('自检页：$name'));
+        },
+      ),
+    );
+    await _settle(tester);
+
+    await tester.tap(find.byIcon(Icons.source_outlined));
+    await _settle(tester);
+    expect(find.text('自检「包子漫画（优）」'), findsOneWidget);
+
+    await tester.tap(find.text('自检「包子漫画（优）」'));
+    await _settle(tester);
+
+    expect(passedName, '包子漫画（优）');
+  });
+
+  testWidgets('正常搜索时没有「自检这个源」（控制组：它不是常驻按钮）', (tester) async {
+    final source = _seed();
+    final card = source.searchRules['bookList']!;
+    final target = FakeComicTarget(
+      counts: {card: 1},
+      perElement: {
+        '$card|${source.searchRules['name']}': ['海贼王'],
+        '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
+      },
+    );
+
+    await tester.pumpWidget(_page(target, _FakeCache(png)));
+    await tester.enterText(find.byType(TextField), 'x');
+    await tester.tap(find.text('搜索'));
+    await _settle(tester);
+
+    expect(find.text('海贼王'), findsOneWidget, reason: '先确认这次是成功的');
+    expect(find.text('自检这个源'), findsNothing);
   });
 
   testWidgets('这一话没取到图：如实说，且给返回的路（不假装成功）', (tester) async {

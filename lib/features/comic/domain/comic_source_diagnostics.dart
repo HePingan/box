@@ -13,6 +13,7 @@ import 'dart:async';
 
 import 'comic_chapter_api.dart';
 import 'comic_fetcher.dart';
+import 'comic_html_engine.dart';
 import 'comic_source.dart';
 import 'comic_source_engine.dart';
 
@@ -132,6 +133,149 @@ class ComicProbeReport {
 const Duration kComicProbeWaitTimeout = Duration(seconds: 25);
 const Duration kComicProbePollInterval = Duration(milliseconds: 400);
 
+/// 快路（取 HTML 文本 + 规则引擎）跑出来的一次结果。
+///
+/// 为什么要单独记 [note]：自检的价值是把未知变已知，**快路为什么没通**本身就是一条
+/// 结论（站点不给 HTML / 规则解析不出卡片 / 取回来的不是网页），不能只留个 false。
+class _FastPathResult {
+  const _FastPathResult({
+    this.ok = false,
+    required this.note,
+    this.firstBookUrl,
+    this.firstChapterUrl,
+    this.tocCount,
+    this.samples = const <String>[],
+  });
+
+  final bool ok;
+  final String note;
+  final String? firstBookUrl;
+  final String? firstChapterUrl;
+  final int? tocCount;
+  final List<String> samples;
+}
+
+/// 取一个地址的 HTML 文本（判断口径与 `ComicOnlineService._tryHtml` 一致：
+/// 空的 / 开头不是 `<` 的一律算"没取到"）。
+///
+/// 走的是**页面内取文本**（与 App 快路同一个入口），所以带着站点的 cookie，
+/// 不是在 App 侧另发一个裸 HTTP 请求 —— 后者会得出与 App 不一样的结论。
+Future<String?> _fetchHtmlText(
+  ComicSourceTarget target,
+  String url, {
+  required Map<String, String> headers,
+  required Duration timeout,
+}) async {
+  try {
+    final body = await target.fetchInPage(url, headers: headers, timeout: timeout);
+    final text = body.trim();
+    if (text.isEmpty) return null;
+    if (!text.startsWith('<')) return null;
+    return body;
+  } on Object {
+    // 取不到不算错误：这条路现在不通，退到渲染后查 DOM（原因由调用方拼进说明）。
+    return null;
+  }
+}
+
+/// 搜索的快路：**与 App 搜索同一条路**（取 HTML 文本 + 规则引擎解析卡片）。
+Future<_FastPathResult> _searchViaHtmlFastPath({
+  required ComicSourceTarget target,
+  required ComicSource source,
+  required String url,
+  required Map<String, String> headers,
+  required Duration timeout,
+}) async {
+  final cardRule = source.searchRules['bookList'] ?? '';
+  if (cardRule.trim().isEmpty) {
+    return const _FastPathResult(note: '书源没给 bookList 规则，快路无从解析');
+  }
+  final html = await _fetchHtmlText(target, url, headers: headers, timeout: timeout);
+  if (html == null) {
+    return const _FastPathResult(note: '取不到搜索页的 HTML（多为 WAF 挑战页或需要渲染）');
+  }
+  final doc = parseComicHtml(html);
+  final names = comicHtmlPerElement(doc, cardRule, source.searchRules['name'] ?? '');
+  final links = comicHtmlPerElement(doc, cardRule, source.searchRules['bookUrl'] ?? '');
+  if (links.isEmpty) {
+    return const _FastPathResult(note: 'HTML 里没解析出书链（规则与站点页面可能已不匹配）');
+  }
+  return _FastPathResult(
+    ok: true,
+    note: '走的是快路（取 HTML 文本 + 规则引擎）—— 与 App 搜索同一条路：'
+        '书名 ${names.length} 个、书链 ${links.length} 个',
+    firstBookUrl: source.absolute(links.first),
+    samples: names.take(3).toList(),
+  );
+}
+
+/// 详情的快路：**与 App 打开详情页同一条路**（取 HTML 文本 + 规则引擎解析书名/目录）。
+Future<_FastPathResult> _detailViaHtmlFastPath({
+  required ComicSourceTarget target,
+  required ComicSource source,
+  required String url,
+  required Map<String, String> headers,
+  required Duration timeout,
+}) async {
+  final html = await _fetchHtmlText(target, url, headers: headers, timeout: timeout);
+  if (html == null) {
+    return const _FastPathResult(note: '取不到详情页的 HTML（多为 WAF 挑战页或需要渲染）');
+  }
+  final doc = parseComicHtml(html);
+  final names = comicHtmlExtract(doc, source.bookInfoRules['name'] ?? '');
+  final authors = comicHtmlExtract(doc, source.bookInfoRules['author'] ?? '');
+  final String container;
+  try {
+    container = _tocContainerRuleOf(source);
+  } on ComicProbeException catch (e) {
+    return _FastPathResult(note: '读不了目录规则：${e.message}');
+  }
+  final chapterTitles = comicHtmlPerElement(
+    doc,
+    container,
+    source.tocRules['chapterName'] ?? '',
+  );
+  final chapterUrls = comicHtmlPerElement(
+    doc,
+    container,
+    source.tocRules['chapterUrl'] ?? '',
+  );
+  if (names.isEmpty || chapterUrls.isEmpty) {
+    return _FastPathResult(
+      note: 'HTML 里没解析出${names.isEmpty ? '书名' : '章节链接'}',
+    );
+  }
+  return _FastPathResult(
+    ok: true,
+    note: '走的是快路（取 HTML 文本 + 规则引擎）—— 与 App 打开详情页同一条路：'
+        '书名「${names.first}」'
+        '${authors.isEmpty ? '' : ' · 作者 ${authors.first}'}'
+        ' · 章节 ${chapterUrls.length} 条'
+        '${chapterTitles.length == chapterUrls.length ? '' : '（章节名 ${chapterTitles.length} 条）'}',
+    firstChapterUrl: source.absolute(chapterUrls.first),
+    tocCount: chapterUrls.length,
+    samples: [
+      names.first,
+      if (authors.isNotEmpty) authors.first,
+      '章节数 ${chapterUrls.length}',
+    ],
+  );
+}
+
+/// 目录容器规则：取 `tocUrl` 的第一段选择器原文（整条里含书源自己写的笔误段 `harf`）。
+///
+/// 与 `ComicOnlineService._tocContainerRule` 同一口径 —— 自检与 App 用同一段规则，
+/// 否则"自检说目录读不到"而 App 读得到（或反过来）。
+String _tocContainerRuleOf(ComicSource source) {
+  final tocRule = source.bookInfoRules['tocUrl'] ?? '';
+  final rule =
+      firstSelectorRule(tocRule) ?? firstSelectorCss(tocRule) ?? cssFromComicRule(tocRule) ?? '';
+  if (rule.isEmpty) {
+    throw ComicProbeException('书源的 tocUrl 规则不认识：「$tocRule」');
+  }
+  return rule;
+}
+
 /// 跑一次自检。[key] 是搜索关键字。
 ///
 /// [fetcher] 只在**接口型源**（图不在 HTML 里，如野蛮漫画）的「章节取图」那一步用到 ——
@@ -175,6 +319,32 @@ Future<ComicProbeReport> runComicSourceProbe({
       onStep?.call(step);
     } else {
       try {
+        // ① 先按 **App 实际那条路**跑一遍：取 HTML 文本 + 规则引擎（快路）。
+        //    只验"渲染后查 DOM"会得出与 App 不一致的结论 —— 站点给"取文本"和给
+        //    "渲染后的 DOM"的东西不保证一样，而自检的全部价值就是"这一步过了 App 就能用"。
+        final fast = await _searchViaHtmlFastPath(
+          target: target,
+          source: source,
+          url: url,
+          headers: headers(),
+          timeout: waitTimeout,
+        );
+        if (fast.ok) {
+          firstBookUrl = fast.firstBookUrl;
+          final step = ComicProbeStep(
+            name: '搜索',
+            ok: true,
+            elapsedMs: stepSw.elapsedMilliseconds,
+            note: fast.note,
+            samples: fast.samples,
+            finalUrl: url,
+          );
+          steps.add(step);
+          onStep?.call(step);
+        } else {
+        // ② 快路没通：退到"打开页面、等渲染、在 DOM 里查"，并**把快路失败的原因带上**
+        //    —— 这条原因本身就是结论（站点不给 HTML ≠ 站点没有这本书）。
+        final fastPrefix = '快路没走通（${fast.note}）；退到渲染后查 DOM：';
         final nav = await openComicWithFallback(
           target,
           source,
@@ -210,11 +380,12 @@ Future<ComicProbeReport> runComicSourceProbe({
             name: '搜索',
             ok: false,
             elapsedMs: stepSw.elapsedMilliseconds,
-            note: _zeroHitNote(
-              selector: cardCss,
-              waitedSeconds: waited.seconds,
-              pageTitle: title,
-            ),
+            note: fastPrefix +
+                _zeroHitNote(
+                  selector: cardCss,
+                  waitedSeconds: waited.seconds,
+                  pageTitle: title,
+                ),
             finalUrl: finalUrl,
             pageTitle: title,
           );
@@ -234,7 +405,8 @@ Future<ComicProbeReport> runComicSourceProbe({
             name: '搜索',
             ok: urls.isNotEmpty,
             elapsedMs: stepSw.elapsedMilliseconds,
-            note: (urls.isNotEmpty
+            note: fastPrefix +
+                (urls.isNotEmpty
                     ? '命中 ${waited.count} 条，取到书名 ${names.length} 个、链接 ${urls.length} 个'
                     : '卡片命中 ${waited.count} 条，但书链规则一条都没取到（站点可能改版）') +
                 navSuffix(nav),
@@ -246,6 +418,7 @@ Future<ComicProbeReport> runComicSourceProbe({
           onStep?.call(step);
         }
         }
+        } // else: 快路没通 → 老路
       } catch (e) {
         final step = ComicProbeStep(
           name: '搜索',
@@ -275,6 +448,29 @@ Future<ComicProbeReport> runComicSourceProbe({
   } else {
     final stepSw = Stopwatch()..start();
     try {
+      // ① 同样先走 App 实际那条路（取 HTML 文本 + 规则引擎解析详情与目录）。
+      final fast = await _detailViaHtmlFastPath(
+        target: target,
+        source: source,
+        url: firstBookUrl,
+        headers: headers(),
+        timeout: waitTimeout,
+      );
+      if (fast.ok) {
+        firstChapterUrl = fast.firstChapterUrl;
+        tocCount = fast.tocCount;
+        final step = ComicProbeStep(
+          name: '详情',
+          ok: true,
+          elapsedMs: stepSw.elapsedMilliseconds,
+          note: fast.note,
+          samples: fast.samples,
+          finalUrl: firstBookUrl,
+        );
+        steps.add(step);
+        onStep?.call(step);
+      } else {
+      final fastPrefix = '快路没走通（${fast.note}）；退到渲染后查 DOM：';
       final nav = await openComicWithFallback(
         target,
         source,
@@ -298,11 +494,12 @@ Future<ComicProbeReport> runComicSourceProbe({
           name: '详情',
           ok: false,
           elapsedMs: stepSw.elapsedMilliseconds,
-          note: _zeroHitNote(
-            selector: titleCss,
-            waitedSeconds: waited.seconds,
-            pageTitle: pageTitle,
-          ),
+          note: fastPrefix +
+              _zeroHitNote(
+                selector: titleCss,
+                waitedSeconds: waited.seconds,
+                pageTitle: pageTitle,
+              ),
           finalUrl: finalUrl,
           pageTitle: pageTitle,
         );
@@ -341,7 +538,8 @@ Future<ComicProbeReport> runComicSourceProbe({
           name: '详情',
           ok: names.isNotEmpty && count > 0,
           elapsedMs: stepSw.elapsedMilliseconds,
-          note: '书名「${names.isEmpty ? '—' : names.first}」'
+          note: '$fastPrefix'
+              '书名「${names.isEmpty ? '—' : names.first}」'
               '${authors.isEmpty ? '' : ' · 作者 ${authors.first}'}'
               ' · 章节 $count 条'
               '${count == 0 ? '（章节选择器 0 命中）' : ''}'
@@ -357,6 +555,7 @@ Future<ComicProbeReport> runComicSourceProbe({
         steps.add(step);
         onStep?.call(step);
       }
+      } // else: 快路没通 → 老路
     } catch (e) {
       // 配置错误（规则不认识）与网络错误要分开说：前者是我们自己的问题，
       // 说成"打不开页面"会把排查方向带偏。

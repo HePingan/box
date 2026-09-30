@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'apk_digest.dart';
 import 'update_download_plan.dart';
 import 'update_models.dart';
+import 'update_resume.dart';
 import 'update_security.dart';
 
 /// 一个**已经下载完、并且校验过哈希**的更新包。
@@ -63,30 +64,101 @@ class AppInstaller {
     final fileName = 'update_${manifest.latestVersionCode}.apk';
     final savePath = p.join(dir.path, fileName);
 
+    // 半成品留在原地（`<包>.part` + 它的记录）：断网/切后台之后下次接着下。
+    // 旧实现每次失败都删掉，所以"断了就得重下 27MB"（用户报过一次）。
+    final partPath = '$savePath.part';
+    final metaPath = '$partPath.meta';
+    // 别的版本留下的半成品顺手清掉：临时目录不该越攒越多（当前版本的要留着）。
+    await _dropOtherPartials(dir.path, keep: fileName);
+
     Object? lastError;
 
     for (var i = 0; i < plan.length; i++) {
       final url = plan[i];
       try {
-        await dio.download(
+        final resumeState = await _readResumeState(metaPath);
+        final partBytes = await _fileLength(partPath);
+        final response = await dio.get<ResponseBody>(
           url,
-          savePath,
+          options: Options(
+            responseType: ResponseType.stream,
+            headers: resumeHeaders(partBytes: partBytes, state: resumeState),
+            validateStatus: (code) =>
+                code != null && code >= 200 && code < 400,
+          ),
           cancelToken: cancelToken,
-          onReceiveProgress: (count, total) {
-            if (total > 0 && onProgress != null) {
-              onProgress(count / total);
-            }
-          },
         );
+        final body = response.data;
+        if (body == null) throw Exception('更新包没有响应内容');
+
+        // 服务端给的起点必须**正好**是我们请求的那个偏移，否则拼出来是坏包：
+        // 拼不上就当整包重来（不是错误，只是那部分白下了）。
+        final rangeStart = startFromContentRange(
+          response.headers.value('content-range'),
+        );
+        final partial =
+            isPartialContent(response.statusCode) &&
+            partBytes > 0 &&
+            (rangeStart == null || rangeStart == partBytes);
+        final headerTotal = _totalFromHeader(response.headers.value('content-length'));
+        final total = partial
+            ? (totalFromContentRange(
+                    response.headers.value('content-range'),
+                  ) ??
+                  (headerTotal == null ? null : headerTotal + partBytes))
+            : headerTotal;
+
+        var received = partial ? partBytes : 0;
+        if (total != null && total > 0) onProgress?.call(received / total);
+
+        final sink = File(
+          partPath,
+        ).openWrite(mode: partial ? FileMode.append : FileMode.write);
+        try {
+          await for (final chunk in body.stream) {
+            sink.add(chunk);
+            received += chunk.length;
+            if (total != null && total > 0 && onProgress != null) {
+              onProgress((received / total).clamp(0.0, 1.0));
+            }
+          }
+          await sink.flush();
+        } finally {
+          await sink.close();
+        }
+
+        // 把这次的包标识记下来，供下一次续传带 If-Range。
+        await _writeResumeState(
+          metaPath,
+          UpdateResumeState(
+            etag: response.headers.value('etag'),
+            lastModified: response.headers.value('last-modified'),
+            totalBytes: total,
+          ),
+        );
+
+        if (total != null && received < total) {
+          // 连接被中途掐断（但 HTTP 层没报错）：留着半成品，下次接着下。
+          throw Exception('更新包没下完（$received/$total 字节）');
+        }
 
         // A1：流式校验，峰值内存 64KB 量级。
         // 旧实现 readAsBytes() 会一次性分配整包（实测 57MB），低端机上直接被杀，
         // 而且崩在「下载已完成」之后，用户完全无法自查。
-        final digest = await sha256OfFile(File(savePath));
+        final digest = await sha256OfFile(File(partPath));
         if (digest.toLowerCase() != expectedSha256) {
-          await _deleteQuietly(savePath);
+          // 哈希不符说明这份文件根本不是我们要的包（换过包/被改过）：
+          // 留着它会让每次续传都拼在上面，所以必须删干净、下次重下。
+          await _deleteQuietly(partPath);
+          await _deleteQuietly(metaPath);
           throw Exception('APK 校验失败，文件可能损坏或被篡改');
         }
+
+        // 校验过了才改名成正式文件名（半成品名带 .part，安装器不该看到它）。
+        final target = File(savePath);
+        if (await target.exists()) await target.delete();
+        await File(partPath).rename(savePath);
+        await _deleteQuietly(metaPath);
 
         return DownloadedUpdate(
           path: savePath,
@@ -101,7 +173,8 @@ class AppInstaller {
         }
 
         lastError = e;
-        await _deleteQuietly(savePath);
+        // **不删半成品**：断网/切后台这种下次能接着下（这条就是本次改动的重点）。
+        // 只有上面"哈希不符"那一种情况才必须删（那里已经删了）。
 
         final isLast = i == plan.length - 1;
         if (isLast) break;
@@ -142,6 +215,61 @@ class AppInstaller {
       if (await f.exists()) await f.delete();
     } catch (_) {
       // 删除失败不应掩盖真正的失败原因。
+    }
+  }
+
+  static int? _totalFromHeader(String? contentLength) {
+    final parsed = contentLength == null ? null : int.tryParse(contentLength.trim());
+    return (parsed != null && parsed > 0) ? parsed : null;
+  }
+
+  static Future<int> _fileLength(String path) async {
+    final f = File(path);
+    if (!await f.exists()) return 0;
+    return f.length();
+  }
+
+  static Future<UpdateResumeState?> _readResumeState(String metaPath) async {
+    try {
+      final f = File(metaPath);
+      if (!await f.exists()) return null;
+      return UpdateResumeState.decode(await f.readAsString());
+    } on FileSystemException {
+      // 读不到记录就当没有：续传只是省流量，不该因此让下载失败。
+      return null;
+    }
+  }
+
+  static Future<void> _writeResumeState(
+    String metaPath,
+    UpdateResumeState state,
+  ) async {
+    try {
+      await File(metaPath).writeAsString(state.encode(), flush: true);
+    } on FileSystemException {
+      // 记不下来就算了：下次从 0 下，功能照旧。
+    }
+  }
+
+  /// 清掉**别的版本**留下的半成品与记录（当前版本的那份要留着续传）。
+  static Future<void> _dropOtherPartials(
+    String dirPath, {
+    required String keep,
+  }) async {
+    try {
+      await for (final entity in Directory(dirPath).list()) {
+        if (entity is! File) continue;
+        final name = p.basename(entity.path);
+        if (!name.startsWith('update_')) continue;
+        if (name == keep || name.startsWith('$keep.part')) continue;
+        try {
+          await entity.delete();
+        } on FileSystemException {
+          // 删不掉不影响这次下载。
+        }
+      }
+    } on FileSystemException {
+      // 列不出临时目录也不影响下载本身。
     }
   }
 }

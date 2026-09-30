@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:box/app_drawer.dart';
 import 'package:box/app/app_routes.dart';
 import 'package:box/features/about/presentation/about_page.dart';
+import 'package:box/features/account/data/personal_center_cache_service.dart';
 import 'package:box/features/cloud_sync/domain/announcement_center.dart';
 import 'package:box/features/settings/presentation/data_settings_page.dart';
 
@@ -144,6 +145,58 @@ void main() {
 
       expect(find.text('备份本地数据'), findsOneWidget);
       expect(find.text('恢复本地数据'), findsOneWidget);
+    });
+
+    testWidgets('「清理缓存」显示在线漫画图片占了多大，清完报出释放了多少', (tester) async {
+      // 用户按这一下就是想腾空间：先要知道占了多少，按完要知道腾出来多少。
+      // 以前这一项压根没覆盖漫画图片（它不归图片缓存管理器管），所以数字报不出来。
+      var sizeCalls = 0;
+      final service = PersonalCenterCacheService(
+        clearNetworkCache: () async {},
+        clearReaderMemoryCache: () {},
+        clearComicImageCache: () async => 77 * 1024 * 1024,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DataSettingsPage(
+            cacheService: service,
+            cacheSizeProbe: () async {
+              sizeCalls++;
+              return sizeCalls == 1 ? 100 * 1024 * 1024 : 23 * 1024 * 1024;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('在线漫画图片 100 MB'), findsOneWidget);
+
+      await tester.tap(find.text('清理缓存'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('清理'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.textContaining('漫画图片释放 77.0 MB'), findsOneWidget,
+          reason: '只说「已清理」看不出到底有没有用');
+
+      await tester.pumpAndSettle();
+      expect(find.textContaining('在线漫画图片 23.0 MB'), findsOneWidget,
+          reason: '清完要重新量一次占用，不能一直显示旧数字');
+    });
+
+    testWidgets('量不到占用时就不显示数字（不编一个）', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DataSettingsPage(
+            cacheSizeProbe: () async => throw StateError('no platform channel'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('临时缓存占用的空间'), findsOneWidget);
+      expect(find.textContaining('在线漫画图片'), findsNothing);
     });
   });
 }

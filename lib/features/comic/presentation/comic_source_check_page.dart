@@ -24,6 +24,7 @@ class ComicSourceCheckPage extends StatefulWidget {
     super.key,
     this.targetOverride,
     this.fetcherOverride,
+    this.initialSourceName,
   });
 
   /// 单测注入假取数（真机省略即用 WebView）。
@@ -31,6 +32,12 @@ class ComicSourceCheckPage extends StatefulWidget {
 
   /// 接口型源的「章节取图」要真发 HTTP（直连站点 + 取图接口）；单测注入假的。
   final ComicFetcher? fetcherOverride;
+
+  /// 进来时预选的源（按名字匹配；匹配不到就用清单第一份）。
+  ///
+  /// 从「在线漫画」的失败态点进来时会带上当前那份源：那时候用户想问的必然是
+  /// 「我现在这本读不了，是源的问题吗」，再让他挑一次源是白费一步。
+  final String? initialSourceName;
 
   @override
   State<ComicSourceCheckPage> createState() => _ComicSourceCheckPageState();
@@ -56,7 +63,7 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
       .whereType<ComicSource>()
       .toList(growable: false);
 
-  int _sourceIndex = 0;
+  late int _sourceIndex = _initialSourceIndex();
 
   ComicProbeReport? _report;
   List<ComicProbeStep> _live = const [];
@@ -70,6 +77,14 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
   }
 
   ComicSourceTarget get _target => widget.targetOverride ?? _webView!.target;
+
+  /// 进来时预选哪一份源：按名字匹配，匹配不到就用清单第一份（= App 默认用的那份）。
+  int _initialSourceIndex() {
+    final name = widget.initialSourceName;
+    if (name == null || name.isEmpty) return 0;
+    final i = _sources.indexWhere((s) => s.name == name);
+    return i < 0 ? 0 : i;
+  }
 
   /// 换源：清掉上一份源的报告/进度 —— 结论只对刚跑过的那份源成立，混着显示会误导。
   void _selectSource(int index) {

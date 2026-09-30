@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../../design_system/app_tokens.dart';
 import '../../account/data/personal_center_cache_service.dart';
 import '../../backup/local_backup_service.dart';
+import '../../comic/domain/comic_image_cache.dart';
 
 /// 数据设置：备份与恢复、清理缓存。
 ///
@@ -16,7 +17,16 @@ import '../../backup/local_backup_service.dart';
 ///  2. 恢复成功后提示重启。内存缓存虽已失效，但已建好的页面（列表、阅读器）
 ///     不会自己重建，用户看到的可能还是旧画面，会以为恢复失败又导一次。
 class DataSettingsPage extends StatefulWidget {
-  const DataSettingsPage({super.key});
+  const DataSettingsPage({super.key, this.cacheSizeProbe, this.cacheService});
+
+  /// 单测注入：不注入就量真实的漫画图片缓存占用。
+  ///
+  /// 量大小要过 path_provider 的平台通道，纯 widget test 里没有插件；
+  /// 真实现量不到时会**不显示数字**（而不是编一个）。
+  final Future<int> Function()? cacheSizeProbe;
+
+  /// 单测注入：不注入就走真实现（清图片/阅读器/漫画图片三类缓存）。
+  final PersonalCenterCacheService? cacheService;
 
   @override
   State<DataSettingsPage> createState() => _DataSettingsPageState();
@@ -25,6 +35,31 @@ class DataSettingsPage extends StatefulWidget {
 class _DataSettingsPageState extends State<DataSettingsPage> {
   /// 清理进行中：拦住重复点击，并给图标位一个转圈反馈。
   bool _clearing = false;
+
+  /// 漫画图片缓存当前占用（null = 还没量出来，或这台机器量不到）。
+  ///
+  /// 为什么把它显示出来：它是「清理缓存」里唯一能报出确定数字的部分，
+  /// 也是唯一会**悄悄涨**的部分 —— 它自己落在临时目录，不归图片缓存管理器管，
+  /// 以前这一项清理完全没覆盖到它。
+  int? _comicCacheBytes;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadComicCacheSize();
+  }
+
+  Future<void> _loadComicCacheSize() async {
+    int? bytes;
+    try {
+      bytes = await (widget.cacheSizeProbe ?? ComicImageCache.diskUsage)();
+    } catch (_) {
+      // 量不出来就不显示数字（平台通道不可用/外部存储异常时是这样）：
+      // 显示一个假数字比不显示更糟。
+    }
+    if (!mounted || bytes == null) return;
+    setState(() => _comicCacheBytes = bytes);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -75,7 +110,10 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
             child: _DataTile(
               icon: Icons.cleaning_services_outlined,
               title: '清理缓存',
-              subtitle: '释放图片与阅读器临时缓存占用的空间',
+              subtitle: _comicCacheBytes == null
+                  ? '释放图片与阅读器临时缓存占用的空间'
+                  : '释放图片与阅读器临时缓存占用的空间'
+                        '（其中在线漫画图片 ${_fmtBytes(_comicCacheBytes!)}）',
               busy: _clearing,
               onTap: _clearing ? null : _clearCache,
             ),
@@ -98,7 +136,7 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('清理缓存'),
-        content: const Text('仅清除图片和阅读器临时缓存，不会删除登录信息、离线书籍或题库数据。'),
+        content: const Text('仅清除图片（含在线漫画图片）和阅读器临时缓存，不会删除登录信息、离线书籍或题库数据。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -115,13 +153,34 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
 
     setState(() => _clearing = true);
     try {
-      await PersonalCenterCacheService().clearRegenerableCaches();
-      if (mounted) _showSnack(context, '缓存已清理');
+      final freed = await (widget.cacheService ??
+              PersonalCenterCacheService())
+          .clearRegenerableCaches();
+      // 报出释放了多少：用户按这一下就是想腾空间，一个「已清理」看不出到底有没有用。
+      // freed 只统计漫画图片那部分 —— 另外两类（图片缓存管理器、阅读器内存）给不出
+      // 「释放了多少」，不编数字。
+      final detail = freed > 0 ? '（漫画图片释放 ${_fmtBytes(freed)}）' : '（漫画图片本来没有占用）';
+      if (mounted) _showSnack(context, '缓存已清理$detail');
+      await _loadComicCacheSize();
     } catch (error) {
       if (mounted) _showSnack(context, '清理缓存失败：$error');
     } finally {
       if (mounted) setState(() => _clearing = false);
     }
+  }
+
+  /// 字节数说人话（设置页只有一个地方用，不值得抽公共工具）。
+  static String _fmtBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    const units = ['KB', 'MB', 'GB'];
+    var value = bytes / 1024;
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit++;
+    }
+    final digits = value >= 100 ? 0 : (value >= 10 ? 1 : 2);
+    return '${value.toStringAsFixed(digits)} ${units[unit]}';
   }
 
   void _showSnack(BuildContext context, String message) {

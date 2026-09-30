@@ -25,10 +25,15 @@ import '../domain/comic_source_diagnostics.dart'
     show ComicSourceTarget, describeComicProbeError;
 import '../domain/comic_source_engine.dart' show ComicProbeException;
 import '../domain/sources/seed_comic_source.dart';
+import 'comic_source_check_page.dart';
 import 'comic_source_webview_target.dart';
 
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart'
     show ServerOpsSettings;
+
+/// 书源菜单里「自检这份源」那一项的取值：菜单值的类型是 `Object`
+/// （既能装一份源，也能装这一项），命中它就开自检页。
+const Object _kSelfCheckItem = 'comicSourceSelfCheck';
 
 /// 读中转要用的**设备令牌**（与只读运维 API 共用同一份）。
 ///
@@ -79,6 +84,7 @@ class ComicOnlinePage extends StatefulWidget {
     this.waitTimeout = const Duration(seconds: 15),
     this.listTimeout = const Duration(seconds: 12),
     this.openTimeout = const Duration(seconds: 20),
+    this.selfCheckPageBuilder,
   });
 
   /// 可注入（测试用）；生产走内置书源。
@@ -110,6 +116,12 @@ class ComicOnlinePage extends StatefulWidget {
   final Duration waitTimeout;
   final Duration listTimeout;
   final Duration openTimeout;
+
+  /// 可注入（测试用）：按源名造「漫画源自检」那一页。
+  ///
+  /// 为什么不直接 new 出真页面：真页面会建平台 WebView，纯 widget test 里碰不得
+  /// （测试只要验证「带的是哪份源」）。
+  final Widget Function(String sourceName)? selfCheckPageBuilder;
 
   @override
   State<ComicOnlinePage> createState() => _ComicOnlinePageState();
@@ -602,13 +614,22 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   }
 
   /// 书源切换：内置的源都列出来（各自的备注写在名字下面，只作展示）。
-  Widget _sourceMenu() => PopupMenuButton<ComicSource>(
+  ///
+  /// 菜单里还挂一条「自检这份源」：源出问题时最有用的一步就是跑一次自检，
+  /// 入口不该只藏在漫画库那一页（用户只有手机，出问题时想在原地拿到结论）。
+  Widget _sourceMenu() => PopupMenuButton<Object>(
     tooltip: '切换书源',
     icon: const Icon(Icons.source_outlined),
-    onSelected: _selectSource,
-    itemBuilder: (context) => [
+    onSelected: (value) {
+      if (value is ComicSource) {
+        _selectSource(value);
+      } else {
+        _openSourceSelfCheck();
+      }
+    },
+    itemBuilder: (context) => <PopupMenuEntry<Object>>[
       for (final s in _sources)
-        PopupMenuItem<ComicSource>(
+        PopupMenuItem<Object>(
           value: s,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -628,6 +649,17 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             ],
           ),
         ),
+      const PopupMenuDivider(),
+      PopupMenuItem<Object>(
+        value: _kSelfCheckItem,
+        child: Row(
+          children: [
+            const Icon(Icons.health_and_safety_outlined, size: 18),
+            const SizedBox(width: 8),
+            Text('自检「${_source.name}」'),
+          ],
+        ),
+      ),
     ],
   );
 
@@ -642,10 +674,30 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           Text(_error!, textAlign: TextAlign.center),
           const SizedBox(height: 16),
           FilledButton(onPressed: _search, child: const Text('重试')),
+          const SizedBox(height: 4),
+          // 失败了别只让人反复重试：源坏没坏、坏在哪一步，跑一次自检就有结论，
+          // 而且自检页能一键复制结论（用户只有手机，这是他唯一拿得到证据的途径）。
+          TextButton(
+            onPressed: _openSourceSelfCheck,
+            child: const Text('自检这个源'),
+          ),
         ],
       ),
     ),
   );
+
+  /// 打开「漫画源自检」，并预选当前这份源。
+  void _openSourceSelfCheck() {
+    final name = _source.name;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) =>
+            widget.selfCheckPageBuilder?.call(name) ??
+            ComicSourceCheckPage(initialSourceName: name),
+      ),
+    );
+  }
 
   // ── 搜索 ──────────────────────────────────────────────────────
 
