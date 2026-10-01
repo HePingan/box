@@ -13,7 +13,9 @@
     才算数（一次采样撞上瞬时尖峰就报警，等于训练人忽略消息）；crit 当次就报；
   * `--check` **不落状态** —— 否则"试跑一次"就把当天告警自己吃掉了（security-patrol 的教训）；
   * **采不到数据 ≠ 一切正常**：连续失败要报，而且报的是"采不到"，绝不能在采不到时说"资源正常"；
-  * 消息里只有主机名与数值，**不放令牌/口令**（消息会进飞书、会被转发、会被截屏）。
+  * 消息里只有主机名与数值，**不放令牌/口令**（消息会进飞书、会被转发、会被截屏）；
+  * 越线消息里带一行「**当时在跑什么**」（只读接口的 `/processes` 前 5，**只取进程名与
+    CPU/内存占比，不取命令行** —— 命令行里可能有口令）。取不到就写"取不到"，绝不因此漏发。
 
 用法：
   box_ops_alert.py --check      # 试跑：打当前值 + 会发什么，不落状态、不真发
@@ -98,6 +100,38 @@ def fetch_overview(host_cfg: dict, timeout: int) -> dict:
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def fetch_processes(host_cfg: dict, timeout: int, sort: str = "cpu", limit: int = 5) -> list[dict]:
+    """取"当时在跑什么"：只读接口的 /processes（与 overview 同 base、同令牌）。
+
+    只用 name / cpuPercent / memPercent / elapsed，**丢掉 args** —— 命令行里可能有
+    口令或密钥，而这条消息会进飞书、会被转发、会被截屏。
+    """
+    base = host_cfg["base"].rstrip("/")
+    token = read_token(host_cfg)
+    if not token:
+        raise RuntimeError("没有读到令牌文件（见配置里的 token_file）")
+    req = urllib.request.Request(
+        f"{base}/processes?sort={sort}&limit={limit}",
+        headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8")).get("processes", [])
+
+
+def top_process_line(host_cfg: dict, timeout: int, sort: str) -> str:
+    """告警正文里那行"当时在跑什么"。取不到就直说取不到。"""
+    try:
+        procs = fetch_processes(host_cfg, timeout, sort=sort)
+    except Exception as e:  # noqa: BLE001
+        return f"当时在跑什么：取不到（{type(e).__name__}）"
+    if not procs:
+        return "当时在跑什么：取不到（接口返回空）"
+    by = "内存" if sort == "mem" else "CPU"
+    items = [f"{p.get('name', '?')} cpu{p.get('cpuPercent', 0)}% mem{p.get('memPercent', 0)}%"
+             for p in procs[:5]]
+    return f"当时在跑什么（按{by}排序，前{len(items)}）：" + " · ".join(items)
 
 
 # ── 规则 ────────────────────────────────────────────────────────────
@@ -245,7 +279,9 @@ def send_feishu(title: str, body: str, dry: bool = False) -> bool:
     if dry:
         print("  [dry-run 会发] " + text.replace("\n", " / "))
         return True
-    for cmd in (["/root/.local/bin/hermes", "send", "-t", "feishu", text],
+    # 绝对路径优先（cron 的 PATH 里没有 hermes；写死的那条路径不存在）
+    for cmd in (["/usr/local/bin/hermes", "send", "-t", "feishu", text],
+                ["/usr/bin/hermes", "send", "-t", "feishu", text],
                 ["hermes", "send", "-t", "feishu", text]):
         try:
             r = subprocess.run(cmd, capture_output=True, timeout=60)
@@ -256,7 +292,8 @@ def send_feishu(title: str, body: str, dry: bool = False) -> bool:
     return False
 
 
-def compose(host_cfg: dict, ov: dict, messages: list[dict]) -> list[tuple[str, str]]:
+def compose(host_cfg: dict, ov: dict, messages: list[dict],
+            timeout: int = 20) -> list[tuple[str, str]]:
     label = host_cfg.get("label", host_cfg.get("id", "?"))
     hostname = ov.get("hostname", "?")
     mem = ov.get("memory", {})
@@ -267,7 +304,15 @@ def compose(host_cfg: dict, ov: dict, messages: list[dict]) -> list[tuple[str, s
            f"CPU {cpu.get('usedPercent')}% · 内存 {mem.get('memUsedPercent')}% · "
            f"swap {mem.get('swapUsedPercent')}% · 负载 {load.get('load1')}（{cores} 核）\n"
            f"{now().strftime('%Y-%m-%d %H:%M')}")
-    return [(f"{host_cfg.get('icon', '')}{m['title']}".strip(), m["body"] + "\n" + ctx)
+    # 越线（含仍未恢复）时补一行"当时在跑什么"：只有百分比的话，每次排查都得从零开始
+    # （2026-10-01 那次 CPU 100%：真凶是 dc-reader 每 10 分钟空转一轮）。恢复消息不补。
+    live = [m for m in messages if m.get("level") in ("warn", "crit")]
+    proc_line = ""
+    if live:
+        rules = {m.get("rule", "") for m in live}
+        proc_line = "\n" + top_process_line(host_cfg, timeout, "mem" if rules <= {"mem", "swap"} else "cpu")
+    return [(f"{host_cfg.get('icon', '')}{m['title']}".strip(),
+             m["body"] + "\n" + ctx + proc_line)
             for m in messages]
 
 
@@ -337,7 +382,7 @@ def run_once(cfg: dict, state_path: str, dry: bool, verbose: bool = True) -> int
             brief = " · ".join(f"{f['rule']}={f['value']}" for f in findings)
             print(f"[{hid}] {brief or '（没有可评估的指标）'}"
                   f"{'  → 要发 ' + str(len(messages)) + ' 条' if messages else ''}")
-        for title, body in compose(host_cfg, ov, messages):
+        for title, body in compose(host_cfg, ov, messages, int(th["timeout_seconds"])):
             if send_feishu(title, body, dry):
                 sent += 1
         hs["rules"] = apply_findings(prev, findings, messages, ts)
@@ -469,6 +514,56 @@ def selftest() -> int:
         state_path = os.path.join(tmp, "state.json")
         run_once(cfg, state_path, dry=True, verbose=False)
         check("--check 之后没有状态文件", not Path(state_path).exists())
+
+    print("== 越线时带「当时在跑什么」==")
+    global fetch_processes  # noqa: PLW0603
+    real_fp = fetch_processes
+    try:
+        fake = [{"name": "python3", "cpuPercent": 78.5, "memPercent": 12.0, "elapsed": "00:07",
+                 "args": "python3 /root/dc-reader/sync.py --token SHOUldNOTleak"},
+                {"name": "php-fpm", "cpuPercent": 9.0, "memPercent": 3.0, "elapsed": "01:12"}]
+        calls = []
+
+        def fake_fp(cfg, timeout, sort="cpu", limit=5):
+            calls.append(sort)
+            return fake
+
+        fetch_processes = fake_fp
+        host2 = {"id": "h2", "label": "假机器", "base": "http://127.0.0.1:1", "token_file": "/dev/null"}
+        th2 = dict(DEFAULT_THRESHOLDS)
+        ov_cpu = ov(cpu=99)
+        pairs = compose(host2, ov_cpu, decide({}, evaluate(host2, ov_cpu, th2), th2, t0), timeout=1)
+        body = pairs[0][1] if pairs else ""
+        check("越线正文里有「当时在跑什么」", "当时在跑什么" in body, body[:160])
+        check("带上了 top 进程名与占比", "python3 cpu78.5%" in body, body[:200])
+        check("**不**把命令行放进去（可能带口令）", "SHOUldNOTleak" not in body and "args" not in body,
+              body[:200])
+        check("cpu 越线按 CPU 排序取数", calls == ["cpu"], str(calls))
+
+        calls.clear()
+        ov_mem = ov(cpu=10, mem=99)
+        pairs_mem = compose(host2, ov_mem, decide({}, evaluate(host2, ov_mem, th2), th2, t0), timeout=1)
+        check("内存越线按内存排序取数", calls == ["mem"], str(calls))
+        check("内存越线也有那一行", "当时在跑什么" in (pairs_mem[0][1] if pairs_mem else ""),
+              (pairs_mem[0][1] if pairs_mem else "")[:120])
+
+        calls.clear()
+        ok_msgs = [{"rule": "cpu", "level": "ok", "title": "🟢 cpu 已恢复", "body": "回到正常档"}]
+        pairs_ok = compose(host2, ov(cpu=10), ok_msgs, timeout=1)
+        check("恢复消息不去取数（省接口调用）", calls == [], str(calls))
+        check("恢复消息里不带那行（否则每条恢复都长一截）",
+              "当时在跑什么" not in pairs_ok[0][1], pairs_ok[0][1][:120])
+
+        def boom(*_a, **_k):
+            raise RuntimeError("接口挂了")
+
+        fetch_processes = boom
+        pairs_bad = compose(host2, ov_cpu, decide({}, evaluate(host2, ov_cpu, th2), th2, t0), timeout=1)
+        bad_body = pairs_bad[0][1] if pairs_bad else ""
+        check("取不到 top 时**仍然发**告警，并写明取不到",
+              "越线" in (pairs_bad[0][0] if pairs_bad else "") and "取不到" in bad_body, bad_body[:200])
+    finally:
+        fetch_processes = real_fp
 
     print(f"\n自检：通过 {ok} / 失败 {bad}")
     return 0 if bad == 0 else 1
