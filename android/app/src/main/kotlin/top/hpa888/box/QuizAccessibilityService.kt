@@ -151,6 +151,14 @@ class QuizAccessibilityService : AccessibilityService() {
         // 当前活跃截图请求的 requestId，用于丢弃过期回调
         @Volatile var currentRequestId: Int = 0
 
+        /**
+         * 截图回包看门狗（毫秒）。
+         *
+         * takeScreenshot 的两个回调都没到时兜底收尾：不完成这次回调 = Dart 侧那个
+         * await 永不返回（界面永远停在「读屏中」）。
+         */
+        const val CAPTURE_WATCHDOG_MS = 6000L
+
         fun isRunning(): Boolean = runningService != null
 
         /**
@@ -4347,6 +4355,12 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         if (region == null || region.isEmpty) { callback(null); return }
 
         Companion.currentRequestId = requestId
+        // 同上：这次请求必须恰好完成一次回调，被顶掉也回 null，不静默丢弃。
+        val answered = java.util.concurrent.atomic.AtomicBoolean(false)
+        val finish: (ByteArray?) -> Unit = { bytes ->
+            if (answered.compareAndSet(false, true)) callback(bytes)
+        }
+        mainHandler.postDelayed({ finish(null) }, CAPTURE_WATCHDOG_MS)
         try {
             takeScreenshot(
                 android.view.Display.DEFAULT_DISPLAY,
@@ -4355,17 +4369,17 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
                     override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
                         val bytes = runCatching { encodePngWithRegion(screenshot, region) }.getOrNull()
                         try { screenshot.hardwareBuffer.close() } catch (_: Throwable) {}
-                        if (Companion.currentRequestId == requestId) callback(bytes)
+                        finish(if (Companion.currentRequestId == requestId) bytes else null)
                     }
                     override fun onFailure(errorCode: Int) {
                         Log.w(TAG, "captureImageRegion failed code=$errorCode")
-                        if (Companion.currentRequestId == requestId) callback(null)
+                        finish(null)
                     }
                 }
             )
         } catch (e: Throwable) {
             Log.w(TAG, "captureImageRegion exception", e)
-            if (Companion.currentRequestId == requestId) callback(null)
+            finish(null)
         }
     }
 
@@ -4398,6 +4412,15 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         // 记录本次请求 ID，后续回调时比对
         Companion.currentRequestId = requestId
         screenRegion = screenRegion ?: loadRegion()
+        // 这次请求必须**恰好完成一次**回调：原生不回包 ⇒ Dart 侧那个 await 永远不返回
+        // （真机事故 2026-10-01：界面永远停在「读屏中」，超过 45s 只提示可重新点击，
+        //  用户再点 AI 也没反应）。所以「被更新的请求顶掉」时回 null，绝不静默丢弃。
+        val answered = java.util.concurrent.atomic.AtomicBoolean(false)
+        val finish: (ByteArray?) -> Unit = { bytes ->
+            if (answered.compareAndSet(false, true)) callback(bytes)
+        }
+        // 看门狗：takeScreenshot 的 onSuccess/onFailure 都没到（框架异常/被节流）时兜底。
+        mainHandler.postDelayed({ finish(null) }, CAPTURE_WATCHDOG_MS)
         try {
             takeScreenshot(
                 android.view.Display.DEFAULT_DISPLAY,
@@ -4409,25 +4432,19 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
                             screenshot.hardwareBuffer.close()
                         } catch (_: Throwable) {}
                         lastScreenshotBytes = bytes
-                        // 仅当 requestId 未过期时才回传
-                        if (Companion.currentRequestId == requestId) {
-                            callback(bytes)
-                        }
+                        // 仍是最新请求 → 回传字节；已被顶掉 → 回 null（不留悬挂的等待）
+                        finish(if (Companion.currentRequestId == requestId) bytes else null)
                     }
 
                     override fun onFailure(errorCode: Int) {
                         Log.w(TAG, "takeScreenshot failed code=$errorCode")
-                        if (Companion.currentRequestId == requestId) {
-                            callback(null)
-                        }
+                        finish(null)
                     }
                 }
             )
         } catch (e: Throwable) {
             Log.w(TAG, "takeScreenshot exception", e)
-            if (Companion.currentRequestId == requestId) {
-                callback(null)
-            }
+            finish(null)
         }
     }
 

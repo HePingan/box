@@ -62,6 +62,26 @@ class QuizPluginEntry {
 
   static const MethodChannel _channel = MethodChannel(_kChannel);
 
+  /// 截图（平台通道）回包超时上限。
+  ///
+  /// 为什么必须有上限（2026-10-01 真机事故）：截图是 `invokeMethod` 等原生回包，而原生侧
+  /// **只在「自己仍是最新请求」时才回包**（`QuizAccessibilityService.currentRequestId`），
+  /// 一旦被更新的截图请求顶掉、或框架回调异常没到，这里的 await 就**永远挂住**：
+  /// 界面一直停在「读屏中」，超过 45s 只显示「等待超时，可重新点击 AI 读屏重试」，
+  /// 用户再点也是挂同一处（报障原话：「还是超时，点击 AI 按钮也没反应」）。
+  /// 任何等待都必须有终点：超时按「没拿到截图」处理，并把原因写进日志与界面。
+  ///
+  /// 单测会把这里调小到几十毫秒（真等 8s 太慢）。
+  static Duration captureTimeout = const Duration(seconds: 8);
+
+  /// 截不到图时给用户的**可行动**原因。
+  ///
+  /// 手动点 AI 读屏却拿不到截图时绝不能退化成「未搜到答案。点右上角紫色 AI 按钮」——
+  /// 那等于让用户去点一个必然再次失败的按钮（本 Bug 的用户体验就是这么坏掉的）。
+  static String visionCaptureFailureHint() =>
+      '没拿到屏幕截图（截图无响应，或权限被系统关闭）。'
+      '请到「设置 → 无障碍」确认「答题助手」服务仍开启后重试。';
+
   // 一键批量录入状态
   static bool _batchRunning = false;
   static int _batchSuccessCount = 0;
@@ -359,12 +379,38 @@ class QuizPluginEntry {
   ///
   /// 原生在同一个 MethodChannel 调用完成时回传本次字节；Dart 侧再用
   /// [QuizCaptureSessionCoordinator] 校验 requestId，防止并发 OCR/录入/试识串图。
-  static Future<Uint8List?> captureRegionScreenshot() async {
+  /// 上一次截图是否**以超时收尾**（原生压根没回包）。
+  ///
+  /// 用来区分两种失败，决定要不要补一次：
+  ///   * 快速回 null → 多半是「被更新的截图请求顶掉」或被系统节流，补一次很容易拿到；
+  ///   * 超时 → 原生没回包（看门狗都要 6s），再补一次只会让用户再多等 8 秒，不补。
+  static bool _lastCaptureTimedOut = false;
+
+  /// [retryIfQuickNull]：手动点 AI 读屏时传 true（见 [_captureRegionScreenshotOnce]）。
+  static Future<Uint8List?> captureRegionScreenshot({
+    bool retryIfQuickNull = false,
+  }) async {
+    final first = await _captureRegionScreenshotOnce();
+    if (first != null || !retryIfQuickNull || _lastCaptureTimedOut) return first;
+    // 真机 2026-10-01：翻题时自动流程会不停发起截图，与手动这一次抢同一个
+    // `currentRequestId`，原生把旧请求的回包丢弃 ⇒ 手动这一次只拿到 null。
+    // 补一次（此刻我们是最新请求），把这种「偶发被顶掉」变成可用。
+    QuizDiag.warn(QuizDiagStage.result, '截图快速回空，补一次（疑似被顶掉）', fields: {
+      'cmd': 'captureRegionScreenshot',
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    return _captureRegionScreenshotOnce();
+  }
+
+  /// 单次截图（不做任何重试）：原生在同一个 MethodChannel 调用完成时回传本次字节；
+  /// Dart 侧再用 [QuizCaptureSessionCoordinator] 校验 requestId，防止并发 OCR/录入/试识串图。
+  static Future<Uint8List?> _captureRegionScreenshotOnce() async {
+    _lastCaptureTimedOut = false;
     final requestId = _coordinator.begin();
     try {
-      final raw = await _channel.invokeMethod('captureRegionScreenshot', {
-        'requestId': requestId,
-      });
+      final raw = await _channel
+          .invokeMethod('captureRegionScreenshot', {'requestId': requestId})
+          .timeout(captureTimeout);
       if (raw == null) return null;
       // 原生侧返回 {bytes: Uint8List, dHash: String}
       if (raw is Map) {
@@ -381,6 +427,13 @@ class QuizPluginEntry {
       final taken = _coordinator.take(requestId);
       if (taken == null || taken.isEmpty) return null;
       return Uint8List.fromList(taken);
+    } on TimeoutException catch (_) {
+      // 原生不回包（被更新的请求顶掉/框架异常）：自己收尾，别无限等。
+      _lastCaptureTimedOut = true;
+      QuizDiag.warn(QuizDiagStage.result, '截图无响应（超时）', fields: {
+        'cmd': 'captureRegionScreenshot',
+        'timeoutMs': captureTimeout.inMilliseconds,
+      });
     } catch (_) {
       // 截图不可用由调用方展示对应状态。
     }
@@ -392,9 +445,9 @@ class QuizPluginEntry {
   captureRegionScreenshotWithHash() async {
     final requestId = _coordinator.begin();
     try {
-      final raw = await _channel.invokeMethod('captureRegionScreenshot', {
-        'requestId': requestId,
-      });
+      final raw = await _channel
+          .invokeMethod('captureRegionScreenshot', {'requestId': requestId})
+          .timeout(captureTimeout);
       if (raw == null || raw is! Map) return null;
       final bytesRaw = raw['bytes'];
       final dHash = raw['dHash'] as String?;
@@ -404,6 +457,11 @@ class QuizPluginEntry {
       final taken = _coordinator.take(requestId);
       if (taken == null || taken.isEmpty) return null;
       return MapEntry(Uint8List.fromList(taken), dHash);
+    } on TimeoutException catch (_) {
+      QuizDiag.warn(QuizDiagStage.result, '截图无响应（超时）', fields: {
+        'cmd': 'captureRegionScreenshotWithHash',
+        'timeoutMs': captureTimeout.inMilliseconds,
+      });
     } catch (_) {
       // 截图不可用由调用方展示对应状态。
     }
@@ -1248,6 +1306,7 @@ class QuizPluginEntry {
       hintQuestion: captured,
       requestGeneration: generation,
       requestFingerprint: fingerprint,
+      manual: true,
     );
     if (!_isCurrentRequest(generation, fingerprint)) return;
 
@@ -1359,11 +1418,17 @@ class QuizPluginEntry {
   static Future<String?> captureImageRegionHash() async {
     final requestId = _coordinator.begin();
     try {
-      final raw = await _channel.invokeMethod('captureImageRegionScreenshot', {
-        'requestId': requestId,
-      });
+      final raw = await _channel
+          .invokeMethod('captureImageRegionScreenshot', {'requestId': requestId})
+          .timeout(captureTimeout);
       if (raw == null || raw is! Map) return null;
       return (raw['dHash'] as String?)?.trim().toLowerCase();
+    } on TimeoutException catch (_) {
+      QuizDiag.warn(QuizDiagStage.result, '截图无响应（超时）', fields: {
+        'cmd': 'captureImageRegionScreenshot',
+        'timeoutMs': captureTimeout.inMilliseconds,
+      });
+      return null;
     } catch (_) {
       return null;
     }
@@ -1491,6 +1556,7 @@ class QuizPluginEntry {
     String hintQuestion = '',
     required int requestGeneration,
     required String requestFingerprint,
+    bool manual = false,
   }) async {
     if (!visionFallbackEnabled(config)) return null;
     if (!_isCurrentRequest(requestGeneration, requestFingerprint)) return null;
@@ -1505,10 +1571,23 @@ class QuizPluginEntry {
       answersList: const [],
     );
 
-    final bytes = await captureRegionScreenshot();
+    final bytes = await captureRegionScreenshot(retryIfQuickNull: manual);
     if (!_isCurrentRequest(requestGeneration, requestFingerprint)) return null;
     if (bytes == null || bytes.isEmpty) {
-      QuizDiag.warn(QuizDiagStage.result, '读屏跳过：未拿到截图');
+      QuizDiag.warn(
+        QuizDiagStage.result,
+        '读屏跳过：未拿到截图',
+        fields: {'manual': manual},
+      );
+      // 手动点 AI 读屏时不能悄悄退化成「未搜到答案，点右上角紫色 AI 按钮」——
+      // 那会引导用户去点一个必然再次失败的按钮（真机就是这么坏掉的）。
+      // 如实给原因 + 指出去哪检查（截图无响应时 Dart 侧已在 captureTimeout 处收尾）。
+      if (manual) {
+        return QuizResult(
+          question: hintQuestion.trim(),
+          error: visionCaptureFailureHint(),
+        );
+      }
       return null;
     }
 
