@@ -112,11 +112,16 @@ class ComicImageCache {
   ///
   /// [lowPriority]：预取这类"顺手"的活传 true —— 它只占 [foregroundReserved] 之外的名额，
   /// 且**有前台在排队时不抢名额**（见 [_canStart]）。
-  Future<File> fetch(String url, {bool lowPriority = false}) {
+  ///
+  /// [dest]：**离线下载专用** —— 字节直接写进这个文件（调用方给的是离线目录里的路径），
+  /// 不进 temp 缓存、也不参与那套 300MB/4000 张的淘汰。其余一模一样：同样的每次连接
+  /// 截止时间、同样的 `:666` → 443 换端口、同样的"被掐断就按同一地址重试"。
+  /// 这么做的理由：离线下载没必要再写一套取图逻辑，写一套就一定会漏掉上面某一条。
+  Future<File> fetch(String url, {bool lowPriority = false, File? dest}) {
     final key = url;
     final running = _inFlight[key];
     if (running != null) return running;
-    final future = _fetchOnce(url, low: lowPriority).whenComplete(() {
+    final future = _fetchOnce(url, low: lowPriority, dest: dest).whenComplete(() {
       // 注意：这里**必须是块体**（返回 void）。写成 `=> _inFlight.remove(key)`
       // 的话，`whenComplete` 会把"回调的返回值"当成还要再等的 Future —— 而
       // `remove` 返回的正是**这个 Future 自己**，于是它永远在等自己完成。
@@ -130,9 +135,15 @@ class ComicImageCache {
     return future;
   }
 
-  Future<File> _fetchOnce(String url, {required bool low}) async {
-    final existing = await cachedFile(url);
-    if (existing != null) return existing;
+  Future<File> _fetchOnce(String url, {required bool low, File? dest}) async {
+    if (dest != null) {
+      // 离线下载：目标文件已经在了就直接用（**离线下载的续传就靠这一条** ——
+      // 不数计数、不认清单里的 done，文件在就算下过，杀进程重启后天然接着下）。
+      if (await dest.exists()) return dest;
+    } else {
+      final existing = await cachedFile(url);
+      if (existing != null) return existing;
+    }
 
     final uri = Uri.tryParse(url);
     if (uri == null || !uri.hasScheme) {
@@ -153,7 +164,7 @@ class ComicImageCache {
         final candidate = queue.removeFirst();
         attempts++;
         try {
-          final file = await _transfer(candidate, url, host);
+          final file = await _transfer(candidate, url, host, dest: dest);
           _usedAddress[url] = candidate.toString();
           return file;
         } on ComicImageException catch (e) {
@@ -290,7 +301,7 @@ class ComicImageCache {
   }
 
   /// 真正下这一张（[uri] 是本次要连的地址，[url] 是**缓存键 / 请求头判据**用的原始地址）。
-  Future<File> _transfer(Uri uri, String url, String host) async {
+  Future<File> _transfer(Uri uri, String url, String host, {File? dest}) async {
     final client = _http();
     try {
       final HttpClientRequest req;
@@ -339,14 +350,25 @@ class ComicImageCache {
       if (bytes.isEmpty) {
         throw ComicImageException('这张图是空的（0 字节，$host）');
       }
-      final dir = await _cacheDir();
-      final tmp = File('${dir.path}/${_key(url)}.part');
-      await tmp.writeAsBytes(bytes, flush: true);
-      final out = File('${dir.path}/${_key(url)}');
-      await tmp.rename(out.path);
-      // 下完一张顺手看一眼上限（每 16 张才真去全盘数一次：全盘 list 是 O(文件数)，
-      // 209 张一话挨张扫一遍是白跑）。
-      await _maybePrune();
+      final File out;
+      if (dest != null) {
+        // 离线下载：写进调用方给的路径，先 .part 再改名（写一半被杀掉不会留半张图
+        // 假扮成"已下载"）。**不**碰 temp 缓存的上限淘汰：用户主动下的内容不该因为
+        // "存太久了"被清掉，那是缓存才该有的行为。
+        out = dest;
+        final part = File('${dest.path}.part');
+        await part.writeAsBytes(bytes, flush: true);
+        await part.rename(dest.path);
+      } else {
+        final dir = await _cacheDir();
+        final tmp = File('${dir.path}/${_key(url)}.part');
+        await tmp.writeAsBytes(bytes, flush: true);
+        out = File('${dir.path}/${_key(url)}');
+        await tmp.rename(out.path);
+        // 下完一张顺手看一眼上限（每 16 张才真去全盘数一次：全盘 list 是 O(文件数)，
+        // 209 张一话挨张扫一遍是白跑）。
+        await _maybePrune();
+      }
       return out;
     } on ComicImageException {
       rethrow;

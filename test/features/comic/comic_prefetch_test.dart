@@ -19,7 +19,7 @@ class _RecordingCache extends ComicImageCache {
   final List<bool> lowPriorityFlags = <bool>[];
 
   @override
-  Future<File> fetch(String url, {bool lowPriority = false}) async {
+  Future<File> fetch(String url, {bool lowPriority = false, File? dest}) async {
     fetched.add(url);
     lowPriorityFlags.add(lowPriority);
     if (failing.contains(url)) throw const FileSystemException('取不到');
