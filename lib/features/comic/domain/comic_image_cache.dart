@@ -7,6 +7,7 @@
 library;
 
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -30,6 +31,9 @@ class ComicImageCache {
     this.connectTimeout = defaultConnectTimeout,
     this.idleTimeout = defaultIdleTimeout,
     this.totalTimeout = defaultTotalTimeout,
+    this.alternatePorts = defaultAlternatePorts,
+    this.maxAttempts = defaultMaxAttempts,
+    this.maxParallel = defaultMaxParallel,
   }) : headerFor = headerFor ?? _noHeaders,
        tempDirProvider = tempDirProvider ?? getTemporaryDirectory;
 
@@ -55,6 +59,17 @@ class ComicImageCache {
   static const Duration defaultIdleTimeout = Duration(seconds: 15);
   static const Duration defaultTotalTimeout = Duration(seconds: 90);
 
+  /// 换个端口再试一次（`原端口 → 备选端口`）。
+  ///
+  /// 2026-10-01 用户报「图床连不上 (tuer.justpic01pt.com)：Connection reset by peer」：
+  /// 那本漫画的图床挂在 **`:666`** 上，而 `:666` 在**手机那条网**上会被掐断 —— 同一张图
+  /// 换 443 就是好的（实测 `https://tuer.justpic01pt.com/picbed/…` 不带端口返回同一份字节，
+  /// 服务器侧也验过 `:666` 与 `:443` 内容一致）。所以直连失败时先自己换端口重试一次，
+  /// 用户在运营商封端口时不必等我们发版。
+  final Map<int, int> alternatePorts;
+
+  static const Map<int, int> defaultAlternatePorts = {666: 443};
+
   /// 取**这个地址**的图要带的头（默认空表）。
   ///
   /// 为什么按地址给、而不是一张固定表：图片地址里既有图床（直连取，只要手机 UA），
@@ -63,6 +78,14 @@ class ComicImageCache {
   final Map<String, String> Function(String url) headerFor;
 
   static Map<String, String> _noHeaders(String url) => const <String, String>{};
+
+  /// 这张图**最后是用哪个地址取通的**（原地址被掐断时会换端口，见 [alternatePorts]）。
+  ///
+  /// 自检要拿它说清「是换了端口才通的」：只说"下下来了"，用户下次换台网/换张图又懵；
+  /// 说出「原来的 :666 被掐断、443 才通」，才看得懂自己那条网发生了什么。
+  final Map<String, String> _usedAddress = {};
+
+  String? usedAddress(String url) => _usedAddress[url];
 
   final Map<String, Future<File>> _inFlight = {};
   Directory? _dir;
@@ -112,8 +135,118 @@ class ComicImageCache {
       throw ComicImageException('图片地址不合法：$url');
     }
     final host = uri.host.isEmpty ? url : uri.host;
-    final client = httpClientFactory?.call() ?? HttpClient();
+
+    // 要试的地址队列：先原地址，再换端口的同一张图（见 [alternatePorts]）。
+    // 失败是「被掐断」这类**一闪而过**的错时，把原地址再排一次 —— 2026-10-01 用户实测
+    // 同样的地址在手机浏览器里能打开，说明那条路本身通，被掐断多半是偶发（图床对同一
+    // 来源的短时并发敏感），重试一次往往就成了。
+    final queue = Queue<Uri>()..addAll(_candidatesFor(uri));
+    var attempts = 0;
+    ComicImageException? last;
+    await _acquire();
+    try {
+      while (queue.isNotEmpty && attempts < maxAttempts) {
+        final candidate = queue.removeFirst();
+        attempts++;
+        try {
+          final file = await _transfer(candidate, url, host);
+          _usedAddress[url] = candidate.toString();
+          return file;
+        } on ComicImageException catch (e) {
+          // 只有**网络层**的失败才值得换个地址再来一次：HTTP 码、0 字节、地址不合法
+          // 再试一百次也是一样的结果。
+          if (!e.retryable) rethrow;
+          last = e;
+          if (e.transient) queue.add(uri);
+        }
+      }
+    } finally {
+      _release();
+    }
+    // 一条都没成：把"试过哪几个端口、试了几次"说出来，用户才知道不是我们没试。
+    throw ComicImageException(
+      '${last!.message}（${_triedLabel(uri)}共试了 $attempts 次）',
+    );
+  }
+
+  /// 最多试几个地址（原地址 + 换端口 + 补一次原地址）。
+  final int maxAttempts;
+
+  static const int defaultMaxAttempts = 3;
+
+  /// 这张图按什么顺序试地址：原地址在前，其次换端口的同一张图（见 [alternatePorts]）。
+  List<Uri> _candidatesFor(Uri uri) {
+    final port = uri.hasPort ? uri.port : (uri.scheme == 'https' ? 443 : 80);
+    final alt = alternatePorts[port];
+    if (alt == null || alt == port) return <Uri>[uri];
+    return <Uri>[uri, uri.replace(port: alt)];
+  }
+
+  static String _triedLabel(Uri uri) {
+    final port = uri.hasPort ? uri.port : (uri.scheme == 'https' ? 443 : 80);
+    return ':$port 这条路';
+  }
+
+  /// 同时最多几张图在下载（其余排队）。
+  ///
+  /// 为什么要限（2026-10-01）：列表一屏近十个封面、每张各开一条新 TLS 连接，境外图床和
+  /// 运营商网关对这种小突发很敏感 —— 掐掉几条，用户看到的就是"有的出来了、有的转圈"。
+  /// 限到 4 条以后失败面小得多，而总耗时几乎不变（瓶颈在对端不在我们这儿）。
+  final int maxParallel;
+
+  static const int defaultMaxParallel = 4;
+
+  int _running = 0;
+  final Queue<Completer<void>> _waiters = Queue<Completer<void>>();
+
+  HttpClient? _client;
+
+  /// 整个缓存实例共用一个 HttpClient。
+  ///
+  /// 2026-10-01 之前是**每张图各造一个 client、下完就 force close**：一屏近十个封面
+  /// 就是十条新建 TLS 连接、下完全拆。图床与运营商网关对"同一来源的短时新建连接数"
+  /// 敏感（用户那张网上偶发 `Connection reset by peer`，而同一个地址在手机浏览器里打得开
+  /// —— 浏览器正是复用连接的）。改成共用之后连接会复用，`maxConnectionsPerHost`
+  /// 又把每台主机的并发卡在 [maxParallel] 条。
+  HttpClient _http() {
+    final injected = httpClientFactory;
+    final client = _client ??= (injected != null ? injected() : HttpClient());
     client.connectionTimeout = connectTimeout;
+    client.maxConnectionsPerHost = maxParallel;
+    // 闲置连接别攥太久：手机网络的中转设备会先一步把长时间不动的连接拆掉，
+    // 那时我们再写就正好撞上 reset。10 秒是个安全的中间值。
+    client.idleTimeout = const Duration(seconds: 10);
+    return client;
+  }
+
+  /// 关掉共用连接（页面销毁时调用；不调也只是让连接闲置到期）。
+  void close() {
+    _client?.close(force: true);
+    _client = null;
+  }
+
+  Future<void> _acquire() {
+    if (_running < maxParallel) {
+      _running++;
+      return Future<void>.value();
+    }
+    final waiter = Completer<void>();
+    _waiters.add(waiter);
+    return waiter.future;
+  }
+
+  void _release() {
+    if (_waiters.isNotEmpty) {
+      // 名额直接转给排队的那一个：_running 不动，避免"放出去又抢回来"的抖动。
+      _waiters.removeFirst().complete();
+      return;
+    }
+    if (_running > 0) _running--;
+  }
+
+  /// 真正下这一张（[uri] 是本次要连的地址，[url] 是**缓存键 / 请求头判据**用的原始地址）。
+  Future<File> _transfer(Uri uri, String url, String host) async {
+    final client = _http();
     try {
       final HttpClientRequest req;
       try {
@@ -121,11 +254,17 @@ class ComicImageCache {
       } on TimeoutException {
         throw ComicImageException(
           '图床连不上（$host）：等了 ${_dur(connectTimeout)}都没连上',
+          retryable: true,
         );
       } catch (e) {
         // 连不上（DNS 失败 / 连接被拒 / 连接被重置）也要说清楚 —— 这类错以前会被
         // 裹成一句"图片下载失败"，看不出是**没连上**还是**下到一半断了**。
-        throw ComicImageException('图床连不上（$host）：${_short(e)}');
+        // 顺手把术语翻成人话：用户看到 `errno = 104` 除了截图给我没有任何用处。
+        throw ComicImageException(
+          '图床连不上（$host）：${_netReason(e)}',
+          retryable: true,
+          transient: _isTransientNetError(e),
+        );
       }
       req.headers.set(HttpHeaders.acceptHeader, 'image/*,*/*;q=0.8');
       headerFor(url).forEach((k, v) {
@@ -137,12 +276,19 @@ class ComicImageCache {
       } on TimeoutException {
         throw ComicImageException(
           '图床没响应（$host）：连上了但等了 ${_dur(connectTimeout)}一个字节都没收到',
+          retryable: true,
         );
       }
       if (resp.statusCode != 200) {
         // 把正文丢掉再抛：不读干会留着这条连接（force close 也不保证对端立刻释放）。
         await resp.drain<void>().catchError((_) {});
-        throw ComicImageException('这张图没下来（HTTP ${resp.statusCode}，$host）');
+        throw ComicImageException(
+          '这张图没下来（HTTP ${resp.statusCode}，$host）',
+          // 5xx 是服务端一时抽风（CDN 节点过载常见），换条路再试有意义；
+          // 4xx（404/403）说明这个地址本来就没有，别白试。
+          retryable: resp.statusCode >= 500,
+          transient: resp.statusCode >= 500,
+        );
       }
       final bytes = await _readBody(resp, host);
       if (bytes.isEmpty) {
@@ -160,9 +306,14 @@ class ComicImageCache {
     } on ComicImageException {
       rethrow;
     } catch (e) {
-      throw ComicImageException('图片下载失败（$host）：${_short(e)}');
+      throw ComicImageException(
+        '图片下载失败（$host）：${_netReason(e)}',
+        retryable: true,
+        transient: _isTransientNetError(e),
+      );
     } finally {
-      client.close(force: true);
+      // 注意：**不关**这个 client —— 它是整个缓存实例共用的（见 [_http]），
+      // 每张图各开一条新连接正是被图床掐的原因之一。
     }
   }
 
@@ -179,6 +330,7 @@ class ComicImageCache {
               sink.addError(
                 ComicImageException(
                   '图床卡住了（$host）：${_dur(idleTimeout)}一个新字节都没有',
+                  retryable: true,
                 ),
               );
               sink.close();
@@ -189,12 +341,17 @@ class ComicImageCache {
             totalTimeout,
             onTimeout: () => throw ComicImageException(
               '这张图下载超时（$host）：等了 ${_dur(totalTimeout)}还没下完',
+              retryable: true,
             ),
           );
     } on ComicImageException {
       rethrow;
     } catch (e) {
-      throw ComicImageException('图片下载中断（$host）：${_short(e)}');
+      throw ComicImageException(
+        '图片下载中断（$host）：${_netReason(e)}',
+        retryable: true,
+        transient: _isTransientNetError(e),
+      );
     }
   }
 
@@ -219,6 +376,7 @@ class ComicImageCache {
     if (await dir.exists()) await dir.delete(recursive: true);
     _dir = null;
     _inFlight.clear();
+    _usedAddress.clear();
   }
 
   // ── 上限与清理（设置页的「清理缓存」也走这里）───────────────────────
@@ -341,13 +499,63 @@ class ComicImageCache {
     final s = e.toString();
     return s.length > 120 ? '${s.substring(0, 120)}…' : s;
   }
+
+  /// 「一闪而过」的网络错：被对方掐断 / 连接被提前关掉 / 服务端 5xx。
+  ///
+  /// 与 [retryable] 分开是因为两者的**代价不一样**：换端口只多花一次连接，而"同一地址
+  /// 再试一次"要再等一整套超时 —— 只有这种一眼看着像偶发的错才值得。
+  static bool _isTransientNetError(Object e) {
+    final s = e.toString();
+    return s.contains('Connection reset') ||
+        s.contains('errno = 104') ||
+        s.contains('Connection closed');
+  }
+
+  /// 网络层的异常翻成人话。
+  ///
+  /// 2026-10-01 用户截图里那行是 `SocketException: Connection reset by peer (OS Error:
+  /// Connection reset by peer, errno = 104), address = …` —— 一屏都是术语，他除了截图
+  /// 给我帮不上任何忙；而这几种情况的**处置恰好是不一样的**（换端口能救的、只能等的、
+  /// 得找运维的），所以先分清楚再显示。
+  static String _netReason(Object e) {
+    final s = e.toString();
+    if (s.contains('Connection reset') || s.contains('errno = 104')) {
+      return '连接被对方掐断（端口被运营商/网关拦，或对端拒绝）';
+    }
+    if (s.contains('Connection closed')) return '连接被对方提前关掉';
+    if (s.contains('Failed host lookup') || s.contains('nodename nor servname')) {
+      return '域名解析不出来（DNS 或本地网络的问题）';
+    }
+    if (s.contains('Connection refused')) return '对方拒绝连接（端口没开）';
+    if (s.contains('Network is unreachable') || s.contains('No route to host')) {
+      return '网络不通（这条路到不了对方）';
+    }
+    if (s.contains('timed out') || s.contains('TimeoutException')) {
+      return '等太久没响应';
+    }
+    return _short(e);
+  }
 }
 
 /// 取图失败（可以给人看）。
 class ComicImageException implements Exception {
-  ComicImageException(this.message);
+  ComicImageException(
+    this.message, {
+    this.retryable = false,
+    this.transient = false,
+  });
 
   final String message;
+
+  /// 值不值得**换个地址再试一次**：连不上、被掐断、卡住这类网络层的失败，换端口往往就好了；
+  /// HTTP 4xx、0 字节这种再试一百次也一样，直接抛给用户别浪费时间。
+  final bool retryable;
+
+  /// 是不是「一闪而过」的错（被对方掐断 / 连接被提前关掉 / 服务端 5xx）。
+  ///
+  /// 这类错**同一个地址再试一次**往往就成（用户实测：同样的地址在手机浏览器里能打开）；
+  /// 而超时不是 —— 那是这条网本来就慢，再来一遍只会让用户多等一个超时。
+  final bool transient;
 
   @override
   String toString() => message;

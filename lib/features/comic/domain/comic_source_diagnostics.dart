@@ -150,6 +150,19 @@ Future<int> downloadComicImageForProbe(String url) async {
   return file.length();
 }
 
+/// 同上，但把**实际取通的地址**也带回来。
+///
+/// 为什么自检需要：这本漫画的图床在 `:666` 上，手机那条网会把 `:666` 掐断、443 才通
+/// （2026-10-01 用户报的）—— 只报"下到多少 KB"，用户下次又懵；报出"原来那个端口被掐断、
+/// 换成 443 才通"，才是一句能自己判断的结论。
+Future<({int bytes, String usedUrl})> downloadComicImageForProbeDetailed(
+  String url,
+) async {
+  final cache = ComicImageCache(headerFor: (u) => comicDirectHeaders());
+  final file = await cache.fetch(url);
+  return (bytes: await file.length(), usedUrl: cache.usedAddress(url) ?? url);
+}
+
 /// 快路（取 HTML 文本 + 规则引擎）跑出来的一次结果。
 ///
 /// 为什么要单独记 [note]：自检的价值是把未知变已知，**快路为什么没通**本身就是一条
@@ -761,15 +774,27 @@ Future<ComicProbeReport> runComicSourceProbe({
     final stepSw = Stopwatch()..start();
     final host = Uri.tryParse(firstImageUrl)?.host ?? firstImageUrl;
     try {
-      final bytes = await (imageDownloader ?? downloadComicImageForProbe)(
-        firstImageUrl,
-      );
+      final int bytes;
+      var usedUrl = firstImageUrl;
+      final injected = imageDownloader;
+      if (injected != null) {
+        bytes = await injected(firstImageUrl);
+      } else {
+        final r = await downloadComicImageForProbeDetailed(firstImageUrl);
+        bytes = r.bytes;
+        usedUrl = r.usedUrl;
+      }
+      final switched = usedUrl != firstImageUrl;
+      final switchedNote = switched
+          ? '；注意这条网把 ${_portLabel(firstImageUrl)} 掐断了，'
+                '换成 ${_portLabel(usedUrl)} 才通 —— 是运营商/网关在拦连接，不是源的问题'
+          : '';
       final step = ComicProbeStep(
         name: '图片下载',
         ok: true,
         elapsedMs: stepSw.elapsedMilliseconds,
         note: '真下到 ${_kb(bytes)}（$host），用的就是 App 显示封面/漫画页那条路'
-            '（图片缓存 + 手机 UA）',
+            '（图片缓存 + 手机 UA）$switchedNote',
       );
       steps.add(step);
       onStep?.call(step);
@@ -892,6 +917,17 @@ String _short(Object e) {
 /// 字节数说人话（自检的「图片下载」步要写清"真下到多少"）。
 String _kb(int bytes) =>
     bytes < 1024 ? '$bytes 字节' : '${(bytes / 1024).toStringAsFixed(1)} KB';
+
+/// 地址里的端口，用来说人话（写不写默认端口，在界面上要统一）。
+///
+/// 自检第 4 步靠它把「原来 `:666` 被掐断、换成 `:443` 才通」说出来 —— 只说"下下来了"，
+/// 用户换张图/换条网又要重新懵一遍。
+String _portLabel(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null) return '原来那个端口';
+  if (uri.hasPort) return ':${uri.port}';
+  return uri.scheme == 'http' ? ':80' : ':443';
+}
 
 /// 轮询等到选择器命中；超时返回最后的命中数（**不抛**，由调用方判断并说明）。
 ///
