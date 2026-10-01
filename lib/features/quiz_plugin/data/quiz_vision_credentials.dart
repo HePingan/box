@@ -14,6 +14,8 @@
 //
 // 单测接缝：平台通道在单测里不存在，故构造器可注入 [store]/[client]/[accountStore]，
 // 全局实例亦可用 [debugSetQuizVisionCredentialResolver] 替换。
+import 'dart:async';
+
 import '../../../utils/app_logger.dart';
 import '../../../utils/log_channels.dart';
 import '../../account/data/account_store.dart';
@@ -36,9 +38,34 @@ class QuizVisionCredentialResolver {
   final QuizVisionDeviceTokenClient _client;
   final BoxAccountStore _accountStore;
 
+  /// 凭证解析（含本机存储读取）的超时上限。
+  ///
+  /// 为什么必须有（2026-10-01 真机事故续）：发请求之前除了截图，还有一处**无界等待**
+  /// —— 读本机存储（Keystore / SharedPreferences）。它一旦不回，界面同样永远停在
+  /// 「读屏中」且服务端零请求。任何等待都要有终点：超时翻成 unavailable + 可读原因。
+  /// 单测会把这里调小到几十毫秒。
+  static Duration resolveTimeout = const Duration(seconds: 10);
+
   /// 解析本次读屏凭证。**不抛异常**：失败一律返回带可读原因的
   /// [QuizVisionMode.unavailable]。
-  Future<QuizVisionEndpoint> resolve(QuizConfig config) async {
+  Future<QuizVisionEndpoint> resolve(QuizConfig config) =>
+      _bounded(() => _resolveInner(config), what: '读屏凭证解析');
+
+  /// 超时兜底：把任意解析流程收敛成「有终点的结果」。
+  Future<QuizVisionEndpoint> _bounded(
+    Future<QuizVisionEndpoint> Function() task, {
+    required String what,
+  }) async {
+    try {
+      return await task().timeout(resolveTimeout);
+    } on TimeoutException catch (_) {
+      _log('$what超时（${resolveTimeout.inSeconds}s，本机存储无响应）', warn: true);
+      return QuizVisionEndpoint.unavailable('$what超时（本机存储无响应），请重试');
+    }
+  }
+
+  /// [resolve] 的实现体（不做超时包装，超时统一由 [_bounded] 负责）。
+  Future<QuizVisionEndpoint> _resolveInner(QuizConfig config) async {
     // 手填过 key 或端点：老直连逻辑原样，不读存储、不签发设备凭证。
     final userConfigured =
         config.apiUrl.trim().isNotEmpty || config.apiKey.trim().isNotEmpty;
@@ -97,7 +124,11 @@ class QuizVisionCredentialResolver {
   /// 登录用户读屏直接死在「凭证已失效」，而匿名档本来就是通的）。
   ///
   /// 手填凭证的用户仍按原样直连（不会把请求改道到平台）。失败不抛，返回 unavailable。
-  Future<QuizVisionEndpoint> resolveAnonymous(QuizConfig config) async {
+  Future<QuizVisionEndpoint> resolveAnonymous(QuizConfig config) =>
+      _bounded(() => _resolveAnonymousInner(config), what: '读屏匿名凭证解析');
+
+  /// [resolveAnonymous] 的实现体（超时统一由 [_bounded] 负责）。
+  Future<QuizVisionEndpoint> _resolveAnonymousInner(QuizConfig config) async {
     final userConfigured =
         config.apiUrl.trim().isNotEmpty || config.apiKey.trim().isNotEmpty;
     if (userConfigured) {
