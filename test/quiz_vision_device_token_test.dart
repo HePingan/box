@@ -407,4 +407,76 @@ void main() {
       expect(issuer.calls, 1);
     });
   });
+
+  group('resolveAnonymous（登录档被拒时的降级入口）', () {
+    test('本机有会话令牌时：resolve 走登录档，resolveAnonymous 仍走匿名档', () async {
+      final store = _MemoryStore(token: 'cached-device-token');
+      final resolver = _resolver(
+        store: store,
+        accountStore: _FakeAccountStore(session: _session()),
+      );
+
+      final normal = await resolver.resolve(const QuizConfig());
+      expect(normal.mode, QuizVisionMode.platformProxy);
+      expect(normal.apiKey, 'sess-token-abc123', reason: '有会话就用会话');
+      expect(
+        normal.baseUrl,
+        _proxyBase,
+        reason: '登录档与匿名档是同一条代理路径',
+      );
+
+      final anon = await resolver.resolveAnonymous(const QuizConfig());
+      expect(
+        anon.mode,
+        QuizVisionMode.deviceProxy,
+        reason: '降级必须跳过登录档（会话已失效，再拿它重试只会再 401）',
+      );
+      expect(anon.apiKey, 'cached-device-token');
+      expect(anon.baseUrl, _proxyBase);
+    });
+
+    test('本机没有设备令牌 → 签发一次并复用同一设备标识', () async {
+      final store = _MemoryStore();
+      final issuer = _FakeIssuer();
+      final resolver = _resolver(store: store, issuer: issuer);
+
+      final anon = await resolver.resolveAnonymous(const QuizConfig());
+
+      expect(anon.mode, QuizVisionMode.deviceProxy);
+      expect(anon.apiKey, 'device-token-1');
+      expect(issuer.calls, 1);
+      expect(issuer.paths.single, _deviceTokenPath);
+      expect(store.token, 'device-token-1', reason: '签发后落盘，下次直接复用');
+      expect(store.deviceId, isNotNull);
+    });
+
+    test('签发失败 → unavailable + 可读原因（不静默：内置 key 已删除）', () async {
+      final resolver = _resolver(
+        store: _MemoryStore(),
+        issuer: _FakeIssuer(status: 429),
+      );
+
+      final anon = await resolver.resolveAnonymous(const QuizConfig());
+
+      expect(anon.isUnavailable, isTrue);
+      expect(anon.errorMessage, contains('429'));
+    });
+
+    test('手填了 key/端点 → 原样直连，绝不被改道到匿名代理', () async {
+      final issuer = _FakeIssuer();
+      final resolver = _resolver(store: _MemoryStore(), issuer: issuer);
+
+      final anon = await resolver.resolveAnonymous(
+        const QuizConfig(
+          allowExternalApi: true,
+          apiUrl: 'https://newapi.hpa888.top/v1',
+          apiKey: 'sk-user-own',
+        ),
+      );
+
+      expect(anon.mode, QuizVisionMode.ownKey);
+      expect(anon.apiKey, 'sk-user-own');
+      expect(issuer.calls, 0, reason: '手填凭证的用户不碰平台这条链');
+    });
+  });
 }

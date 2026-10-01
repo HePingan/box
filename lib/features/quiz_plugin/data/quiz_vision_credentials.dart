@@ -90,6 +90,47 @@ class QuizVisionCredentialResolver {
     );
   }
 
+  /// 匿名档解析：**跳过登录档**（即使本机有会话令牌）。
+  ///
+  /// 用途：登录档的会话令牌被服务端判失效（代理 401）时降级重试 —— 读屏不该
+  /// 因为"登录过期"而彻底不可用（2026-10-01 真机事故：服务端会话 30 天 TTL 到期，
+  /// 登录用户读屏直接死在「凭证已失效」，而匿名档本来就是通的）。
+  ///
+  /// 手填凭证的用户仍按原样直连（不会把请求改道到平台）。失败不抛，返回 unavailable。
+  Future<QuizVisionEndpoint> resolveAnonymous(QuizConfig config) async {
+    final userConfigured =
+        config.apiUrl.trim().isNotEmpty || config.apiKey.trim().isNotEmpty;
+    if (userConfigured) {
+      return resolveQuizVisionEndpoint(config, serverUrl: '');
+    }
+    final serverUrl = await _loadServerUrl();
+    final cached = await _readDeviceToken();
+    if (cached.isNotEmpty) {
+      return resolveQuizVisionEndpoint(
+        config,
+        serverUrl: serverUrl,
+        deviceToken: cached,
+      );
+    }
+    final deviceId = await _ensureDeviceId();
+    final issued = await _client.issue(serverUrl: serverUrl, deviceId: deviceId);
+    if (!issued.isSuccess) {
+      _log('读屏匿名降级：设备令牌签发失败 ${issued.error}', warn: true);
+      return QuizVisionEndpoint.unavailable(issued.error);
+    }
+    final token = issued.token!;
+    try {
+      await _store.writeDeviceToken(token);
+    } catch (e) {
+      _log('读屏匿名降级：设备令牌落盘失败（本次用内存令牌）：$e', warn: true);
+    }
+    return resolveQuizVisionEndpoint(
+      config,
+      serverUrl: serverUrl,
+      deviceToken: token,
+    );
+  }
+
   /// 设备令牌被服务端拒（代理 401）时调用：清掉本机令牌，
   /// 下次 [resolve] 会自动重新签发（自愈），用户无需重装/重登。
   ///

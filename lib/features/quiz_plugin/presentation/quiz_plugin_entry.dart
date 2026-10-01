@@ -14,6 +14,7 @@ import '../data/quiz_cloud_pull.dart';
 import '../data/quiz_cloud_auto_sync.dart';
 import '../domain/quiz_capture_session.dart';
 import '../domain/quiz_config.dart';
+import '../../account/data/account_store.dart';
 import '../data/quiz_engine.dart';
 import '../data/quiz_vision_credentials.dart';
 import '../data/quiz_ocr_client.dart';
@@ -1543,17 +1544,35 @@ class QuizPluginEntry {
       apiUrl: endpoint.baseUrl,
       apiKey: endpoint.apiKey,
     );
+    var sessionCredentialRejected = false;
     final result = await engine.searchVisionApi(
       bytes,
       hintQuestion: hintQuestion,
+      // 代理 401 时回调：登录档 → 换匿名设备令牌（设备档 → 先清本机令牌再重签）。
+      // 读屏不该因"登录过期"而不可用（2026-10-01 真机事故：会话 30 天 TTL 到期）。
+      onCredentialRejected: () async {
+        // 只有登录档被拒才算「会话失效」：设备档被拒是令牌问题，不是登录问题
+        // （否则会给未登录用户弹一条假的「登录已失效」）。
+        if (endpoint.mode != QuizVisionMode.deviceProxy) {
+          sessionCredentialRejected = true;
+        }
+        if (endpoint.mode == QuizVisionMode.deviceProxy) {
+          await quizVisionCredentialResolver.invalidateDeviceToken();
+        }
+        return quizVisionCredentialResolver.resolveAnonymous(config);
+      },
     );
     if (!_isCurrentRequest(requestGeneration, requestFingerprint)) return null;
     if (!result.isSuccess) {
-      // 设备令牌被服务端拒（代理 401）：清掉本机令牌 → 下次自动重新签发（自愈）。
-      // 只对设备档做：登录档的 401 是「登录过期」，清设备令牌没有意义。
-      if (endpoint.mode == QuizVisionMode.deviceProxy &&
-          result.error == visionProxyCredentialExpiredText) {
-        await quizVisionCredentialResolver.invalidateDeviceToken();
+      // 代理 401 走到这里 = 降级后仍被拒（或没有可降级的档）：
+      //   * 设备档被拒 → 清本机令牌，下次自动重新签发（自愈）；
+      //   * 登录档被拒 → 全局标记「登录已失效」，让「我的」页面直接提示重新登录。
+      if (result.error == visionProxyCredentialExpiredText) {
+        if (endpoint.mode == QuizVisionMode.deviceProxy ||
+            sessionCredentialRejected) {
+          await quizVisionCredentialResolver.invalidateDeviceToken();
+        }
+        if (sessionCredentialRejected) markGlobalSessionInvalid();
       }
       QuizDiag.warn(QuizDiagStage.result, '读屏未产出结果',
           fields: {'err': result.error ?? '-'});

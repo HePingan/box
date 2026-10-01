@@ -138,7 +138,11 @@ class QuizAnswer {
 }
 
 class QuizEngine {
-  QuizEngine({required this.config});
+  QuizEngine({required this.config, http.Client? httpClient})
+    : _http = httpClient ?? http.Client();
+
+  /// HTTP 客户端（单测注入假实现；线上用默认实现）。
+  final http.Client _http;
 
   QuizConfig config;
 
@@ -1158,6 +1162,7 @@ class QuizEngine {
   Future<QuizResult> searchVisionApi(
     Uint8List imageBytes, {
     String? hintQuestion,
+    Future<QuizVisionEndpoint> Function()? onCredentialRejected,
   }) async {
     final stopwatch = Stopwatch()..start();
     final question = (hintQuestion ?? '').trim();
@@ -1196,7 +1201,10 @@ class QuizEngine {
     pushProc();
 
     final base = config.apiUrl.trim().replaceAll(RegExp(r'/+$'), '');
-    final uri = Uri.parse('$base/chat/completions');
+    var uri = Uri.parse('$base/chat/completions');
+    // 可变 Bearer：登录档 401 降级到匿名档时会换掉（见循环内降级分支）。
+    var bearer = config.apiKey.trim();
+    var authFallbackTried = false;
     // 代理模式判定：base 指向平台 /api/quiz/vision 时 401/403/429 语义不同
     // （session 过期 / 代理未开 / 日限额），文案走 visionHttpErrorText 代理分支。
     final viaProxy = base.contains(QuizVisionEndpoint.proxyPathSegment);
@@ -1248,13 +1256,12 @@ class QuizEngine {
       proc.add('③ 第${attempt + 1}次请求（预算 ${remaining.inSeconds}s）');
       pushProc();
       try {
-        final response = await http
+        final response = await _http
             .post(
               uri,
               headers: {
                 'Content-Type': 'application/json; charset=utf-8',
-                if (config.apiKey.trim().isNotEmpty)
-                  'Authorization': 'Bearer ${config.apiKey.trim()}',
+                if (bearer.isNotEmpty) 'Authorization': 'Bearer $bearer',
               },
               body: body,
             )
@@ -1322,6 +1329,32 @@ class QuizEngine {
         // 退避预算，让用户多等半分钟才看到同一句话 —— 立即失败。
         if (viaProxy &&
             const {401, 403, 429}.contains(response.statusCode)) {
+          // 401 且当前是**登录档**（Bearer = 会话令牌）：降级到匿名设备令牌重试一次。
+          // 为什么（2026-10-01 真机事故）：会话有 30 天 TTL，过期后登录档必然 401，
+          // 而读屏并不要求登录（匿名档早已上线）。让"登录过期"把读屏整条打死
+          // 是设计缺口 —— 用户该看到的是答案，不是"请重新登录"。
+          if (response.statusCode == 401 &&
+              onCredentialRejected != null &&
+              !authFallbackTried) {
+            authFallbackTried = true;
+            _visionLog('$tag ⚠ 代理 401（登录档）→ 尝试降级匿名设备令牌', warn: true);
+            proc.add('③ 登录凭证失效 → 改用匿名设备令牌重试');
+            pushProc();
+            final fallback = await onCredentialRejected();
+            if (!fallback.isUnavailable &&
+                fallback.mode == QuizVisionMode.deviceProxy) {
+              uri = Uri.parse(
+                '${fallback.baseUrl.replaceAll(RegExp(r'/+$'), '')}'
+                '/chat/completions',
+              );
+              bearer = fallback.apiKey.trim();
+              _visionLog('$tag ↻ 已切匿名档，立即重试（不退避）');
+              continue;
+            }
+            _visionLog('$tag ✖ 匿名降级不可用：${fallback.errorMessage}', warn: true);
+            lastError = fallback.errorMessage;
+            break;
+          }
           lastError = visionHttpErrorText(response.statusCode, viaProxy: true);
           _visionLog('$tag ✖ 代理 HTTP${response.statusCode} 确定性失败，不重试',
               warn: true);
@@ -1594,7 +1627,7 @@ class QuizEngine {
       },
     );
 
-    final response = await http.get(uri).timeout(const Duration(seconds: 10));
+    final response = await _http.get(uri).timeout(const Duration(seconds: 10));
 
     if (response.statusCode != 200) {
       return QuizResult(
