@@ -152,6 +152,22 @@ class ComicOfflineStore {
   final Future<Directory> Function() _dirProvider;
   Directory? _root;
 
+  /// 已经解析出来的根目录（还没解析过就是 null）。**同步**，见 [localFileIfReady]。
+  Directory? get readyRoot => _root;
+
+  /// 预热：把根目录解析一次（平台调用只做一次，之后就都是纯路径计算）。
+  ///
+  /// 为什么要它：`getApplicationSupportDirectory()` 是**平台通道往返**，而封面/阅读页
+  /// 的取图路径上不该出现"每张图等一次平台调用"。预热之后用 [localFileIfReady] 同步问。
+  Future<void> warmUp() async {
+    try {
+      await rootDir();
+    } catch (_) {
+      // 拿不到目录（没有平台实现/存储异常）就当没预热：界面会照旧走网络那条路。
+      // **必须吞掉**：预热是加速用的，它把界面弄崩是最亏的。
+    }
+  }
+
   /// 根目录：`<appSupport>/comic_offline`。
   Future<Directory> rootDir() async {
     final cached = _root;
@@ -308,8 +324,59 @@ class ComicOfflineStore {
   // ── 给阅读侧用的一条：这张图本机有没有 ─────────────────────────
 
   /// 离线命中（阅读页/封面优先问它）。没有就 null，**不发请求**。
+  ///
+  /// 读离线库出任何问题（目录拿不到、权限、IO 错）都当"没有"：这条路只是**加速**，
+  /// 让它把联网那条路一起弄挂是最亏的（曾经就是这么挂的：拿不到 appSupport 目录时
+  /// 整个封面报错，而覆盖网络请求只需要在这里返回 null）。
   Future<File?> localFile(String bookUrl, String chapterUrl, String imageUrl) async {
-    final f = await fileFor(bookUrl, chapterUrl, imageUrl);
-    return await f.exists() ? f : null;
+    try {
+      final f = await fileFor(bookUrl, chapterUrl, imageUrl);
+      return await f.exists() ? f : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// **同步**版离线命中：根目录还没预热好就返回 null（调用方直接走网络，别在渲染路径上等）。
+  ///
+  /// 这条是给**界面**用的：命中就是本机读盘（不发请求、也不等平台通道）。
+  File? localFileIfReady(String bookUrl, String chapterUrl, String imageUrl) {
+    final root = _root;
+    if (root == null || bookUrl.isEmpty) return null;
+    final f = File(
+      '${root.path}/${hash(bookUrl)}/${hash(chapterUrl)}/${hash(imageUrl)}',
+    );
+    return f.existsSync() ? f : null;
+  }
+
+  /// **同步**版离线封面命中（同上）。
+  File? localCoverIfReady(String bookUrl, String coverUrl) {
+    final root = _root;
+    if (root == null || bookUrl.isEmpty || coverUrl.isEmpty) return null;
+    final f = File('${root.path}/${hash(bookUrl)}/cover/${hash(coverUrl)}');
+    return f.existsSync() ? f : null;
+  }
+
+  // ── 封面 ──────────────────────────────────────────────────────
+  //
+  // 封面不归任何一话，所以单独一层：`<书哈希>/cover/<图哈希>`。
+  // 没有它，断网时书架与详情页只剩一排破图标 —— "断网也能看"就缺了一块。
+
+  Future<File> coverFile(String bookUrl, String coverUrl) async {
+    final book = await bookDir(bookUrl);
+    final dir = Directory('${book.path}/cover');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return File('${dir.path}/${hash(coverUrl)}');
+  }
+
+  /// 离线封面命中（书架/详情页优先问它）。同样：出错就当没有（见 [localFile]）。
+  Future<File?> localCover(String bookUrl, String coverUrl) async {
+    if (coverUrl.isEmpty) return null;
+    try {
+      final f = await coverFile(bookUrl, coverUrl);
+      return await f.exists() ? f : null;
+    } catch (_) {
+      return null;
+    }
   }
 }

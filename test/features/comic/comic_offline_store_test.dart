@@ -167,6 +167,28 @@ void main() {
     expect(jsonDecode(raw), isA<Map<String, dynamic>>());
   });
 
+  test('同步离线命中：预热后才给答案（渲染路径不等平台调用）', () async {
+    final b = book();
+    const img = 'https://tuer.justpic01pt.com:666/picbed/1.jpg';
+    const cover = 'https://tuer.justpic01pt.com:666/picbed/a.jpg';
+    final f = await store.fileFor(b.bookUrl, b.chapters[0].url, img);
+    await f.writeAsBytes(List<int>.filled(64, 3));
+    final c = await store.coverFile(b.bookUrl, cover);
+    await c.writeAsBytes(List<int>.filled(32, 4));
+
+    // 预热：App 里进阅读页/书架时做一次（一次平台通道往返）。
+    await store.warmUp();
+    expect(store.localFileIfReady(b.bookUrl, b.chapters[0].url, img), isNotNull);
+    expect(store.localCoverIfReady(b.bookUrl, cover), isNotNull);
+    // 没下过的话 → null（界面上就照常走网络）
+    expect(store.localFileIfReady(b.bookUrl, 'https://别的书/1.html', img), isNull);
+
+    // 全新实例（还没预热）：同步问必须"说不知道"，而不是在渲染路径上等平台调用。
+    final cold = ComicOfflineStore(dirProvider: () async => tmp);
+    expect(cold.localFileIfReady(b.bookUrl, b.chapters[0].url, img), isNull);
+    expect(cold.localCoverIfReady(b.bookUrl, cover), isNull);
+  });
+
   test('clearAll 把整棵离线树干掉', () async {
     final b = book();
     final f = await store.fileFor(b.bookUrl, b.chapters[0].url, b.chapters[0].images.first);

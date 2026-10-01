@@ -6,10 +6,12 @@
 // 出来"，而我这边连原因都拿不到（2026-09-29 用户报的就是这个）。
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:box/features/comic/domain/comic_fetcher.dart';
 import 'package:box/features/comic/domain/comic_image_cache.dart';
+import 'package:box/features/comic/domain/comic_offline_store.dart';
 import 'package:flutter/material.dart';
 
 /// 一张漫画图：带手机 UA 下载、落本地缓存；失败把**原因**写在图上，点一下重试。
@@ -21,6 +23,8 @@ class ComicCoverImage extends StatefulWidget {
     this.fit = BoxFit.cover,
     this.height,
     this.borderRadius,
+    this.offline,
+    this.offlineBookUrl = '',
   });
 
   final String url;
@@ -32,6 +36,10 @@ class ComicCoverImage extends StatefulWidget {
   final BoxFit fit;
   final double? height;
   final BorderRadius? borderRadius;
+
+  /// 离线库 + 这本书的地址：**封面先问本机**（下过就在本机，断网也看得见）。
+  final ComicOfflineStore? offline;
+  final String offlineBookUrl;
 
   @override
   State<ComicCoverImage> createState() => _ComicCoverImageState();
@@ -55,9 +63,35 @@ class _ComicCoverImageState extends State<ComicCoverImage> {
   /// 运行时当成"没人处理的异常"（widget 测试里直接判失败，真机上也是一条噪音日志）。
   /// 真正的错误还是通过返回的这个 Future 交给 FutureBuilder，界面上照旧显示原因。
   Future<File> _start() {
-    final loading = _cache.fetch(widget.url);
+    final loading = _load();
     loading.then<void>((_) {}, onError: (Object _) {});
     return loading;
+  }
+
+  /// 先问离线库（命中 → 一个请求都不发），没有再走缓存/网络。
+  ///
+  /// 这里用**同步**版的离线查询（`localCoverIfReady`）：渲染路径上不能出现平台通道往返
+  /// （预热由页面在进页面时做一次，见 `ComicOfflineStore.warmUp`）。
+  Future<File> _load() async {
+    final offline = widget.offline;
+    final fast = offline?.localCoverIfReady(widget.offlineBookUrl, widget.url);
+    if (fast != null) return fast;
+    try {
+      return await _cache.fetch(widget.url);
+    } catch (e) {
+      // 联网那条路失败（断网/图床掐断）：这时才问一次离线库。
+      // **只有预热过才问**：没预热时的平台通道往返可能一直挂着（界面上只剩转圈）。
+      if (offline != null && offline.readyRoot != null) {
+        final fallback = await offline.localCover(
+          widget.offlineBookUrl,
+          widget.url,
+        );
+        if (fallback != null) return fallback;
+      } else {
+        unawaited(offline?.warmUp() ?? Future<void>.value());
+      }
+      rethrow;
+    }
   }
 
   void _retry() {

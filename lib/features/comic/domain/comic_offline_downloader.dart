@@ -178,7 +178,25 @@ class ComicOfflineDownloader extends ChangeNotifier {
       );
     }
     notifyListeners();
+    unawaited(_fetchCover(bookUrl, book.cover));
     unawaited(_pump());
+  }
+
+  /// 顺手把封面也下下来。
+  ///
+  /// 封面失败**不影响**下载结果：一本书读得了比封面重要得多，所以这里吞掉异常，
+  /// 由封面自己的组件在下次联网时再试。
+  Future<void> _fetchCover(String bookUrl, String cover) async {
+    if (cover.isEmpty) return;
+    try {
+      final dest = await store.coverFile(bookUrl, cover);
+      if (await dest.exists()) return;
+      await cache.fetch(cover, lowPriority: true, dest: dest);
+    } on ComicImageException {
+      // 封面是"顺带"，失败不打扰任何人。
+    } on FormatException {
+      // 同上（地址不合法之类）。
+    }
   }
 
   /// 暂停（正在跑的那一话会在**下完当前这张**之后停下）。
@@ -359,7 +377,7 @@ class ComicOfflineDownloader extends ChangeNotifier {
       var saved = 0;
       for (final url in entry.images) {
         if (_pauseRequested || _cancelRequested) {
-          _finishInterrupted(job, entry, book);
+          await _finishInterrupted(job, entry, book);
           return false;
         }
         final dest = await store.fileFor(job.bookUrl, job.chapterUrl, url);
@@ -381,51 +399,53 @@ class ComicOfflineDownloader extends ChangeNotifier {
         notifyListeners();
       }
 
-      job.state = ComicOfflineJobState.done;
+      // **先落清单再改内存状态**：反过来的话，界面已经显示"下完"而清单里还是 running，
+      // 这时候被杀掉，下次启动会把这一话当成"下到一半"（进度全丢）。
       entry
         ..state = ComicOfflineState.done
         ..done = entry.images.length
         ..bytes = job.bytes
         ..error = '';
       await store.saveBook(book);
+      job.state = ComicOfflineJobState.done;
       notifyListeners();
       return true;
     } on ComicImageException catch (e) {
-      job.state = ComicOfflineJobState.failed;
-      job.error = e.message;
       entry
         ..state = ComicOfflineState.failed
         ..error = e.message
         ..done = job.done
         ..bytes = job.bytes;
       await store.saveBook(book);
+      job.state = ComicOfflineJobState.failed;
+      job.error = e.message;
       notifyListeners();
       return false;
     } on FormatException catch (e) {
-      job.state = ComicOfflineJobState.failed;
-      job.error = e.message;
       entry
         ..state = ComicOfflineState.failed
         ..error = e.message;
       await store.saveBook(book);
+      job.state = ComicOfflineJobState.failed;
+      job.error = e.message;
       notifyListeners();
       return false;
     }
   }
 
-  void _finishInterrupted(
+  Future<void> _finishInterrupted(
     ComicOfflineJob job,
     ComicOfflineChapter entry,
     ComicOfflineBook book,
-  ) {
+  ) async {
     _pauseRequested = false;
     _cancelRequested = false;
-    job.state = ComicOfflineJobState.paused;
     entry
       ..state = ComicOfflineState.paused
       ..done = job.done
       ..bytes = job.bytes;
-    unawaited(store.saveBook(book));
+    await store.saveBook(book);
+    job.state = ComicOfflineJobState.paused;
     notifyListeners();
   }
 

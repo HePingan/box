@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:box/features/comic/domain/comic_book.dart';
 import 'package:box/features/comic/domain/comic_fetcher.dart';
 import 'package:box/features/comic/domain/comic_image_cache.dart';
+import 'package:box/features/comic/domain/comic_offline_store.dart';
 import 'package:box/features/comic/domain/comic_library_store.dart';
 import 'package:box/features/comic/domain/comic_online_progress.dart';
 import 'package:box/features/comic/presentation/comic_online_page.dart';
@@ -53,6 +55,7 @@ class ComicLibraryPage extends StatefulWidget {
     this.libraryStore,
     this.onlineProgressStore,
     this.coverCache,
+    this.offlineStore,
   });
 
   /// 可注入存储（测试用）；生产省略即走默认实例。
@@ -60,6 +63,9 @@ class ComicLibraryPage extends StatefulWidget {
 
   /// 可注入的封面缓存（测试用）；生产省略即走"带手机 UA"的默认缓存。
   final ComicImageCache? coverCache;
+
+  /// 离线库（测试注入用）。
+  final ComicOfflineStore? offlineStore;
 
   /// 在线阅读进度的存储（测试用内存版）；生产省略即走默认实例。
   final ComicOnlineProgressStore? onlineProgressStore;
@@ -86,10 +92,16 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
       widget.coverCache ??
       ComicImageCache(headerFor: (url) => comicDirectHeaders());
 
+  /// 离线库：封面先问本机（下载过的书断网也看得见封面）。
+  late final ComicOfflineStore _offline =
+      widget.offlineStore ?? ComicOfflineStore();
+
   @override
   void initState() {
     super.initState();
     _store = widget.libraryStore ?? ComicLibraryStore();
+    // 预热离线库：下载过的书断网时封面/阅读都能直接读本机那份。
+    unawaited(_offline.warmUp());
     _future = _load();
     // 令牌读一次就够（用户改了设置再进本页也会重新读）。读不出来保持 null：
     // 在线页会自己去读，读不到就直连站点（不是错误）。
@@ -240,6 +252,7 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
               return _ComicBookCard(
                 entry: entry,
                 cache: _coverCache,
+                offline: _offline,
                 onTap: () => _openReader(entry.book),
                 onDelete: () => _confirmDelete(entry.book),
               );
@@ -284,6 +297,7 @@ class _ComicBookCard extends StatelessWidget {
   const _ComicBookCard({
     required this.entry,
     required this.cache,
+    required this.offline,
     required this.onTap,
     required this.onDelete,
   });
@@ -292,6 +306,9 @@ class _ComicBookCard extends StatelessWidget {
 
   /// 封面走的缓存（带请求头；失败会把原因显示出来）。
   final ComicImageCache cache;
+
+  /// 离线库：下载过的书断网也要有封面。
+  final ComicOfflineStore offline;
   final VoidCallback onTap;
   final VoidCallback onDelete;
 
@@ -315,7 +332,12 @@ class _ComicBookCard extends StatelessWidget {
                 fit: StackFit.expand,
                 children: [
                   if (book.isOnline && (book.coverPath ?? '').isNotEmpty)
-                    ComicCoverImage(url: book.coverPath!, cache: cache)
+                    ComicCoverImage(
+                      url: book.coverPath!,
+                      cache: cache,
+                      offline: offline,
+                      offlineBookUrl: book.onlineUrl ?? '',
+                    )
                   else if (book.coverPath != null)
                     Image.file(
                       File(book.coverPath!),

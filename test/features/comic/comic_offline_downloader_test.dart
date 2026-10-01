@@ -2,7 +2,6 @@
 //
 // 图片用一个**真本地 HTTP 服务器**（绑 127.0.0.1，不联网）：要验的正是连接那一层
 // （续传靠"文件在不在"、失败要带出图床的原话），假 fetcher 验不出来。
-import 'dart:async';
 import 'dart:io';
 
 import 'package:box/features/comic/domain/comic_image_cache.dart';
@@ -119,7 +118,9 @@ void main() {
     expect(job.done, 3);
     expect(job.progress, 1.0);
     expect(job.bytes, 3 * 1024);
-    expect(host.totalHits(), 3);
+    // 3 张图 + 1 张封面：封面也是"顺手下下来"的（断网时书架要有图）。
+    expect(host.totalHits(), 4);
+    expect(await store.localCover(bookUrl, host.img('cover.jpg')), isNotNull);
 
     final book = await store.loadBook(bookUrl);
     expect(book!.title, '测试书');
@@ -127,7 +128,7 @@ void main() {
     expect(book.chapters.single.isDone, isTrue);
     final f = await store.fileFor(bookUrl, c.url, c.images.first);
     expect(await f.exists(), isTrue);
-    expect(await store.bytesOf(bookUrl), 3 * 1024);
+    expect(await store.bytesOf(bookUrl, chapterUrl: c.url), 3 * 1024);
   });
 
   test('续传只补缺的那几张：已经在本机的不再请求图床', () async {

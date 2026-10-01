@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 
 import '../domain/comic_book.dart';
 import '../domain/comic_image_cache.dart';
+import '../domain/comic_offline_store.dart';
 import '../domain/comic_library_store.dart';
 import '../domain/comic_online_progress.dart';
 import '../domain/comic_prefetch.dart';
@@ -82,6 +83,7 @@ class ComicOnlinePage extends StatefulWidget {
     this.source,
     this.targetBuilder,
     this.imageCache,
+    this.offlineStore,
     this.progressStore,
     this.libraryStore,
     this.readerPrefs,
@@ -100,6 +102,10 @@ class ComicOnlinePage extends StatefulWidget {
   final ComicSourceTarget Function()? targetBuilder;
 
   final ComicImageCache? imageCache;
+
+  /// 离线库（**阅读页取图先问它**：命中就一个请求都不发，飞行模式也能读）。
+  final ComicOfflineStore? offlineStore;
+
   final ComicOnlineProgressStore? progressStore;
 
   /// 从书架点进来时直接打开这本书（省掉再搜一次）。
@@ -194,6 +200,10 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   /// 这次取数走的是哪条路（快路省时间；退到老路时把原因写出来）。
   String? _pathNote;
   ComicBookDetail? _book;
+
+  /// 离线库：阅读页与封面都先问它（命中 → 不发请求）。
+  late final ComicOfflineStore _offline =
+      widget.offlineStore ?? ComicOfflineStore();
 
   /// 这本书在不在书架里（界面按实际状态显示「已在书架」）。
   bool _inShelf = false;
@@ -507,6 +517,10 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   }
 
   Future<void> _openChapter(ComicChapterRef chapter, {int atIndex = 0}) async {
+    // 离线库预热一次（把根目录解析出来）：之后每张图都能**同步**问"本机有没有"。
+    // **不 await**：预热是加速用的，渲染与取图都不该等它（真读不到时走下面的兜底）。
+    unawaited(_offline.warmUp());
+
     // 进阅读要记一层（返回能退回详情）。层级只看**进来时**那一态：逐批显示会先把
     // `_mode` 改成阅读，之后再判就会漏记 —— 那样在阅读里按返回会直接退出本页。
     final from = _mode;
@@ -952,7 +966,13 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _Cover(url: book.cover, cache: _cache, size: 96),
+              _Cover(
+                url: book.cover,
+                cache: _cache,
+                size: 96,
+                offline: _offline,
+                offlineBookUrl: book.bookUrl,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -1118,6 +1138,9 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
                 url: _images[i],
                 cache: _cache,
                 fit: BoxFit.contain,
+                offline: _offline,
+                offlineBookUrl: _book?.bookUrl ?? '',
+                offlineChapterUrl: _chapter?.url ?? '',
               ),
             ),
           ),
@@ -1147,6 +1170,9 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             itemBuilder: (context, i) => _PageImage(
               url: _images[i],
               cache: _cache,
+              offline: _offline,
+              offlineBookUrl: _book?.bookUrl ?? '',
+              offlineChapterUrl: _chapter?.url ?? '',
               // 预取后面两张：翻页时基本就是本地读盘了。
               prefetch: _images.skip(i + 1).take(2).toList(),
             ),
@@ -1233,7 +1259,17 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
 
 /// 列表里的封面（带缓存与失败态）。
 class _Cover extends StatelessWidget {
-  const _Cover({required this.url, required this.cache, required this.size});
+  const _Cover({
+    required this.url,
+    required this.cache,
+    required this.size,
+    this.offline,
+    this.offlineBookUrl = '',
+  });
+
+  /// 离线库 + 书地址：封面也走"先问本机"（断网时书架/详情页不至于只剩破图标）。
+  final ComicOfflineStore? offline;
+  final String offlineBookUrl;
 
   final String? url;
   final ComicImageCache cache;
@@ -1255,7 +1291,15 @@ class _Cover extends StatelessWidget {
     return SizedBox(
       width: size,
       height: size * 4 / 3,
-      child: _CachedImage(url: u, cache: cache, fit: BoxFit.cover),
+      child: _CachedImage(
+        url: u,
+        cache: cache,
+        fit: BoxFit.cover,
+        offline: offline,
+        offlineBookUrl: offlineBookUrl,
+        // 封面归"这本书"而不是某一话（离线目录里单独一层）。
+        offlineCover: true,
+      ),
     );
   }
 }
@@ -1266,11 +1310,17 @@ class _PageImage extends StatelessWidget {
     required this.url,
     required this.cache,
     this.prefetch = const [],
+    this.offline,
+    this.offlineBookUrl = '',
+    this.offlineChapterUrl = '',
   });
 
   final String url;
   final ComicImageCache cache;
   final List<String> prefetch;
+  final ComicOfflineStore? offline;
+  final String offlineBookUrl;
+  final String offlineChapterUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -1280,7 +1330,14 @@ class _PageImage extends StatelessWidget {
     }
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: _CachedImage(url: url, cache: cache, fit: BoxFit.fitWidth),
+      child: _CachedImage(
+        url: url,
+        cache: cache,
+        fit: BoxFit.fitWidth,
+        offline: offline,
+        offlineBookUrl: offlineBookUrl,
+        offlineChapterUrl: offlineChapterUrl,
+      ),
     );
   }
 }
@@ -1291,11 +1348,23 @@ class _CachedImage extends StatefulWidget {
     required this.url,
     required this.cache,
     required this.fit,
+    this.offline,
+    this.offlineBookUrl = '',
+    this.offlineChapterUrl = '',
+    this.offlineCover = false,
   });
 
   final String url;
   final ComicImageCache cache;
   final BoxFit fit;
+
+  /// 离线库：有就先在本机找（**命中不发请求** → 飞行模式也能读）。
+  final ComicOfflineStore? offline;
+  final String offlineBookUrl;
+  final String offlineChapterUrl;
+
+  /// 这是**封面**（按"这本书的封面"去找，而不是按某一话的图去找）。
+  final bool offlineCover;
 
   @override
   State<_CachedImage> createState() => _CachedImageState();
@@ -1307,11 +1376,57 @@ class _CachedImageState extends State<_CachedImage> {
   @override
   void initState() {
     super.initState();
-    _future = widget.cache.fetch(widget.url);
+    _future = _load();
+  }
+
+  /// 取图：**先问离线库**（下过的话本机就有，一个请求都不用发），没有再走缓存/网络。
+  ///
+  /// 同步版（`localFileIfReady`）：渲染路径上不做平台通道往返；离线库的预热在进页面/
+  /// 打开章节时做（见 `ComicOfflineStore.warmUp`）。
+  Future<File> _load() async {
+    final offline = widget.offline;
+
+    /// 同步问一次（预热过就是纯路径计算）。命中 → 一个请求都不发。
+    File? local() => widget.offlineCover
+        ? offline?.localCoverIfReady(widget.offlineBookUrl, widget.url)
+        : offline?.localFileIfReady(
+            widget.offlineBookUrl,
+            widget.offlineChapterUrl,
+            widget.url,
+          );
+
+    /// 认真问一次（可以等）。只在**联网那条路已经失败**时才走到这里。
+    Future<File?> localAsync() async => widget.offlineCover
+        ? await offline?.localCover(widget.offlineBookUrl, widget.url)
+        : await offline?.localFile(
+            widget.offlineBookUrl,
+            widget.offlineChapterUrl,
+            widget.url,
+          );
+
+    final fast = local();
+    if (fast != null) return fast;
+
+    /// 离线库**当前能不能答话**：预热过就能（纯路径计算），没预热就别在这里等 ——
+    /// 平台通道往返在拿不到平台实现的环境里会一直挂着，界面上就只剩一个转圈。
+    final usable = offline != null && offline.readyRoot != null;
+    try {
+      return await widget.cache.fetch(widget.url);
+    } catch (e) {
+      // 断网/图床被掐：这时才值得再问一次离线库（下过的话照样读得出来）。
+      if (usable) {
+        final fallback = await localAsync();
+        if (fallback != null) return fallback;
+      } else {
+        // 没预热就顺手预热一下：用户点「重试」时就有离线那条快路了。
+        unawaited(offline?.warmUp() ?? Future<void>.value());
+      }
+      rethrow;
+    }
   }
 
   void _retry() {
-    setState(() => _future = widget.cache.fetch(widget.url));
+    setState(() => _future = _load());
   }
 
   @override
