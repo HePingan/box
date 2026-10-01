@@ -6,6 +6,7 @@ import '../../../design_system/app_tokens.dart';
 import '../../account/data/personal_center_cache_service.dart';
 import '../../backup/local_backup_service.dart';
 import '../../comic/domain/comic_image_cache.dart';
+import '../../comic/domain/comic_offline_downloader.dart';
 import '../../comic/domain/comic_offline_prefs.dart';
 import '../../comic/domain/comic_offline_store.dart';
 import '../../comic/presentation/comic_offline_page.dart';
@@ -197,6 +198,11 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
                     onChanged: (v) async {
                       setState(() => _wifiOnly = v);
                       await _offlinePrefs.setWifiOnly(v);
+                      if (!v) {
+                        // 从"仅 Wi-Fi"改成"不限网络"：正在等 Wi-Fi 的任务该自己接着下，
+                        // 否则用户改了设置还得再去点一次「这次用流量」（同一类"点了没反应"）。
+                        ComicOfflineDownloader.shared().allowNetworkOnce();
+                      }
                     },
                     title: const Text('只在 Wi-Fi 下下载'),
                     subtitle: const Text('默认开：整本漫画可能有几个 GB'),

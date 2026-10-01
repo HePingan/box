@@ -80,8 +80,10 @@ class _ComicOfflinePageState extends State<ComicOfflinePage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('清空离线内容？'),
-        content: Text('本机下载的漫画会全部删掉（共 ${_mb(_totalBytes)}），'
-            '以后再读要重新联网下载。'),
+        content: Text(
+          '本机下载的漫画会全部删掉（共 ${_mb(_totalBytes)}），'
+          '以后再读要重新联网下载。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -104,8 +106,10 @@ class _ComicOfflinePageState extends State<ComicOfflinePage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('删除这本书的离线内容？'),
-        content: Text('${book.title.isEmpty ? book.bookUrl : book.title}\n'
-            '（${_mb(book.bytes)}）'),
+        content: Text(
+          '${book.title.isEmpty ? book.bookUrl : book.title}\n'
+          '（${_mb(book.bytes)}）',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -130,26 +134,26 @@ class _ComicOfflinePageState extends State<ComicOfflinePage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _books.isEmpty
-              ? const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text(
-                      '还没有下载过漫画。\n在漫画详情页点「下载」就能选下载范围。',
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                )
-              : Column(
-                  children: [
-                    if (_downloader.waitingForWifi) _wifiBanner(),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: _books.length,
-                        itemBuilder: (context, i) => _bookCard(_books[i]),
-                      ),
-                    ),
-                  ],
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  '还没有下载过漫画。\n在漫画详情页点「下载」就能选下载范围。',
+                  textAlign: TextAlign.center,
                 ),
+              ),
+            )
+          : Column(
+              children: [
+                if (_downloader.waitingForWifi) _wifiBanner(),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: _books.length,
+                    itemBuilder: (context, i) => _bookCard(_books[i]),
+                  ),
+                ),
+              ],
+            ),
       bottomNavigationBar: _books.isEmpty
           ? null
           : SafeArea(
@@ -170,32 +174,48 @@ class _ComicOfflinePageState extends State<ComicOfflinePage> {
     );
   }
 
+  /// 一话的说明文字。
+  ///
+  /// `0/0 张` 要避免：那是"**还没开始**"（图地址还没取），写成 `0/0 张` 看着像下不动。
+  String _chapterSubtitle(ComicOfflineChapter c) {
+    if (c.isDone) return '已下载 ${_mb(c.bytes)}';
+    if (c.state == ComicOfflineState.failed) return '下载失败：${c.error}';
+    if (c.total == 0) {
+      if (c.error.contains('Wi-Fi')) return '还没开始（按设置只在 Wi-Fi 下下载）';
+      return c.state == ComicOfflineState.paused ? '已暂停' : '准备下载…';
+    }
+    final progress = '${c.done}/${c.total} 张';
+    return c.state == ComicOfflineState.paused
+        ? '已暂停（$progress）'
+        : '下载中（$progress）';
+  }
+
   /// 有任务在等 Wi-Fi：给一句说明 + 一次性放行（不然用户只看到"怎么不动"）。
   Widget _wifiBanner() => Material(
-        color: Theme.of(context).colorScheme.secondaryContainer,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-          child: Row(
-            children: [
-              const Icon(Icons.wifi_off_rounded, size: 18),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text('按设置：只在 Wi-Fi 下下载（有任务在等）'),
-              ),
-              TextButton(
-                onPressed: _downloader.allowNetworkOnce,
-                child: const Text('这次用流量'),
-              ),
-            ],
+    color: Theme.of(context).colorScheme.secondaryContainer,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      child: Row(
+        children: [
+          const Icon(Icons.wifi_off_rounded, size: 18),
+          const SizedBox(width: 8),
+          const Expanded(child: Text('按设置：只在 Wi-Fi 下下载（有任务在等）')),
+          TextButton(
+            onPressed: _downloader.allowNetworkOnce,
+            child: const Text('这次用流量'),
           ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 
   Widget _bookCard(ComicOfflineBook book) {
-    final chapters = book.chapters.where((c) => c.state != ComicOfflineState.none).toList();
-    final running = _downloader.jobsOfBook(book.bookUrl).where(
-      (j) => j.state == ComicOfflineJobState.running,
-    );
+    final chapters = book.chapters
+        .where((c) => c.state != ComicOfflineState.none)
+        .toList();
+    final running = _downloader
+        .jobsOfBook(book.bookUrl)
+        .where((j) => j.state == ComicOfflineJobState.running);
 
     return Card(
       margin: const EdgeInsets.fromLTRB(12, 8, 12, 8),
@@ -256,7 +276,9 @@ class _ComicOfflinePageState extends State<ComicOfflinePage> {
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       const SizedBox(height: 4),
-                      LinearProgressIndicator(value: j.total > 0 ? j.progress : null),
+                      LinearProgressIndicator(
+                        value: j.total > 0 ? j.progress : null,
+                      ),
                     ],
                   ),
                 ),
@@ -271,13 +293,7 @@ class _ComicOfflinePageState extends State<ComicOfflinePage> {
                   overflow: TextOverflow.ellipsis,
                 ),
                 subtitle: Text(
-                  c.isDone
-                      ? '已下载 ${_mb(c.bytes)}'
-                      : c.state == ComicOfflineState.failed
-                          ? '下载失败：${c.error}'
-                          : c.state == ComicOfflineState.paused
-                              ? '已暂停（${c.done}/${c.total} 张）'
-                              : '下载中（${c.done}/${c.total} 张）',
+                  _chapterSubtitle(c),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),

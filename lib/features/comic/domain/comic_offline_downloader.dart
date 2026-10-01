@@ -106,16 +106,26 @@ class ComicOfflineDownloader extends ChangeNotifier {
   /// 用户那次点了"用流量"是因为他**知道**自己在 5G 上，下次未必。
   bool _allowOnce = false;
 
-  /// 还有几个任务在等 Wi-Fi（界面用它决定要不要显示"这次用流量"）。
-  bool get waitingForWifi => _jobs.any(
-        (j) =>
-            j.state == ComicOfflineJobState.paused &&
-            j.error.contains('Wi-Fi'),
-      );
+  /// 这一话是不是被"只在 Wi-Fi 下下载"拦下的。
+  bool _wifiHeld(ComicOfflineJob job) =>
+      job.state == ComicOfflineJobState.paused && job.error.contains('Wi-Fi');
+
+  /// 还有任务在等 Wi-Fi（界面用它决定要不要显示"这次用流量"）。
+  bool get waitingForWifi => _jobs.any(_wifiHeld);
 
   /// 「这次也用流量」：本轮放行一次。
+  ///
+  /// 除了开一次性放行，必须**把它们从 paused 重新排回队列** —— 被拦下的任务是 paused，
+  /// 而 [_pump] 只挑 queued，于是用户点了按钮什么都不会发生（2026-10-01 用户报的
+  /// 「点击这次用流量没反应」就是这个：按钮本身没坏，是没人把它们叫回来）。
   void allowNetworkOnce() {
     _allowOnce = true;
+    for (final j in _jobs) {
+      if (_wifiHeld(j)) {
+        j.state = ComicOfflineJobState.queued;
+        j.error = '';
+      }
+    }
     notifyListeners();
     unawaited(_pump());
   }
@@ -245,21 +255,27 @@ class ComicOfflineDownloader extends ChangeNotifier {
   }
 
   /// 继续（暂停/失败的任务重新排队）。
+  ///
+  /// 被"只在 Wi-Fi 下下载"拦下的那一话，点「继续」= 用户**现在就要它接着下**，
+  /// 所以顺手开一次性放行：否则他会看到"点了没反应"（任务排回去又被同一条策略拦下，
+  /// 界面只多了一行字）。2026-10-01 用户报的正是这类观感。
   void resume(String bookUrl, String chapterUrl) {
     final job = jobFor(bookUrl, chapterUrl);
     if (job == null) return;
     if (job.state == ComicOfflineJobState.done) return;
+    if (_wifiHeld(job)) _allowOnce = true;
     job.state = ComicOfflineJobState.queued;
     job.error = '';
     notifyListeners();
     unawaited(_pump());
   }
 
-  /// 继续全部没下完的。
+  /// 继续全部没下完的（同样：被 Wi-Fi 拦下的按"用户要求现在继续"处理）。
   void resumeAll() {
     for (final j in _jobs) {
       if (j.state == ComicOfflineJobState.paused ||
           j.state == ComicOfflineJobState.failed) {
+        if (_wifiHeld(j)) _allowOnce = true;
         j.state = ComicOfflineJobState.queued;
         j.error = '';
       }

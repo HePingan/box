@@ -208,6 +208,40 @@ void main() {
     expect((await store.loadBook(bookUrl))!.chapters.single.state, ComicOfflineState.paused);
   });
 
+  test('「这次用流量」：被仅 Wi-Fi 拦下的任务会重新排起来并下完（不是按了没反应）', () async {
+    final c = chapter('c10', [host.img('m1.jpg'), host.img('m2.jpg')]);
+    // 策略仍然说"只在 Wi-Fi 下"（用户没改设置，只是这一次放行）。
+    final dl = downloader(imagesOf: {'c10': c.images}, wifi: false);
+    await dl.enqueue(bookUrl: bookUrl, chapters: [c]);
+    await _waitFor(
+      () => dl.jobs.single.state == ComicOfflineJobState.paused,
+      what: '被拦下',
+    );
+    expect(dl.waitingForWifi, isTrue);
+    expect(host.totalHits(), 0, reason: '拦下就该一个请求都不发');
+
+    // 点「这次用流量」的瞬间：它们得**从 paused 排回队列**才会被 _pump 挑走。
+    // （用户报过"点击没反应"：按钮没坏，是没人把这些任务叫回来。）
+    dl.allowNetworkOnce();
+    await _waitFor(() => dl.jobs.single.isDone, what: '放行之后真的下完');
+    expect(dl.waitingForWifi, isFalse);
+    expect(host.totalHits(), 2, reason: '两张图（这条用例没给封面）');
+  });
+
+  test('对"在等 Wi-Fi"的那一话点继续：就按"现在接着下"办（不是又拦一次）', () async {
+    final c = chapter('c11', [host.img('n1.jpg')]);
+    final dl = downloader(imagesOf: {'c11': c.images}, wifi: false);
+    await dl.enqueue(bookUrl: bookUrl, chapters: [c]);
+    await _waitFor(
+      () => dl.jobs.single.state == ComicOfflineJobState.paused,
+      what: '被拦下',
+    );
+
+    dl.resume(bookUrl, c.url);
+    await _waitFor(() => dl.jobs.single.isDone, what: '点了继续就真的下完');
+    expect(host.totalHits(), 1);
+  });
+
   test('取消：任务从队列消失，已经下来的文件也删掉', () async {
     final c = chapter('c9', [host.img('d1.jpg')]);
     final dl = downloader(imagesOf: {'c9': c.images});
