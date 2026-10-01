@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../domain/account_models.dart';
 import '../domain/personal_center_models.dart';
 import '../domain/usage_models.dart';
+import 'account_store.dart';
 
 /// 注册结果。服务端注册响应里本来就带 `quota`，过去只取 token/user 白丢了，
 /// 导致刚注册完还要再打一次 /api/image/quota 才知道自己有多少额度。
@@ -182,6 +183,9 @@ class BoxAccountClient {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final structured = _extractStructuredError(decoded);
       final serverMessage = structured ?? (preview.isEmpty ? '请求失败' : preview);
+      // 401 = 会话失效（服务端 30 天 TTL 到期，或被其他设备挤掉）。
+      // 全局记一笔，让「我的」等页面直接提示重新登录（2026-10-01 真机事故）。
+      if (response.statusCode == 401) markGlobalSessionInvalid();
       throw BoxAccountException(
         _friendlyError(
           response.statusCode,

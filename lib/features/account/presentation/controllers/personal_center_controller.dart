@@ -48,6 +48,13 @@ class PersonalCenterController extends ChangeNotifier {
   bool quizLoading = false;
   bool quizLoadingMore = false;
 
+  /// 登录态已失效（任一子模块拿到 401）。
+  ///
+  /// 与 [warnings] 的区别：warnings 是"某模块偶发失败，数据本身还在"，
+  /// 而这个是"会话没了，所有需要登录的模块都拿不到数据"—— 页面据此显示
+  /// 「登录已失效，请重新登录」，而不是把四个模块的失败摊成一句「暂不可用」。
+  bool sessionExpired = false;
+
   static const int _pageSize = 20;
   String? pluginStatus;
   String? quizStatus;
@@ -80,6 +87,7 @@ class PersonalCenterController extends ChangeNotifier {
   Future<void> load({bool force = false}) async {
     loading = true;
     fatalError = null;
+    sessionExpired = false;
     notifyListeners();
     try {
       session = await _accountStore.loadSession();
@@ -337,11 +345,22 @@ class PersonalCenterController extends ChangeNotifier {
   }
 
   /// 执行一个子模块加载，失败只登记降级提示，不抛出。
+  ///
+  /// 401 单独归类：会话失效时四个模块会同时 401，各登记一条 warning 只会得到
+  /// 「额度总览、额度流水、活跃趋势暂不可用」这种把用户引向错误方向的说法。
+  /// 会话失效统一置 [sessionExpired]，由页面给一个可行动的提示 + 一键重新登录。
   Future<void> _guard(String label, Future<void> Function() task) async {
     try {
       await task();
       warnings.remove(label);
-    } catch (_) {
+      // 有一个模块拿到 200 就说明会话是好的（同 token 不可能同时 401 与 200）。
+      sessionExpired = false;
+    } catch (e) {
+      if (e is PersonalCenterException && e.statusCode == 401) {
+        sessionExpired = true;
+        warnings.remove(label);
+        return;
+      }
       warnings[label] = label;
     }
   }

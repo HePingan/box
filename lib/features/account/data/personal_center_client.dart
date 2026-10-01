@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../domain/personal_center_models.dart';
+import 'account_store.dart';
 
 class PersonalCenterClient {
   PersonalCenterClient({http.Client? httpClient})
@@ -98,6 +99,10 @@ class PersonalCenterClient {
       headers: {'Authorization': 'Bearer $token'},
     );
     if (response.statusCode != 200) {
+      // 401 = 会话令牌过期/无效。除了本页降级展示，还要**全局**记一笔：
+      // 让「我的」这类页面直接说「登录已失效，请重新登录」，而不是
+      // 把四五个子模块的失败摊成一屏「暂不可用」（2026-10-01 真机事故）。
+      if (response.statusCode == 401) markGlobalSessionInvalid();
       throw PersonalCenterException(
         '请求失败 HTTP ${response.statusCode}',
         statusCode: response.statusCode,

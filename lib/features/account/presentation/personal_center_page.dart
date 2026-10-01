@@ -105,6 +105,25 @@ class _PersonalCenterViewState extends State<_PersonalCenterView>
           // 所以不再整屏 return，交给 _buildBody 按 Tab 决定。
           return Column(
             children: [
+              // 会话失效优先于普通降级提示：四个模块同时 401 时，「登录已失效」
+              // 才是可行动的说法（2026-10-01 真机事故：会话 30 天 TTL 到期，
+              // 界面却只说「数据暂不可用」，用户只好自己猜）。
+              if (controller.sessionExpired)
+                MaterialBanner(
+                  content: const Text(
+                    '登录已失效，请重新登录（额度、插件、我的题库等需要登录的数据暂不可用）。',
+                  ),
+                  leading: const Icon(Icons.lock_outline),
+                  backgroundColor: Theme.of(
+                    context,
+                  ).colorScheme.errorContainer,
+                  actions: [
+                    TextButton(
+                      onPressed: () => _relogin(controller),
+                      child: const Text('重新登录'),
+                    ),
+                  ],
+                ),
               if (controller.hasWarnings)
                 MaterialBanner(
                   content: Text(controller.warningMessage),
@@ -129,6 +148,16 @@ class _PersonalCenterViewState extends State<_PersonalCenterView>
         },
       ),
     );
+  }
+
+  /// 会话失效时的一键重新登录：跳账号中心，回来后强制重拉。
+  ///
+  /// 为什么不直接清会话让用户重登：会话失效**不等于**用户想退出 ——
+  /// 保留服务器地址与用户信息，登录成功后原样恢复（服务端只认新令牌）。
+  Future<void> _relogin(PersonalCenterController controller) async {
+    await Navigator.of(context).pushNamed(AppRoutes.account);
+    if (!mounted) return;
+    await controller.load(force: true);
   }
 
   Widget _buildBody(PersonalCenterController controller) {

@@ -22,6 +22,29 @@ const _legacySalt = 'box-account-store-v1';
 /// 模块 context：决定本模块用的密钥（与远程存储插件不共用）。
 const _codecContext = 'account';
 
+/// 全局「登录态已失效」广播。
+///
+/// 为什么需要它（2026-10-01 真机事故）：服务端的会话有 30 天 TTL，过期后**所有**
+/// 账号接口都返回 401 —— 但 App 本地仍保留着会话，界面看起来"已登录"，
+/// 于是各页面各说各话（个人中心显示「数据暂不可用」、读屏显示「凭证已失效」），
+/// 没有一个地方告诉用户「你该重新登录了」。
+///
+/// 口径：任何账号接口拿到 401 都置 true；重新登录成功（[BoxAccountStore.saveSession]）
+/// 或主动退出（[BoxAccountStore.clearSession]）清回 false。
+final ValueNotifier<bool> globalSessionInvalidNotifier = ValueNotifier<bool>(false);
+
+/// 标记登录态已失效（幂等；不重复通知）。
+void markGlobalSessionInvalid() {
+  if (globalSessionInvalidNotifier.value) return;
+  globalSessionInvalidNotifier.value = true;
+}
+
+/// 清除登录态失效标记（幂等）。
+void clearGlobalSessionInvalid() {
+  if (!globalSessionInvalidNotifier.value) return;
+  globalSessionInvalidNotifier.value = false;
+}
+
 /// 全局登录状态广播 — AppDrawer 等远端组件可自动响应
 final ValueNotifier<BoxAccountSession?> globalSessionNotifier =
     ValueNotifier<BoxAccountSession?>(null);
@@ -126,6 +149,8 @@ class BoxAccountStore {
       codec.encrypt(jsonEncode(session.user.toJson())),
     );
     globalSessionNotifier.value = session;
+    // 重新登录/续期成功 = 会话恢复，清掉全局「登录已失效」标记。
+    clearGlobalSessionInvalid();
   }
 
   Future<void> clearSession({bool keepServerUrl = true}) async {
@@ -134,6 +159,8 @@ class BoxAccountStore {
     await prefs.remove(_tokenKey);
     await prefs.remove(_userJsonKey);
     globalSessionNotifier.value = null;
+    // 主动退出不是「登录失效」，别把重登提示留在界面上。
+    clearGlobalSessionInvalid();
   }
 
   /// 解密一个值：先按新格式，再退回旧格式（并标记需要迁移）。
