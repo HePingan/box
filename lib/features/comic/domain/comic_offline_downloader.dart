@@ -100,6 +100,26 @@ class ComicOfflineDownloader extends ChangeNotifier {
   /// 现在允不允许下载（仅 Wi-Fi 策略由界面/设置注入）。默认允许（测试与桌面）。
   Future<bool> Function() _networkAllowed;
 
+  /// 「这次也用流量」的一次性放行（用完即失效）。
+  ///
+  /// 为什么是一次性的：做成常开等于把"仅 Wi-Fi"这个设置悄悄关掉 ——
+  /// 用户那次点了"用流量"是因为他**知道**自己在 5G 上，下次未必。
+  bool _allowOnce = false;
+
+  /// 还有几个任务在等 Wi-Fi（界面用它决定要不要显示"这次用流量"）。
+  bool get waitingForWifi => _jobs.any(
+        (j) =>
+            j.state == ComicOfflineJobState.paused &&
+            j.error.contains('Wi-Fi'),
+      );
+
+  /// 「这次也用流量」：本轮放行一次。
+  void allowNetworkOnce() {
+    _allowOnce = true;
+    notifyListeners();
+    unawaited(_pump());
+  }
+
   final List<ComicOfflineJob> _jobs = <ComicOfflineJob>[];
   bool _pumping = false;
   bool _pauseRequested = false;
@@ -287,7 +307,12 @@ class ComicOfflineDownloader extends ChangeNotifier {
     var found = 0;
     for (final book in await store.books()) {
       for (final c in book.chapters) {
-        if (c.state == ComicOfflineState.running) {
+        final live = jobFor(book.bookUrl, c.url);
+        final liveRunning = live != null &&
+            (live.state == ComicOfflineJobState.running ||
+                live.state == ComicOfflineJobState.queued);
+        if (c.state == ComicOfflineState.running && !liveRunning) {
+          // 清单说"下到一半"而队列里没有这个任务 = 上次被杀掉了 → 改成暂停等人点。
           c.state = ComicOfflineState.paused;
           await store.saveBook(book);
           found++;
@@ -322,11 +347,15 @@ class ComicOfflineDownloader extends ChangeNotifier {
     if (_pumping) return;
     _pumping = true;
     try {
+      // 一次放行覆盖**本轮**排着的所有任务（用户点"这次也用流量"时看到的就是这些）。
+      var allowedOnce = _allowOnce;
+      _allowOnce = false;
+
       while (true) {
         final job = _nextQueued;
         if (job == null) break;
 
-        if (!await _networkAllowed()) {
+        if (!allowedOnce && !await _networkAllowed()) {
           job.state = ComicOfflineJobState.paused;
           job.error = '按设置：只在 Wi-Fi 下下载';
           _persist(job);

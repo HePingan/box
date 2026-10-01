@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 
 import '../domain/comic_book.dart';
 import '../domain/comic_image_cache.dart';
+import '../domain/comic_offline_downloader.dart';
 import '../domain/comic_offline_store.dart';
 import '../domain/comic_library_store.dart';
 import '../domain/comic_online_progress.dart';
@@ -28,6 +29,8 @@ import '../domain/comic_source_diagnostics.dart'
     show ComicSourceTarget, describeComicProbeError;
 import '../domain/comic_source_engine.dart' show ComicProbeException;
 import '../domain/sources/seed_comic_source.dart';
+import 'comic_offline_page.dart';
+import 'comic_offline_wiring.dart';
 import 'comic_source_check_page.dart';
 import 'comic_source_webview_target.dart';
 
@@ -84,6 +87,7 @@ class ComicOnlinePage extends StatefulWidget {
     this.targetBuilder,
     this.imageCache,
     this.offlineStore,
+    this.offlineDownloader,
     this.progressStore,
     this.libraryStore,
     this.readerPrefs,
@@ -105,6 +109,9 @@ class ComicOnlinePage extends StatefulWidget {
 
   /// 离线库（**阅读页取图先问它**：命中就一个请求都不发，飞行模式也能读）。
   final ComicOfflineStore? offlineStore;
+
+  /// 离线下载队列（测试注入用）；生产用全 App 共用那份（离开本页也要继续下）。
+  final ComicOfflineDownloader? offlineDownloader;
 
   final ComicOnlineProgressStore? progressStore;
 
@@ -205,6 +212,10 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   late final ComicOfflineStore _offline =
       widget.offlineStore ?? ComicOfflineStore();
 
+  /// 离线下载队列（全 App 共用：离开本页之后还要接着下）。
+  late final ComicOfflineDownloader _downloader =
+      widget.offlineDownloader ?? ComicOfflineDownloader.shared();
+
   /// 这本书在不在书架里（界面按实际状态显示「已在书架」）。
   bool _inShelf = false;
 
@@ -219,6 +230,12 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
 
   /// 书架状态读不出来时的说明（不挡住看书）。
   String? _shelfNote;
+
+  /// "现在读的是离线内容"的说明。
+  ///
+  /// 为什么不复用 [_shelfNote]：那个字段会被 [_refreshShelfFlags] **整体重写**
+  /// （读书架成功就设成 null），离线提示写进去会被当场抹掉 —— 界面看着就像没兜底。
+  String? _offlineNote;
   ComicChapterRef? _chapter;
   List<String> _images = const [];
   int _imageIndex = 0;
@@ -247,12 +264,17 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     // 服务按"当前源 + 当前令牌"组：令牌可能是异步读出来的（设置里），
     // 先按注入的值组一次，读到之后再重建 —— 界面不必为这一步卡住。
     _service = _makeService();
+    _downloader.setLoadImages((chapterUrl) => _service.chapterImages(chapterUrl));
+    // 「仅 Wi-Fi 下载」按设置生效（默认开；读不到网络类型就不拦，见那个文件里的立场）。
+    wireComicOfflineNetworkGuard(_downloader);
     _prefetcher = ComicChapterPrefetcher(
       loadImages: (chapterUrl) => _service.chapterImages(chapterUrl),
       cache: _cache,
     );
     _library = widget.libraryStore ?? ComicLibraryStore();
     _prefs = widget.readerPrefs ?? ComicReaderPrefs();
+    // 预热离线库：一次平台通道往返，之后"本机有没有这一话"都是纯路径计算。
+    unawaited(_offline.warmUp());
     _progress = widget.progressStore ?? ComicOnlineProgressStore();
     _loadPrefs();
     // 分类列表要等 WebView 就绪，放到第一帧之后（失败不挡搜索，只写在界面上一行）。
@@ -313,7 +335,13 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   /// 换一次服务：**先把旧的关掉**（它可能握着 http 连接池），再按当前源 / 令牌建新的。
   void _swapService() {
     final old = _service;
-    setState(() => _service = _makeService());
+    setState(() {
+      _service = _makeService();
+      // 令牌异步读出来之后服务是新的：下载队列取图地址也要跟着换。
+      _downloader.setLoadImages(
+        (chapterUrl) => _service.chapterImages(chapterUrl),
+      );
+    });
     old.close();
   }
 
@@ -449,8 +477,46 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         _pathNote = _describePath();
       });
     }, '正在打开这本书…（最多等 ${_service.openTimeout.inSeconds} 秒）');
+    // 站点打不开（断网 / 被掐断）**或目录是空的**：这本书下过的话，就从离线清单
+    // 把书名/封面/目录摆出来。"下过了却连目录都进不去"是最不像话的一种失败。
+    //
+    // 两种形态都要接：打不通是抛错（_book 还是 null），而站点能连上但取不到目录
+    // 时是**成功返回一本空目录的书**（以前这里只接抛错，于是断网时那种情况漏了）。
+    if (_book == null || _book!.chapters.isEmpty) {
+      await _showOfflineFallback(url);
+    }
     // 书架/进度是**装饰**：放在取数之外读，读的时候也不让页面按钮变灰。
     await _refreshShelfFlags();
+  }
+
+  /// 断网兜底：用离线清单把这本书摆出来，**只列已经下好的话**。
+  Future<void> _showOfflineFallback(String url) async {
+    // 没预热就别在这里等平台调用（那种环境里会一直挂着，页面就卡在报错态）。
+    if (_offline.readyRoot == null) return;
+    ComicOfflineBook? saved;
+    try {
+      saved = await _offline.loadBook(url);
+    } catch (_) {
+      saved = null;
+    }
+    final s0 = saved;
+    if (s0 == null || s0.doneCount == 0) return;
+    if (!mounted) return;
+    setState(() {
+      _book = ComicBookDetail(
+        bookUrl: url,
+        name: s0.title.isEmpty ? '（离线）已下载的漫画' : s0.title,
+        cover: s0.cover,
+        chapters: [
+          for (final c in s0.chapters.where((c) => c.isDone))
+            ComicChapterRef(title: c.title, url: c.url),
+        ],
+      );
+      _mode = _Mode.book;
+      _error = null;
+      _pathNote = '离线';
+      _offlineNote = '离线模式：站点没连上，这里列的是已下载的 ${s0.doneCount} 话';
+    });
   }
 
   /// 读翻页偏好（读不出来就用默认的竖向连续）。
@@ -516,6 +582,106 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     await _refreshShelfFlags();
   }
 
+  /// 「下载」：选下载范围。
+  ///
+  /// 为什么要有"未读之后 N 话"：追更的人真正想要的是"把我还没看的先下下来"，
+  /// 而不是整本 —— 一本 200 话的漫画在 5G 上不是小数目（几个 GB）。
+  Future<void> _pickDownloadScope(ComicBookDetail book) async {
+    final chapters = book.chapters;
+    if (chapters.isEmpty) return;
+
+    // "未读之后" = 从上次读到的那一话往后；没读到过就从列表开头。
+    final resumeUrl = _resume?.chapterUrl;
+    var start = 0;
+    if (resumeUrl != null) {
+      final i = chapters.indexWhere((c) => c.url == resumeUrl);
+      if (i >= 0) start = i;
+    }
+    final rest = chapters.skip(start).toList();
+    final options = <String, List<ComicChapterRef>>{
+      '未读之后 5 话': rest.take(5).toList(),
+      '未读之后 10 话': rest.take(10).toList(),
+      '余下全部（${rest.length} 话）': rest,
+      '整本（${chapters.length} 话）': chapters,
+    };
+    final fromLabel = start > 0
+        ? '从「${chapters[start].title}」往后'
+        : '从列表第一话开始';
+
+    final picked = await showModalBottomSheet<List<ComicChapterRef>>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
+              child: Text('下载到本机（下过之后不联网也能读）'),
+            ),
+            for (final e in options.entries)
+              if (e.value.isNotEmpty)
+                ListTile(
+                  dense: true,
+                  title: Text(e.key),
+                  subtitle: e.key.startsWith('未读') ? Text(fromLabel) : null,
+                  onTap: () => Navigator.of(ctx).pop(e.value),
+                ),
+            const Divider(height: 1),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.folder_open_outlined, size: 20),
+              title: const Text('离线下载管理'),
+              onTap: () => Navigator.of(ctx).pop(const <ComicChapterRef>[]),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || picked == null) return;
+
+    if (picked.isEmpty) {
+      _openOfflineManager();
+      return;
+    }
+    await _downloader.enqueue(
+      bookUrl: book.bookUrl,
+      chapters: [
+        for (final c in picked) ComicOfflineChapter(url: c.url, title: c.title),
+      ],
+      bookTitle: book.name,
+      cover: book.cover ?? '',
+    );
+    if (!mounted) return;
+    // 被"仅 Wi-Fi"拦下时，顺手给一个一次性的放行按钮 —— 否则用户只会看到"怎么不动"。
+    final held = _downloader.waitingForWifi;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          held
+              ? '已加入队列：${picked.length} 话 —— 按设置只在 Wi-Fi 下下载'
+              : '已加入下载队列：${picked.length} 话（可在「离线下载管理」里看进度）',
+        ),
+        action: held
+            ? SnackBarAction(
+                label: '这次也用流量',
+                onPressed: () => _downloader.allowNetworkOnce(),
+              )
+            : null,
+      ),
+    );
+  }
+
+  void _openOfflineManager() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ComicOfflinePage(
+          store: _offline,
+          downloader: _downloader,
+        ),
+      ),
+    );
+  }
+
   Future<void> _openChapter(ComicChapterRef chapter, {int atIndex = 0}) async {
     // 离线库预热一次（把根目录解析出来）：之后每张图都能**同步**问"本机有没有"。
     // **不 await**：预热是加速用的，渲染与取图都不该等它（真读不到时走下面的兜底）。
@@ -550,8 +716,8 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     }
 
     await _run(() async {
-      final images = await _service.chapterImages(
-        chapter.url,
+      final images = await _imagesFor(
+        chapter,
         // 取到一批就先显示出来：一整话实测 209 张、要 21 次往返，等全取完再显示
         // 用户看到的就是"一直转圈"（2026-10-01 报的）。
         onPartial: (partial) {
@@ -586,6 +752,39 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       }
       _jumpTo(_imageIndex);
     }, '正在取「${chapter.title}」的图…（整话要分批取，取到一批就先显示）');
+  }
+
+  /// 取一话的图片地址：**先要点站**；点不上就退回离线清单里那份（下过的话照样读）。
+  Future<List<String>> _imagesFor(
+    ComicChapterRef chapter, {
+    void Function(List<String> partial)? onPartial,
+  }) async {
+    try {
+      return await _service.chapterImages(chapter.url, onPartial: onPartial);
+    } catch (e) {
+      final offline = await _offlineImages(chapter);
+      if (offline == null || offline.isEmpty) rethrow;
+      if (mounted) {
+        setState(() => _offlineNote = '离线模式：站点没连上，读的是本机下载的这一话');
+      }
+      return offline;
+    }
+  }
+
+  /// 离线清单里这一话的图片地址（没下过就是 null）。
+  Future<List<String>?> _offlineImages(ComicChapterRef chapter) async {
+    final book = _book;
+    if (book == null) return null;
+    if (_offline.readyRoot == null) return null;
+    try {
+      final saved = await _offline.loadBook(book.bookUrl);
+      for (final c in saved?.chapters ?? const <ComicOfflineChapter>[]) {
+        if (c.url == chapter.url && c.images.isNotEmpty) return c.images;
+      }
+    } catch (_) {
+      // 读离线清单失败就当没下过（不能因此把联网那条路也堵死）。
+    }
+    return null;
   }
 
   /// 进度随手记；失败不影响阅读（不弹错、不中断，下次再存）。
@@ -1026,6 +1225,16 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
                           onPressed: _busy || _inShelf ? null : _addToShelf,
                           child: Text(_inShelf ? '已在书架' : '加入书架'),
                         ),
+                        OutlinedButton.icon(
+                          onPressed: _busy
+                              ? null
+                              : () => _pickDownloadScope(book),
+                          icon: const Icon(
+                            Icons.download_for_offline_outlined,
+                            size: 18,
+                          ),
+                          label: const Text('下载'),
+                        ),
                       ],
                     ),
                   ],
@@ -1040,6 +1249,23 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             child: Text(
               _shelfNote!,
               style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ),
+        if (_offlineNote != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.cloud_off_outlined, size: 14),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _offlineNote!,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
             ),
           ),
         if (book.intro != null && book.intro!.isNotEmpty)
@@ -1082,6 +1308,14 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
                     c.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: ChapterOfflineAction(
+                    downloader: _downloader,
+                    store: _offline,
+                    bookUrl: book.bookUrl,
+                    bookTitle: book.name,
+                    cover: book.cover ?? '',
+                    chapter: c,
                   ),
                   onTap: _busy ? null : () => _openChapter(c),
                 );
@@ -1299,6 +1533,206 @@ class _Cover extends StatelessWidget {
         offlineBookUrl: offlineBookUrl,
         // 封面归"这本书"而不是某一话（离线目录里单独一层）。
         offlineCover: true,
+      ),
+    );
+  }
+}
+
+/// 目录里每一话右边的离线控件：下载这一话 / 看进度 / 暂停 / 继续 / 删掉。
+///
+/// 状态取两个来源：**队列里正在跑的那份**（活的）与**清单里记的那份**（持久）——
+/// 队列里没有就看清单，于是重启 App 之后"已下载"照样显示（不然用户会以为白下了）。
+class ChapterOfflineAction extends StatefulWidget {
+  const ChapterOfflineAction({
+    super.key,
+    required this.downloader,
+    required this.store,
+    required this.bookUrl,
+    required this.chapter,
+    this.bookTitle = '',
+    this.cover = '',
+  });
+
+  final ComicOfflineDownloader downloader;
+  final ComicOfflineStore store;
+  final String bookUrl;
+  final ComicChapterRef chapter;
+  final String bookTitle;
+  final String cover;
+
+  @override
+  State<ChapterOfflineAction> createState() => _ChapterOfflineActionState();
+}
+
+class _ChapterOfflineActionState extends State<ChapterOfflineAction> {
+  ComicOfflineChapter? _entry;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.downloader.addListener(_onChanged);
+    unawaited(_reload());
+  }
+
+  @override
+  void dispose() {
+    widget.downloader.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _reload() async {
+    final book = await widget.store.loadBook(widget.bookUrl);
+    ComicOfflineChapter? entry;
+    for (final c in book?.chapters ?? const <ComicOfflineChapter>[]) {
+      if (c.url == widget.chapter.url) entry = c;
+    }
+    if (!mounted) return;
+    setState(() {
+      _entry = entry;
+      _loaded = true;
+    });
+  }
+
+  bool get _downloaded => _entry?.isDone ?? false;
+
+  Future<void> _tap() async {
+    final job = widget.downloader.jobFor(widget.bookUrl, widget.chapter.url);
+    if (job != null || _downloaded) {
+      await _sheet();
+      return;
+    }
+    await widget.downloader.enqueue(
+      bookUrl: widget.bookUrl,
+      chapters: [
+        ComicOfflineChapter(url: widget.chapter.url, title: widget.chapter.title),
+      ],
+      bookTitle: widget.bookTitle,
+      cover: widget.cover,
+    );
+    await _reload();
+  }
+
+  Future<void> _sheet() async {
+    final job = widget.downloader.jobFor(widget.bookUrl, widget.chapter.url);
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+              child: Text(
+                widget.chapter.title.isEmpty ? '这一话' : widget.chapter.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (job != null &&
+                (job.state == ComicOfflineJobState.running ||
+                    job.state == ComicOfflineJobState.queued))
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.pause_rounded, size: 20),
+                title: const Text('暂停'),
+                onTap: () {
+                  widget.downloader.pause(widget.bookUrl, widget.chapter.url);
+                  Navigator.of(ctx).pop();
+                },
+              ),
+            if (job != null &&
+                (job.state == ComicOfflineJobState.paused ||
+                    job.state == ComicOfflineJobState.failed))
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.play_arrow_rounded, size: 20),
+                title: const Text('继续下载'),
+                onTap: () {
+                  widget.downloader.resume(widget.bookUrl, widget.chapter.url);
+                  Navigator.of(ctx).pop();
+                },
+              ),
+            if (_downloaded || job != null)
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.delete_outline, size: 20),
+                title: Text(_downloaded ? '删除这一话的离线内容' : '取消下载并删掉已下的'),
+                onTap: () async {
+                  Navigator.of(ctx).pop();
+                  await widget.downloader.cancel(
+                    widget.bookUrl,
+                    widget.chapter.url,
+                  );
+                  await _reload();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+    await _reload();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final job = widget.downloader.jobFor(widget.bookUrl, widget.chapter.url);
+    final theme = Theme.of(context);
+
+    Widget icon;
+    String tip;
+    switch (job?.state) {
+      case ComicOfflineJobState.running:
+        final j = job;
+        icon = SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(
+            value: (j != null && j.total > 0) ? j.progress : null,
+            strokeWidth: 2,
+          ),
+        );
+        tip = j == null ? '正在下载' : '正在下载 ${j.done}/${j.total} 张';
+      case ComicOfflineJobState.queued:
+        icon = const Icon(Icons.schedule_rounded, size: 20);
+        tip = '排队中';
+      case ComicOfflineJobState.paused:
+        icon = const Icon(Icons.pause_circle_outline, size: 20);
+        tip = '已暂停：${job?.error ?? ''}';
+      case ComicOfflineJobState.failed:
+        icon = Icon(Icons.error_outline, size: 20, color: theme.colorScheme.error);
+        tip = '下载失败：${job?.error ?? ''}';
+      case ComicOfflineJobState.done:
+        icon = Icon(Icons.check_circle, size: 20, color: theme.colorScheme.primary);
+        tip = '已下载到本机';
+      case null:
+        if (!_loaded) {
+          icon = const Icon(Icons.download_for_offline_outlined, size: 20);
+          tip = '下载这一话';
+        } else if (_downloaded) {
+          icon = Icon(
+            Icons.check_circle,
+            size: 20,
+            color: theme.colorScheme.primary,
+          );
+          tip = '已下载到本机';
+        } else {
+          icon = const Icon(Icons.download_for_offline_outlined, size: 20);
+          tip = '下载这一话';
+        }
+    }
+
+    return Tooltip(
+      message: tip,
+      child: InkWell(
+        onTap: _tap,
+        onLongPress: _sheet,
+        borderRadius: BorderRadius.circular(20),
+        child: Padding(padding: const EdgeInsets.all(8), child: icon),
       ),
     );
   }

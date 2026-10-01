@@ -6,6 +6,9 @@ import '../../../design_system/app_tokens.dart';
 import '../../account/data/personal_center_cache_service.dart';
 import '../../backup/local_backup_service.dart';
 import '../../comic/domain/comic_image_cache.dart';
+import '../../comic/domain/comic_offline_prefs.dart';
+import '../../comic/domain/comic_offline_store.dart';
+import '../../comic/presentation/comic_offline_page.dart';
 
 /// 数据设置：备份与恢复、清理缓存。
 ///
@@ -17,7 +20,19 @@ import '../../comic/domain/comic_image_cache.dart';
 ///  2. 恢复成功后提示重启。内存缓存虽已失效，但已建好的页面（列表、阅读器）
 ///     不会自己重建，用户看到的可能还是旧画面，会以为恢复失败又导一次。
 class DataSettingsPage extends StatefulWidget {
-  const DataSettingsPage({super.key, this.cacheSizeProbe, this.cacheService});
+  const DataSettingsPage({
+    super.key,
+    this.cacheSizeProbe,
+    this.cacheService,
+    this.offlineStore,
+    this.offlinePrefs,
+  });
+
+  /// 单测注入：离线库（不注入就走真实目录）。
+  final ComicOfflineStore? offlineStore;
+
+  /// 单测注入：离线下载偏好（仅 Wi-Fi）。
+  final ComicOfflinePrefs? offlinePrefs;
 
   /// 单测注入：不注入就量真实的漫画图片缓存占用。
   ///
@@ -43,10 +58,55 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
   /// 以前这一项清理完全没覆盖到它。
   int? _comicCacheBytes;
 
+  late final ComicOfflineStore _offline =
+      widget.offlineStore ?? ComicOfflineStore();
+  late final ComicOfflinePrefs _offlinePrefs =
+      widget.offlinePrefs ?? ComicOfflinePrefs();
+
+  /// 离线内容占用（null = 还没量出来；量不到就不显示数字）。
+  int? _offlineBytes;
+  int _offlineBooks = 0;
+
+  /// 「仅 Wi-Fi 下载」：默认 true（省流量那档）。
+  bool _wifiOnly = true;
+
   @override
   void initState() {
     super.initState();
     _loadComicCacheSize();
+    _loadOfflineUsage();
+  }
+
+  Future<void> _loadOfflineUsage() async {
+    int? bytes;
+    var books = 0;
+    // 离线库得先预热（一次平台通道往返）。没预热就**不量**：硬量会在拿不到
+    // 平台实现的环境里一直挂着，而这一行只是"顺便显示个数字"。
+    await _offline.warmUp();
+    if (_offline.readyRoot == null) {
+      // 量不出来就不显示数字（显示一个假数字比不显示更糟）。
+      if (!mounted) return;
+      setState(() => _offlineBytes = null);
+      return;
+    }
+    try {
+      bytes = await _offline.totalBytes();
+      books = (await _offline.books()).where((b) => b.doneCount > 0).length;
+    } catch (_) {
+      // 量不到就不显示数字（显示假数字比不显示更糟）。
+    }
+    bool wifiOnly;
+    try {
+      wifiOnly = await _offlinePrefs.wifiOnly();
+    } catch (_) {
+      wifiOnly = true;
+    }
+    if (!mounted) return;
+    setState(() {
+      _offlineBytes = bytes;
+      _offlineBooks = books;
+      _wifiOnly = wifiOnly;
+    });
   }
 
   Future<void> _loadComicCacheSize() async {
@@ -94,6 +154,53 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
                   title: '恢复本地数据',
                   subtitle: '重装后导入此前导出的备份',
                   onTap: () => _restoreLocalData(context),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            decoration: BoxDecoration(
+              color: AppTokens.surface,
+              borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+              border: Border.all(color: AppTokens.divider),
+            ),
+            child: Column(
+              children: [
+                _DataTile(
+                  icon: Icons.download_for_offline_outlined,
+                  title: '离线下载',
+                  subtitle: _offlineBytes == null
+                      ? '管理下载到本机的漫画（断网也能读）'
+                      : _offlineBooks == 0
+                      ? '还没下载过漫画；在漫画详情页点「下载」'
+                      : '$_offlineBooks 本书 · 占用 ${_fmtBytes(_offlineBytes!)}',
+                  onTap: () async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) =>
+                            ComicOfflinePage(store: _offline, downloader: null),
+                      ),
+                    );
+                    // 回来重新量一次（用户可能刚在里面删了东西）。
+                    await _loadOfflineUsage();
+                  },
+                ),
+                const Divider(height: 1, color: AppTokens.divider),
+                // 外面那层 Container 有底色：SwitchListTile 必须有自己的 Material，
+                // 否则 Flutter 会断言"背景与墨水效果可能看不见"（测试里直接判失败）。
+                Material(
+                  color: Colors.transparent,
+                  child: SwitchListTile(
+                    dense: true,
+                    value: _wifiOnly,
+                    onChanged: (v) async {
+                      setState(() => _wifiOnly = v);
+                      await _offlinePrefs.setWifiOnly(v);
+                    },
+                    title: const Text('只在 Wi-Fi 下下载'),
+                    subtitle: const Text('默认开：整本漫画可能有几个 GB'),
+                  ),
                 ),
               ],
             ),
@@ -153,13 +260,14 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
 
     setState(() => _clearing = true);
     try {
-      final freed = await (widget.cacheService ??
-              PersonalCenterCacheService())
+      final freed = await (widget.cacheService ?? PersonalCenterCacheService())
           .clearRegenerableCaches();
       // 报出释放了多少：用户按这一下就是想腾空间，一个「已清理」看不出到底有没有用。
       // freed 只统计漫画图片那部分 —— 另外两类（图片缓存管理器、阅读器内存）给不出
       // 「释放了多少」，不编数字。
-      final detail = freed > 0 ? '（漫画图片释放 ${_fmtBytes(freed)}）' : '（漫画图片本来没有占用）';
+      final detail = freed > 0
+          ? '（漫画图片释放 ${_fmtBytes(freed)}）'
+          : '（漫画图片本来没有占用）';
       if (mounted) _showSnack(context, '缓存已清理$detail');
       await _loadComicCacheSize();
     } catch (error) {
@@ -195,9 +303,7 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
       final file = await LocalBackupService.writeBackupToTemporaryFile();
       String summaryText;
       try {
-        final summary = LocalBackupService.summarize(
-          await file.readAsString(),
-        );
+        final summary = LocalBackupService.summarize(await file.readAsString());
         summaryText = summary.describe();
       } catch (_) {
         summaryText = '（自检未通过，请确认备份文件是否完整）';
