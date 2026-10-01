@@ -22,6 +22,7 @@
   box_channel_cred.py issue --label phone-hpa --host hpa888          # 可写（文件 + 终端）
   box_channel_cred.py issue --label phone-hpa --host hpa888 --read-only
   box_channel_cred.py list
+  box_channel_cred.py check       # 两份 htpasswd 与登记表还对得上吗（巡检每 10 分钟跑一次）
   box_channel_cred.py revoke --label phone-hpa --host hpa888
   box_channel_cred.py --selftest
 """
@@ -180,7 +181,6 @@ def cmd_issue(a) -> int:
 
     all_lines = [ln for ln in read_lines(cfg["all"]) if not ln.startswith(user + ":")]
     all_lines.append(line)
-    write_lines(cfg["all"], all_lines)
 
     rw_lines = read_lines(cfg["rw"])
     if not rw_lines:
@@ -192,13 +192,22 @@ def cmd_issue(a) -> int:
             rw_lines.append(line)
     if not any(ln.startswith(LEGACY_USER + ":") for ln in rw_lines):
         rw_lines = [ln for ln in all_lines if ln.startswith(LEGACY_USER + ":")] + rw_lines
-    write_lines(cfg["rw"], rw_lines)
 
     state[f"{host}/{label}"] = {
         "label": label, "host": host, "user": user,
         "readOnly": bool(a.read_only), "createdAt": now_iso(),
     }
     save_state(state)
+
+    bad = write_both_guarded(host, cfg, state, all_lines, rw_lines, extra_required={user})
+    if bad:
+        # 登记表也撤回：不留"登记了但文件里没有"的假象
+        state.pop(f"{host}/{label}", None)
+        save_state(state)
+        say("✗ 写完之后不变量自检不过，两份 htpasswd 已整体回滚（没留下半截状态）：")
+        for b in bad:
+            say("   • " + b)
+        return 4
 
     if host == "175":
         sync_175(cfg)
@@ -253,10 +262,16 @@ def cmd_retire_legacy(a) -> int:
         if not a.yes:
             say(f"  {host}：要删掉旧口令那一行 —— 加 --yes 确认（删了之后用它登录的设备立刻 401）")
             return 2
-        write_lines(cfg["all"], [ln for ln in lines if not ln.startswith(LEGACY_USER + ":")])
+        new_all = [ln for ln in lines if not ln.startswith(LEGACY_USER + ":")]
         rw = read_lines(cfg["rw"])
-        if any(ln.startswith(LEGACY_USER + ":") for ln in rw):
-            write_lines(cfg["rw"], [ln for ln in rw if not ln.startswith(LEGACY_USER + ":")])
+        new_rw = ([ln for ln in rw if not ln.startswith(LEGACY_USER + ":")]
+                  if any(ln.startswith(LEGACY_USER + ":") for ln in rw) else rw)
+        bad = write_both_guarded(host, cfg, load_state(), new_all, new_rw)
+        if bad:
+            say(f"  ✗ {host}：退休旧口令后自检不过，已整体回滚（什么都没删）：")
+            for b in bad:
+                say("     • " + b)
+            return 4
         if host == "175":
             sync_175(cfg)
         restart_channel(cfg)
@@ -273,15 +288,127 @@ def cmd_revoke(a) -> int:
         say(f"{a.host} 上没有 label={a.label} 的凭据")
         return 2
     user = rec["user"]
-    for f in (cfg["all"], cfg["rw"]):
-        lines = [ln for ln in read_lines(f) if not ln.startswith(user + ":")]
-        write_lines(f, lines)
+    new_all = [ln for ln in read_lines(cfg["all"]) if not ln.startswith(user + ":")]
+    new_rw = [ln for ln in read_lines(cfg["rw"]) if not ln.startswith(user + ":")]
     state.pop(key, None)
     save_state(state)
+    bad = write_both_guarded(a.host, cfg, state, new_all, new_rw)
+    if bad:
+        say("✗ 撤销后自检不过，两份 htpasswd 已整体回滚（那一行还在）：")
+        for b in bad:
+            say("   • " + b)
+        return 4
     if a.host == "175":
         sync_175(cfg)
     restart_channel(cfg)
     say(f"✓ 已撤销 {a.host} 上的 {user}（那一行已删，rclone 已重启、nginx 已 reload）—— 旧凭据立刻失效")
+    return 0
+
+
+def rows_of(text: str) -> list[str]:
+    """文本 -> 有效行（丢空行）。
+
+    为什么单拎出来：远端那份是 `cat A; echo ---; cat B` 取回来的，分隔符后面自带一个
+    换行，直接 splitlines() 会多出一个空 key，把"一致"误报成"不一致"（真踩过）。
+    """
+    return [ln for ln in text.splitlines() if ln.strip()]
+
+
+def as_map(lines: list[str]) -> dict[str, str]:
+    """行 -> {用户名: 哈希}。比较两份文件时只看"谁在、哈希是什么"，不看行序。"""
+    out: dict[str, str] = {}
+    for ln in lines:
+        u, _, h = ln.partition(":")
+        out[u] = h
+    return out
+
+
+def invariants(host: str, state: dict, all_lines: list[str], rw_lines: list[str],
+               extra_required: set[str] | None = None) -> list[str]:
+    """两份 htpasswd 与登记表之间**该有的关系**。返回问题清单（空 = 一致）。
+
+    为什么单拎出来判：2026-09-30 的事故 —— 有人把 all 整体覆盖成了 rw 的内容，
+    只读凭据那一行（ro-probe-*）静默消失。巡检只能从"只读凭据 401"倒推，还顺带
+    误报"密钥路径收口被放开了"。文件之间的关系是可判定的，那就该判，别靠现象猜。
+    """
+    all_map, rw_map = as_map(all_lines), as_map(rw_lines)
+    bad: list[str] = []
+    for u, h in rw_map.items():
+        if u not in all_map:
+            bad.append(f"{host}: rw 里的 {u} 不在 all 里（写方法能用、读方法读不了）")
+        elif all_map[u] != h:
+            bad.append(f"{host}: {u} 在 all 与 rw 里的哈希不一致（点了同一个名字的两份口令）")
+    required = {v["user"] for v in state.values() if v.get("host") == host}
+    required |= set(extra_required or ())
+    for u in sorted(required):
+        if u not in all_map:
+            bad.append(f"{host}: 已登记的凭据 {u} 不在 all 里 —— 它现在一律 401")
+    for v in state.values():
+        if v.get("host") == host and v.get("readOnly") and v["user"] in rw_map:
+            bad.append(f"{host}: 只读凭据 {v['user']} 出现在 rw 里（写方法那层会认它）")
+    # 幽灵行：只看"全表都没登记过的 ro- 用户"——某个 ro- 用户登记在另一台上不算幽灵
+    # （自检里两台指向同一份临时文件，按 host 严格判会误报）
+    registered = {v["user"] for v in state.values()}
+    for u in all_map:
+        if u.startswith("ro-") and u not in registered:
+            bad.append(f"{host}: all 里有未登记的只读用户 {u}（幽灵行：查不出是谁、也没法用 revoke 收）")
+    return bad
+
+
+def write_both_guarded(host: str, cfg: dict, state: dict, new_all: list[str],
+                       new_rw: list[str], extra_required: set[str] | None = None) -> list[str]:
+    """写两份 htpasswd，写完立刻按不变量复核；不过就整体回滚。
+
+    返回问题清单（空 = 写好了）。回滚用的是写之前的快照 —— 也就是说，这个工具
+    自己写坏文件这件事，从今天起不可能发生（要么写好，要么回到原样）。
+    """
+    before = {k: read_lines(cfg[k]) for k in ("all", "rw")}
+    write_lines(cfg["all"], new_all)
+    write_lines(cfg["rw"], new_rw)
+    bad = invariants(host, state, read_lines(cfg["all"]), read_lines(cfg["rw"]),
+                     extra_required)
+    if bad:
+        for k in ("all", "rw"):
+            write_lines(cfg[k], before[k])
+    return bad
+
+
+def cmd_check(_a=None) -> int:
+    """核对每台机器两份 htpasswd 与登记表的关系。只读，不改任何东西。
+
+    在边缘机上跑（巡检每 10 分钟通过 ssh 调一次）。问题行以 `✗ ` 开头 —— 巡检
+    按这个前缀取原因，所以别改这个前缀。
+    """
+    state = load_state()
+    bad: list[str] = []
+    for host in ("hpa888", "175"):
+        cfg = FILES[host]
+        if not cfg["all"].exists():
+            bad.append(f"{host}: 读不到 {cfg['all']} —— 你不在边缘机上跑"
+                       f"（状态未知，**不是**'已退休'）")
+            continue
+        bad += invariants(host, state, read_lines(cfg["all"]), read_lines(cfg["rw"]))
+        if host == "175" and cfg.get("remote"):
+            # 175 的 rclone 读的是它自己那份；两份不一致 = 两层认证判断不同
+            rc, out = sh(["ssh", "-o", "BatchMode=yes", "-i", SSH_KEY_175, HOST_175,
+                          f"cat {cfg['remote']} 2>/dev/null; echo ---; "
+                          f"cat {cfg['remote_rw']} 2>/dev/null"])
+            if rc != 0:
+                bad.append(f"{host}: 读不到 175 本地那份（{cfg['remote']}）—— 那层状态未知")
+            else:
+                r_all, _, r_rw = out.partition("---")
+                if as_map(rows_of(r_all)) != as_map(read_lines(cfg["all"])):
+                    bad.append(f"{host}: 175 本地那份与边缘机不一致（rclone 与 nginx 会判断不同）")
+                if as_map(rows_of(r_rw)) != as_map(read_lines(cfg["rw"])):
+                    bad.append(f"{host}: 175 本地的写档文件与边缘机不一致")
+    if bad:
+        for b in bad:
+            say(f"✗ {b}")
+        say(f"凭据清单不过：{len(bad)} 项（上面每行 ✗ 是一项）")
+        return 1
+    users = sum(len(read_lines(FILES[h]["all"])) for h in ("hpa888", "175"))
+    say(f"✅ 凭据清单一致：rw ⊆ all、登记表里的凭据都在 all 里、只读凭据没进 rw"
+        f"（两台共 {users} 行）")
     return 0
 
 
@@ -296,6 +423,11 @@ def selftest() -> int:
         else:
             bad += 1
             say(f"  ❌ {desc} {extra}")
+
+    say("== 解析 ==")
+    check("分隔符后面那个空行不算一行（否则会把一致误报成不一致）",
+          as_map(rows_of("\nphone-x:$2b$12$h")) == {"phone-x": "$2b$12$h"},
+          str(as_map(rows_of("\nphone-x:$2b$12$h"))))
 
     say("== 哈希 ==")
     h = hash_secret("s3cret-value")
@@ -388,6 +520,31 @@ def selftest() -> int:
 
             left = [v["label"] for v in load_state().values()]
             check("状态文件里只剩没被撤销的那条", left == ["phone-ro"], str(left))
+
+            # 事故回归（2026-09-30）：all 被整体覆盖成 rw 的内容，只读凭据静默消失。
+            # check 要当场点出来，而不是让人从"巡检查到 401"倒推。
+            keep_all = read_lines(cfg["all"])
+            write_lines(cfg["all"], read_lines(cfg["rw"]))
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc_lost = cmd_check(None)
+            out = buf.getvalue()
+            check("all 被 rw 覆盖后 check 当场报不过", rc_lost == 1, f"rc={rc_lost}")
+            check("点名的正是消失的那一条", "ro-phone-ro" in out, out.strip()[:70])
+            check("问题行以 ✗ 开头（巡检按此前缀取原因）",
+                  any(ln.startswith("✗ ") for ln in out.splitlines()))
+            write_lines(cfg["all"], keep_all)
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_back = cmd_check(None)
+            check("还原之后 check 通过", rc_back == 0, f"rc={rc_back}")
+            # 幽灵行：all 里冒出没登记的 ro- 用户（撤销时会漏掉它）
+            write_lines(cfg["all"], keep_all + ["ro-ghost:$2b$12$ghost"])
+            buf2 = io.StringIO()
+            with contextlib.redirect_stdout(buf2):
+                rc_ghost = cmd_check(None)
+            check("未登记的 ro- 行会被点出来", rc_ghost == 1 and "幽灵行" in buf2.getvalue(),
+                  buf2.getvalue().strip()[:70])
+            write_lines(cfg["all"], keep_all)
         finally:
             FILES = saved_files
             globals()["STATE"] = saved_state
@@ -411,6 +568,7 @@ def main(argv: list[str]) -> int:
     p4 = sub.add_parser("retire-legacy", help="删掉旧通道口令那一行（不可逆）")
     p4.add_argument("--host", choices=["hpa888", "175"], help="不给就两台都做")
     p4.add_argument("--yes", action="store_true", help="确认：删了之后用旧口令的设备立刻 401")
+    sub.add_parser("check", help="核对两份 htpasswd 与登记表是否一致（只读；巡检用它）")
     a = ap.parse_args(argv)
 
     if a.selftest:
@@ -423,6 +581,8 @@ def main(argv: list[str]) -> int:
         return cmd_revoke(a)
     if a.cmd == "retire-legacy":
         return cmd_retire_legacy(a)
+    if a.cmd == "check":
+        return cmd_check(a)
     ap.print_help()
     return 2
 

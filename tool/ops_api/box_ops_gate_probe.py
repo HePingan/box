@@ -9,7 +9,8 @@ rclone 那层（--htpasswd）在 systemd 单元里，面板碰不到，但它自
 所以每 10 分钟查两件事：
   1. **活的**（真的打公网入口）：没凭据必须 401；只读凭据能读、不能写、不能进终端；
      密钥类路径与 /etc/shadow 仍然 404（C4）。
-  2. **配置**（ssh 到边缘机看文件）：vhost 里那几行还在不在、两台 rclone 的 --htpasswd 还在不在。
+  2. **配置**（ssh 到边缘机看文件）：vhost 里那几行还在不在、两台 rclone 的 --htpasswd 还在不在、
+     凭据清单对不对（rw ⊆ all、登记表里的凭据都还在 all 里 —— `box_channel_cred.py check`）。
 
 只在"状态变化"时发消息（正常时一声不出）；恢复时补一条，免得一直以为坏着。
 
@@ -103,7 +104,8 @@ def send_feishu(title: str, body: str, dry: bool = False) -> bool:
     if dry:
         print(f"  [dry-run 会发] {text}")
         return True
-    for cmd in (["/root/.local/bin/hermes", "send", "-t", "feishu", text],
+    for cmd in (["/usr/local/bin/hermes", "send", "-t", "feishu", text],
+                ["/usr/bin/hermes", "send", "-t", "feishu", text],
                 ["hermes", "send", "-t", "feishu", text]):
         try:
             if subprocess.run(cmd, capture_output=True, timeout=60).returncode == 0:
@@ -147,6 +149,23 @@ def probe_config() -> list[str]:
             fails.append(f"{unit} 的 --htpasswd 没了（rclone 那层会退回单口令）")
         if out.count("--exclude") < 17:
             fails.append(f"{unit} 的 --exclude 少于 17 条（C4 的密钥路径收口被改动了）")
+
+    # 凭据清单（工具自己的 check，在边缘机上跑）：rw ⊆ all、登记表里的凭据都还在 all 里。
+    # 2026-09-30 的事故：all 被整体覆盖成 rw 的内容，只读凭据那一行静默消失 —— 在线侧
+    # 只看得到"只读凭据 401"，很容易被引到"是不是 C4 收口被放开了"上面去。
+    try:
+        p = subprocess.run(SSH + ["python3 /usr/local/sbin/box_channel_cred.py check"],
+                           capture_output=True, text=True, timeout=90)
+        out, rc = (p.stdout + p.stderr).strip(), p.returncode
+    except Exception as e:  # noqa: BLE001
+        fails.append(f"凭据清单自查没跑起来（{type(e).__name__}）—— 不敢说凭据还在，先当问题报")
+    else:
+        rows = [ln.strip()[2:].strip() for ln in out.splitlines() if ln.strip().startswith("✗")]
+        if rc != 0:
+            fails.extend(f"凭据清单：{r}" for r in rows)
+            if not rows:
+                tail = out.splitlines()[-1][:120] if out else "（没有输出）"
+                fails.append(f"凭据清单自查不过（rc={rc}）：{tail}")
     return fails
 
 
@@ -167,6 +186,12 @@ def probe_live() -> list[str]:
             fails.append(f"缺 {host} 的巡检凭据（{CRED_FILE}）—— 在线侧只能查\"没凭据\"那一条")
             continue
         c = http(PUBLIC + ENTRY["root"], user, pw, "PROPFIND", depth=True)
+        if c == "401":
+            # 凭据自己进不去：后面三条（不能写 / 不能进终端 / 密钥路径 404）全是它的后果。
+            # 把它们报成"只读闸门破了""C4 收口被放开了"会把排查带偏（2026-09-30 真发生过）。
+            fails.append(f"{ENTRY['root']} 巡检只读凭据拿到 401 —— 这一行在边缘机的 htpasswd 里"
+                         f"没了/被换了？（先看上面凭据清单那条）")
+            continue
         if c != "207":
             fails.append(f"{ENTRY['root']} 只读凭据列目录拿到 {c}（应当是 207）")
         c = http(PUBLIC + ENTRY["root"] + "tmp/box-gate-probe.txt", user, pw, "PUT")
@@ -205,7 +230,8 @@ def run(quiet: bool) -> int:
                     "文件/终端入口的凭据闸门有项不对：\n\n"
                     + "\n".join("• " + f for f in fails)
                     + "\n\n先别往这两个入口贴重要口令；查法："
-                      "ssh hpa888 看 vhost 的 auth_basic 与 rclone 单元的 --htpasswd。")
+                      "ssh hpa888 看 vhost 的 auth_basic 与 rclone 单元的 --htpasswd；"
+                      "凭据清单跑 box_channel_cred.py check（在边缘机上）。")
     st["state"] = "bad"
     st["since"] = st.get("since") if was == "bad" else now().isoformat(timespec="seconds")
     st["failures"] = fails

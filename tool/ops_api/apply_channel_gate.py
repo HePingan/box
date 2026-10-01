@@ -281,7 +281,7 @@ def curl_code(url: str, user: str | None = None, pw: str | None = None,
 
 def issue_temp(host: str, label: str, read_only: bool) -> tuple[str, str]:
     """返回（htpasswd 用户名, 口令）。用户名就是 label（只读带 ro- 前缀）。"""
-    cmd = (f"python3 /root/box-channel-cred.py issue --label {label} "
+    cmd = (f"python3 /usr/local/sbin/box_channel_cred.py issue --label {label} "
            f"--host {host}{' --read-only' if read_only else ''}")
     rc, out = sh(["bash", "-lc", cmd])
     tok = ""
@@ -394,21 +394,21 @@ def verify() -> list[str]:
     check("/term175/ 只读凭据进终端 → 403", c == "403", f"拿到 {c}")
 
     say("== 5) 撤销立刻生效 + 审计里有用户名 + 密钥路径仍 404 ==")
-    sh(["bash", "-lc", "python3 /root/box-channel-cred.py revoke --label "
-        f"gate-rw-{stamp} --host hpa888 && python3 /root/box-channel-cred.py revoke "
+    sh(["bash", "-lc", "python3 /usr/local/sbin/box_channel_cred.py revoke --label "
+        f"gate-rw-{stamp} --host hpa888 && python3 /usr/local/sbin/box_channel_cred.py revoke "
         f"--label gate-ro-{stamp} --host hpa888"])
     c = curl_code(PUBLIC + "/dav/", rw_user, rw, "PROPFIND", ["Depth: 0"])
     check("/dav/ 撤销后的凭据 → 401", c == "401", f"拿到 {c}")
     c = curl_code(PUBLIC + "/term/", rw_user, rw)
     check("/term/ 撤销后的凭据 → 401", c == "401", f"拿到 {c}")
-    sh(["bash", "-lc", "python3 /root/box-channel-cred.py revoke --label "
-        f"gate-rw-{stamp} --host 175 && python3 /root/box-channel-cred.py revoke "
+    sh(["bash", "-lc", "python3 /usr/local/sbin/box_channel_cred.py revoke --label "
+        f"gate-rw-{stamp} --host 175 && python3 /usr/local/sbin/box_channel_cred.py revoke "
         f"--label gate-ro-{stamp} --host 175"])
     c = curl_code(PUBLIC + "/dav175/", rw175_user, rw175, "PROPFIND", ["Depth: 0"])
     check("/dav175/ 撤销后的凭据 → 401", c == "401", f"拿到 {c}")
     # 无论上面哪一步炸，发出去的测试凭据都要收回来（失败路径最容易漏）
     for host, name in made:
-        sh(["bash", "-lc", f"python3 /root/box-channel-cred.py revoke --label {name} --host {host}"])
+        sh(["bash", "-lc", f"python3 /usr/local/sbin/box_channel_cred.py revoke --label {name} --host {host}"])
 
     rc, log = sh(["bash", "-lc", f"tail -200 {ACCESS_LOG} 2>/dev/null"])
     check("审计日志里能看到用户名（新凭据的用户名出现在里面）",
