@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../utils/app_logger.dart';
 import '../../../utils/log_channels.dart';
@@ -37,6 +40,69 @@ class QuizDiag {
   /// 单条日志里最长保留的题干/选项片段，避免整屏被长题干淹没。
   static const int _snippetMax = 60;
 
+  /// 内存环形缓冲：最近 [_ringMax] 条（自检页现场直读，不落盘、不限级别）。
+  static final List<String> _ring = <String>[];
+  static const int _ringMax = 60;
+
+  /// 落本机的重要事件（warn/error）——**跨重启**也要能看到：
+  /// 真机上"卡住 → 用户重开 App"是常态，只在内存里就等于没有。
+  static const String _importantKey = 'quiz.diag.important';
+  static const int _importantMax = 40;
+
+  static String _stamp() {
+    final t = DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
+  }
+
+  /// 记进环形缓冲；warn/error 额外落本机（自检页读得到）。
+  static void _remember(String entry, LogLevel level) {
+    _ring.add(entry);
+    if (_ring.length > _ringMax) {
+      _ring.removeRange(0, _ring.length - _ringMax);
+    }
+    if (level != LogLevel.info) {
+      unawaited(_persistImportant(entry));
+    }
+  }
+
+  static Future<void> _persistImportant(String entry) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final all = prefs.getStringList(_importantKey) ?? <String>[];
+      all.add(entry);
+      if (all.length > _importantMax) {
+        all.removeRange(0, all.length - _importantMax);
+      }
+      await prefs.setStringList(_importantKey, all);
+    } catch (_) {
+      // 存储不可用不该影响主流程：少一条自检信息，好过因为记日志而崩。
+    }
+  }
+
+  /// 最近日志（内存，含所有级别，旧的在前）。自检页与「复制结论」用。
+  static List<String> recent({int limit = 20}) => _ring.length <= limit
+      ? List<String>.unmodifiable(_ring)
+      : _ring.sublist(_ring.length - limit);
+
+  /// 落本机的重要事件（warn/error，旧的在前）。
+  static Future<List<String>> important({int limit = 20}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final all = prefs.getStringList(_importantKey) ?? const <String>[];
+    return all.length <= limit ? all : all.sublist(all.length - limit);
+  }
+
+  /// 清空（自检页的「清空日志」）。
+  static Future<void> clearAll() async {
+    _ring.clear();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_importantKey);
+    } catch (_) {
+      // 同上：存储不可用不影响主流程。
+    }
+  }
+
   /// 裁剪长文本，保留可辨认的开头。
   ///
   /// 刻意保留**开头**而不是结尾：题干的关键限定词（「驾驶机动车」「不按规定」
@@ -63,6 +129,7 @@ class QuizDiag {
         : ' ${fields.entries.map((e) => '${e.key}=${e.value}').join(' ')}';
 
     final line = '${stage.tag} $message$suffix';
+    _remember('${_stamp()} $line', level);
     // 双写：AppLogger 负责落盘与日志页检索，debugPrint 负责现场直读。
     AppLogger.instance.logTo(LogChannel.quiz, line, level: level);
     debugPrint('[QuizDiag][${stage.tag}] $message$suffix');

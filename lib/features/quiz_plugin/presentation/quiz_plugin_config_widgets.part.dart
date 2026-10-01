@@ -206,6 +206,18 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
               onRequestAccessibility: () =>
                   QuizPluginEntry.requestAccessibility(),
             ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.health_and_safety_outlined, size: 20),
+              title: const Text('自检 & 最近日志'),
+              subtitle: const Text('读屏卡在哪一步、截图通道通不通，这里能看、能一键复制'),
+              trailing: const Icon(Icons.chevron_right, size: 18),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const QuizPluginSelfCheckPage(),
+                ),
+              ),
+            ),
             const SizedBox(height: AppTokens.spaceSm),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
