@@ -1,3 +1,4 @@
+import '../domain/quiz_vision_timeouts.dart';
 import 'package:flutter/services.dart';
 
 /// AI 作答过程推送桥。
@@ -20,7 +21,7 @@ class AiProcessBridge {
   /// 推送过程文本；传空串表示清空并隐藏该区块。
   static Future<void> push(String text) async {
     try {
-      await _channel.invokeMethod('updateAiProcess', {'text': text});
+      await _channel.invokeMethod('updateAiProcess', {'text': text}).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {
       // 原生侧未就绪时忽略：过程展示是增强功能，不能影响出答案。
     }

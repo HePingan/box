@@ -14,6 +14,7 @@
 //
 // 单测接缝：平台通道在单测里不存在，故构造器可注入 [store]/[client]/[accountStore]，
 // 全局实例亦可用 [debugSetQuizVisionCredentialResolver] 替换。
+import '../domain/quiz_vision_timeouts.dart';
 import 'dart:async';
 
 import '../../../utils/app_logger.dart';
@@ -44,7 +45,7 @@ class QuizVisionCredentialResolver {
   /// —— 读本机存储（Keystore / SharedPreferences）。它一旦不回，界面同样永远停在
   /// 「读屏中」且服务端零请求。任何等待都要有终点：超时翻成 unavailable + 可读原因。
   /// 单测会把这里调小到几十毫秒。
-  static Duration resolveTimeout = const Duration(seconds: 10);
+  static Duration resolveTimeout = QuizVisionTimeouts.resolve;
 
   /// 解析本次读屏凭证。**不抛异常**：失败一律返回带可读原因的
   /// [QuizVisionMode.unavailable]。

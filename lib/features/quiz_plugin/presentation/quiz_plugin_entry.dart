@@ -1,3 +1,4 @@
+import '../domain/quiz_vision_timeouts.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -24,6 +25,7 @@ import '../domain/quiz_search_policy.dart';
 import '../domain/quiz_vision_endpoint.dart';
 import '../utils/ai_process_bridge.dart';
 
+import 'quiz_plugin_self_check_page.dart';
 part 'quiz_plugin_config_widgets.part.dart';
 part 'quiz_plugin_region_widgets.part.dart';
 part 'quiz_plugin_cloud_widgets.part.dart';
@@ -72,7 +74,7 @@ class QuizPluginEntry {
   /// 任何等待都必须有终点：超时按「没拿到截图」处理，并把原因写进日志与界面。
   ///
   /// 单测会把这里调小到几十毫秒（真等 8s 太慢）。
-  static Duration captureTimeout = const Duration(seconds: 8);
+  static Duration captureTimeout = QuizVisionTimeouts.capture;
 
   /// 截不到图时给用户的**可行动**原因。
   ///
@@ -140,7 +142,7 @@ class QuizPluginEntry {
   /// 启动一键批量录入（Flutter侧触发）
   static Future<bool> startBatchEntry() async {
     try {
-      await _channel.invokeMethod('batchStart');
+      await _channel.invokeMethod('batchStart').timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
       _batchRunning = true;
       _batchSuccessCount = 0;
       _batchFailCount = 0;
@@ -153,7 +155,7 @@ class QuizPluginEntry {
   /// 停止一键批量录入
   static Future<void> stopBatchEntry() async {
     try {
-      await _channel.invokeMethod('batchStop');
+      await _channel.invokeMethod('batchStop').timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {}
     _batchRunning = false;
   }
@@ -199,14 +201,18 @@ class QuizPluginEntry {
     await prefs.setString(_configKey, jsonEncode(toSave.toJson()));
     // 通知无障碍服务：按新配置重算「离开 App 自动考试模式」
     try {
-      await _channel.invokeMethod('onConfigChanged');
+      await _channel.invokeMethod('onConfigChanged').timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {}
   }
 
   // 原生交互
   static Future<bool> isAccessibilityEnabled() async {
     try {
-      return await _channel.invokeMethod('isAccessibilityEnabled') as bool;
+      return await _channel
+              .invokeMethod('isAccessibilityEnabled')
+              .timeout(QuizVisionTimeouts.channel, onTimeout: () => null)
+          as bool? ??
+          false;
     } catch (_) {
       return false;
     }
@@ -214,19 +220,19 @@ class QuizPluginEntry {
 
   static Future<void> requestAccessibility() async {
     try {
-      await _channel.invokeMethod('requestAccessibility');
+      await _channel.invokeMethod('requestAccessibility').timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {}
   }
 
   static Future<void> requestOverlayPermission() async {
     try {
-      await _channel.invokeMethod('requestOverlayPermission');
+      await _channel.invokeMethod('requestOverlayPermission').timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {}
   }
 
   static Future<void> requestNotificationPermission() async {
     try {
-      await _channel.invokeMethod('requestNotificationPermission');
+      await _channel.invokeMethod('requestNotificationPermission').timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {}
   }
 
@@ -238,7 +244,7 @@ class QuizPluginEntry {
       final result = await _channel.invokeMethod('setOverlayVisible', {
         'visible': visible,
         'displayMode': displayMode,
-      });
+      }).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
       // 新版返回诊断 Map；兼容旧版返回 bool
       if (result is Map) {
         return result['visible'] as bool? ?? false;
@@ -258,7 +264,7 @@ class QuizPluginEntry {
       final result = await _channel.invokeMethod('setOverlayVisible', {
         'visible': visible,
         'displayMode': displayMode,
-      });
+      }).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
       if (result is Map) {
         return Map<String, dynamic>.from(result);
       }
@@ -270,7 +276,7 @@ class QuizPluginEntry {
 
   static Future<bool> isOverlayVisible() async {
     try {
-      return await _channel.invokeMethod('isOverlayVisible') as bool? ?? false;
+      return await _channel.invokeMethod('isOverlayVisible').timeout(QuizVisionTimeouts.channel, onTimeout: () => null) as bool? ?? false;
     } catch (_) {
       return false;
     }
@@ -278,7 +284,7 @@ class QuizPluginEntry {
 
   static Future<bool> hasOverlayPermission() async {
     try {
-      return await _channel.invokeMethod('hasOverlayPermission') as bool? ??
+      return await _channel.invokeMethod('hasOverlayPermission').timeout(QuizVisionTimeouts.channel, onTimeout: () => null) as bool? ??
           false;
     } catch (_) {
       return false;
@@ -331,14 +337,14 @@ class QuizPluginEntry {
         'matchIndex': ?matchIndex,
         'matchCount': ?matchCount,
         'answersList': ?answersList,
-      });
+      }).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {}
   }
 
   /// 拉起原生悬浮窗框选。返回 false 表示无障碍服务未运行、无法进入框选。
   static Future<bool> openRegionSelector() async {
     try {
-      final opened = await _channel.invokeMethod('openRegionSelector');
+      final opened = await _channel.invokeMethod('openRegionSelector').timeout(QuizVisionTimeouts.userInteraction, onTimeout: () => null);
       return opened == true;
     } catch (_) {
       return false;
@@ -355,7 +361,7 @@ class QuizPluginEntry {
     try {
       await _channel.invokeMethod('setOverlayOpacity', {
         'opacity': opacity.clamp(0.3, 1.0),
-      });
+      }).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {}
   }
 
@@ -365,13 +371,13 @@ class QuizPluginEntry {
       await _channel.invokeMethod('setOverlaySize', {
         'widthDp': widthDp.clamp(240, 640),
         'heightDp': heightDp.clamp(140, 720),
-      });
+      }).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {}
   }
 
   static Future<void> resetOverlaySize() async {
     try {
-      await _channel.invokeMethod('resetOverlaySize');
+      await _channel.invokeMethod('resetOverlaySize').timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {}
   }
 
@@ -476,7 +482,7 @@ class QuizPluginEntry {
         'top': region.top.toDouble(),
         'right': region.right.toDouble(),
         'bottom': region.bottom.toDouble(),
-      });
+      }).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {}
   }
 
@@ -488,7 +494,7 @@ class QuizPluginEntry {
         'top': rectF.top,
         'right': rectF.right,
         'bottom': rectF.bottom,
-      });
+      }).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {}
   }
 
@@ -1407,7 +1413,7 @@ class QuizPluginEntry {
   static Future<bool> openImageRegionSelector() async {
     invalidateImageRegionHashCache();
     try {
-      final ok = await _channel.invokeMethod('openImageRegionSelector');
+      final ok = await _channel.invokeMethod('openImageRegionSelector').timeout(QuizVisionTimeouts.userInteraction, onTimeout: () => null);
       return ok == true;
     } catch (_) {
       return false;
@@ -1548,7 +1554,7 @@ class QuizPluginEntry {
   /// 具体等待已各自有终点（截图 8s、凭证 10s、引擎自身 45s 硬顶），这里再加一层
   /// 兜底：无论内部卡在哪一步，流程都会结束，并把**卡住的阶段**写进用户能看到的
   /// 提示 —— 用户只有手机、读不到日志，提示必须自带诊断信息。
-  static Duration visionFlowTimeout = const Duration(seconds: 75);
+  static Duration visionFlowTimeout = QuizVisionTimeouts.flow;
 
   /// 单测接缝：把「当前请求」摆成指定代次/指纹，让读屏路径能一路走下去。
   @visibleForTesting
@@ -1891,7 +1897,7 @@ class QuizPluginEntry {
   /// 用已框选/已保存区域直接「试捕」读屏填表（无需重新框选）。
   static Future<bool> probeFromSavedRegion() async {
     try {
-      final ok = await _channel.invokeMethod('probeFromSavedRegion');
+      final ok = await _channel.invokeMethod('probeFromSavedRegion').timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
       return ok == true;
     } catch (_) {
       return false;
@@ -1901,7 +1907,7 @@ class QuizPluginEntry {
   /// 打开 OCR 悬浮录入窗（需无障碍已开）。
   static Future<bool> showOcrEntryOverlay() async {
     try {
-      final ok = await _channel.invokeMethod('showOcrEntryOverlay');
+      final ok = await _channel.invokeMethod('showOcrEntryOverlay').timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
       return ok == true;
     } catch (_) {
       return false;
@@ -1910,13 +1916,13 @@ class QuizPluginEntry {
 
   static Future<void> hideOcrEntryOverlay() async {
     try {
-      await _channel.invokeMethod('hideOcrEntryOverlay');
+      await _channel.invokeMethod('hideOcrEntryOverlay').timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {}
   }
 
   static Future<void> _ocrEntrySetStatus(String message) async {
     try {
-      await _channel.invokeMethod('ocrEntrySetStatus', {'message': message});
+      await _channel.invokeMethod('ocrEntrySetStatus', {'message': message}).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {}
   }
 
@@ -1936,7 +1942,7 @@ class QuizPluginEntry {
         'analysis': analysis,
         'raw': raw,
         'status': status,
-      });
+      }).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     } catch (_) {}
   }
 
@@ -2135,7 +2141,7 @@ class QuizPluginEntry {
       await _channel.invokeMethod('setRegionProbeResult', {
         'title': 'OCR 失败',
         'body': '未拿到截图字节',
-      });
+      }).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
       return;
     }
     final config = await loadConfig();
@@ -2148,7 +2154,7 @@ class QuizPluginEntry {
       await _channel.invokeMethod('setRegionProbeResult', {
         'title': 'OCR 失败',
         'body': ocr.error ?? '未识别到文本',
-      });
+      }).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
       return;
     }
     final text = ocr.fullText.trim();
@@ -2167,7 +2173,7 @@ class QuizPluginEntry {
     await _channel.invokeMethod('setRegionProbeResult', {
       'title': 'OCR 试识',
       'body': preview.isEmpty ? '（识别为空）' : preview,
-    });
+    }).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
     if (autoSearch) {
       final q = parsed.question.trim().isNotEmpty
           ? parsed.question.trim()

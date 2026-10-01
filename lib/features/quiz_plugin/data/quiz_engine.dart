@@ -1,3 +1,4 @@
+import '../domain/quiz_vision_timeouts.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -1235,7 +1236,7 @@ class QuizEngine {
 
     // 指数退避：实测 503 会连续命中数次，退避窗口取 2s/5s/10s/15s。
     const backoffsMs = [2000, 5000, 10000, 15000];
-    const hardTimeout = Duration(seconds: 45);
+    const hardTimeout = QuizVisionTimeouts.engineHard;
     Object? lastError;
     var lastAuthFlaky = false; // 401/403「渠道鉴权不稳」标志（循环内赋值，循环后用）
     final stopwatchStart = stopwatch.elapsed;
@@ -1627,7 +1628,7 @@ class QuizEngine {
       },
     );
 
-    final response = await _http.get(uri).timeout(const Duration(seconds: 10));
+    final response = await _http.get(uri).timeout(QuizVisionTimeouts.httpRequest);
 
     if (response.statusCode != 200) {
       return QuizResult(
@@ -1684,7 +1685,7 @@ class QuizEngine {
         ).replace(queryParameters: {'question': question, 'type': 'json'});
         final response = await http
             .get(uri, headers: {'User-Agent': 'Mozilla/5.0'})
-            .timeout(const Duration(seconds: 8));
+            .timeout(QuizVisionTimeouts.externalBankHttp);
 
         if (response.statusCode == 200) {
           final answers = _parseBuiltInResponse(response.body);
