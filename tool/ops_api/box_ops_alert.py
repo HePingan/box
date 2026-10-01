@@ -11,6 +11,9 @@
 口径（每条都对应一个踩过的坑）：
   * 只在**档位变化**时发（ok→warn、warn→crit、恢复）；warn 要连续 `samples_before_alert` 次
     才算数（一次采样撞上瞬时尖峰就报警，等于训练人忽略消息）；crit 当次就报；
+  * 但**读完要能校准**：CPU/内存是 **0.25 秒**瞬时采样（`/proc/stat` 两次求差），短促尖峰也会
+    读到 100%，所以越线消息里明写这一点，并附上 1 分钟均值负载做互相印证 ——
+    "100.0%" 不等于主机持续满载（2026-10-01 那条 CPU 告警就是这么被误读的）；
   * `--check` **不落状态** —— 否则"试跑一次"就把当天告警自己吃掉了（security-patrol 的教训）；
   * **采不到数据 ≠ 一切正常**：连续失败要报，而且报的是"采不到"，绝不能在采不到时说"资源正常"；
   * 消息里只有主机名与数值，**不放令牌/口令**（消息会进飞书、会被转发、会被截屏）；
@@ -310,7 +313,10 @@ def compose(host_cfg: dict, ov: dict, messages: list[dict],
     proc_line = ""
     if live:
         rules = {m.get("rule", "") for m in live}
-        proc_line = "\n" + top_process_line(host_cfg, timeout, "mem" if rules <= {"mem", "swap"} else "cpu")
+        proc_line = ("\n（CPU/内存是 0.25 秒瞬时采样 —— 短促尖峰也会读到 100%；"
+                     "负载是 1 分钟均值，可互相印证）"
+                     + "\n" + top_process_line(host_cfg, timeout,
+                                               "mem" if rules <= {"mem", "swap"} else "cpu"))
     return [(f"{host_cfg.get('icon', '')}{m['title']}".strip(),
              m["body"] + "\n" + ctx + proc_line)
             for m in messages]
@@ -538,6 +544,8 @@ def selftest() -> int:
         check("带上了 top 进程名与占比", "python3 cpu78.5%" in body, body[:200])
         check("**不**把命令行放进去（可能带口令）", "SHOUldNOTleak" not in body and "args" not in body,
               body[:200])
+        check("越线正文写明 CPU 是瞬时采样（别把 100% 读成持续满载）",
+              "0.25 秒瞬时采样" in body, body[:200])
         check("cpu 越线按 CPU 排序取数", calls == ["cpu"], str(calls))
 
         calls.clear()
@@ -553,6 +561,7 @@ def selftest() -> int:
         check("恢复消息不去取数（省接口调用）", calls == [], str(calls))
         check("恢复消息里不带那行（否则每条恢复都长一截）",
               "当时在跑什么" not in pairs_ok[0][1], pairs_ok[0][1][:120])
+        check("恢复消息里也不带瞬时采样那句", "瞬时采样" not in pairs_ok[0][1], pairs_ok[0][1][:120])
 
         def boom(*_a, **_k):
             raise RuntimeError("接口挂了")
