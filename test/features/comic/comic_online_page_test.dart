@@ -183,6 +183,19 @@ Future<void> _settle(WidgetTester tester) async {
   }
 }
 
+/// 把在途的取图轮询真跑完：服务里是 250ms 一轮、最长 12 秒。
+///
+/// 为什么要单独一个（别用 [_settle]）：帧循环的 1.6 秒不够，测试会以"还有定时器挂着"
+/// 直接判失败 —— 那是**测试**欠的账，不是产品的问题。
+Future<void> drainPolls(WidgetTester tester) async {
+  // 40 秒假时钟（160 × 250ms）：一次切换会牵出"本话取图 + 顺手预取下一话"两轮轮询，
+  // 每轮最长 12 秒，而且第二轮是**第一轮跑完之后**才开始的 —— 推得不够就会在收尾时
+  // 被"还有定时器挂着"判失败。pump 只推假时钟，不真等，所以多推没有代价。
+  for (var i = 0; i < 160; i++) {
+    await tester.pump(const Duration(milliseconds: 250));
+  }
+}
+
 /// 野蛮漫画搜索页的真形状（照实测 HTML 写：`li.item.comic-item` → `p.title` / `a[href]` / `img[src]`）。
 /// 直连那条路（快路 = 页内取这份 HTML）用它；规则改了这里会红。
 const String _yemanSearchHtml = '''
@@ -914,9 +927,9 @@ void main() {
       target.fetched.clear();
       await tester.tap(find.text('下一话'));
       await waitForRequest(tester, target, 'slot=33');
-      // 等到之后还要把在途的收尾（服务里那 250ms 的取图轮询）走完：
-      // 测试结束得比它早，框架会以"有定时器还挂着"直接判失败。
-      await _settle(tester);
+      // 等到之后还要把在途的收尾（服务里那 250ms 一轮的取图轮询）走完：测试结束得比它早，
+      // 框架会以"还有定时器挂着"直接判失败。
+      await drainPolls(tester);
 
       expect(
         target.requests,
@@ -934,9 +947,9 @@ void main() {
       target.fetched.clear();
       await tester.tap(find.text('上一话'));
       await waitForRequest(tester, target, 'slot=11');
-      // 等到之后还要把在途的收尾（服务里那 250ms 的取图轮询）走完：
-      // 测试结束得比它早，框架会以"有定时器还挂着"直接判失败。
-      await _settle(tester);
+      // 等到之后还要把在途的收尾（服务里那 250ms 一轮的取图轮询）走完：测试结束得比它早，
+      // 框架会以"还有定时器挂着"直接判失败。
+      await drainPolls(tester);
 
       expect(
         target.requests,
@@ -959,9 +972,10 @@ void main() {
       target.fetched.clear();
       await tester.tap(find.text('下一话'));
       await waitForRequest(tester, target, 'slot=22');
-      // 等到之后还要把在途的收尾（服务里那 250ms 的取图轮询）走完：
-      // 测试结束得比它早，框架会以"有定时器还挂着"直接判失败。
-      await _settle(tester);
+      // 等到之后还要把在途的收尾（服务里那 250ms 一轮的取图轮询）走完：测试结束得比它早，
+      // 框架会以"还有定时器挂着"直接判失败。1.6 秒的 _settle 不够（轮询最长 12 秒），
+      // 这里按轮询的节奏把假时钟推够。
+      await drainPolls(tester);
       expect(
         target.requests,
         contains('https://cn.baozimhcn.com/user/page_direct?slot=22'),
@@ -986,9 +1000,9 @@ void main() {
       await openHost(tester, _host(target, cache));
       await openChapterAt(tester, '第2话');
       await waitForRequest(tester, target, 'slot=33');
-      // 等到之后还要把在途的收尾（服务里那 250ms 的取图轮询）走完：
-      // 测试结束得比它早，框架会以"有定时器还挂着"直接判失败。
-      await _settle(tester);
+      // 等到之后还要把在途的收尾（服务里那 250ms 一轮的取图轮询）走完：测试结束得比它早，
+      // 框架会以"还有定时器挂着"直接判失败。
+      await drainPolls(tester);
 
       final req = target.requests.join(' ');
       expect(req, contains('slot=33'), reason: '第2话里就该问第3话');

@@ -15,6 +15,10 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path_provider/path_provider.dart';
 
 /// 图片缓存：`url → 本地文件`。
+///
+/// **每一张图都必须有截止时间**（2026-10-01 用户报「封面图一直转圈」就是这里没有上限）：
+/// 没有超时的下载会永远停在"转圈"那一态，界面上既没有图、也没有原因 —— 用户只能说
+/// "一直转圈"，我这边连是"连不上"还是"下到一半卡住"都分不出来。
 class ComicImageCache {
   ComicImageCache({
     this.httpClientFactory,
@@ -23,6 +27,9 @@ class ComicImageCache {
     this.maxBytes = defaultMaxBytes,
     this.maxFiles = defaultMaxFiles,
     this.pruneEveryWrites = defaultPruneEveryWrites,
+    this.connectTimeout = defaultConnectTimeout,
+    this.idleTimeout = defaultIdleTimeout,
+    this.totalTimeout = defaultTotalTimeout,
   }) : headerFor = headerFor ?? _noHeaders,
        tempDirProvider = tempDirProvider ?? getTemporaryDirectory;
 
@@ -31,6 +38,22 @@ class ComicImageCache {
 
   /// 可注入（测试用）：缓存根目录，默认系统临时目录。
   final Future<Directory> Function() tempDirProvider;
+
+  /// 连上图片服务器的上限（连不上要**说出来**，不能一直转圈）。
+  final Duration connectTimeout;
+
+  /// 两个数据块之间的最长间隔：这么长时间一个新字节都没有 = 这条连接已经废了。
+  ///
+  /// 为什么要单独的"闲着"超时：连接被接住了、响应头也回来了，但正文一个字节不来
+  /// （移动网上很常见）—— 这种卡死连接不会自己断，靠总时长兜底会让用户白等。
+  final Duration idleTimeout;
+
+  /// 整张图（含收字节、落盘）的上限，兜底用。
+  final Duration totalTimeout;
+
+  static const Duration defaultConnectTimeout = Duration(seconds: 15);
+  static const Duration defaultIdleTimeout = Duration(seconds: 15);
+  static const Duration defaultTotalTimeout = Duration(seconds: 90);
 
   /// 取**这个地址**的图要带的头（默认空表）。
   ///
@@ -66,7 +89,16 @@ class ComicImageCache {
     final key = url;
     final running = _inFlight[key];
     if (running != null) return running;
-    final future = _fetchOnce(url).whenComplete(() => _inFlight.remove(key));
+    final future = _fetchOnce(url).whenComplete(() {
+      // 注意：这里**必须是块体**（返回 void）。写成 `=> _inFlight.remove(key)`
+      // 的话，`whenComplete` 会把"回调的返回值"当成还要再等的 Future —— 而
+      // `remove` 返回的正是**这个 Future 自己**，于是它永远在等自己完成。
+      //
+      // 后果就是 2026-10-01 用户报的形态：图片其实早就下完了（甚至已经落盘），
+      // 但 `fetch` 的 Future 永远不 complete —— 封面、阅读页第一张全在转圈，
+      // 而自检的"搜索/详情/取图"三步全通（它们不走这里），看着就"说不通"。
+      _inFlight.remove(key);
+    });
     _inFlight[key] = future;
     return future;
   }
@@ -79,21 +111,42 @@ class ComicImageCache {
     if (uri == null || !uri.hasScheme) {
       throw ComicImageException('图片地址不合法：$url');
     }
+    final host = uri.host.isEmpty ? url : uri.host;
     final client = httpClientFactory?.call() ?? HttpClient();
-    client.connectionTimeout = const Duration(seconds: 20);
+    client.connectionTimeout = connectTimeout;
     try {
-      final req = await client.getUrl(uri);
+      final HttpClientRequest req;
+      try {
+        req = await client.getUrl(uri);
+      } on TimeoutException {
+        throw ComicImageException(
+          '图床连不上（$host）：等了 ${_dur(connectTimeout)}都没连上',
+        );
+      } catch (e) {
+        // 连不上（DNS 失败 / 连接被拒 / 连接被重置）也要说清楚 —— 这类错以前会被
+        // 裹成一句"图片下载失败"，看不出是**没连上**还是**下到一半断了**。
+        throw ComicImageException('图床连不上（$host）：${_short(e)}');
+      }
       req.headers.set(HttpHeaders.acceptHeader, 'image/*,*/*;q=0.8');
       headerFor(url).forEach((k, v) {
         req.headers.set(k, v);
       });
-      final resp = await req.close();
-      if (resp.statusCode != 200) {
-        throw ComicImageException('这张图没下来（HTTP ${resp.statusCode}）');
+      final HttpClientResponse resp;
+      try {
+        resp = await req.close().timeout(connectTimeout);
+      } on TimeoutException {
+        throw ComicImageException(
+          '图床没响应（$host）：连上了但等了 ${_dur(connectTimeout)}一个字节都没收到',
+        );
       }
-      final bytes = await resp.fold<List<int>>(<int>[], (a, b) => a..addAll(b));
+      if (resp.statusCode != 200) {
+        // 把正文丢掉再抛：不读干会留着这条连接（force close 也不保证对端立刻释放）。
+        await resp.drain<void>().catchError((_) {});
+        throw ComicImageException('这张图没下来（HTTP ${resp.statusCode}，$host）');
+      }
+      final bytes = await _readBody(resp, host);
       if (bytes.isEmpty) {
-        throw ComicImageException('这张图是空的（0 字节）');
+        throw ComicImageException('这张图是空的（0 字节，$host）');
       }
       final dir = await _cacheDir();
       final tmp = File('${dir.path}/${_key(url)}.part');
@@ -107,9 +160,41 @@ class ComicImageCache {
     } on ComicImageException {
       rethrow;
     } catch (e) {
-      throw ComicImageException('图片下载失败：${_short(e)}');
+      throw ComicImageException('图片下载失败（$host）：${_short(e)}');
     } finally {
       client.close(force: true);
+    }
+  }
+
+  /// 读完整张图，带**两道截止时间**（闲着 15 秒 / 总共 90 秒）。
+  ///
+  /// 这里以前是裸 `resp.fold(...)`：对端把连接挂住（移动网上的常事）就永远收不到
+  /// 结束信号，界面上只剩一个转圈 —— 用户报的「封面图加载不出来」正是这个形态。
+  Future<List<int>> _readBody(HttpClientResponse resp, String host) async {
+    try {
+      return await resp
+          .timeout(
+            idleTimeout,
+            onTimeout: (sink) {
+              sink.addError(
+                ComicImageException(
+                  '图床卡住了（$host）：${_dur(idleTimeout)}一个新字节都没有',
+                ),
+              );
+              sink.close();
+            },
+          )
+          .fold<List<int>>(<int>[], (a, b) => a..addAll(b))
+          .timeout(
+            totalTimeout,
+            onTimeout: () => throw ComicImageException(
+              '这张图下载超时（$host）：等了 ${_dur(totalTimeout)}还没下完',
+            ),
+          );
+    } on ComicImageException {
+      rethrow;
+    } catch (e) {
+      throw ComicImageException('图片下载中断（$host）：${_short(e)}');
     }
   }
 
@@ -245,6 +330,12 @@ class ComicImageCache {
   }
 
   static String _key(String url) => sha1.convert(utf8.encode(url)).toString();
+
+  /// 时长说人话：`inSeconds` 会把 100 毫秒说成"0 秒"（自检里看着像没等），
+  /// 一秒以下一律用毫秒。
+  static String _dur(Duration d) => d.inMilliseconds < 1000
+      ? '${d.inMilliseconds} 毫秒'
+      : '${d.inSeconds} 秒';
 
   static String _short(Object e) {
     final s = e.toString();

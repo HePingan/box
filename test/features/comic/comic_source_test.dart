@@ -6,6 +6,7 @@
 import 'package:box/features/comic/domain/comic_fetcher.dart';
 import 'package:box/features/comic/domain/comic_source.dart';
 import 'package:box/features/comic/domain/comic_source_diagnostics.dart';
+import 'package:box/features/comic/domain/comic_image_cache.dart';
 import 'package:box/features/comic/domain/comic_source_engine.dart';
 import 'package:box/features/comic/domain/sources/seed_comic_source.dart';
 import 'dart:convert';
@@ -149,6 +150,32 @@ String androidEncode(String jsonText) => jsonEncode(jsonText)
 
 /// 内置书源（顶层用例用；`自检流程` 组里另有一份局部写法）。
 ComicSource seedSource() => ComicSource.tryParse(kSeedComicSourceJson)!;
+
+/// 跑一次自检。**第 4 步「真下一张图」在单测里换成假的** —— 用例一律不联网：
+/// 图床可达性只能在真机上证明（那正是自检页存在的理由）。这里只验逻辑。
+Future<ComicProbeReport> probe({
+  required ComicSourceTarget target,
+  required ComicSource source,
+  String key = '海贼',
+  Duration waitTimeout = kComicProbeWaitTimeout,
+  Duration pollInterval = kComicProbePollInterval,
+  void Function(ComicProbeStep step)? onStep,
+  ComicFetcher? fetcher,
+  int imageBytes = 4096,
+  String? imageError,
+}) => runComicSourceProbe(
+  target: target,
+  source: source,
+  key: key,
+  waitTimeout: waitTimeout,
+  pollInterval: pollInterval,
+  onStep: onStep,
+  fetcher: fetcher,
+  imageDownloader: (url) async {
+    if (imageError != null) throw ComicImageException(imageError);
+    return imageBytes;
+  },
+);
 
 void main() {
   group('书源解析', () {
@@ -329,7 +356,7 @@ void main() {
         },
       );
 
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: source(),
         key: '海贼',
@@ -337,10 +364,15 @@ void main() {
         pollInterval: const Duration(milliseconds: 1),
       );
 
-      expect(report.allOk, isTrue, reason: '三步都该通过');
+      expect(report.allOk, isTrue, reason: '四步都该通过');
       expect(report.tocCount, 1211);
       expect(report.firstImageUrl, contains('static-tw.baozimhcn.com'));
-      expect(report.steps.map((s) => s.name), ['搜索', '详情', '章节取图']);
+      expect(report.steps.map((s) => s.name), ['搜索', '详情', '章节取图', '图片下载']);
+      expect(
+        report.steps.last.note,
+        contains('4.0 KB'),
+        reason: '第 4 步要如实写"真下到多少"，这是手机上唯一能证明图床可达的方式',
+      );
       expect(fake.opened.first, contains('%E6%B5%B7%E8%B4%BC'), reason: '搜索用编码后的关键字');
     });
 
@@ -370,7 +402,7 @@ void main() {
         ],
       );
 
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: src,
         key: '海贼',
@@ -382,9 +414,9 @@ void main() {
       expect(
         report.allOk,
         isTrue,
-        reason: '三步都该通过（这份源的图在接口里，不是 HTML 里没有图就等于源坏了）',
+        reason: '四步都该通过（这份源的图在接口里，不是 HTML 里没有图就等于源坏了）',
       );
-      final step = report.steps.last;
+      final step = report.steps[2];
       expect(step.name, '章节取图');
       expect(step.note, contains('取图接口'), reason: '说明要讲清走的是哪条路');
       expect(step.note, isNot(contains('找不到图片选择器')));
@@ -418,7 +450,7 @@ void main() {
         batches: [jsonEncode({'data': {'pic': <Object>[]}})],
       );
 
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: src,
         fetcher: fetcher,
@@ -427,8 +459,13 @@ void main() {
       );
 
       expect(report.allOk, isFalse);
-      expect(report.steps.last.note, contains('一张图都没取到'));
+      expect(report.steps[2].note, contains('一张图都没取到'));
       expect(report.firstImageUrl, isNull);
+      expect(
+        report.steps[3].note,
+        contains('跳过了'),
+        reason: '没拿到地址就没得下：如实写"跳过"，不能算通过',
+      );
     });
 
     test('接口型源：章节页里没有 `let read={…}` 时，报站点可能改版（不猜参数）', () async {
@@ -450,7 +487,7 @@ void main() {
         batches: const [],
       );
 
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: src,
         fetcher: fetcher,
@@ -459,7 +496,8 @@ void main() {
       );
 
       expect(report.allOk, isFalse);
-      expect(report.steps.last.note, contains('找不到取图参数'));
+      expect(report.steps[2].note, contains('找不到取图参数'));
+      expect(report.steps[3].note, contains('跳过了'));
       expect(fetcher.posted, isEmpty, reason: '参数都没拿到就不该乱打接口');
     });
 
@@ -468,7 +506,7 @@ void main() {
       final fake = _FakeTarget(title: '🐴 502 Bad Gateway');
       expect(fake.counts[cardCss], isNull);
 
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: source(),
         waitTimeout: const Duration(milliseconds: 300),
@@ -484,7 +522,7 @@ void main() {
 
     test('还停在人机验证页：原因要指出来', () async {
       final fake = _FakeTarget(title: '正在验证浏览器');
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: source(),
         waitTimeout: const Duration(milliseconds: 200),
@@ -493,20 +531,64 @@ void main() {
       expect(report.steps.first.note, contains('人机验证'));
     });
 
+    test('第 4 步失败：说清是图床/网络的问题，并点明前三步已经证明"源能列出图地址"', () async {
+      // 2026-10-01 用户报的正是"自检全通、封面却转圈"：源没问题，图床在这台手机上取不到。
+      // 这条就是钉住"两件事分开说"。
+      final src = ComicSource.tryParse(kSeedComicSourceYemanJson)!;
+      final cardCss = cssFromComicRule(src.searchRules['bookList']!)!;
+      final detailCss = cssFromComicRule(src.bookInfoRules['name']!)!;
+      final tocCss = firstSelectorCss(src.bookInfoRules['tocUrl']!)!;
+      final fake = _FakeTarget(
+        counts: {cardCss: 20, detailCss: 1, '$tocCss a[href]': 209},
+        values: {
+          src.searchRules['name']!: ['海贼王'],
+          src.searchRules['bookUrl']!: ['/comic/7530/'],
+          src.bookInfoRules['name']!: ['航海王'],
+        },
+        hrefs: {'$tocCss a[href]': '/chapter/7530/772668.html'},
+      );
+      final fetcher = _FakeApiFetcher(
+        chapterHtml: "let read={aid:'7530',cid:'772668',picCount:7};",
+        batches: [_picsJson(7, total: 7, from: 1)],
+      );
+
+      final report = await probe(
+        target: fake,
+        source: src,
+        fetcher: fetcher,
+        imageError: '图床连不上（tuer.justpic01pt.com:666）：连接被拒绝',
+        waitTimeout: const Duration(seconds: 1),
+        pollInterval: const Duration(milliseconds: 1),
+      );
+
+      expect(report.steps[2].ok, isTrue, reason: '第三步（源能列出图地址）照样算过');
+      expect(report.steps[3].ok, isFalse);
+      expect(report.steps[3].note, contains('图床'));
+      expect(
+        report.steps[3].note,
+        contains('前三步'),
+        reason: '要指明"源这边没坏"，否则用户会去改源',
+      );
+      expect(report.firstImageUrl, isNotNull, reason: '地址照样给出（能贴给运维看）');
+      expect(report.allOk, isFalse, reason: '有一步没过就不是"全通"');
+    });
+
     test('上一步失败时，后续步骤是"跳过"，不是"通过"', () async {
       final fake = _FakeTarget(title: '🐴 502 Bad Gateway');
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: source(),
         waitTimeout: const Duration(milliseconds: 200),
         pollInterval: const Duration(milliseconds: 1),
       );
 
-      expect(report.steps, hasLength(3));
+      expect(report.steps, hasLength(4));
       expect(report.steps[1].ok, isFalse);
       expect(report.steps[1].note, contains('跳过'));
       expect(report.steps[2].ok, isFalse);
       expect(report.steps[2].note, contains('跳过'));
+      expect(report.steps[3].ok, isFalse);
+      expect(report.steps[3].note, contains('跳过'));
       expect(report.firstImageUrl, isNull);
     });
 
@@ -517,7 +599,7 @@ void main() {
         searchUrl: 'https://x.example/s?q={{key}}',
         searchRules: {'bookList': 'class.a', 'name': 'class.b@@[bad]'},
       );
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: _FakeTarget(counts: const {'.a': 3}),
         source: broken,
         waitTimeout: const Duration(milliseconds: 200),
@@ -555,7 +637,7 @@ void main() {
         jsText: {'java.getElements': '<img src="https://static-tw.baozimhcn.com/1.jpg">'},
       );
 
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: source(),
         key: '海贼',
@@ -585,7 +667,7 @@ void main() {
         },
         failFirstNAttempts: 1,
       );
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: source(),
         waitTimeout: const Duration(seconds: 1),
@@ -610,7 +692,7 @@ void main() {
           ),
         },
       );
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: source(),
         waitTimeout: const Duration(milliseconds: 200),
@@ -643,7 +725,7 @@ void main() {
           ),
         },
       );
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: source(),
         waitTimeout: const Duration(milliseconds: 200),
@@ -665,7 +747,7 @@ void main() {
         searchUrl: 'https://x.example/s?q={{key}}',
         searchRules: {'bookList': 'class.a@@[bad]'},
       );
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: _FakeTarget(counts: {'.a': 3}),
         source: broken,
         waitTimeout: const Duration(milliseconds: 200),
@@ -701,7 +783,7 @@ void main() {
         jsText: const {},
       );
 
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: seedSource(),
         key: '海贼',
@@ -735,7 +817,7 @@ void main() {
         jsText: const {},
       );
 
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: seedSource(),
         key: '海贼',
@@ -766,7 +848,7 @@ void main() {
         jsText: const {},
       )..sample = '<amp-img class="i-amphtml-element" layout="responsive"></amp-img>';
 
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: seedSource(),
         key: '海贼',
@@ -817,7 +899,7 @@ void main() {
         jsText: const {},
       );
 
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: seedSource(),
         key: '海贼',
@@ -861,7 +943,7 @@ void main() {
         },
       )..jsRawResult = androidEncode('{"error": "JS 段没有返回值"}');
 
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: seedSource(),
         key: '海贼',
@@ -979,7 +1061,7 @@ void main() {
         hrefs: {'$tocCss a[href]': '/user/page_direct?comic_id=x&chapter_slot=1186'},
       )..jsRawResult = androidRaw;
 
-      final report = await runComicSourceProbe(
+      final report = await probe(
         target: fake,
         source: seedSource(),
         key: '海贼',

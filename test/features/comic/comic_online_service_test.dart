@@ -207,6 +207,105 @@ void main() {
       );
     });
 
+    test('分类列表：纯文本清单（名称::地址）——不用跑 JS、不用开页面', () async {
+      // 2026-10-01：野蛮漫画没配 exploreUrl，界面上一直显示「分类浏览不可用」。
+      // 补上清单后这里钉住两条：填好 {{page}}、且**不碰站点页面**（纯文本不需要）。
+      final yeman = ComicSource.tryParse(kSeedComicSourceYemanJson)!;
+      final fake = FakeComicTarget();
+      final service = ComicOnlineService(
+        target: fake,
+        source: yeman,
+        listTimeout: const Duration(milliseconds: 20),
+      );
+
+      final list = await service.categories();
+
+      expect(list.length, greaterThanOrEqualTo(10), reason: '这份源给了十来个分类');
+      expect(list.first.title, '全部');
+      expect(
+        list.first.url,
+        'https://yemancomic.com/comiclists/9/全部/3/1.html',
+        reason: '`{{page}}` 填成第 1 页',
+      );
+      expect(fake.opened, isEmpty, reason: '纯文本清单不用打开站点页面');
+    });
+
+    test('分类取书：分类页是网页（class. 规则）→ 走页面解析，下一页按清单里的 {{page}} 推', () async {
+      final yeman = ComicSource.tryParse(kSeedComicSourceYemanJson)!;
+      const url = 'https://yemancomic.com/comiclists/9/全部/3/1.html';
+      final fake = FakeComicTarget(responses: {url: _yemanListHtml});
+      final service = ComicOnlineService(
+        target: fake,
+        source: yeman,
+        listTimeout: const Duration(milliseconds: 20),
+      );
+
+      final page = await service.explore(url);
+
+      expect(page.hits.length, 2);
+      expect(page.hits.first.name, '海贼王~');
+      expect(
+        page.hits.first.bookUrl,
+        'https://yemancomic.com/book/7530/',
+        reason: '相对地址要补成绝对地址',
+      );
+      expect(page.hits.first.cover, contains('justpic'));
+      expect(
+        page.nextUrl,
+        'https://yemancomic.com/comiclists/9/全部/3/2.html',
+        reason: '清单里写着 {{page}}，翻页就按它加一（不假装到底了）',
+      );
+      expect(
+        service.lastPath,
+        contains('快路'),
+        reason: 'HTML 已经在手里就直接解析，不走"打开页面渲染"那条慢路',
+      );
+    });
+
+    test('分类取书：网页式分类页解析不出卡片时，如实报出来（不当成成功）', () async {
+      final yeman = ComicSource.tryParse(kSeedComicSourceYemanJson)!;
+      const url = 'https://yemancomic.com/comiclists/9/全部/3/1.html';
+      final fake = FakeComicTarget(
+        responses: {url: '<html><body>什么都没有</body></html>'},
+      );
+      final service = ComicOnlineService(
+        target: fake,
+        source: yeman,
+        listTimeout: const Duration(milliseconds: 20),
+      );
+
+      await expectLater(
+        service.explore(url),
+        throwsA(isA<ComicProbeException>()),
+      );
+    });
+
+    test('分类列表：没配 exploreUrl 时说的是"没配"，不是"格式看不懂"', () async {
+      // 两种坏法要分开：没配是**源的问题**（改源），格式看不懂才是**解析的问题**。
+      const bare = ComicSource(
+        name: '没分类的源',
+        baseUrl: 'https://x.example',
+        searchUrl: 'https://x.example/s?q={{key}}',
+        searchRules: {'bookList': 'class.a'},
+      );
+      final service = ComicOnlineService(
+        target: FakeComicTarget(),
+        source: bare,
+        listTimeout: const Duration(milliseconds: 20),
+      );
+
+      await expectLater(
+        service.categories(),
+        throwsA(
+          isA<ComicProbeException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('没配分类浏览'), isNot(contains('格式'))),
+          ),
+        ),
+      );
+    });
+
     test('分类取书：JSON 规则取字段（名字/作者/封面/书链），封面补成绝对地址', () async {
       const url = 'https://cn.baozimhcn.com/api/list?type=all&page=1';
       final body = jsonEncode({
@@ -516,7 +615,7 @@ void main() {
       expect(service.lastPath, contains('中转'));
     });
 
-    test('章节取图：两批共 10 张；地址包成中转地址；offset 递增正确', () async {
+    test('章节取图：一批 10 张（站点上限就是 10）；地址包成中转地址；offset 递增正确', () async {
       final host = FakeComicRelay(
         chapterHtml: _yemanChapterHtml(total: 10),
         total: 10,
@@ -532,7 +631,12 @@ void main() {
       );
 
       expect(urls.length, 10);
-      expect(host.postForms.map((f) => f['offset']).toList(), ['0', '5']);
+      expect(host.postForms.map((f) => f['offset']).toList(), ['0']);
+      expect(
+        host.postForms.first['limit'],
+        '10',
+        reason: '要 10 张：站点封顶 10（实测 limit>10 也只回 10），一整话少跑一半往返',
+      );
       expect(host.postForms.first['id'], '772668');
       expect(host.postForms.first['aid'], '7530');
       // 地址必须是**中转地址**（手机直连图片 CDN 也连不上），但令牌不在地址里
@@ -646,13 +750,44 @@ void main() {
         isTrue,
         reason: '直连不把图片地址包成中转地址',
       );
-      expect(host.postForms.length, 2, reason: '10 张按一批 5 张取，分 2 批');
+      expect(
+        host.postForms.length,
+        1,
+        reason: '10 张按一批 10 张取（站点上限 10），一次往返取完',
+      );
       expect(
         host.directUserAgents,
         everyElement(contains('Android')),
         reason: '直连必须带手机 UA，否则站点 307 空响应',
       );
       expect(service.lastPath, contains('直连'));
+    });
+
+    test('章节取图：逐批回调（onPartial）—— 阅读页靠它先显示前几张，不必等整话取完', () async {
+      // 209 张 = 21 批：用户报的"取第一页一直转圈"就是等整话取完才显示。
+      final host = FakeComicRelay(
+        chapterHtml: _yemanChapterHtml(total: 209),
+        total: 209,
+      );
+      final service = ComicOnlineService(
+        target: FakeComicTarget(),
+        source: yeman,
+        directClient: host.directClient(),
+      );
+
+      final progress = <int>[];
+      final urls = await service.chapterImages(
+        'https://yemancomic.com/chapter/7530/772668.html',
+        onPartial: (partial) => progress.add(partial.length),
+      );
+
+      expect(urls.length, 209);
+      expect(
+        progress.take(3).toList(),
+        [10, 20, 30],
+        reason: '每批都回调一次、长度递增（第一批就能显示）',
+      );
+      expect(progress.last, 209, reason: '最后一批回调到整话的张数');
     });
 
     test('headersFor：中转地址才带令牌，图床地址只给手机 UA（令牌不许发给第三方）', () {
@@ -738,7 +873,8 @@ class FakeComicRelay {
   /// 每批取图表单（`id`/`aid`/`offset`）。
   final List<Map<String, String>> postForms = [];
 
-  static const int batch = 5;
+  /// 站点**一次最多给几张**（真实站点是 10：`limit: 10` 是能要到的上限）。
+  static const int batch = 10;
 
   ComicRelay client() => ComicRelay(
     endpoint: _relayEndpoint,
@@ -786,7 +922,11 @@ class FakeComicRelay {
       );
     }
     final offset = int.tryParse(form['offset'] ?? '') ?? 0;
-    final n = (total - offset).clamp(0, batch).toInt();
+    // 站点认 `limit`（上限 10）：我们要 10 张就给 10 张，别写死 5 —— 一整话 209 张
+    // 因此从 42 次往返降到 21 次。
+    final want = int.tryParse(form['limit'] ?? '') ?? batch;
+    final cap = want < batch ? want : batch;
+    final n = (total - offset).clamp(0, cap).toInt();
     return http.Response(
       jsonEncode({
         'data': {
@@ -798,7 +938,7 @@ class FakeComicRelay {
               },
           ],
           'offset': offset,
-          'limit': batch,
+          'limit': cap,
           'total': total,
         },
       }),
@@ -839,6 +979,9 @@ class FakeComicRelay {
 }
 
 // ── 站点页面的真实形状（照 2026-09-28 实测的 HTML 写，规则改了这里就会红） ──
+
+/// 分类页和搜索页是**同一套卡片**（同一天实测的 HTML），起个名字用在分类用例里。
+const String _yemanListHtml = _yemanSearchHtml;
 
 const String _yemanSearchHtml = '''
 <html><body>

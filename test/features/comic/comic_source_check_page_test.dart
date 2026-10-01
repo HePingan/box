@@ -71,6 +71,9 @@ Future<void> drainRun(WidgetTester tester, {int maxSteps = 3000}) async {
   }
 }
 
+/// 自检第 4 步（真下一张图）在单测里换成假的：用例一律不联网。
+Future<int> _fakeImageDownload(String url) async => 4096;
+
 void main() {
   testWidgets('一进页面就说清用途与边界（含"只代表这台手机"）', (tester) async {
     await tester.pumpWidget(
@@ -105,6 +108,7 @@ void main() {
       MaterialApp(
         home: ComicSourceCheckPage(
           targetOverride: _FakeTarget(),
+          imageDownloaderOverride: _fakeImageDownload,
           initialSourceName: second.name,
         ),
       ),
@@ -141,6 +145,7 @@ void main() {
       MaterialApp(
         home: ComicSourceCheckPage(
           targetOverride: _FakeTarget(),
+          imageDownloaderOverride: _fakeImageDownload,
           initialSourceName: '没有这份源',
         ),
       ),
@@ -165,6 +170,7 @@ void main() {
       MaterialApp(
         home: ComicSourceCheckPage(
           targetOverride: _FakeTarget(title: '🐴 502 Bad Gateway', cards: 0),
+          imageDownloaderOverride: _fakeImageDownload,
         ),
       ),
     );
@@ -184,12 +190,19 @@ void main() {
     expect(find.textContaining('结论：'), findsOneWidget);
     expect(find.textContaining('「${first.name}」'), findsWidgets, reason: '结论要写明是哪份源');
 
-    // 回到顶部换到第二份源：旧结论必须消失（它不是这份源跑出来的）。
-    await tester.dragUntilVisible(
-      find.text(second.name),
-      find.byType(ListView),
-      const Offset(0, 200), // 往回滚到顶部（+y = 往下拖）
+    // 回到顶部换到第二份源：**直接跳回顶部**再点。
+    // 别用 dragUntilVisible："拖到可见"可能正好停在 AppBar 底下，tap 会打空
+    // （内容多了一步之后就会踩到这个坑）。
+    final scrollable = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
+    scrollable.position.jumpTo(0);
+    await tester.pump();
     await tester.tap(find.text(second.name));
     await tester.pumpAndSettle();
     expect(find.textContaining('结论：'), findsNothing, reason: '换源后旧结论要清掉');
@@ -197,7 +210,7 @@ void main() {
     expect(find.text('复制结论'), findsNothing);
   });
 
-  testWidgets('接口型源（野蛮漫画）：三步全通，第三步说明走的是站点的取图接口', (tester) async {
+  testWidgets('接口型源（野蛮漫画）：四步全通，第三步说明走的是站点的取图接口', (tester) async {
     final fetcher = _FakeApiFetcher(
       chapterHtml: "let read={aid:'7530',cid:'772668',picCount:7};",
       batches: [
@@ -209,6 +222,7 @@ void main() {
       MaterialApp(
         home: ComicSourceCheckPage(
           targetOverride: _YemanTarget(),
+          imageDownloaderOverride: _fakeImageDownload,
           fetcherOverride: fetcher,
         ),
       ),
@@ -238,7 +252,8 @@ void main() {
       findsOneWidget,
       reason: '要说清图是从接口来的（图不在 HTML 里）',
     );
-    expect(find.textContaining('三步全通', findRichText: true), findsOneWidget);
+    expect(find.textContaining('四步全通', findRichText: true), findsOneWidget);
+    expect(find.text('图片下载'), findsOneWidget, reason: '第 4 步也要列出来（真机上下过一张才算数）');
     expect(fetcher.posted, hasLength(2), reason: '7 张 = 两批（5 + 2）');
   });
 
@@ -247,6 +262,7 @@ void main() {
       MaterialApp(
         home: ComicSourceCheckPage(
           targetOverride: _FakeTarget(title: '🐴 502 Bad Gateway', cards: 0),
+          imageDownloaderOverride: _fakeImageDownload,
         ),
       ),
     );
@@ -277,6 +293,7 @@ void main() {
       MaterialApp(
         home: ComicSourceCheckPage(
           targetOverride: _FakeTarget(title: '🐴 502 Bad Gateway', cards: 0),
+          imageDownloaderOverride: _fakeImageDownload,
         ),
       ),
     );

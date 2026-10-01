@@ -1,7 +1,9 @@
 // 漫画源自检页：一句话回答"这个源在这台手机上到底能不能用"。
 //
 // 设计取舍：
-//   * 只跑三步（搜索 / 详情 / 章节取图），每步都给"通过或原因"，不打分不美化；
+//   * 跑四步（搜索 / 详情 / 章节取图 / **真下一张图**），每步都给"通过或原因"，不打分不美化；
+//     第 4 步是 2026-10-01 补的：前三步只证明"能列出图地址"，证明不了"图能下下来" ——
+//     用户当时正是"自检三路全通、封面却一直转圈"；
 //   * 失败原因里带上页面标题 —— 502 这种错误光看"命中 0"是看不出来的；
 //   * 拿到图就**当场显示一张**（图片链没有防盗链，能显示即证明可读）；
 //   * 「复制结论」把整份报告变成纯文本 —— 手机上看不出毛病时，贴回来就是证据。
@@ -24,6 +26,7 @@ class ComicSourceCheckPage extends StatefulWidget {
     super.key,
     this.targetOverride,
     this.fetcherOverride,
+    this.imageDownloaderOverride,
     this.initialSourceName,
   });
 
@@ -32,6 +35,9 @@ class ComicSourceCheckPage extends StatefulWidget {
 
   /// 接口型源的「章节取图」要真发 HTTP（直连站点 + 取图接口）；单测注入假的。
   final ComicFetcher? fetcherOverride;
+
+  /// 第 4 步「图片下载」要真下字节；单测注入假的（否则 widget 测试会去联网）。
+  final ComicImageDownloader? imageDownloaderOverride;
 
   /// 进来时预选的源（按名字匹配；匹配不到就用清单第一份）。
   ///
@@ -114,6 +120,7 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
       source: source,
       key: _key.text.trim().isEmpty ? '海贼' : _key.text.trim(),
       fetcher: widget.fetcherOverride,
+      imageDownloader: widget.imageDownloaderOverride,
       onStep: (step) {
         if (!mounted) return;
         setState(() {
@@ -207,8 +214,8 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
                 ],
                 const SizedBox(height: 10),
                 const Text(
-                  '这一步用这台手机上的真 WebView 跑三件事：搜索 → 打开一本书 → 打开第一章取图。'
-                  '站点有人机验证（纯请求会被 403），所以只能在手机上问出真相。\n'
+                  '这一步用这台手机上的真 WebView 跑四件事：搜索 → 打开一本书 → 打开第一章取图 '
+                  '→ 真下一张图。站点有人机验证（纯请求会被 403），所以只能在手机上问出真相。\n'
                   '结论只代表**这台手机 + 当前网络**；换网络或站点改版都会变。',
                   style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
                 ),
@@ -264,8 +271,8 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
       const Divider(height: 28),
       Text(
         r.allOk
-            ? '结论：「${r.sourceName}」三步全通 ✅ 在这台手机上可用'
-            : '结论：「${r.sourceName}」${r.steps.length - r.okCount} 步没过 ❌ 上面每一步后面写了原因',
+            ? '结论：「${r.sourceName}」${_cnNum(r.steps.length)}步全通 ✅ 在这台手机上可用'
+            : '结论：「${r.sourceName}」${_cnNum(r.steps.length - r.okCount)}步没过 ❌ 上面每一步后面写了原因',
         style: TextStyle(
           fontSize: 14,
           fontWeight: FontWeight.w600,
@@ -280,7 +287,7 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
       if (r.firstImageUrl != null) ...[
         const SizedBox(height: 14),
         const Text(
-          '取到的第一张图（能显示就说明图片链通、没有防盗链）：',
+          '取到的第一张图（第 4 步已经把它下到本地了，这里显示的就是缓存里那一份）：',
           style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
         ),
         const SizedBox(height: 8),
@@ -401,4 +408,11 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
       ),
     );
   }
+}
+
+/// 步数用汉字说：「四步全通」比「4 步全通」像人话（数字留给真正的数值）。
+String _cnNum(int n) {
+  const cn = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+  if (n >= 0 && n < cn.length) return cn[n];
+  return '$n';
 }

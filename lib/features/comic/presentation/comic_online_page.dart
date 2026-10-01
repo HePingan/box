@@ -507,17 +507,53 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   }
 
   Future<void> _openChapter(ComicChapterRef chapter, {int atIndex = 0}) async {
-    await _run(() async {
-      final images = await _service.chapterImages(chapter.url);
+    // 进阅读要记一层（返回能退回详情）。层级只看**进来时**那一态：逐批显示会先把
+    // `_mode` 改成阅读，之后再判就会漏记 —— 那样在阅读里按返回会直接退出本页。
+    final from = _mode;
+    var levelAdded = false;
+
+    void enterReader(List<String> images, {required bool partial}) {
       if (!mounted) return;
       setState(() {
         _chapter = chapter;
         _images = images;
-        _imageIndex = atIndex.clamp(0, images.isEmpty ? 0 : images.length - 1);
-        // 从"详情"进阅读记一层：阅读里按返回能退回详情（不是直接退出本页）。
-        if (_mode != _Mode.reader) _levels.add(_mode);
+        if (!levelAdded) {
+          if (from != _Mode.reader) _levels.add(from);
+          levelAdded = true;
+        }
         _mode = _Mode.reader;
+        if (!partial) {
+          _imageIndex = atIndex.clamp(
+            0,
+            images.isEmpty ? 0 : images.length - 1,
+          );
+        } else if (_imageIndex >= images.length) {
+          // 逐批显示时，上一话留下的页码可能超出这一批的张数（PageView 页码越界会直接抛）。
+          // 先收到这批的范围内；整话取完那一下再按 atIndex 定位。
+          _imageIndex = images.isEmpty ? 0 : images.length - 1;
+        }
       });
+    }
+
+    await _run(() async {
+      final images = await _service.chapterImages(
+        chapter.url,
+        // 取到一批就先显示出来：一整话实测 209 张、要 21 次往返，等全取完再显示
+        // 用户看到的就是"一直转圈"（2026-10-01 报的）。
+        onPartial: (partial) {
+          // 取图是异步的：用户可能已经退出这一页（onPartial 挂在 await 之后，
+          // 仓库里那条 lint 就是钉这个的）。
+          if (!mounted) return;
+          if (partial.isEmpty) return;
+          if (partial.length < _images.length) return; // 只有变多了才刷新
+          enterReader(partial, partial: true);
+          setState(
+            () => _busyLabel =
+                '正在取「${chapter.title}」的图…已取到 ${partial.length} 张',
+          );
+        },
+      );
+      enterReader(images, partial: false);
       final book = _book;
       if (book != null) {
         // 一话很短（一两张图）时不会触发翻页回调 —— 进来就先判一次要不要预取下一话。
@@ -535,7 +571,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         } catch (_) {}
       }
       _jumpTo(_imageIndex);
-    }, '正在取「${chapter.title}」的图…（最多等 ${_service.waitTimeout.inSeconds} 秒）');
+    }, '正在取「${chapter.title}」的图…（整话要分批取，取到一批就先显示）');
   }
 
   /// 进度随手记；失败不影响阅读（不弹错、不中断，下次再存）。
@@ -1085,6 +1121,8 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
               ),
             ),
           ),
+          // 后面的图还在取：顶部挂一条进度，别让人以为是卡住了。
+          if (_busy) Positioned(top: 0, left: 0, right: 0, child: _loadingBanner()),
           Positioned(left: 0, right: 0, bottom: 0, child: _readerBar()),
         ],
       );
@@ -1114,6 +1152,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             ),
           ),
         ),
+        if (_busy) Positioned(top: 0, left: 0, right: 0, child: _loadingBanner()),
         Positioned(
           left: 0,
           right: 0,
@@ -1121,6 +1160,35 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           child: _readerBar(),
         ),
       ],
+    );
+  }
+
+  /// 还在取后面的图时挂的一条进度（写清楚"已取到几张"，不写成"请稍候"）。
+  Widget _loadingBanner() {
+    return Container(
+      color: Colors.black87,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _busyLabel.isEmpty ? '正在取后面的图…' : _busyLabel,
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

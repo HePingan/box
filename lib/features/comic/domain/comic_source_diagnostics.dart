@@ -1,4 +1,5 @@
-// 漫画源自检：用真手机上的 WebView 把「搜索 → 详情 → 章节取图」跑一遍，逐项给结论。
+// 漫画源自检：用真手机上的 WebView 把「搜索 → 详情 → 章节取图 → 真下一张图」跑一遍，
+// 逐项给结论。
 //
 // 为什么值得单独做这一步：站点有 WAF（JS 挑战），而章节页在我们两台服务器上都是
 // 502 —— **只有手机上能问出真相**。所以本文件的价值是"把未知变已知"，而不是"能看漫画"。
@@ -14,6 +15,7 @@ import 'dart:async';
 import 'comic_chapter_api.dart';
 import 'comic_fetcher.dart';
 import 'comic_html_engine.dart';
+import 'comic_image_cache.dart';
 import 'comic_source.dart';
 import 'comic_source_engine.dart';
 
@@ -132,6 +134,21 @@ class ComicProbeReport {
 /// 自检里"等到选择器出现"的默认节奏：WAF 挑战本身要几秒，页面渲染也要时间。
 const Duration kComicProbeWaitTimeout = Duration(seconds: 25);
 const Duration kComicProbePollInterval = Duration(milliseconds: 400);
+
+/// 自检第 4 步的"真下一张图"：返回图片字节数，失败就抛（由调用方如实写进结论）。
+///
+/// 为什么要有这一步（2026-10-01 用户报「封面图加载不出来 + 取第一页一直转圈」）：
+/// 前三步只证明**能列出图地址**，证明不了**图能下下来** —— 而这两个是两回事：书源全对、
+/// 图床在这台手机的网上取不到，界面上就是"封面一直转圈、阅读页一直转圈"。
+/// 自检的价值是"这一步过了 App 就能用"，那就不能停在"地址列出来了"。
+typedef ComicImageDownloader = Future<int> Function(String url);
+
+/// 真机用的实现：走图片缓存那条路（带手机 UA、同一套超时规则），返回字节数。
+Future<int> downloadComicImageForProbe(String url) async {
+  final cache = ComicImageCache(headerFor: (u) => comicDirectHeaders());
+  final file = await cache.fetch(url);
+  return file.length();
+}
 
 /// 快路（取 HTML 文本 + 规则引擎）跑出来的一次结果。
 ///
@@ -289,6 +306,7 @@ Future<ComicProbeReport> runComicSourceProbe({
   Duration pollInterval = kComicProbePollInterval,
   void Function(ComicProbeStep step)? onStep,
   ComicFetcher? fetcher,
+  ComicImageDownloader? imageDownloader,
 }) async {
   final steps = <ComicProbeStep>[];
   final sw = Stopwatch()..start();
@@ -725,6 +743,50 @@ Future<ComicProbeReport> runComicSourceProbe({
     }
   }
 
+  // ── 第 4 步：真下一张图 ─────────────────────────────────────────
+  //
+  // 前三步证明的是"能列出图地址"，这一步证明"图能下下来" —— 两回事。用户 2026-10-01
+  // 报的正是"自检三路全通、封面却一直转圈"：源没问题，是图床在这台手机的网上取不到。
+  // 所以这一步失败时要**直说是图床/网络的问题**，别让人以为书源又要修。
+  if (firstImageUrl == null) {
+    const step = ComicProbeStep(
+      name: '图片下载',
+      ok: false,
+      elapsedMs: 0,
+      note: '上一步没拿到图地址，跳过了（不是"通过"）',
+    );
+    steps.add(step);
+    onStep?.call(step);
+  } else {
+    final stepSw = Stopwatch()..start();
+    final host = Uri.tryParse(firstImageUrl)?.host ?? firstImageUrl;
+    try {
+      final bytes = await (imageDownloader ?? downloadComicImageForProbe)(
+        firstImageUrl,
+      );
+      final step = ComicProbeStep(
+        name: '图片下载',
+        ok: true,
+        elapsedMs: stepSw.elapsedMilliseconds,
+        note: '真下到 ${_kb(bytes)}（$host），用的就是 App 显示封面/漫画页那条路'
+            '（图片缓存 + 手机 UA）',
+      );
+      steps.add(step);
+      onStep?.call(step);
+    } catch (e) {
+      final step = ComicProbeStep(
+        name: '图片下载',
+        ok: false,
+        elapsedMs: stepSw.elapsedMilliseconds,
+        note: '图下不下来（$host）：${e is ComicImageException ? e.message : describeComicProbeError(e)}'
+            ' —— 前三步已经证明书源能列出图地址，所以这是**图床/网络**的问题，'
+            '不是书源坏了',
+      );
+      steps.add(step);
+      onStep?.call(step);
+    }
+  }
+
   sw.stop();
   return ComicProbeReport(
     sourceName: source.name,
@@ -826,6 +888,10 @@ String _short(Object e) {
   final t = e.toString().replaceFirst('ComicProbeException: ', '').trim();
   return t.length > 80 ? '${t.substring(0, 80)}…' : t;
 }
+
+/// 字节数说人话（自检的「图片下载」步要写清"真下到多少"）。
+String _kb(int bytes) =>
+    bytes < 1024 ? '$bytes 字节' : '${(bytes / 1024).toStringAsFixed(1)} KB';
 
 /// 轮询等到选择器命中；超时返回最后的命中数（**不抛**，由调用方判断并说明）。
 ///

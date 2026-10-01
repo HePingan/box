@@ -58,7 +58,14 @@ const String kSeedComicSourceYemanJson = r'''
     "chapterName": "tag.a@text",
     "chapterUrl": "tag.a@href"
   },
-  "bookSourceComment": "// 手机直接能访问本站（要带手机 UA，桌面 UA 会被 307 挡）；图在 /api/comic/read/pics（一批 5 张）；配了设备令牌才经自建中转"
+  "exploreUrl": "全部::https://yemancomic.com/comiclists/9/全部/3/{{page}}.html\n热血::https://yemancomic.com/comiclists/9/热血/3/{{page}}.html\n恋爱::https://yemancomic.com/comiclists/9/爱情/3/{{page}}.html\n纯爱::https://yemancomic.com/comiclists/9/纯爱/3/{{page}}.html\n奇幻::https://yemancomic.com/comiclists/9/奇幻/3/{{page}}.html\n冒险::https://yemancomic.com/comiclists/9/冒险/3/{{page}}.html\n搞笑::https://yemancomic.com/comiclists/9/搞笑/3/{{page}}.html\n悬疑::https://yemancomic.com/comiclists/9/悬疑/3/{{page}}.html\n科幻::https://yemancomic.com/comiclists/9/科幻/3/{{page}}.html\n剧情::https://yemancomic.com/comiclists/9/剧情/3/{{page}}.html\n古风::https://yemancomic.com/comiclists/9/古风/3/{{page}}.html\n校园::https://yemancomic.com/comiclists/9/校园/3/{{page}}.html",
+  "ruleExplore": {
+    "bookList": "class.comic-item",
+    "name": "class.title@text",
+    "bookUrl": "tag.a.0@href",
+    "coverUrl": "tag.img@src"
+  },
+  "bookSourceComment": "// 手机直接能访问本站（要带手机 UA，桌面 UA 会被 307 挡）；图在 /api/comic/read/pics（一批 10 张）；配了设备令牌才经自建中转"
 }
 ''';
 

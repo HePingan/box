@@ -320,8 +320,12 @@ class ComicOnlineService {
           .toList();
     }
     final rule = source.exploreUrl ?? '';
+    if (rule.trim().isEmpty) {
+      // 说清是"没配"，别让用户以为站点坏了（他的下一步是搜索，不是修源）。
+      throw ComicProbeException('这份书源没配分类浏览（exploreUrl 空着）—— 直接用搜索就行');
+    }
     if (!isComicJsRule(rule)) {
-      throw ComicProbeException('这份书源没有分类浏览（exploreUrl 不是 JS 列表，也不是 `名称::地址` 清单）');
+      throw ComicProbeException('分类清单格式看不懂（exploreUrl 既不是 `<js>`，也不是每行 `名称::地址`）');
     }
     // 中转模式下不打开站点页面：JS 段仍需页面环境，这里的 WebView 只当"JS 求值器"用，
     // 取数本身走中转（直连那条才需要先停在站点上）。
@@ -355,12 +359,21 @@ class ComicOnlineService {
     return out;
   }
 
-  /// 按分类取书（规则是 JSON 写法：`$.items[*]` 等）。
+  /// 按分类取书。
+  ///
+  /// 两条路（看 `ruleExplore.bookList` 的写法）：
+  ///   * `$.items[*]` → 接口返回 JSON（榜单类站点）；
+  ///   * `class.xxx` → **分类页本身是网页**，跟搜索页是同一套卡片，走页面解析这条
+  ///     （2026-10-01 补：野蛮漫画的分类页就是这种，之前只认 JSON，界面上一直显示
+  ///     "分类浏览不可用"）。
   Future<ComicExplorePage> explore(String url) async {
     final rules = source.exploreRules;
     final listRule = rules['bookList'] ?? '';
     if (listRule.trim().isEmpty) {
       throw ComicProbeException('这份书源没给分类取数规则（ruleExplore.bookList）');
+    }
+    if (!listRule.trim().startsWith(r'$')) {
+      return _exploreHtml(url, rules);
     }
     // 必须在站点自己的页面上发请求：页面里发才带着站点发的 cookie（机房 IP 直连是 403）。
     // 走中转时由服务器代发，不用碰 WebView。
@@ -392,6 +405,75 @@ class ComicOnlineService {
     }
     if (out.isEmpty) throw ComicProbeException('这一页没取到任何书（站点可能改版）');
     return ComicExplorePage(hits: out, nextUrl: _nextUrlOf(data));
+  }
+
+  /// HTML 写法的分类页：跟搜索页同一套卡片规则，走同一条路（先取 HTML 直接解析，
+  /// 解析不出卡片再打开页面渲染后取 DOM）。
+  ///
+  /// 为什么要专门有一条：站点之间的差别不在"分类"这个概念，而在**这张列表是网页还是
+  /// 接口**。只认 JSON 的话，网页式分类页永远显示"分类浏览不可用"（用户看到的正是这句）。
+  Future<ComicExplorePage> _exploreHtml(
+    String url,
+    Map<String, String> rules,
+  ) async {
+    final card = rules['bookList']!;
+    try {
+      await _ensureOnSite();
+    } on ComicProbeException catch (e) {
+      throw ComicProbeException('分类页打不开：$e');
+    }
+    final html = await _tryHtml(url);
+    if (html != null) {
+      final doc = parseComicHtml(html);
+      final hits = _buildHits(
+        names: comicHtmlPerElement(doc, card, rules['name'] ?? ''),
+        links: comicHtmlPerElement(doc, card, rules['bookUrl'] ?? ''),
+        covers: comicHtmlPerElement(doc, card, rules['coverUrl'] ?? ''),
+        authors: comicHtmlPerElement(doc, card, rules['author'] ?? ''),
+      );
+      if (hits.isNotEmpty) {
+        lastPath = _fastPathLabel;
+        return ComicExplorePage(hits: hits, nextUrl: _nextListPage(url));
+      }
+      lastPathNote = '${lastPathNote ?? ''}取到的 HTML 里没解析出卡片'.trim();
+    }
+
+    lastPath = '老路（打开页面渲染后取）';
+    await _open(url, what: '分类页');
+    await _waitForCount(card, listTimeout);
+    final hits = _buildHits(
+      names: await _perElement(card, rules['name'] ?? ''),
+      links: await _perElement(card, rules['bookUrl'] ?? ''),
+      covers: await _perElement(card, rules['coverUrl'] ?? ''),
+      authors: await _perElement(card, rules['author'] ?? ''),
+    );
+    if (hits.isEmpty) {
+      throw ComicProbeException('分类页的卡片取到了，但书链一条都没取到（站点可能改版；也可能是这一类翻到底了）');
+    }
+    return ComicExplorePage(hits: hits, nextUrl: _nextListPage(url));
+  }
+
+  /// 纯文本清单（`名称::地址`）里这一页的**下一页**地址。
+  ///
+  /// 为什么从清单反推：`explore(url)` 只拿到一个具体地址，各家分页写法不同
+  /// （`.../3/1.html`、`?page=1`），只有清单里的 `{{page}}` 是唯一定义 —— 把当前
+  /// 地址扣回模板、取中间那截数字、加一，就对得上。
+  String? _nextListPage(String url) {
+    final plain = source.plainExplore;
+    if (plain == null) return null;
+    for (final e in plain) {
+      if (!e.url.contains('{{page}}')) continue;
+      final parts = e.url.split('{{page}}');
+      if (parts.length != 2) continue; // 多个占位符：不猜
+      final head = parts[0];
+      final tail = parts[1];
+      if (!url.startsWith(head) || !url.endsWith(tail)) continue;
+      final mid = url.substring(head.length, url.length - tail.length);
+      final n = int.tryParse(mid);
+      if (n == null) continue;
+      return '$head${n + 1}$tail';
+    }
+    return null;
   }
 
   /// 响应里的下一页地址（没有 / 不是字符串 → null，界面就不显示「加载更多」）。
@@ -558,6 +640,10 @@ class ComicOnlineService {
 
   /// 章节取图：返回图片地址列表。
   ///
+  /// [onPartial]：接口型源**每取到一批**就回调一次当前全部地址 —— 阅读页靠它先把
+  /// 前几张显示出来。整话 209 张要 21 次往返，全取完才显示的话用户看到的就是
+  /// "一直转圈"（2026-10-01 用户报的）。
+  ///
   /// 两条互不相干的路：
   ///   * **取图接口**（源带 `relay` 段 = 图不在 HTML 里）：先取章节页拿到
   ///     `aid/cid/picCount`，再用站点的取图接口分批取。**默认直连**（手机能到站点），
@@ -565,7 +651,10 @@ class ComicOnlineService {
   ///     这一路失败**如实报错**，不悄悄退回"打开页面"那条 —— HTML 里根本没有图地址，
   ///     退了只会白等一轮；
   ///   * 老路：打开章节页、等图片地址真的出现，再按书源 JS 段 → 直读属性两路取。
-  Future<List<String>> chapterImages(String chapterUrl) async {
+  Future<List<String>> chapterImages(
+    String chapterUrl, {
+    void Function(List<String> urls)? onPartial,
+  }) async {
     final fetcher = _fetcher;
     if (fetcher != null) {
       final picsPath = source.relay?.picsPath;
@@ -574,7 +663,7 @@ class ComicOnlineService {
           '这份书源没配取图接口（relay.chapterApi.pics）—— 取不到图',
         );
       }
-      return _chapterImagesViaApi(chapterUrl, fetcher, picsPath);
+      return _chapterImagesViaApi(chapterUrl, fetcher, picsPath, onPartial);
     }
     await _open(chapterUrl, what: '章节页');
 
@@ -617,10 +706,13 @@ class ComicOnlineService {
   ///
   /// 分批那套逻辑在 `comic_chapter_api.dart` 里 —— 自检页的「章节取图」跑的是**同一份**
   /// （以前只有这里实现，自检页对接口型源会误报「找不到图片选择器」）。
+  ///
+  /// [onPartial] 逐批回调（先显示前几张，不必等整话取完）。
   Future<List<String>> _chapterImagesViaApi(
     String chapterUrl,
     ComicFetcher fetcher,
     String picsPath,
+    void Function(List<String> urls)? onPartial,
   ) async {
     lastPath = relay == null ? '直连（章节取图接口）' : '中转（章节取图接口）';
     return fetchComicChapterPicsViaApi(
@@ -628,6 +720,7 @@ class ComicOnlineService {
       source: source,
       chapterUrl: chapterUrl,
       picsPath: picsPath,
+      onImages: onPartial,
     );
   }
 

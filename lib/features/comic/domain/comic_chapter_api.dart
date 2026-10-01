@@ -48,12 +48,16 @@ ComicChapterReadParams? readComicChapterParams(String html) {
 
 /// 取图接口一批的结果。
 class ComicChapterPicsBatch {
-  const ComicChapterPicsBatch({required this.urls, this.total});
+  const ComicChapterPicsBatch({required this.urls, this.total, this.limit});
 
   final List<String> urls;
 
   /// 站点自报的总张数（接口的 `total` 比章节页的 picCount 更权威）。
   final int? total;
+
+  /// 站点**这一批实际给几张**（接口的 `limit`；站点自己封顶 10）。
+  /// 拿它判断"这批没满 = 已是最后一批"，比用我们请求的张数可靠。
+  final int? limit;
 }
 
 /// 解析取图接口的一批响应；结构对不上返回 null（由调用方如实报）。
@@ -76,14 +80,19 @@ ComicChapterPicsBatch? parseComicChapterPicsBatch(String body) {
     if (p.isNotEmpty) urls.add(p);
   }
   final t = data['total'];
+  final l = data['limit'];
   return ComicChapterPicsBatch(
     urls: urls,
     total: t is num ? t.toInt() : int.tryParse('${t ?? ''}'),
+    limit: l is num ? l.toInt() : int.tryParse('${l ?? ''}'),
   );
 }
 
-/// 每一批取几张（站点取图接口的 `limit` 就是 5；末批可能不足）。
-const int kComicPicBatchSize = 5;
+/// 每一批要几张。
+///
+/// 站点自己封顶 **10**（实测 `limit=20/50/100` 都只回 10 张，响应里也写着 `limit: 10`），
+/// 所以按 10 要：一整话 209 张从 42 次往返降到 21 次 —— 少等一半时间。
+const int kComicPicBatchSize = 10;
 
 /// 一话最多取多少张（防接口异常时死循环；真源单话实测 209 张，500 够用）。
 const int kComicMaxPics = 500;
@@ -92,6 +101,8 @@ const int kComicMaxPics = 500;
 /// （中转会包成中转地址；直连原样返回，图片由图片缓存带着手机 UA 去取）。
 ///
 /// [onBatch] 每批成功后回调一次（批号从 1 开始），给自检页做进度提示用。
+/// [onImages] 每批成功后回调**当前全部地址**（含 `wrap`）—— 阅读页靠它先显示前几张，
+/// 不必等整话 209 张都取完（那要几十次往返，用户看到的就是"一直转圈"）。
 Future<List<String>> fetchComicChapterPicsViaApi({
   required ComicFetcher fetcher,
   required ComicSource source,
@@ -100,6 +111,7 @@ Future<List<String>> fetchComicChapterPicsViaApi({
   int batchSize = kComicPicBatchSize,
   int maxPics = kComicMaxPics,
   void Function(int batchNo, int got)? onBatch,
+  void Function(List<String> urls)? onImages,
 }) async {
   final html = await fetcher.getText(chapterUrl);
   final params = readComicChapterParams(html);
@@ -111,6 +123,7 @@ Future<List<String>> fetchComicChapterPicsViaApi({
   final picsUrl = source.absolute(picsPath);
   final out = <String>[];
   var offset = 0;
+  var batchNo = 0;
   // total：站点说多少张。章节页的 picCount 先当已知数，接口的 `total` 更权威。
   var total = params.picCount ?? 0;
   while (true) {
@@ -120,13 +133,14 @@ Future<List<String>> fetchComicChapterPicsViaApi({
       );
     }
     if (total > 0 && out.length >= total) break; // 取满了
-    final batchNo = offset ~/ batchSize + 1;
+    batchNo++;
     final String body;
     try {
       body = await fetcher.postForm(picsUrl, {
         'id': params.cid,
         'aid': params.aid,
         'offset': '$offset',
+        'limit': '$batchSize',
       });
     } on ComicProbeException catch (e) {
       // 报清**第几批 / 从哪一张开始**：只说"取图失败"用户没法判断是偶发还是接口变了。
@@ -148,17 +162,20 @@ Future<List<String>> fetchComicChapterPicsViaApi({
       break; // 没有更多了
     }
     out.addAll(batch.urls);
-    // 按**实际返回张数**推进 offset（末批不足 5 张时不会跳过中间的页）。
+    // 按**实际返回张数**推进 offset（末批不足时不会跳过中间的页）。
     offset += batch.urls.length;
     onBatch?.call(batchNo, out.length);
-    // total 未知时：一批不足一整批就是最后一批。
-    if (total <= 0 && batch.urls.length < batchSize) break;
+    // 地址交给取数器：中转包成中转地址；直连原样返回（图片缓存自己带手机 UA）。
+    onImages?.call(out.map(fetcher.wrap).toList());
+    // total 未知时：这批没满（按**站点自报的**批大小判）就是最后一批。
+    final effLimit = batch.limit ?? batchSize;
+    if (total <= 0 && batch.urls.length < effLimit) break;
   }
   if (out.isEmpty) {
     throw ComicProbeException('这一话一张图都没取到（取图接口返回空）');
   }
-  // 地址交给取数器：中转包成中转地址；直连原样返回 —— 图在 `tuer.justpic01pt.com:666`，
-  // 实测**直连可取**（200 / 48 KB / image/jpeg），图片缓存会带上手机 UA。
+  // 图在 `tuer.justpic01pt.com:666`，实测**直连可取**（200 / 48 KB / image/jpeg），
+  // 图片缓存会带上手机 UA。
   return out.map(fetcher.wrap).toList();
 }
 
