@@ -240,6 +240,15 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   List<String> _images = const [];
   int _imageIndex = 0;
 
+  /// 底部控制栏是否显示。默认显示几秒后自己收起；点画面任意处可再叫出来 / 收起来。
+  /// （2026-10-02 用户报"最下面这个影响观看，不能隐藏" —— 一直压着画面确实碍事。）
+  bool _chromeVisible = true;
+  Timer? _chromeTimer;
+
+  /// 整话的图**还在取**：这时 `_images.length` 只是"已经取到几张"，
+  /// 不能拿它当总数写出来（用户看到过"1 / 1 张"，其实整话 209 张 —— 就是"页数不对"）。
+  bool _imagesStreaming = false;
+
   /// 下一话预取（只在本话快读完时才动手，见 `_maybePrefetchNext`）。
   late final ComicChapterPrefetcher _prefetcher;
 
@@ -249,7 +258,8 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   void initState() {
     super.initState();
     _sources = _builtinComicSources();
-    _source = widget.source ??
+    _source =
+        widget.source ??
         (_sources.isNotEmpty
             ? _sources.first
             : ComicSource.tryParse(kSeedComicSourceJson)!);
@@ -264,7 +274,9 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     // 服务按"当前源 + 当前令牌"组：令牌可能是异步读出来的（设置里），
     // 先按注入的值组一次，读到之后再重建 —— 界面不必为这一步卡住。
     _service = _makeService();
-    _downloader.setLoadImages((chapterUrl) => _service.chapterImages(chapterUrl));
+    _downloader.setLoadImages(
+      (chapterUrl) => _service.chapterImages(chapterUrl),
+    );
     // 「仅 Wi-Fi 下载」按设置生效（默认开；读不到网络类型就不拦，见那个文件里的立场）。
     wireComicOfflineNetworkGuard(_downloader);
     _prefetcher = ComicChapterPrefetcher(
@@ -347,6 +359,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
 
   @override
   void dispose() {
+    _chromeTimer?.cancel();
     _pageController.dispose();
     _keyController.dispose();
     _scrollController.dispose();
@@ -464,7 +477,11 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   Future<void> _openBook(ComicSearchHit hit) =>
       _openBookUrl(hit.bookUrl, name: hit.name);
 
-  Future<void> _openBookUrl(String url, {String? name, bool fromList = true}) async {
+  Future<void> _openBookUrl(
+    String url, {
+    String? name,
+    bool fromList = true,
+  }) async {
     await _run(() async {
       final book = await _service.bookInfo(url);
       if (!mounted) return;
@@ -550,7 +567,9 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     ComicOnlineProgress? progress;
     String? note;
     try {
-      inShelf = (await _library.fetch()).any((b) => b.onlineUrl == book.bookUrl);
+      inShelf = (await _library.fetch()).any(
+        (b) => b.onlineUrl == book.bookUrl,
+      );
       progress = await _progress.load(book.bookUrl);
     } catch (e) {
       // 书架/进度读不出来是**存储**的问题，不该挡住看书 —— 单独写一行说明。
@@ -604,9 +623,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       '余下全部（${rest.length} 话）': rest,
       '整本（${chapters.length} 话）': chapters,
     };
-    final fromLabel = start > 0
-        ? '从「${chapters[start].title}」往后'
-        : '从列表第一话开始';
+    final fromLabel = start > 0 ? '从「${chapters[start].title}」往后' : '从列表第一话开始';
 
     final picked = await showModalBottomSheet<List<ComicChapterRef>>(
       context: context,
@@ -674,10 +691,8 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   void _openOfflineManager() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => ComicOfflinePage(
-          store: _offline,
-          downloader: _downloader,
-        ),
+        builder: (_) =>
+            ComicOfflinePage(store: _offline, downloader: _downloader),
       ),
     );
   }
@@ -702,6 +717,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           levelAdded = true;
         }
         _mode = _Mode.reader;
+        _imagesStreaming = partial;
         if (!partial) {
           _imageIndex = atIndex.clamp(
             0,
@@ -713,6 +729,8 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           _imageIndex = images.isEmpty ? 0 : images.length - 1;
         }
       });
+      // 整话取完（不是半截）时，给控制栏一个"几秒后自己收起"的计时。
+      if (!partial) _scheduleChromeHide();
     }
 
     await _run(() async {
@@ -728,8 +746,8 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           if (partial.length < _images.length) return; // 只有变多了才刷新
           enterReader(partial, partial: true);
           setState(
-            () => _busyLabel =
-                '正在取「${chapter.title}」的图…已取到 ${partial.length} 张',
+            () =>
+                _busyLabel = '正在取「${chapter.title}」的图…已取到 ${partial.length} 张',
           );
         },
       );
@@ -809,7 +827,11 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   ///
   /// 触发点就挂在进度上报上（两种翻页模式都走这里），省得多处各挂一次。
   /// 只认"还剩 2 张以内"：早于这个点去取，很可能用户下一话根本不看，白费流量。
-  void _maybePrefetchNext(ComicBookDetail book, ComicChapterRef chapter, int index) {
+  void _maybePrefetchNext(
+    ComicBookDetail book,
+    ComicChapterRef chapter,
+    int index,
+  ) {
     if (_images.isEmpty) return;
     if (_images.length - index > _kPrefetchTriggerPages) return;
     final i = book.chapters.indexWhere((c) => c.url == chapter.url);
@@ -862,13 +884,11 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(
-            switch (_mode) {
-              _Mode.search => '在线漫画',
-              _Mode.book => _book?.name ?? '详情',
-              _Mode.reader => _chapter?.title ?? '阅读',
-            },
-          ),
+          title: Text(switch (_mode) {
+            _Mode.search => '在线漫画',
+            _Mode.book => _book?.name ?? '详情',
+            _Mode.reader => _chapter?.title ?? '阅读',
+          }),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: _back,
@@ -1039,9 +1059,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           Expanded(
             child: Center(
               child: Text(
-                _categories.isEmpty
-                    ? '输入关键字，点「搜索」'
-                    : '输入关键字搜，或点上面的分类翻榜单',
+                _categories.isEmpty ? '输入关键字，点「搜索」' : '输入关键字搜，或点上面的分类翻榜单',
               ),
             ),
           ),
@@ -1054,7 +1072,11 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
                 final hit = _hits[i];
                 return ListTile(
                   leading: _Cover(url: hit.cover, cache: _cache, size: 44),
-                  title: Text(hit.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  title: Text(
+                    hit.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   subtitle: Text(
                     hit.author == null || hit.author!.isEmpty
                         ? '（未给出作者）'
@@ -1347,10 +1369,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
-              FilledButton(
-                onPressed: _back,
-                child: const Text('返回'),
-              ),
+              FilledButton(onPressed: _back, child: const Text('返回')),
             ],
           ),
         ),
@@ -1360,65 +1379,86 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       // 左右翻页：一屏一张，左右滑（页漫用这个顺）
       return Stack(
         children: [
-          PageView.builder(
-            controller: _pageController,
-            itemCount: _images.length,
-            onPageChanged: (i) {
-              setState(() => _imageIndex = i);
-              _saveProgress(i);
-            },
-            itemBuilder: (context, i) => Center(
-              child: _CachedImage(
-                url: _images[i],
-                cache: _cache,
-                fit: BoxFit.contain,
-                offline: _offline,
-                offlineBookUrl: _book?.bookUrl ?? '',
-                offlineChapterUrl: _chapter?.url ?? '',
+          // 点画面收起/叫出底部控制栏（阅读时画面是主角）。
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _toggleChrome,
+            child: PageView.builder(
+              controller: _pageController,
+              itemCount: _images.length,
+              onPageChanged: (i) {
+                setState(() => _imageIndex = i);
+                _saveProgress(i);
+              },
+              itemBuilder: (context, i) => Center(
+                child: _CachedImage(
+                  url: _images[i],
+                  cache: _cache,
+                  fit: BoxFit.contain,
+                  offline: _offline,
+                  offlineBookUrl: _book?.bookUrl ?? '',
+                  offlineChapterUrl: _chapter?.url ?? '',
+                ),
               ),
             ),
           ),
           // 后面的图还在取：顶部挂一条进度，别让人以为是卡住了。
-          if (_busy) Positioned(top: 0, left: 0, right: 0, child: _loadingBanner()),
-          Positioned(left: 0, right: 0, bottom: 0, child: _readerBar()),
+          if (_busy)
+            Positioned(top: 0, left: 0, right: 0, child: _loadingBanner()),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _readerProgressLine(),
+          ),
+          Positioned(left: 0, right: 0, bottom: 0, child: _readerChrome()),
         ],
       );
     }
     return Stack(
       children: [
-        NotificationListener<ScrollNotification>(
-          onNotification: (n) {
-            final px = n.metrics.pixels;
-            final per = n.metrics.maxScrollExtent /
-                (_images.isNotEmpty ? _images.length : 1);
-            final idx = per <= 0 ? 0 : (px / per).round();
-            if (idx != _imageIndex) {
-              setState(() => _imageIndex = idx);
-              _saveProgress(idx);
-            }
-            return false;
-          },
-          child: ListView.builder(
-            controller: _scrollController,
-            itemCount: _images.length,
-            itemBuilder: (context, i) => _PageImage(
-              url: _images[i],
-              cache: _cache,
-              offline: _offline,
-              offlineBookUrl: _book?.bookUrl ?? '',
-              offlineChapterUrl: _chapter?.url ?? '',
-              // 预取后面两张：翻页时基本就是本地读盘了。
-              prefetch: _images.skip(i + 1).take(2).toList(),
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _toggleChrome,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (n) {
+              final count = _images.length;
+              if (count == 0) return false;
+              final max = n.metrics.maxScrollExtent;
+              // 折算出"滚到第几张"：顶部=第 1 张，底部=最后一张。
+              // 老写法 `per = max / count` 在**底部**会算出 count（越界一位），
+              // 页面就写成 "210 / 209 张" 这种；用 (count-1) 并夹住范围才两头都对
+              // （2026-10-02 用户报"最下面页数显示不对"）。
+              final idx = max <= 0
+                  ? 0
+                  : ((n.metrics.pixels / max) * (count - 1))
+                        .round()
+                        .clamp(0, count - 1);
+              if (idx != _imageIndex) {
+                setState(() => _imageIndex = idx);
+                _saveProgress(idx);
+              }
+              return false;
+            },
+            child: ListView.builder(
+              controller: _scrollController,
+              itemCount: _images.length,
+              itemBuilder: (context, i) => _PageImage(
+                url: _images[i],
+                cache: _cache,
+                offline: _offline,
+                offlineBookUrl: _book?.bookUrl ?? '',
+                offlineChapterUrl: _chapter?.url ?? '',
+                // 预取后面两张：翻页时基本就是本地读盘了。
+                prefetch: _images.skip(i + 1).take(2).toList(),
+              ),
             ),
           ),
         ),
-        if (_busy) Positioned(top: 0, left: 0, right: 0, child: _loadingBanner()),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: _readerBar(),
-        ),
+        if (_busy)
+          Positioned(top: 0, left: 0, right: 0, child: _loadingBanner()),
+        Positioned(left: 0, right: 0, bottom: 0, child: _readerProgressLine()),
+        Positioned(left: 0, right: 0, bottom: 0, child: _readerChrome()),
       ],
     );
   }
@@ -1452,12 +1492,67 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     );
   }
 
+  /// 点画面：收起 / 叫出底部控制栏。
+  void _toggleChrome() {
+    setState(() => _chromeVisible = !_chromeVisible);
+    if (_chromeVisible) _scheduleChromeHide();
+  }
+
+  /// 显示几秒后自己收起（不必让用户去点，也不会一直压着画面）。
+  void _scheduleChromeHide() {
+    _chromeTimer?.cancel();
+    _chromeTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted && _chromeVisible) setState(() => _chromeVisible = false);
+    });
+  }
+
+  /// 页码文案。取完才给总数；还在取时只说"已取到几张"。
+  String _pageLabel() {
+    final n = _images.length;
+    if (n == 0) return '第 1 张';
+    final at = (_imageIndex + 1).clamp(1, n);
+    if (_imagesStreaming) return '第 $at 张 · 整话还在取（已取到 $n 张）';
+    return '$at / $n 张';
+  }
+
+  /// 常驻的一条 2px 进度线：收起控制栏时也知道读到哪了（占位极小，不挡画面）。
+  Widget _readerProgressLine() {
+    final n = _images.length;
+    final v = n <= 1 ? 1.0 : ((_imageIndex + 1) / n).clamp(0.0, 1.0);
+    return IgnorePointer(
+      child: LinearProgressIndicator(
+        value: v,
+        minHeight: 2,
+        backgroundColor: Colors.transparent,
+        color: Colors.white70,
+      ),
+    );
+  }
+
+  /// 底部控制栏：半透明 + 让开底部安全区，且能被收起来。
+  Widget _readerChrome() {
+    return IgnorePointer(
+      ignoring: !_chromeVisible,
+      child: AnimatedOpacity(
+        opacity: _chromeVisible ? 1 : 0,
+        duration: const Duration(milliseconds: 180),
+        child: _readerBar(),
+      ),
+    );
+  }
+
   Widget _readerBar() {
     final prev = _neighbor(-1);
     final next = _neighbor(1);
     return Container(
-      color: Colors.black87,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      // 半透明（不是实心底）：底下还是画面；再让开底部安全区，别被手势条压住。
+      color: Colors.black54,
+      padding: EdgeInsets.only(
+        left: 8,
+        right: 8,
+        top: 4,
+        bottom: 4 + MediaQuery.of(context).padding.bottom,
+      ),
       child: Row(
         children: [
           // 左边 = 上一话，右边 = 下一话（跟翻页方向、常见阅读器一致）。
@@ -1469,14 +1564,16 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             tooltip: _pageTurn ? '换成竖向连续（条漫）' : '换成左右翻页（页漫）',
             onPressed: _togglePageTurn,
             icon: Icon(
-              _pageTurn ? Icons.view_day_outlined : Icons.view_carousel_outlined,
+              _pageTurn
+                  ? Icons.view_day_outlined
+                  : Icons.view_carousel_outlined,
               color: Colors.white,
               size: 20,
             ),
           ),
           Expanded(
             child: Text(
-              '${_imageIndex + 1} / ${_images.length} 张',
+              _pageLabel(),
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white, fontSize: 13),
             ),
@@ -1609,7 +1706,10 @@ class _ChapterOfflineActionState extends State<ChapterOfflineAction> {
     await widget.downloader.enqueue(
       bookUrl: widget.bookUrl,
       chapters: [
-        ComicOfflineChapter(url: widget.chapter.url, title: widget.chapter.title),
+        ComicOfflineChapter(
+          url: widget.chapter.url,
+          title: widget.chapter.title,
+        ),
       ],
       bookTitle: widget.bookTitle,
       cover: widget.cover,
@@ -1704,10 +1804,18 @@ class _ChapterOfflineActionState extends State<ChapterOfflineAction> {
         icon = const Icon(Icons.pause_circle_outline, size: 20);
         tip = '已暂停：${job?.error ?? ''}';
       case ComicOfflineJobState.failed:
-        icon = Icon(Icons.error_outline, size: 20, color: theme.colorScheme.error);
+        icon = Icon(
+          Icons.error_outline,
+          size: 20,
+          color: theme.colorScheme.error,
+        );
         tip = '下载失败：${job?.error ?? ''}';
       case ComicOfflineJobState.done:
-        icon = Icon(Icons.check_circle, size: 20, color: theme.colorScheme.primary);
+        icon = Icon(
+          Icons.check_circle,
+          size: 20,
+          color: theme.colorScheme.primary,
+        );
         tip = '已下载到本机';
       case null:
         if (!_loaded) {

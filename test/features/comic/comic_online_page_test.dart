@@ -1044,5 +1044,38 @@ void main() {
         reason: '才第 1 张就去取下一话 = 白费流量',
       );
     });
+
+    testWidgets('底部控制栏：能收起来（点画面），过几秒也会自己收起', (tester) async {
+      final target = threeChapters();
+      await openHost(tester, _host(target, _FakeCache(png)));
+      await openChapterAt(tester, '第1话');
+
+      // 控制栏是 AnimatedOpacity 包着的（收起时**留在树上**、只是透明），
+      // 所以"有没有收起来"看透明度，别看 findsWidgets。
+      double chromeOpacity() => tester
+          .widget<AnimatedOpacity>(
+            find.ancestor(
+              of: find.text('1 / 1 张'),
+              matching: find.byType(AnimatedOpacity),
+            ),
+          )
+          .opacity;
+
+      expect(chromeOpacity(), 1, reason: '刚进来要看得见（不然找不到按钮）');
+
+      // 点画面（画面中间，不是底部那条）→ 收起来，不挡着看
+      await tester.tapAt(const Offset(400, 250));
+      await _settle(tester);
+      expect(chromeOpacity(), 0, reason: '点一下画面该收起来');
+
+      await tester.tapAt(const Offset(400, 250));
+      await _settle(tester);
+      expect(chromeOpacity(), 1, reason: '再点一下要能叫回来');
+
+      // 什么都不做也会自己收起（不用用户去点）
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(chromeOpacity(), 0, reason: '几秒后自己收起');
+    });
   });
 }
