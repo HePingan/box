@@ -1539,6 +1539,42 @@ class QuizPluginEntry {
 
   /// AI 读屏兜底（B 档）：把截图直接交给大模型读答案。
   ///
+  /// 读屏流程当前阶段（只为「卡住时说清卡在哪」；会出现在用户能看到的提示里）。
+  static String visionPhase = '准备';
+
+  /// 整个读屏流程的兜底上限（**与具体实现无关**的那层保障）。
+  ///
+  /// 2026-10-01 真机事故：点 AI 后既不出发请求、也不报错 —— 用户看到的就是「没反应」。
+  /// 具体等待已各自有终点（截图 8s、凭证 10s、引擎自身 45s 硬顶），这里再加一层
+  /// 兜底：无论内部卡在哪一步，流程都会结束，并把**卡住的阶段**写进用户能看到的
+  /// 提示 —— 用户只有手机、读不到日志，提示必须自带诊断信息。
+  static Duration visionFlowTimeout = const Duration(seconds: 75);
+
+  /// 单测接缝：把「当前请求」摆成指定代次/指纹，让读屏路径能一路走下去。
+  @visibleForTesting
+  static void debugSetCurrentRequest(int generation, String fingerprint) {
+    _searchGeneration = generation;
+    _activeQuestionFingerprint = fingerprint;
+  }
+
+  /// 单测接缝：直接跑一次读屏兜底（生产代码路径不变）。
+  @visibleForTesting
+  static Future<QuizResult?> debugRunVisionFallback(
+    QuizConfig config,
+    QuizEngine engine, {
+    String hintQuestion = '',
+    int requestGeneration = 0,
+    String requestFingerprint = '',
+    bool manual = true,
+  }) => _tryVisionFallback(
+    config,
+    engine,
+    hintQuestion: hintQuestion,
+    requestGeneration: requestGeneration,
+    requestFingerprint: requestFingerprint,
+    manual: manual,
+  );
+
   /// 触发条件（2026-09-13 用户拍板）：**所有本地未命中的题**。
   /// 即：题干搜不到本地题库、OCR 文字搜也搜不到 → 才轮到读屏。
   ///
@@ -1551,6 +1587,44 @@ class QuizPluginEntry {
   /// 代理 401/429、模型没答出来各有文案）。**零内置密钥**后绝不允许把
   /// 「拿不到凭证」静默退化成「未搜到答案」。**失败绝不编造答案**。
   static Future<QuizResult?> _tryVisionFallback(
+    QuizConfig config,
+    QuizEngine engine, {
+    String hintQuestion = '',
+    required int requestGeneration,
+    required String requestFingerprint,
+    bool manual = false,
+  }) async {
+    try {
+      return await _runVisionFallback(
+        config,
+        engine,
+        hintQuestion: hintQuestion,
+        requestGeneration: requestGeneration,
+        requestFingerprint: requestFingerprint,
+        manual: manual,
+      ).timeout(visionFlowTimeout);
+    } on TimeoutException catch (_) {
+      QuizDiag.warn(
+        QuizDiagStage.result,
+        '读屏流程无响应（兜底超时中止）',
+        fields: {
+          'phase': visionPhase,
+          'timeoutMs': visionFlowTimeout.inMilliseconds,
+          'manual': manual,
+        },
+      );
+      if (!manual) return null;
+      return QuizResult(
+        question: hintQuestion.trim(),
+        error:
+            'AI 读屏无响应（卡在：$visionPhase）。可重试；若反复出现，'
+            '请到「设置 → 无障碍」确认「答题助手」服务仍开启。',
+      );
+    }
+  }
+
+  /// [_tryVisionFallback] 的实现体（超时兜底由 [_tryVisionFallback] 负责）。
+  static Future<QuizResult?> _runVisionFallback(
     QuizConfig config,
     QuizEngine engine, {
     String hintQuestion = '',
@@ -1571,6 +1645,7 @@ class QuizPluginEntry {
       answersList: const [],
     );
 
+    visionPhase = '截图';
     final bytes = await captureRegionScreenshot(retryIfQuickNull: manual);
     if (!_isCurrentRequest(requestGeneration, requestFingerprint)) return null;
     if (bytes == null || bytes.isEmpty) {
@@ -1595,6 +1670,7 @@ class QuizPluginEntry {
     //   手填 key/端点 → 原样直连；已登录 → 平台代理（Bearer = session token）；
     //   未登录 → 同一条代理，Bearer = 服务端签发的匿名设备令牌。
     // 解析不出凭证时**如实报错**（内置 key 已删除，不再有任何兜底直连）。
+    visionPhase = '读凭证';
     final endpoint = await quizVisionCredentialResolver.resolve(config);
     if (!_isCurrentRequest(requestGeneration, requestFingerprint)) return null;
     QuizDiag.log(
@@ -1623,6 +1699,7 @@ class QuizPluginEntry {
       apiUrl: endpoint.baseUrl,
       apiKey: endpoint.apiKey,
     );
+    visionPhase = '发请求';
     var sessionCredentialRejected = false;
     final result = await engine.searchVisionApi(
       bytes,

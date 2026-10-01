@@ -17,6 +17,8 @@
 // —— 一个永不返回的 await 会让用例自己挂死（这也正是它在真机上的症状）。
 import 'dart:async';
 
+import 'package:box/features/quiz_plugin/data/quiz_engine.dart';
+import 'package:box/features/quiz_plugin/domain/quiz_config.dart';
 import 'package:box/features/quiz_plugin/presentation/quiz_plugin_entry.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -52,6 +54,7 @@ void main() {
 
   tearDown(() {
     QuizPluginEntry.captureTimeout = const Duration(seconds: 8);
+    QuizPluginEntry.visionFlowTimeout = const Duration(seconds: 75);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(_channel, null);
   });
@@ -136,5 +139,65 @@ void main() {
       isNot(contains('未搜到答案')),
       reason: '不能说成「未搜到答案，点右上角紫色 AI 按钮」——那是让用户点必然再失败的按钮',
     );
+  });
+
+  group('读屏流程兜底：点 AI 后不许无声卡住', () {
+    /// 截图永不回包、其他命令照常（= 内部某处等待没有终点）。
+    void hangCapture() {
+      QuizPluginEntry.debugSetCurrentRequest(7, 'fp-7');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(_channel, (call) async {
+            if (call.method.contains('apture')) {
+              return Completer<Object?>().future;
+            }
+            return null;
+          });
+    }
+
+    test('未知等待卡住 → 兜底收尾，且提示里说清「卡在哪」', () async {
+      // 具体超时故意放长，逼出"兜底"这条路径：真机事故就是这种形状 ——
+      // 点 AI 后既不出发请求、也不报错（服务端零请求）。
+      QuizPluginEntry.captureTimeout = const Duration(seconds: 30);
+      QuizPluginEntry.visionFlowTimeout = const Duration(milliseconds: 60);
+      hangCapture();
+      const config = QuizConfig(enabled: true, allowExternalApi: true);
+      final sw = Stopwatch()..start();
+
+      final result = await QuizPluginEntry.debugRunVisionFallback(
+        config,
+        QuizEngine(config: config),
+        hintQuestion: '1+1=?',
+        requestGeneration: 7,
+        requestFingerprint: 'fp-7',
+        manual: true,
+      );
+
+      expect(sw.elapsed, lessThan(const Duration(seconds: 2)));
+      expect(result, isNotNull, reason: '手动点 AI 必须给出结果，不能静默');
+      expect(
+        result!.error,
+        contains('卡在：截图'),
+        reason: '提示要自带诊断信息 —— 用户只有手机，读不到日志',
+      );
+    });
+
+    test('自动路径卡住 → 兜底返回 null（不打断自动流程）', () async {
+      QuizPluginEntry.captureTimeout = const Duration(seconds: 30);
+      QuizPluginEntry.visionFlowTimeout = const Duration(milliseconds: 60);
+      hangCapture();
+      const config = QuizConfig(enabled: true, allowExternalApi: true);
+      final sw = Stopwatch()..start();
+
+      final result = await QuizPluginEntry.debugRunVisionFallback(
+        config,
+        QuizEngine(config: config),
+        requestGeneration: 7,
+        requestFingerprint: 'fp-7',
+        manual: false,
+      );
+
+      expect(result, isNull);
+      expect(sw.elapsed, lessThan(const Duration(seconds: 2)));
+    });
   });
 }
