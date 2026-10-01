@@ -67,11 +67,19 @@ class QuizPluginSelfCheckPage extends StatefulWidget {
 }
 
 class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
+  /// 上一次自检结果（**跨页面实例保留**）。
+  ///
+  /// 2026-10-01 真机报告暴露：用户先点「截图自测」成功（275ms/157KB），
+  /// 退出再进来复制结论时那一格又变回"未测试" —— 让人以为没测过。
+  static String? _lastProbe;
+  static String? _lastCredentialMode;
+
   bool _loading = true;
   Map<String, String> _status = const {};
   List<String> _recent = const [];
   List<String> _important = const [];
-  String _probe = '未测试（点上面的「截图自测」当场验一次）';
+  String _probe =
+      _lastProbe ?? '未测试（点上面的「截图自测」当场验一次）';
   bool _probing = false;
   bool _credentialChecking = false;
 
@@ -93,11 +101,15 @@ class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
       status['无障碍服务'] = '检测失败';
     }
     try {
-      status['悬浮窗权限'] = await QuizPluginEntry.hasOverlayPermission()
+      // 注意：本插件的悬浮窗由无障碍服务用 TYPE_ACCESSIBILITY_OVERLAY 绘制，
+      // **不需要** SYSTEM_ALERT_WINDOW，`canDrawOverlays` 为 false 也不影响显示
+      // （2026-10-01 真机：这一格显示"未授权"而悬浮窗明明在，会误导诊断）。
+      // 判断悬浮窗是否真的能用，以「悬浮窗可见」那一格为准。
+      status['系统悬浮窗权限'] = await QuizPluginEntry.hasOverlayPermission()
           ? '已授权'
-          : '未授权 —— 悬浮窗不会显示';
+          : '未授权（本插件不依赖它 —— 悬浮窗走无障碍层，请看下一格「悬浮窗可见」）';
     } catch (_) {
-      status['悬浮窗权限'] = '检测失败';
+      status['系统悬浮窗权限'] = '检测失败';
     }
     try {
       status['悬浮窗可见'] = await QuizPluginEntry.isOverlayVisible()
@@ -108,7 +120,8 @@ class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
     }
     // 凭证**不在打开页面时**去取：取用会真实消耗一次签发额度（同 IP 每天 5 次），
     // 反复打开自检页反而会把读屏自己顶成 429。改成显式点「检测凭证」。
-    status['凭证模式'] = '未检测（点下面的「检测凭证」，会真实取用一次）';
+    status['凭证模式'] =
+        _lastCredentialMode ?? '未检测（点下面的「检测凭证」，会真实取用一次）';
     status['当前阶段'] = QuizPluginEntry.visionPhase;
 
     final recent = QuizDiag.recent(limit: 20);
@@ -139,6 +152,7 @@ class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
     } catch (_) {
       mode = '解析失败';
     }
+    _lastCredentialMode = mode;
     if (!mounted) return;
     setState(() {
       _status = {..._status, '凭证模式': mode};
@@ -166,6 +180,7 @@ class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
       ok ? '自检：截图通道正常' : '自检：截图通道失败',
       fields: {'ms': watch.elapsedMilliseconds, 'bytes': bytes?.length ?? 0},
     );
+    _lastProbe = text;
     if (!mounted) return;
     setState(() {
       _probe = text;
