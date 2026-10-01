@@ -263,7 +263,7 @@ class _FakeCoverCache extends ComicImageCache {
   final List<String> asked = <String>[];
 
   @override
-  Future<File> fetch(String url) async {
+  Future<File> fetch(String url, {bool lowPriority = false}) async {
     asked.add(url);
     final reason = failWith;
     if (reason != null) throw ComicImageException(reason);

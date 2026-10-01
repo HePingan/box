@@ -15,9 +15,13 @@ class _RecordingCache extends ComicImageCache {
   final List<String> fetched = <String>[];
   final Set<String> failing = <String>{};
 
+  /// 每次取图是不是**低优先级**（预取必须传 true：它不能占着并发名额让正文排队）。
+  final List<bool> lowPriorityFlags = <bool>[];
+
   @override
-  Future<File> fetch(String url) async {
+  Future<File> fetch(String url, {bool lowPriority = false}) async {
     fetched.add(url);
+    lowPriorityFlags.add(lowPriority);
     if (failing.contains(url)) throw const FileSystemException('取不到');
     return File('/dev/null');
   }
@@ -142,5 +146,22 @@ void main() {
 
     expect(cache.fetched, isEmpty);
     expect(prefetcher.hasPrefetchedAnything, isFalse);
+  });
+
+  test('预取一律标成低优先级（不能占着并发名额让正在读的这一话排队）', () async {
+    final cache = _RecordingCache();
+    final prefetcher = ComicChapterPrefetcher(
+      loadImages: (url) async => <String>['$url/1.jpg', '$url/2.jpg'],
+      cache: cache,
+    );
+
+    await prefetcher.prefetchNext(_chapters(['A', 'B']), 0);
+
+    expect(cache.fetched, isNotEmpty);
+    expect(
+      cache.lowPriorityFlags.every((low) => low),
+      isTrue,
+      reason: '预取和正文共用同一个缓存实例 → 同一个并发池，标了低优先级正文才不被挤',
+    );
   });
 }

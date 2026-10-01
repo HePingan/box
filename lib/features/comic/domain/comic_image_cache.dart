@@ -34,6 +34,7 @@ class ComicImageCache {
     this.alternatePorts = defaultAlternatePorts,
     this.maxAttempts = defaultMaxAttempts,
     this.maxParallel = defaultMaxParallel,
+    this.foregroundReserved = defaultForegroundReserved,
   }) : headerFor = headerFor ?? _noHeaders,
        tempDirProvider = tempDirProvider ?? getTemporaryDirectory;
 
@@ -108,11 +109,14 @@ class ComicImageCache {
   }
 
   /// 取图：有缓存直接用，没有就下载。**失败抛出**（带原因）。
-  Future<File> fetch(String url) {
+  ///
+  /// [lowPriority]：预取这类"顺手"的活传 true —— 它只占 [foregroundReserved] 之外的名额，
+  /// 且**有前台在排队时不抢名额**（见 [_canStart]）。
+  Future<File> fetch(String url, {bool lowPriority = false}) {
     final key = url;
     final running = _inFlight[key];
     if (running != null) return running;
-    final future = _fetchOnce(url).whenComplete(() {
+    final future = _fetchOnce(url, low: lowPriority).whenComplete(() {
       // 注意：这里**必须是块体**（返回 void）。写成 `=> _inFlight.remove(key)`
       // 的话，`whenComplete` 会把"回调的返回值"当成还要再等的 Future —— 而
       // `remove` 返回的正是**这个 Future 自己**，于是它永远在等自己完成。
@@ -126,7 +130,7 @@ class ComicImageCache {
     return future;
   }
 
-  Future<File> _fetchOnce(String url) async {
+  Future<File> _fetchOnce(String url, {required bool low}) async {
     final existing = await cachedFile(url);
     if (existing != null) return existing;
 
@@ -143,7 +147,7 @@ class ComicImageCache {
     final queue = Queue<Uri>()..addAll(_candidatesFor(uri));
     var attempts = 0;
     ComicImageException? last;
-    await _acquire();
+    await _acquire(low: low);
     try {
       while (queue.isNotEmpty && attempts < maxAttempts) {
         final candidate = queue.removeFirst();
@@ -161,7 +165,7 @@ class ComicImageCache {
         }
       }
     } finally {
-      _release();
+      _release(low: low);
     }
     // 一条都没成：把"试过哪几个端口、试了几次"说出来，用户才知道不是我们没试。
     throw ComicImageException(
@@ -196,8 +200,26 @@ class ComicImageCache {
 
   static const int defaultMaxParallel = 4;
 
+  /// 给**前台**（正在读的那一话、列表/详情上的封面）留出的名额。
+  ///
+  /// 为什么要有优先级（2026-10-01）：预取（下一话开头几张）和正在读的那一话**共用同一个
+  /// 缓存实例**，也就共用同一个并发池 —— 翻到下一话之前预取正在跑那 3 张，正文的图就排在
+  /// 它们后面，用户体感是"翻页更慢了"。低优先级的活最多占 `maxParallel - foregroundReserved`
+  /// 个名额，而且**有前台在排队时它不抢**。
+  final int foregroundReserved;
+
+  static const int defaultForegroundReserved = 2;
+
   int _running = 0;
-  final Queue<Completer<void>> _waiters = Queue<Completer<void>>();
+
+  /// 其中低优先级占着的名额数。
+  int _runningLow = 0;
+
+  final Queue<Completer<void>> _highWaiters = Queue<Completer<void>>();
+  final Queue<Completer<void>> _lowWaiters = Queue<Completer<void>>();
+
+  /// 低优先级最多同时占几个名额（至少留 1 个给前台，免得自己把自己堵死）。
+  int get _lowLimit => (maxParallel - foregroundReserved).clamp(1, maxParallel);
 
   HttpClient? _client;
 
@@ -225,23 +247,46 @@ class ComicImageCache {
     _client = null;
   }
 
-  Future<void> _acquire() {
-    if (_running < maxParallel) {
-      _running++;
+  Future<void> _acquire({required bool low}) {
+    if (_canStart(low)) {
+      _grant(low);
       return Future<void>.value();
     }
     final waiter = Completer<void>();
-    _waiters.add(waiter);
+    (low ? _lowWaiters : _highWaiters).add(waiter);
     return waiter.future;
   }
 
-  void _release() {
-    if (_waiters.isNotEmpty) {
-      // 名额直接转给排队的那一个：_running 不动，避免"放出去又抢回来"的抖动。
-      _waiters.removeFirst().complete();
+  /// 现在能不能开一条：[low] 为真时还要看"前台没在排队"和"自己没占满"。
+  bool _canStart(bool low) {
+    if (_running >= maxParallel) return false;
+    if (!low) return true;
+    return _highWaiters.isEmpty && _runningLow < _lowLimit;
+  }
+
+  void _grant(bool low) {
+    _running++;
+    if (low) _runningLow++;
+  }
+
+  void _release({required bool low}) {
+    _running--;
+    if (low) _runningLow--;
+    // 刚空出来的名额转给排队者：**前台优先**；低优先级只在没人等前台、且没到自己上限时才接
+    // （否则预取会把名额占着，用户翻页继续排队）。
+    if (_highWaiters.isNotEmpty && _canStart(false)) {
+      // 名额转给排队者时**必须把它叫醒**：`removeFirst()` 只是把它从队列里拿出来，
+      // 不 complete 的话那个 `await _acquire()` 永远不返回 —— 图就卡在队列里（实测过）。
+      final waiter = _highWaiters.removeFirst();
+      _grant(false);
+      waiter.complete();
       return;
     }
-    if (_running > 0) _running--;
+    if (_lowWaiters.isNotEmpty && _canStart(true)) {
+      final waiter = _lowWaiters.removeFirst();
+      _grant(true);
+      waiter.complete();
+    }
   }
 
   /// 真正下这一张（[uri] 是本次要连的地址，[url] 是**缓存键 / 请求头判据**用的原始地址）。

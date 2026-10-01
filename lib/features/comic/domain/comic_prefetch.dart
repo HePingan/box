@@ -62,7 +62,9 @@ class ComicChapterPrefetcher {
       if (images.isEmpty) return;
       for (final url in images.take(leadingImages)) {
         try {
-          await cache.fetch(url);
+          // 低优先级：预取是顺手，不能占着并发名额让**正在读的这一话**排队
+          // （2026-10-01：预取和正文共用同一个缓存实例 → 同一个并发池）。
+          await cache.fetch(url, lowPriority: true);
         } on Object {
           // 某张没下来不中断其余几张：真读那一话时这张还会再取一次（那次会如实报错）。
         }
