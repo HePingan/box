@@ -1556,6 +1556,32 @@ class QuizPluginEntry {
   /// 提示 —— 用户只有手机、读不到日志，提示必须自带诊断信息。
   static Duration visionFlowTimeout = QuizVisionTimeouts.flow;
 
+  /// 同一屏最短重复间隔（读屏是**付费**调用；手动点 AI 不受它限制）。
+  static Duration visionRepeatCooldown = const Duration(seconds: 10);
+  static String _lastVisionFingerprint = '';
+  static DateTime? _lastVisionAt;
+
+  /// 自动路径的「**明显不是题**」判据（纯函数，单测直接覆盖）。
+  ///
+  /// 2026-10-01 真机：`沉浸浏览，视频220，，2026年9月12日 12:48，，第220个，共1102个`
+  /// 这种**界面文字**也照发了一次付费读屏请求（AI 拿到的只是这个界面，自然给不出答案）。
+  ///
+  /// 口径刻意**只挡噪声、放过一切不确定的**：
+  ///   - 屏幕上没文字（解析为空）→ 挡（自动路径若放行，会在任何无文字界面上反复付费）；
+  ///   - 位置指示 / 时间戳 / 日期开头 / 视频弹幕类字样 → 挡；
+  ///   - 其余一律放行 —— 用户 09-13 拍板「所有本地未命中的题都交给读屏」，
+  ///     图题常常只有「如图所示」这种短题干，绝不能因为"短"就拦掉。
+  ///   **手动点 AI 永远放行**（那是用户的明确意图，闸门只管自动路径）。
+  @visibleForTesting
+  static bool isObviousNonQuestion(String question) {
+    final q = question.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (q.isEmpty) return true;
+    if (RegExp(r'第\d+个|共\d+个|沉浸|弹幕|选集|正在播放').hasMatch(q)) return true;
+    if (RegExp(r'^\d{1,2}[:：]\d{2}').hasMatch(q)) return true;
+    if (RegExp(r'^\d{4}年\d{1,2}月\d{1,2}日').hasMatch(q)) return true;
+    return false;
+  }
+
   /// 单测接缝：把「当前请求」摆成指定代次/指纹，让读屏路径能一路走下去。
   @visibleForTesting
   static void debugSetCurrentRequest(int generation, String fingerprint) {
@@ -1640,6 +1666,32 @@ class QuizPluginEntry {
   }) async {
     if (!visionFallbackEnabled(config)) return null;
     if (!_isCurrentRequest(requestGeneration, requestFingerprint)) return null;
+
+    // A1（2026-10-01）：自动路径不把界面文字当题发付费请求；手动点 AI 一律放行。
+    final gateAt = DateTime.now();
+    if (!manual) {
+      if (isObviousNonQuestion(hintQuestion)) {
+        QuizDiag.log(
+          QuizDiagStage.result,
+          '读屏跳过：这屏明显不是题目（自动路径不发付费请求）',
+          fields: {'qLen': hintQuestion.trim().length},
+        );
+        return null;
+      }
+      if (_lastVisionAt != null &&
+          requestFingerprint.isNotEmpty &&
+          requestFingerprint == _lastVisionFingerprint &&
+          gateAt.difference(_lastVisionAt!) < visionRepeatCooldown) {
+        QuizDiag.log(
+          QuizDiagStage.result,
+          '读屏跳过：同一屏冷却中',
+          fields: {'cooldownMs': visionRepeatCooldown.inMilliseconds},
+        );
+        return null;
+      }
+    }
+    _lastVisionFingerprint = requestFingerprint;
+    _lastVisionAt = gateAt;
 
     await _pushOverlay(
       question: '新题 · AI 读屏中…',

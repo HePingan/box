@@ -1,4 +1,5 @@
 import '../domain/quiz_vision_timeouts.dart';
+import '../domain/quiz_vision_usage.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -1268,6 +1269,10 @@ class QuizEngine {
             )
             // 单次超时 = 剩余预算，保证「多次重试」不会把总耗时拖成几分钟。
             .timeout(remaining);
+
+        // B1（2026-10-01）：服务端在响应头里回报「今日用量/上限」，交给自检页显示
+        // （无论 200 还是 401/429 都记 —— 429 恰好是用户最需要看到额度的时候）。
+        QuizVisionUsage.record(response.headers);
 
         if (response.statusCode == 200) {
           // 显式按 UTF-8 解码：中文题干若走 latin-1 会变乱码。

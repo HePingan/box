@@ -1511,6 +1511,7 @@ class PlatformQuotaServer {
         store.quizVisionUsage.putIfAbsent(subjectKey, () => <String, int>{});
     final usedToday = userCounts[dayKey] ?? 0;
     if (usedToday >= quizVisionDailyCap) {
+      setQuizVisionUsageHeaders(request.response, subjectKey, dayKey);
       await jsonResponse(request.response, HttpStatus.tooManyRequests, {
         'error': {
           'message': '今日 AI 读屏次数已用完（$quizVisionDailyCap 次/日），明天再试。',
@@ -1528,6 +1529,7 @@ class PlatformQuotaServer {
       upstream = await postChatCompletionUpstream(provider, decoded);
     } catch (error) {
       store.quizVisionRecordUpstreamFailure(subjectKey, dayKey);
+      setQuizVisionUsageHeaders(request.response, subjectKey, dayKey);
       await jsonResponse(request.response, HttpStatus.serviceUnavailable, {
         'error': {'message': 'AI 读屏上游请求失败：${compactPreview('$error')}'},
       });
@@ -1544,7 +1546,23 @@ class PlatformQuotaServer {
       '${DateTime.now().toIso8601String()} quiz-vision subject=$subjectKey '
       'upstream=${upstream.statusCode} bytes=${upstream.text.length}',
     );
+    setQuizVisionUsageHeaders(request.response, subjectKey, dayKey);
     await jsonText(request.response, upstream.statusCode, upstream.text);
+  }
+
+  /// B1（2026-10-01）：把「今日用量 / 每日上限」写进响应头。
+  ///
+  /// 为什么不放 body：body 是 OpenAI 兼容结构（客户端按 chat/completions 解析），
+  /// 塞自定义字段会破坏解析；头部对老客户端完全透明（它们只读 body）。
+  /// 此前客户端只有**额度用完时的 429** 才知道超了，自检页据此可显示「今日读屏 x/100」。
+  void setQuizVisionUsageHeaders(
+    HttpResponse response,
+    String subjectKey,
+    String dayKey,
+  ) {
+    final used = store.quizVisionUsage[subjectKey]?[dayKey] ?? 0;
+    response.headers.set('X-Quiz-Vision-Used', '$used');
+    response.headers.set('X-Quiz-Vision-Cap', '$quizVisionDailyCap');
   }
 
   /// 匿名设备令牌签发（公开端点，无需登录）。

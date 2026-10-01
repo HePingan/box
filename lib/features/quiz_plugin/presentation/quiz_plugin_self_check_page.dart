@@ -17,6 +17,7 @@ import 'package:flutter/services.dart';
 import '../../../design_system/app_tokens.dart';
 import '../data/quiz_vision_credentials.dart';
 import '../domain/quiz_diag.dart';
+import '../domain/quiz_vision_usage.dart';
 import 'quiz_plugin_entry.dart';
 
 class QuizPluginSelfCheckPage extends StatefulWidget {
@@ -123,6 +124,8 @@ class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
     status['凭证模式'] =
         _lastCredentialMode ?? '未检测（点下面的「检测凭证」，会真实取用一次）';
     status['当前阶段'] = QuizPluginEntry.visionPhase;
+    // B1（2026-10-01）：服务端在响应头回报的额度用量（没有就显示「未知」）。
+    status['读屏用量'] = QuizVisionUsage.describe();
 
     final recent = QuizDiag.recent(limit: 20);
     final important = await QuizDiag.important(limit: 20);
@@ -285,6 +288,29 @@ class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
                               )
                             : const Icon(Icons.key_outlined, size: 18),
                         label: Text(_credentialChecking ? '正在检测…' : '检测凭证'),
+                      ),
+                    ),
+                  ],
+                ),
+                _card(
+                  title: '保活检查（手机上最容易踩的坑）',
+                  children: [
+                    const Text(
+                      '系统会在后台清理「无障碍服务」——vivo / OPPO / 小米 / 华为等机型尤其常见。'
+                      '服务被清掉后，点 AI 会表现为“没反应”，而上面第一格会显示“未启用”。',
+                    ),
+                    const SizedBox(height: AppTokens.spaceXs),
+                    const Text(
+                      '建议在系统设置里给 Box 放行：① 设置 → 电池 → 后台高耗电/后台耗电管理 → 允许后台运行；'
+                      '② 设置 → 应用 → 自启动 → 允许。',
+                    ),
+                    const SizedBox(height: AppTokens.spaceSm),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        onPressed: () => QuizPluginEntry.requestAccessibility(),
+                        icon: const Icon(Icons.accessibility_new, size: 18),
+                        label: const Text('去无障碍设置'),
                       ),
                     ),
                   ],

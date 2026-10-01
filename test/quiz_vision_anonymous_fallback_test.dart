@@ -17,6 +17,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:box/features/quiz_plugin/domain/quiz_vision_usage.dart';
 import 'package:box/features/quiz_plugin/data/quiz_engine.dart';
 import 'package:box/features/quiz_plugin/domain/quiz_config.dart';
 import 'package:box/features/quiz_plugin/domain/quiz_vision_endpoint.dart';
@@ -71,7 +72,12 @@ Future<Uint8List> _png960() async {
   final client = MockClient((req) async {
     requests.add(req);
     final status = statuses[(requests.length - 1).clamp(0, statuses.length - 1)];
-    final headers = {'content-type': 'application/json; charset=utf-8'};
+    final headers = {
+      'content-type': 'application/json; charset=utf-8',
+      // B1（2026-10-01）：服务端在响应头回报额度用量，客户端要把它记下来。
+      'X-Quiz-Vision-Used': '7',
+      'X-Quiz-Vision-Cap': '100',
+    };
     if (status == 200) return http.Response(await _okBody(), 200, headers: headers);
     return http.Response(_proxy401Body, status, headers: headers);
   });
@@ -125,6 +131,21 @@ void main() {
         '$_proxyBase/chat/completions',
         reason: '匿名档与登录档同一条代理路径，只换 Bearer',
       );
+    });
+
+    test('B1：响应头里的用量被记下来（自检页据此显示「今日 X/100」）', () async {
+      QuizVisionUsage.reset();
+      addTearDown(QuizVisionUsage.reset);
+      final rec = _recordingClient([200]);
+      final result = await _engine(rec.client).searchVisionApi(
+        await _png960(),
+        hintQuestion: '驾驶校车…一次记几分？',
+      );
+
+      expect(result.isSuccess, isTrue, reason: result.error ?? '应成功');
+      expect(QuizVisionUsage.usedToday, 7);
+      expect(QuizVisionUsage.dailyCap, 100);
+      expect(QuizVisionUsage.describe(), contains('7/100'));
     });
 
     test('没给降级回调 → 行为不变：立即失败，文案仍是「凭证已失效」', () async {
