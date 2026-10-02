@@ -60,7 +60,9 @@
 | 定向用例 | `flutter test test/daily_news_page_host_allowlist_test.dart test/features/home/ai_hot_feed_test.dart test/features/home/home_feed_tabs_test.dart test/features/home/home_news_empty_state_test.dart` | **49 passed**（含新增的摘要两条用例） |
 | 全量（CI 口径） | `flutter test --exclude-tags live` | **All tests passed!**（4197 passed / 0 failed / 3 skipped） |
 | 真连上游（e2e） | `flutter test --tags live test/features/home/ai_hot_live_e2e_test.dart` | All tests passed（真实 v1 响应 + 解析 + 白名单一致性） |
-| 未验证 | 真机 | 需要发一版才能看到；验收见下 |
+| 产物核对（发布前） | `verify_release_apk.py <新包> <352的包> f50d321 1.20.96 353 --require-literal '这条内容要在浏览器里打开' --control-literal '资讯'` | 全部通过：版本/ABI/证书正确、包内无口令（0/0）、注入项 0→1、控制组 6→6、AOT 新增字面量 4 条（站外说明页 3 条 + 「知乎日报」）。**摘要那一项没有新增字面量**（纯渲染改动），它的证据是同一次构建 + 49 条定向用例 |
+| 发布（2026-10-02） | hpa888 `box-publish-apk.py`（演练后正式） | release **id=194** `1.20.96(353)` published，352 归档；公网包逐字节一致、HMAC 复核通过、352 客户端 `hasNewVersion=true` 且 `effectiveForceUpdate=false`（建议升级、不强制）、353 客户端不再提示；服务端临时包已清理 |
+| 未验证 | 真机 | 验收见下（升级到 1.20.96 后两步） |
 
 ### 真机验收（用户侧两步就能做完）
 
