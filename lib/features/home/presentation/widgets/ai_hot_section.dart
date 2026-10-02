@@ -122,8 +122,16 @@ class AiHotRow extends StatelessWidget {
   final bool showDivider;
   final VoidCallback onTap;
 
+  /// 摘要最多两行之后省略。
+  ///
+  /// 之前界面只显示标题：用户想知道这条讲什么，唯一的路是点开 —— 而这类条目的
+  /// 原文常常在 x.com 上（站内条目页里再跳一次），点开是最贵的一步。
+  /// 两行而不是不限行：AI 页签本来就压在首屏以下的内容后面，不能让卡片无限长。
+  static const int summaryMaxLines = 2;
+
   @override
   Widget build(BuildContext context) {
+    final String? summary = item.summary;
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -147,6 +155,20 @@ class AiHotRow extends StatelessWidget {
                 color: AppTokens.textPrimary,
               ),
             ),
+            // 摘要：上游每条都给，之前解析了却没显示（点开才能知道这条讲什么）。
+            if (summary != null) ...<Widget>[
+              const SizedBox(height: 4),
+              Text(
+                summary,
+                maxLines: summaryMaxLines,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.4,
+                  color: AppTokens.textSecondary,
+                ),
+              ),
+            ],
             const SizedBox(height: 6),
             Row(
               children: <Widget>[

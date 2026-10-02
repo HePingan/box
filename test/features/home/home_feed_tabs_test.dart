@@ -297,5 +297,61 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('缓存'), findsNothing);
     });
+
+    testWidgets('AI 行显示上游摘要，且最多两行（点开之前先知道这条讲什么）', (tester) async {
+      const summary =
+          'Bloomberg 报道，Anthropic 已邀请机构投资者在其可能估值近 2 万亿美元的 IPO 前质询高管，'
+          '最早 11 月 9 日当周启动正式路演，感恩节前上市。';
+      const feed = AiHotFeed(
+        items: <AiHotItem>[
+          AiHotItem(id: 'x', title: '有摘要的条目', summary: summary),
+        ],
+        attributionSource: 'AIHOT',
+      );
+
+      await tester.pumpWidget(_host(_card(aiFeed: feed)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('AI'));
+      await tester.pumpAndSettle();
+
+      final text = tester.widget<Text>(find.text(summary));
+      expect(
+        text.maxLines,
+        AiHotRow.summaryMaxLines,
+        reason: '摘要必须封顶：不限行的长摘要会把卡片撑得没边',
+      );
+      expect(text.overflow, TextOverflow.ellipsis);
+    });
+
+    testWidgets('没有摘要的条目不留空行（行高比有摘要的矮）', (tester) async {
+      const plain = AiHotFeed(
+        items: <AiHotItem>[AiHotItem(id: 'x', title: '只有标题')],
+        attributionSource: 'AIHOT',
+      );
+      await tester.pumpWidget(_host(_card(aiFeed: plain)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('AI'));
+      await tester.pumpAndSettle();
+      expect(find.text(''), findsNothing, reason: '上游没给摘要就不许出现空行占位');
+      final double plainHeight = tester.getSize(find.byType(AiHotRow).first).height;
+
+      const withSummary = AiHotFeed(
+        items: <AiHotItem>[
+          AiHotItem(id: 'x', title: '只有标题', summary: '一行摘要'),
+        ],
+        attributionSource: 'AIHOT',
+      );
+      await tester.pumpWidget(_host(_card(aiFeed: withSummary)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('AI'));
+      await tester.pumpAndSettle();
+      final double summaryHeight = tester.getSize(find.byType(AiHotRow).first).height;
+
+      expect(
+        summaryHeight,
+        greaterThan(plainHeight),
+        reason: '有摘要的条目就该更高一点（否则说明摘要没渲染出来）',
+      );
+    });
   });
 }
