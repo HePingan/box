@@ -7,18 +7,24 @@
 （10 个边缘 IP × 两种端口全 200），所以探针放这里最能代表"我们这边的能力上限"；
 探针**挂了**不代表用户那条网也挂（hpa888 就被这本漫画的图床 reset），报告里要写清这一条。
 
-探什么（四条腿，模拟 App 真实那条路：站点 → 封面地址 → 图床）：
+判什么（四条腿，模拟 App 真实那条路：站点 → 封面地址 → 图床）：
   1. site      手机 UA 取搜索页，200 且里面有卡片（站点活着）
   2. img666    从搜索页里**现取**一个封面地址（图床 :666），200 且是图片
   3. img443    同一路径去掉端口（443）—— 只 666 挂 = 运营商/网关拦端口
   4. img_ip    **全扫**域名解析出的每个边缘 IP（SNI 直连取图）—— 抽样会漏掉
                "域名里混着一半死 IP"这种真问题（2026-10-02 实测 10 个里 5 个全死）
 
-判据：
-  crit = 站点挂了，或 666 与 443 **都**挂
-  warn = 只挂一条，或 ≥70% 的边缘 IP 取不到图（全死另判 crit）
+判据（2026-10-03 改成"按能力"，此前是"单连一次"）：
+  crit = 站点挂了，或 **域名两端口 + 所有边缘 IP 都取不到图**（整条路不通）
+  warn = 域名这条路不通但直连边缘 IP 可取 / 只通一个端口 / ≥70% 边缘 IP 死
   连续 **2 轮**同类才算数（约 20 分钟）—— 单轮抖动发消息就是噪声（去重策略见技能）。
   状态翻转才发飞书：掉下去报一次、恢复报一次，平时一个字都不发。
+
+  为什么不再"单连一次就算这条腿的命"（2026-10-03）：域名解析出 9 个 IP，其中 5 个
+  全死，单连一次等于掷硬币 —— 实测同一个地址连 5 次是 3 通 2 断，于是探针以 10 分钟为
+  单位在 crit/warn 与"已恢复"之间翻转，一天十几条消息，而用户其实还能正常看
+  （App 的候选顺序是"已知好 IP → 域名 → 换端口 → 其它 IP"）。腿的判据必须与 App 的
+  取图路径一致，否则测的是运气不是能力。
 
 用法：
   comic-image-probe.py --check    人工看一遍（不落状态）
@@ -97,13 +103,59 @@ def without_port(cover: str) -> str:
     return re.sub(r"(https?://[^/]+):\d+", r"\1", cover)
 
 
-def check_image(url: str) -> dict:
+def _fetch_via_ip(ip: str, host: str, port: int, path: str, timeout: float, ctx) -> tuple[bool, float | None]:
     try:
-        status, n, ms, _, ctype = http_get(url)
-        ok = status == 200 and ctype.startswith("image/") and n > 0
-        return {"ok": ok, "ms": round(ms), "note": f"HTTP {status} {ctype} {n}B"}
+        t0 = time.time()
+        s = socket.create_connection((ip, port), timeout=timeout)
+        ss = ctx.wrap_socket(s, server_hostname=host)
+        ss.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {UA}\r\n"
+                    "Accept: image/*\r\nConnection: close\r\n\r\n").encode())
+        head = ss.recv(64).split(b"\r\n", 1)[0].decode("latin1", "replace")
+        ss.close()
+        return ("200" in head, round((time.time() - t0) * 1000))
+    except Exception:                                         # noqa: BLE001
+        return (False, None)
+
+
+def check_image(url: str, max_ips: int = 4, timeout: float = 5.0) -> dict:
+    """取一张图 —— **按能力判**：域名解析出的 IP 里只要有一个能取到图，这条腿就算通。
+
+    判据必须与 App 的取图路径一致（App 的候选顺序：已知好 IP → 域名 → 换端口 → 其它 IP，
+    坏的记 30 分钟）。只单连一次域名等于掷硬币：实测同一地址连 5 次 3 通 2 断，
+    因为域名里混着一半死 IP（185.13.110.21~25）。
+    """
+    m = re.match(r"(https?)://([^/:]+)(?::(\d+))?(/.*)$", url)
+    if not m:
+        return {"ok": False, "ms": None, "note": f"地址解析不了：{url[:60]}"}
+    _scheme, host, port, path = m.group(1), m.group(2), int(m.group(3) or 443), m.group(4)
+    try:
+        ips = sorted({i[4][0] for i in socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)})
     except Exception as e:                                    # noqa: BLE001
-        return {"ok": False, "ms": None, "note": f"{type(e).__name__}: {str(e)[:80]}"}
+        return {"ok": False, "ms": None,
+                "note": f"解析失败：{type(e).__name__}: {str(e)[:60]}"}
+    if not ips:
+        return {"ok": False, "ms": None, "note": "解析不到任何 IP"}
+
+    tried = ips[:max_ips] if max_ips else ips
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    # 并发试（死 IP 要吃满超时；串行试 4 个最坏 20 秒，一轮探针会被拖长）
+    with futures.ThreadPoolExecutor(max_workers=min(4, len(tried)) or 1) as pool:
+        results = list(pool.map(
+            lambda ip: _fetch_via_ip(ip, host, port, path, timeout, ctx), tried))
+    hits = [(ip, ms) for ip, (ok, ms) in zip(tried, results) if ok]
+    if hits:
+        best = min((ms for _, ms in hits if ms is not None), default=None)
+        note = f"HTTP 200 图片（{len(hits)}/{len(tried)} 个 IP 命中"
+        if best is not None:
+            note += f"，最快 {best}ms"
+        note += f"；域名共解析 {len(ips)} 个）"
+        return {"ok": True, "ms": best, "note": note,
+                "tried": len(tried), "resolved": len(ips)}
+    return {"ok": False, "ms": None,
+            "note": f"{len(tried)} 个 IP 都取不到图（域名共解析 {len(ips)} 个）",
+            "tried": len(tried), "resolved": len(ips)}
 
 
 def check_edges(cover: str, sample: int = 0) -> dict:
@@ -168,16 +220,30 @@ def check_edges(cover: str, sample: int = 0) -> dict:
 def decide(legs: dict) -> tuple[str, str]:
     site, d666, d443 = legs["site"]["ok"], legs["img666"]["ok"], legs["img443"]["ok"]
     edge = legs["img_ip"]
+    ip_ok = edge.get("good", 0) > 0
     if not site:
         return "crit", "漫画站点本身取不到（搜索页都打不开）——不只是图床的事"
+    # 整条路都取不到图才算 crit：域名两端口都不通**且**所有边缘 IP 也都不通。
+    # （"域名腿不通但直连 IP 能取"是退化不是断 —— App 的候选顺序里直连排在很前面。）
+    if not d666 and not d443 and not ip_ok:
+        return "crit", ("图床整条路都不通（域名两端口 + 所有边缘 IP 都取不到图）"
+                        " —— App 上会表现为封面/漫画页转圈")
     if not d666 and not d443:
-        return "crit", "图床两种端口（:666 与 443）都取不到图 —— App 上会表现为封面/漫画页转圈"
+        return "warn", "域名这条路取不到图，但直连边缘 IP 可以 —— App 会走直连（退化，不是断）"
     if not d666 or not d443:
         only = ":666" if not d666 else "443"
         return "warn", f"图床只有 {only} 这条通 —— 典型是运营商/网关在拦端口"
     if edge["total"] and not edge["ok"]:
         return "warn", f"边缘节点大面积取不到（{edge['note']}）"
     return "none", "四条腿都通"
+
+
+def brief(legs: dict) -> str:
+    """一行摘要，进日志用 —— 只写 `[sent] 已发飞书` 的话事后完全没法复盘（2026-10-03 撞上过）。"""
+    return (f"site={'ok' if legs['site']['ok'] else 'bad'}"
+            f" 666={'ok' if legs['img666']['ok'] else 'bad'}"
+            f" 443={'ok' if legs['img443']['ok'] else 'bad'}"
+            f" ip={legs['img_ip'].get('good', 0)}/{legs['img_ip'].get('total', 0)}")
 
 
 def load_state() -> dict:
@@ -197,19 +263,20 @@ def save_state(state: dict) -> None:
     os.replace(tmp, STATE_PATH)
 
 
-def send(text: str) -> bool:
+def send(text: str, summary: str = "") -> bool:
     """投递只走这一条（绝对路径；cron 的 PATH 里没有 hermes）。发送结果必须留痕。"""
+    stamp = time.strftime("%F %T")
     try:
         p = subprocess.run([HERMES, "send", "-t", "feishu", text],
                            capture_output=True, text=True, timeout=60)
     except Exception as e:                                    # noqa: BLE001
-        log(f"[send-failed] {type(e).__name__}: {e}")
+        log(f"[send-failed] {stamp} {type(e).__name__}: {e} {summary}".rstrip())
         return False
     if p.returncode == 0 and "Sent to feishu" in (p.stdout or ""):
-        log("[sent] 已发飞书")
+        log(f"[sent] {stamp} {summary}".rstrip())
         return True
-    log(f"[send-failed] rc={p.returncode} out={(p.stdout or '').strip()[:120]} "
-        f"err={(p.stderr or '').strip()[:120]}")
+    log(f"[send-failed] {stamp} rc={p.returncode} out={(p.stdout or '').strip()[:120]} "
+        f"err={(p.stderr or '').strip()[:120]} {summary}".rstrip())
     return False
 
 
@@ -251,7 +318,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.test:
-        return 0 if send("图床探针：这是一条 --test 自检消息（非故障）") else 1
+        return 0 if send("图床探针：这是一条 --test 自检消息（非故障）", summary="自检 --test") else 1
 
     legs = run_once()
     level, reason = decide(legs)
@@ -283,15 +350,17 @@ def main() -> int:
 
     if flipped and confirmed != "none":
         save_state(state)
-        send(report(legs, reason))
+        send(report(legs, reason), summary=f"level={confirmed} {brief(legs)} :: {reason}")
     elif flipped and confirmed == "none":
         save_state(state)
         send("图床探针：已恢复 —— 站点与图床四条腿都通了（上一档：" +
-             ("warn" if prev_level == "warn" else "crit") + "）")
+             ("warn" if prev_level == "warn" else "crit") + "）",
+             summary=f"level=none 已恢复 {brief(legs)}")
     else:
         save_state(state)
         if not args.quiet:
-            log(f"level={level} confirmed={confirmed} pending={same_pending} {reason}")
+            log(f"{time.strftime('%F %T')} level={level} confirmed={confirmed} "
+                f"pending={same_pending} {brief(legs)} {reason}")
     return 0
 
 
