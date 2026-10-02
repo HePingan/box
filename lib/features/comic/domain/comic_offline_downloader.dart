@@ -63,6 +63,13 @@ class ComicOfflineJob {
   double get progress => total <= 0 ? 0 : (done / total).clamp(0, 1).toDouble();
 
   bool get isDone => state == ComicOfflineJobState.done;
+
+  /// 用户**自己按的**暂停（只存内存，不落盘）。
+  ///
+  /// 为什么要有这个标记：启动续下要挑"该接着下的"（上次被杀掉、或者被"仅 Wi-Fi"拦下），
+  /// 但**不能把用户手动暂停的也拉起来** —— 那就成了"我停了它，它自己又跑"。
+  /// 光看 `paused` 分不出这两种，所以暂停时打个标，用户点继续时清掉。
+  bool userPaused = false;
 }
 
 /// 离线下载队列。
@@ -273,6 +280,7 @@ class ComicOfflineDownloader extends ChangeNotifier {
   void pause(String bookUrl, String chapterUrl) {
     final job = jobFor(bookUrl, chapterUrl);
     if (job == null) return;
+    job.userPaused = true;
     if (job.state == ComicOfflineJobState.running) {
       _pauseRequested = true;
     } else {
@@ -285,6 +293,7 @@ class ComicOfflineDownloader extends ChangeNotifier {
   /// 暂停全部。
   void pauseAll() {
     for (final j in _jobs) {
+      j.userPaused = true;
       if (j.state == ComicOfflineJobState.running) {
         _pauseRequested = true;
       } else if (j.state == ComicOfflineJobState.queued) {
@@ -303,6 +312,7 @@ class ComicOfflineDownloader extends ChangeNotifier {
     final job = jobFor(bookUrl, chapterUrl);
     if (job == null) return;
     if (job.state == ComicOfflineJobState.done) return;
+    job.userPaused = false;
     if (_wifiHeld(job)) _allowOnce = true;
     job.state = ComicOfflineJobState.queued;
     job.error = '';
@@ -315,6 +325,7 @@ class ComicOfflineDownloader extends ChangeNotifier {
     for (final j in _jobs) {
       if (j.state == ComicOfflineJobState.paused ||
           j.state == ComicOfflineJobState.failed) {
+        j.userPaused = false;
         if (_wifiHeld(j)) _allowOnce = true;
         j.state = ComicOfflineJobState.queued;
         j.error = '';
@@ -322,6 +333,45 @@ class ComicOfflineDownloader extends ChangeNotifier {
     }
     notifyListeners();
     unawaited(_pump());
+  }
+
+  /// 启动时**在网络策略允许的前提下**自动续下"上次没下完的"。
+  ///
+  /// 三条取舍（都不是拍脑袋）：
+  ///   * 不无条件自动续：那等于**可能在移动网络上自己开始下几百兆** —— 用户没点过头
+  ///     （原来 `loadInterrupted` 只标 paused、等人点，就是这个理由）；
+  ///   * 也不永不续：杀掉 App 再打开就全停在"已暂停"，点一话动一话，同样没道理；
+  ///   * 所以看策略：现在是 Wi-Fi（或用户已关掉"仅 Wi-Fi"）就自己继续，否则保持暂停。
+  ///
+  /// 只挑 **paused**：`failed` 是"试过、失败了"，重开一次就再撞一遍是白费流量，
+  /// 那种要用户点一下（界面上失败那一话给的就是重试图标）。
+  Future<int> autoResumeIfAllowed() async {
+    bool allowed;
+    try {
+      allowed = await _networkAllowed();
+    } catch (_) {
+      allowed = false; // 拿不准就不自动下（省流量那一档）
+    }
+    if (!allowed) return 0;
+    var n = 0;
+    for (final j in _jobs) {
+      if (j.state != ComicOfflineJobState.paused) continue;
+      // 用户自己按的暂停不碰：那就成了"我停了它，它自己又跑"。
+      if (j.userPaused) continue;
+      // 只有两类该自动接着下：上次被杀掉的、以及当时被"仅 Wi-Fi"拦下的
+      // （用户此刻就在 Wi-Fi 上，拦的理由已经不成立了）。
+      final wanted =
+          _interrupted.contains(_key(j.bookUrl, j.chapterUrl)) || _wifiHeld(j);
+      if (!wanted) continue;
+      j.state = ComicOfflineJobState.queued;
+      j.error = '';
+      n++;
+    }
+    if (n > 0) {
+      notifyListeners();
+      unawaited(_pump());
+    }
+    return n;
   }
 
   ComicOfflineJob? get _nextQueued {
@@ -359,6 +409,11 @@ class ComicOfflineDownloader extends ChangeNotifier {
   ///
   /// 不自动继续：自动继续意味着**可能在移动网络上**自己开始下几百兆 ——
   /// 用户点一下"继续"才是对的（而且他点的时候知道自己现在什么网）。
+  /// 上次被杀掉、这次被叫回来的任务（`bookUrl|chapterUrl`）—— 启动续下只认这些。
+  final Set<String> _interrupted = <String>{};
+
+  static String _key(String bookUrl, String chapterUrl) => '$bookUrl|$chapterUrl';
+
   Future<int> loadInterrupted() async {
     var found = 0;
     for (final book in await store.books()) {
@@ -371,6 +426,7 @@ class ComicOfflineDownloader extends ChangeNotifier {
           // 清单说"下到一半"而队列里没有这个任务 = 上次被杀掉了 → 改成暂停等人点。
           c.state = ComicOfflineState.paused;
           await store.saveBook(book);
+          _interrupted.add(_key(book.bookUrl, c.url));
           found++;
         }
         if (c.state == ComicOfflineState.done || c.isDone) continue;
@@ -484,6 +540,7 @@ class ComicOfflineDownloader extends ChangeNotifier {
         notifyListeners();
       }
 
+      _interrupted.remove(_key(job.bookUrl, job.chapterUrl));
       // **先落清单再改内存状态**：反过来的话，界面已经显示"下完"而清单里还是 running，
       // 这时候被杀掉，下次启动会把这一话当成"下到一半"（进度全丢）。
       entry

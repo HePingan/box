@@ -27,4 +27,47 @@ void main() {
     await prefs.setPageTurn(false);
     expect(await prefs.pageTurn(), isFalse);
   });
+
+  group('压暗档位（夜里看漫画，2026-10-02）', () {
+    late ComicReaderPrefs prefs;
+
+    setUp(() {
+      prefs = ComicReaderPrefs(
+        cacheStore: CacheStore.inMemory(
+          'comic_reader_prefs_dim_${DateTime.now().microsecondsSinceEpoch}',
+        ),
+      );
+    });
+
+    test('默认不变暗 —— "什么都没发生"好过"一进阅读器就黑一截"', () async {
+      expect(await prefs.dimLevel(), 0);
+    });
+
+    test('调过的那一档记在本机', () async {
+      await prefs.setDimLevel(0.35);
+      expect(await prefs.dimLevel(), closeTo(0.35, 0.0001));
+    });
+
+    test('超出上下限被压回来（不然能调到全黑，用户只能杀 App）', () async {
+      await prefs.setDimLevel(5);
+      expect(await prefs.dimLevel(), ComicReaderPrefs.maxDim);
+      await prefs.setDimLevel(-3);
+      expect(await prefs.dimLevel(), 0);
+    });
+  });
+
+  test('目录顺序：默认正序，记下来之后还是倒序', () async {
+    final cache = CacheStore.inMemory(
+      'comic_reader_prefs_desc_${DateTime.now().microsecondsSinceEpoch}',
+    );
+    final prefs = ComicReaderPrefs(cacheStore: cache);
+
+    expect(await prefs.chapterDescending(), isFalse);
+
+    await prefs.setChapterDescending(true);
+    expect(await prefs.chapterDescending(), isTrue);
+
+    // 换实例读同一份存储：这是全 App 一份的偏好。
+    expect(await ComicReaderPrefs(cacheStore: cache).chapterDescending(), isTrue);
+  });
 }

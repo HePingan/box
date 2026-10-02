@@ -198,4 +198,55 @@ void main() {
     expect(await store.books(), isEmpty);
     expect(await store.totalBytes(), 0);
   });
+
+  // ── 占用口径与残渣清理（2026-10-02）──
+  group('未完成的残渣（.part）', () {
+    test('清理只删老的 .part：刚失败的那张和正常的图都不动', () async {
+      final b = book();
+      await store.saveBook(b);
+      final real = await store.fileFor(b.bookUrl, b.chapters.first.url, b.chapters.first.images.first);
+      await real.writeAsBytes(List<int>.filled(1000, 7));
+      final stale = File('${real.path}.part')..writeAsBytesSync(List<int>.filled(500, 9));
+      await stale.setLastModified(DateTime.now().subtract(const Duration(days: 2)));
+      final fresh = File('${real.path}-b.part')
+        ..writeAsBytesSync(List<int>.filled(300, 9));
+
+      final freed = await store.purgePartials();
+
+      expect(freed, 500, reason: '只算真删掉的那些字节');
+      expect(await stale.exists(), isFalse);
+      expect(await fresh.exists(), isTrue, reason: '刚失败的可能还会被写，别抢');
+      expect(await real.exists(), isTrue);
+    });
+
+    test('占用会把残渣算进去（所以更要清）', () async {
+      final b = book();
+      await store.saveBook(b);
+      final real = await store.fileFor(b.bookUrl, b.chapters.first.url, b.chapters.first.images.first);
+      await real.writeAsBytes(List<int>.filled(1000, 7));
+      final stale = File('${real.path}.part')..writeAsBytesSync(List<int>.filled(500, 9));
+      await stale.setLastModified(DateTime.now().subtract(const Duration(days: 2)));
+
+      // 清单 json 也在同一个根目录下，所以比"差值"而不是绝对值。
+      final before = await store.totalBytes();
+      await store.purgePartials();
+      expect(
+        await store.totalBytes(),
+        before - 500,
+        reason: '整目录递归求和：.part 也算占用，清掉之后占用要跟着降',
+      );
+    });
+
+    test('清空会连残渣一起带走', () async {
+      final b = book();
+      await store.saveBook(b);
+      final real = await store.fileFor(b.bookUrl, b.chapters.first.url, b.chapters.first.images.first);
+      await real.writeAsBytes(List<int>.filled(10, 1));
+      File('${real.path}.part').writeAsBytesSync(List<int>.filled(10, 1));
+
+      await store.clearAll();
+
+      expect(await store.totalBytes(), 0);
+    });
+  });
 }

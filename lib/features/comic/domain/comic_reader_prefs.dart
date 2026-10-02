@@ -43,4 +43,24 @@ class ComicReaderPrefs {
   Future<void> setChapterDescending(bool value) async {
     await _cache.write(_keyChapterDescending, value);
   }
+
+  static const String _keyDim = 'dim_level';
+
+  /// 阅读器的**调暗**档位（0 = 不压暗，最大 [_maxDim]）。
+  ///
+  /// 为什么是"压暗一层黑"而不是改系统亮度：夜里看漫画嫌亮，是"看的内容太亮"，
+  /// 压暗就够了；改系统亮度要引平台插件（还要处理权限/恢复），而这一层是纯 UI，
+  /// 亮暗实时可见、退出阅读器自动恢复。**代价**：只能往暗里压，不能超过系统亮度。
+  static const double maxDim = 0.8;
+
+  /// 读不出来就当 0（不变暗）—— "什么都没发生"比"一进阅读器就黑一截"安全。
+  Future<double> dimLevel() async {
+    final raw = await _cache.read(_keyDim);
+    final v = raw is num ? raw.toDouble() : 0.0;
+    return v.clamp(0.0, maxDim).toDouble();
+  }
+
+  Future<void> setDimLevel(double value) async {
+    await _cache.write(_keyDim, value.clamp(0.0, maxDim).toDouble());
+  }
 }

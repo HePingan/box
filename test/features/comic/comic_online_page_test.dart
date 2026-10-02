@@ -1285,4 +1285,132 @@ void main() {
       );
     });
   });
+
+  // ── 画面亮度（压暗一层，2026-10-02）──
+  group('阅读器：画面亮度', () {
+    /// 一话的书：够进阅读器就行（这条验的是亮度，不是目录）。
+    FakeComicTarget oneChapter() {
+      final source = _seed();
+      final card = source.searchRules['bookList']!;
+      final container = firstSelectorRule(source.bookInfoRules['tocUrl']!)!;
+      return FakeComicTarget(
+        counts: {card: 1, container: 1},
+        perElement: {
+          '$card|${source.searchRules['name']}': ['海贼王'],
+          '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
+          '$container|${source.tocRules['chapterName']}': ['第1186话'],
+          '$container|${source.tocRules['chapterUrl']}': ['/c/1186'],
+        },
+        values: {
+          source.bookInfoRules['name']!: ['航海王'],
+          source.bookInfoRules['author']!: ['尾田荣一郎'],
+        },
+        jsSegment: '<img src="https://s1.bzcdn.net/a/1.jpg">',
+      );
+    }
+
+    Future<ComicReaderPrefs> openReader(
+      WidgetTester tester, {
+      required _FakeCache cache,
+      required String prefsKey,
+    }) async {
+      final prefs = ComicReaderPrefs(
+        cacheStore: CacheStore.inMemory(prefsKey),
+      );
+      await tester.pumpWidget(
+        _page(oneChapter(), cache, readerPrefs: prefs),
+      );
+      await _settle(tester);
+      await tester.enterText(find.byType(TextField).first, '海贼');
+      await tester.tap(find.text('搜索'));
+      await _settle(tester);
+      await tester.tap(find.text('海贼王'));
+      await _settle(tester);
+      await tester.tap(find.text('第1186话'));
+      await _settle(tester);
+      return prefs;
+    }
+
+    File tmpPng(String tag) =>
+        File('${Directory.systemTemp.path}/comic_dim_${tag}_${DateTime.now().microsecondsSinceEpoch}.png')
+          ..writeAsBytesSync(_pngBytes);
+
+    testWidgets('「亮度」面板可以调暗，档位记在本机', (tester) async {
+      final prefs = await openReader(
+        tester,
+        cache: _FakeCache(tmpPng('sheet')),
+        prefsKey: 'dim_sheet_test',
+      );
+
+      await tester.tap(find.byIcon(Icons.brightness_6_outlined));
+      await _settle(tester);
+      expect(find.byType(Slider), findsOneWidget, reason: '面板里得有滑块');
+
+      await tester.drag(find.byType(Slider), const Offset(220, 0));
+      await _settle(tester);
+      final level = await prefs.dimLevel();
+      expect(level, greaterThan(0), reason: '往右拖 = 压暗');
+
+      // 屏幕上真压了一层黑，跟记下来的档位一致（不是只改了个数字）。
+      final black = tester
+          .widgetList<ColoredBox>(find.byType(ColoredBox))
+          .where((c) => c.color.r == 0 && c.color.g == 0 && c.color.b == 0)
+          .map((c) => c.color.a)
+          .toList();
+      expect(
+        black.any((a) => (a - level).abs() < 0.01),
+        isTrue,
+        reason: '压暗层的透明度应该就是记下来的档位（实际：$black）',
+      );
+
+      // 「恢复最亮」能回到 0 并记住。
+      await tester.tap(find.text('恢复最亮'));
+      await _settle(tester);
+      expect(await prefs.dimLevel(), 0);
+    });
+
+    testWidgets('页漫：左半屏上下滑能调亮暗，并弹出档位提示', (tester) async {
+      final prefs = await openReader(
+        tester,
+        cache: _FakeCache(tmpPng('drag')),
+        prefsKey: 'dim_drag_test',
+      );
+
+      // 换成左右翻页（竖向的上下滑是滚动，不该被亮度抢走）。
+      await tester.tap(find.byIcon(Icons.view_carousel_outlined));
+      await _settle(tester);
+
+      final topLeft = tester.getTopLeft(find.byType(PageView));
+      final size = tester.getSize(find.byType(PageView));
+      await tester.dragFrom(
+        topLeft + Offset(size.width * 0.2, size.height * 0.6),
+        const Offset(0, -140),
+      );
+      await tester.pump();
+
+      expect(find.textContaining('亮度'), findsOneWidget, reason: '拖的时候要给个档位提示');
+
+      await tester.pump(const Duration(seconds: 2));
+      expect(await prefs.dimLevel(), greaterThan(0), reason: '手松开就记下这一档');
+      expect(find.textContaining('亮度'), findsNothing, reason: '提示要自己消失');
+    });
+
+    testWidgets('条漫（竖向连续）：上下滑还是滚动，亮度不动', (tester) async {
+      final prefs = await openReader(
+        tester,
+        cache: _FakeCache(tmpPng('vertical')),
+        prefsKey: 'dim_vertical_test',
+      );
+
+      await tester.dragFrom(const Offset(200, 500), const Offset(0, -140));
+      await tester.pump();
+
+      expect(
+        await prefs.dimLevel(),
+        0,
+        reason: '条漫的上下滑是滚动，抢了就成"滑不动反而变暗"',
+      );
+      expect(find.textContaining('亮度'), findsNothing);
+    });
+  });
 }

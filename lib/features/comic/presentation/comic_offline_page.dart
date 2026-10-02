@@ -70,6 +70,12 @@ class _ComicOfflinePageState extends State<ComicOfflinePage> {
     });
   }
 
+  /// `done` 可能大于 `total`：崩溃 / 被杀掉之后，清单里记的是"上次以为下完的张数"，
+  /// 而磁盘上可能根本没有那些图（续下会重新数）。显示成"3/2 张"就是胡说，
+  /// 用户看到只会觉得"进度条又坏了"。这里只压显示，不改计数。
+  static int _clampDone(int done, int total) =>
+      (done > total && total > 0) ? total : done;
+
   static String _mb(int bytes) {
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
     return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
@@ -127,6 +133,15 @@ class _ComicOfflinePageState extends State<ComicOfflinePage> {
     await _reload();
   }
 
+  /// 还能继续的任务数（暂停 / 失败）。按钮的显隐与文案都用它。
+  int get _resumable => _downloader.jobs
+      .where(
+        (j) =>
+            j.state == ComicOfflineJobState.paused ||
+            j.state == ComicOfflineJobState.failed,
+      )
+      .length;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -162,6 +177,14 @@ class _ComicOfflinePageState extends State<ComicOfflinePage> {
                 child: Row(
                   children: [
                     Expanded(child: Text('离线内容共 ${_mb(_totalBytes)}')),
+                    // 「继续全部」：中断的任务（重启、或"只在 Wi-Fi"拦下）一话一话点太累了。
+                    // 只在真有可继续的任务时出现 —— 平时别占位置。
+                    if (_resumable > 0)
+                      TextButton.icon(
+                        onPressed: () => _downloader.resumeAll(),
+                        icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                        label: Text('继续全部（$_resumable）'),
+                      ),
                     TextButton.icon(
                       onPressed: _confirmClearAll,
                       icon: const Icon(Icons.delete_sweep_outlined, size: 18),
@@ -186,7 +209,7 @@ class _ComicOfflinePageState extends State<ComicOfflinePage> {
       if (c.error.contains('Wi-Fi')) return '还没开始（按设置只在 Wi-Fi 下下载）';
       return c.state == ComicOfflineState.paused ? '已暂停' : '准备下载…';
     }
-    final progress = '${c.done}/${c.total} 张';
+    final progress = '${_clampDone(c.done, c.total)}/${c.total} 张';
     return c.state == ComicOfflineState.paused
         ? '已暂停（$progress）'
         : '下载中（$progress）';
@@ -274,7 +297,7 @@ class _ComicOfflinePageState extends State<ComicOfflinePage> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Text(
-                        '正在下载：${j.chapterTitle}（${j.done}/${j.total} 张）',
+                        '正在下载：${j.chapterTitle}（${_clampDone(j.done, j.total)}/${j.total} 张）',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       const SizedBox(height: 4),

@@ -314,6 +314,51 @@ class ComicOfflineStore {
     if (await f.exists()) await f.delete();
   }
 
+  /// 清掉"下了一半"留下的残渣（`.part`），返回释放了多少字节。
+  ///
+  /// 为什么要它（2026-10-02 核对占用口径时发现）：图片是"先写 `.part` 再改名"，
+  /// 所以被杀掉 / 失败时会在离线目录里留下半张图的 `.part`；而 [totalBytes] 是
+  /// 整目录递归求和 —— 这些残渣**会被算进"离线占用"**，既不会自愈、界面上也没有
+  /// 任何入口能删掉它，用户只会看到"我明明没下过这么多"。
+  ///
+  /// 只删 24 小时前的：刚失败的那一张，同一个 `.part` 名字可能正被写（时间窗避开它），
+  /// 而且下次重试会重写这个名字、不需要复用它。
+  Future<int> purgePartials({
+    Duration olderThan = const Duration(hours: 24),
+  }) async {
+    var freed = 0;
+    final root = await _rootForCleanup();
+    if (root == null) return 0;
+    final cutoff = DateTime.now().subtract(olderThan);
+    try {
+      await for (final e in root.list(recursive: true)) {
+        if (e is! File || !e.path.endsWith('.part')) continue;
+        try {
+          final st = await e.stat();
+          if (st.modified.isAfter(cutoff)) continue;
+          freed += st.size;
+          await e.delete();
+        } on FileSystemException {
+          // 删不掉（正在写 / 权限）就跳过，下次启动再来：清理不该把主流程带崩。
+        }
+      }
+    } on FileSystemException {
+      // 目录读不了同理。
+    }
+    return freed;
+  }
+
+  /// 根目录，但**拿不到就算了**（不创建、不抛）：清理类动作用它。
+  Future<Directory?> _rootForCleanup() async {
+    final cached = _root;
+    if (cached != null) return cached;
+    try {
+      return await rootDir();
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// 清空全部离线内容。
   Future<void> clearAll() async {
     final root = await rootDir();

@@ -265,6 +265,12 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   /// 左右翻页（true）/ 竖向连续长条（false）。竖向是默认，条漫更顺。
   bool _pageTurn = false;
 
+  /// 阅读器的**压暗**档位（0~0.8）：夜里看漫画嫌亮，压一层黑就够了（见 ComicReaderPrefs.dimLevel）。
+  double _dim = 0;
+
+  /// 调暗时那一下的提示（比如"亮度 40%"），几秒后自己消失。
+  String _dimHud = '';
+
   /// 左右翻页的分页控制器（只在 `_pageTurn` 时用）。
   final _pageController = PageController();
 
@@ -325,6 +331,17 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     );
     // 「仅 Wi-Fi 下载」按设置生效（默认开；读不到网络类型就不拦，见那个文件里的立场）。
     wireComicOfflineNetworkGuard(_downloader);
+    // 上次没下完的（被杀掉 / 被"仅 Wi-Fi"拦下）在这里自己接着下：用户多半就是
+    // 在看漫画时点的下载，等他要逛到「离线下载」页才续，等于白等。策略不允许就
+    // 保持暂停（那条取舍见 `autoResumeIfAllowed`）。
+    unawaited(() async {
+      try {
+        await _downloader.loadInterrupted();
+        await _downloader.autoResumeIfAllowed();
+      } catch (_) {
+        // 续下失败不影响看漫画：用户手动点「继续全部」也行。
+      }
+    }());
     _prefetcher = ComicChapterPrefetcher(
       loadImages: (chapterUrl) => _service.chapterImages(chapterUrl),
       cache: _cache,
@@ -412,6 +429,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       _readerImmersive = false;
     }
     _chromeTimer?.cancel();
+    _dimHudTimer?.cancel();
     _pageController.dispose();
     _keyController.dispose();
     _scrollController.dispose();
@@ -614,16 +632,118 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     });
   }
 
-  /// 读翻页偏好（读不出来就用默认的竖向连续）。
+  /// 读翻页偏好与调暗档位（读不出来就用默认：竖向连续 + 不压暗）。
   Future<void> _loadPrefs() async {
     bool v = false;
+    double dim = 0;
     try {
       v = await _prefs.pageTurn();
+      dim = await _prefs.dimLevel();
     } catch (_) {
       v = false;
+      dim = 0;
     }
     if (!mounted) return;
-    setState(() => _pageTurn = v);
+    setState(() {
+      _pageTurn = v;
+      _dim = dim;
+    });
+  }
+
+  /// 改压暗档位。界面立刻变（这是手感），写盘在手松开之后（拖动里每帧写盘是白花钱）。
+  void _setDim(double value, {bool notify = true}) {
+    final next = value.clamp(0.0, ComicReaderPrefs.maxDim).toDouble();
+    if (next == _dim) return;
+    setState(() {
+      _dim = next;
+      if (notify) {
+        _dimHud = '亮度 ${(next * 100 / ComicReaderPrefs.maxDim).round()}%';
+      }
+    });
+    if (notify) _scheduleDimHudHide();
+  }
+
+  Timer? _dimHudTimer;
+
+  void _scheduleDimHudHide() {
+    _dimHudTimer?.cancel();
+    _dimHudTimer = Timer(const Duration(milliseconds: 1200), () {
+      if (mounted) setState(() => _dimHud = '');
+    });
+  }
+
+  Future<void> _saveDim() async {
+    try {
+      await _prefs.setDimLevel(_dim);
+    } catch (_) {
+      // 记不住不算错：这次先按用户调的显示。
+    }
+  }
+
+  /// 「亮度」面板：滑块从左到右 = 从原样到压到最暗。
+  ///
+  /// 为什么面板 + 手势两条路都要：页漫里"左半屏上下滑"很顺手，但条漫的上下滑是滚动、
+  /// 抢不得，所以面板那条路必须留着（不然条漫就没法调了）。
+  Future<void> _openDimSheet() async {
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (ctx, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.brightness_6_outlined, size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      '画面亮度（压暗一层，不动系统亮度）',
+                      style: Theme.of(ctx).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+                Slider(
+                  value: _dim,
+                  max: ComicReaderPrefs.maxDim,
+                  divisions: 16,
+                  label: '${(_dim * 100 / ComicReaderPrefs.maxDim).round()}%',
+                  onChanged: (v) {
+                    _setDim(v);
+                    setSheetState(() {});
+                  },
+                  onChangeEnd: (_) => unawaited(_saveDim()),
+                ),
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: () {
+                        _setDim(0);
+                        setSheetState(() {});
+                        unawaited(_saveDim());
+                      },
+                      child: const Text('恢复最亮'),
+                    ),
+                    const Spacer(),
+                    FilledButton(
+                      onPressed: () {
+                        unawaited(_saveDim());
+                        Navigator.of(ctx).pop();
+                      },
+                      child: const Text('好'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   /// 切换翻页方式（记下来，下次进来还是这个）。
@@ -1482,6 +1602,14 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTapUp: (d) => _handleReaderTap(d.localPosition, pageTurn: true),
+            // 左半屏**上下滑**调亮暗（手电筒式的手感）。只有页漫给这条：
+            // 条漫的上下滑是滚动，抢了就变成"滑不动页面反而变暗"。
+            onVerticalDragUpdate: (d) {
+              final width = context.size?.width ?? 0;
+              if (width > 0 && d.localPosition.dx > width / 2) return;
+              _setDim(_dim - d.delta.dy / 400);
+            },
+            onVerticalDragEnd: (_) => unawaited(_saveDim()),
             // 放大用**长按**，不用双击：双击识别器会把单击拖慢 ~300ms（实测），
             // 而页漫"点一下就翻"是手感的命门。长按只在按住 500ms 后才抢手势。
             onLongPress: () => _openZoom(_images[_imageIndex]),
@@ -1513,6 +1641,8 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             bottom: 0,
             child: _readerProgressLine(),
           ),
+          Positioned.fill(child: _dimOverlay()),
+          Positioned.fill(child: _dimHudView()),
           Positioned(left: 0, right: 0, bottom: 0, child: _readerChrome()),
         ],
       );
@@ -1561,6 +1691,8 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         if (_busy)
           Positioned(top: 0, left: 0, right: 0, child: _loadingBanner()),
         Positioned(left: 0, right: 0, bottom: 0, child: _readerProgressLine()),
+        Positioned.fill(child: _dimOverlay()),
+        Positioned.fill(child: _dimHudView()),
         Positioned(left: 0, right: 0, bottom: 0, child: _readerChrome()),
       ],
     );
@@ -1762,6 +1894,37 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   }
 
   /// 底部控制栏：半透明 + 让开底部安全区，且能被收起来。
+  /// 压暗层：压在画面上、**在控制栏下面**（控制栏不该跟着变暗，否则越调越看不见）。
+  Widget _dimOverlay() {
+    if (_dim <= 0) return const SizedBox.shrink();
+    return IgnorePointer(
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: _dim),
+        child: const SizedBox.expand(),
+      ),
+    );
+  }
+
+  /// 调暗的那一下提示。
+  Widget _dimHudView() {
+    if (_dimHud.isEmpty) return const SizedBox.shrink();
+    return IgnorePointer(
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.62),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            _dimHud,
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _readerChrome() {
     return IgnorePointer(
       ignoring: !_chromeVisible,
@@ -1808,6 +1971,15 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
               _pageTurn
                   ? Icons.view_day_outlined
                   : Icons.view_carousel_outlined,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
+          IconButton(
+            tooltip: '画面亮度（压暗，夜里看不刺眼）',
+            onPressed: _openDimSheet,
+            icon: const Icon(
+              Icons.brightness_6_outlined,
               color: Colors.white,
               size: 20,
             ),

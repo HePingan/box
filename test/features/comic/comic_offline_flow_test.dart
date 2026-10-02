@@ -316,6 +316,55 @@ void main() {
     );
   });
 
+  testWidgets('管理页：「继续全部」只在真有可继续的任务时出现', (tester) async {
+    // 一话下完了、一话被"仅 Wi-Fi"拦下（挂着等 Wi-Fi）—— 后者才是可继续的。
+    store.saved[_bookUrl] = ComicOfflineBook(
+      bookUrl: _bookUrl,
+      title: '航海王',
+      chapters: [
+        ComicOfflineChapter(
+          url: _chapterUrl,
+          title: '第1186话',
+          images: [_img1],
+          done: 1,
+          state: ComicOfflineState.done,
+        ),
+        ComicOfflineChapter(
+          url: '$_chapterUrl?2',
+          title: '第1187话',
+          images: [_img2],
+          state: ComicOfflineState.paused,
+          error: '等 Wi-Fi（设置里开了"仅 Wi-Fi 下载"）',
+        ),
+      ],
+    );
+    final dl = ComicOfflineDownloader(store: store, cache: cache);
+    await dl.loadInterrupted();
+
+    await tester.pumpWidget(
+      MaterialApp(home: ComicOfflinePage(store: store, downloader: dl)),
+    );
+    await settle(tester);
+
+    expect(
+      find.textContaining('继续全部（1）'),
+      findsOneWidget,
+      reason: '挂着的那一话要有一键继续的入口（不然只能一话一话点）',
+    );
+  });
+
+  testWidgets('管理页：没有可继续的任务时，不占着位置', (tester) async {
+    seedDownloaded(); // 只有一话，而且是 done
+    final dl = ComicOfflineDownloader(store: store, cache: cache);
+
+    await tester.pumpWidget(
+      MaterialApp(home: ComicOfflinePage(store: store, downloader: dl)),
+    );
+    await settle(tester);
+
+    expect(find.textContaining('继续全部'), findsNothing);
+  });
+
   testWidgets('管理页：列出来、显示占用、能删整本', (tester) async {
     seedDownloaded();
     final dl = ComicOfflineDownloader(store: store, cache: cache);

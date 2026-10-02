@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -5,6 +7,9 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../features/admin/register_providers.dart';
+import '../features/comic/domain/comic_offline_downloader.dart';
+import '../features/comic/domain/comic_offline_store.dart';
+import '../features/comic/presentation/comic_offline_wiring.dart';
 import '../novel/pages/source_manager/book_source_bootstrap.dart';
 import '../platform/flutter_viewport_diagnostics.dart';
 import '../platform/window_diagnostics_channel.dart';
@@ -41,6 +46,7 @@ class AppBootstrap {
     final prefs = await SharedPreferences.getInstance();
     final novelBootstrap = await BookSourceBootstrap.loadAndConfigure(prefs);
     _configureVideoCatalog();
+    _configureComicDownloads();
     registerResourceProviders();
 
     return AppBootstrapResult(prefs: prefs, novelBootstrap: novelBootstrap);
@@ -126,6 +132,31 @@ class AppBootstrap {
         systemNavigationBarIconBrightness: Brightness.dark,
       ),
     );
+  }
+
+  /// 漫画离线下载的启动接线：装网络策略 + 清 `.part` 残渣 + **允许时**自动续下。
+  ///
+  /// 续下（`autoResumeIfAllowed`）**不在这里**：它要能"取一话的图片地址"，
+  /// 而那个 loader 要等漫画页起来才接得上（`setLoadImages`）—— 接在漫画页那里，
+  /// 顺带也覆盖了"用户上次就是在看漫画时点的下载"。这里只收残渣。
+  static void _configureComicDownloads() {
+    final store = ComicOfflineStore();
+    final downloader = ComicOfflineDownloader.shared();
+    wireComicOfflineNetworkGuard(downloader);
+    unawaited(() async {
+      try {
+        // 下了一半留下的残渣会被算进"离线占用"，却没人能删 —— 启动时收一次。
+        final freed = await store.purgePartials();
+        if (freed > 0) {
+          AppLogger.instance.logTo(
+            LogChannel.system,
+            '漫画离线下载：清掉未完成的残渣 $freed 字节',
+          );
+        }
+      } catch (_) {
+        // 清理失败不影响启动。
+      }
+    }());
   }
 
   static void _configureVideoCatalog() {
