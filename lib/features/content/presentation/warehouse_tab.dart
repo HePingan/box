@@ -622,7 +622,11 @@ class WarehouseTabState extends State<WarehouseTab>
             context,
             MaterialPageRoute(
               builder: (_) => book.isOnline
-                  ? ComicOnlinePage(initialBookUrl: book.onlineUrl)
+                  // 在线书：直接接着上次读到的那一话（收藏卡片 = 续读入口）
+                  ? ComicOnlinePage(
+                      initialBookUrl: book.onlineUrl,
+                      autoResume: true,
+                    )
                   : ComicReaderPage(comicBook: book),
             ),
           );

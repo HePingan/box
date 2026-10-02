@@ -95,6 +95,7 @@ class ComicOnlinePage extends StatefulWidget {
     this.readerPrefs,
     this.initialBookUrl,
     this.relayToken,
+    this.autoResume = false,
     this.waitTimeout = const Duration(seconds: 15),
     this.listTimeout = const Duration(seconds: 12),
     this.openTimeout = const Duration(seconds: 20),
@@ -119,6 +120,11 @@ class ComicOnlinePage extends StatefulWidget {
 
   /// 从书架点进来时直接打开这本书（省掉再搜一次）。
   final String? initialBookUrl;
+
+  /// 进来就直接接着上次读到的那一话（内容页的收藏卡片用它做「续读」）。
+  ///
+  /// 默认 false：从书库搜索进来的路径要保持"先看详情"，别擅自把用户丢进阅读器。
+  final bool autoResume;
 
   /// 中转要用的**设备令牌**（**可选**：没有它就直连站点，功能照样可用）。
   ///
@@ -549,6 +555,32 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     }
     // 书架/进度是**装饰**：放在取数之外读，读的时候也不让页面按钮变灰。
     await _refreshShelfFlags();
+
+    // 「续读」：内容页的收藏卡片点进来时，直接接着上次读到的那一话
+    // （不然还要"进详情 → 找到那一话 → 点"，收藏反而变成多两步的负担）。
+    final resume = _resume;
+    if (widget.autoResume && resume != null && mounted) {
+      final chapters = _book?.chapters ?? const <ComicChapterRef>[];
+      // 先按地址认；地址对不上（书源换了域名 / 相对地址解析变了）再按标题认
+      // —— 存的是"上次读到哪一话"，别因为地址写法变了就丢掉这个信息。
+      ComicChapterRef? target;
+      for (final c in chapters) {
+        if (c.url == resume.chapterUrl) {
+          target = c;
+          break;
+        }
+      }
+      if (target == null && resume.chapterTitle.isNotEmpty) {
+        for (final c in chapters) {
+          if (c.title == resume.chapterTitle) {
+            target = c;
+            break;
+          }
+        }
+      }
+      final found = target;
+      if (found != null) await _openChapter(found);
+    }
   }
 
   /// 断网兜底：用离线清单把这本书摆出来，**只列已经下好的话**。
@@ -722,10 +754,21 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       _openOfflineManager();
       return;
     }
+    // **正在看的这一话插到最前面**：下载是串行的，用户更想马上能离线看手上这一话，
+    // 而不是等前面几十话挨个下完（点「整本」时前面的等待是按小时计的）。
+    final currentUrl = _chapter?.url;
+    final ordered = <ComicChapterRef>[
+      if (currentUrl != null)
+        for (final c in picked)
+          if (c.url == currentUrl) c,
+      for (final c in picked)
+        if (c.url != currentUrl) c,
+    ];
     await _downloader.enqueue(
       bookUrl: book.bookUrl,
       chapters: [
-        for (final c in picked) ComicOfflineChapter(url: c.url, title: c.title),
+        for (final c in ordered)
+          ComicOfflineChapter(url: c.url, title: c.title),
       ],
       bookTitle: book.name,
       cover: book.cover ?? '',
@@ -2221,10 +2264,51 @@ class _CachedImage extends StatefulWidget {
 class _CachedImageState extends State<_CachedImage> {
   late Future<File> _future;
 
+  /// 自动重试次数（**只在"被掐断"这类一闪而过的错上**用）。
+  ///
+  /// 2026-10-02 图床一直在交替掐端口：这类错等一两秒再试往往就通了。
+  /// 没有它，用户看到的是破图 + 重试按钮 —— 明明等一下就能自己好。
+  /// 上限 2 次（1.5s、4s），HTTP 码/0 字节这类"再试也没用"的错不重试。
+  int _autoRetries = 0;
+
   @override
   void initState() {
     super.initState();
     _future = _load();
+    unawaited(_watchTransientFailure());
+  }
+
+  /// 盯着这次取图的结果：是"一闪而过"的网错就自己再试（最多两次）。
+  Future<void> _watchTransientFailure() async {
+    while (mounted && _autoRetries < 2) {
+      try {
+        await _future; // 取到了就没什么要做的
+        return;
+      } catch (e) {
+        if (!mounted) return;
+        // HTTP 码 / 0 字节 / 地址不合法：再试也是一样，别浪费用户流量。
+        if (e is! ComicImageException || !e.transient) return;
+        _autoRetries++;
+        // 等差退避：1.5s、然后 3s —— 图床对短时并发敏感，立刻再撞上去没意义。
+        await Future<void>.delayed(
+          Duration(milliseconds: 1500 * _autoRetries),
+        );
+        if (!mounted) return;
+        // 注意用块体：箭头体返回的是"赋值表达式的值"（一个 Future），
+        // setState 会当场断言失败（这条是被用例逮出来的）。
+        setState(() {
+          _future = _load();
+        });
+      }
+    }
+  }
+
+  void _retry() {
+    setState(() {
+      _autoRetries = 0;
+      _future = _load();
+    });
+    unawaited(_watchTransientFailure());
   }
 
   /// 取图：**先问离线库**（下过的话本机就有，一个请求都不用发），没有再走缓存/网络。
@@ -2271,10 +2355,6 @@ class _CachedImageState extends State<_CachedImage> {
       }
       rethrow;
     }
-  }
-
-  void _retry() {
-    setState(() => _future = _load());
   }
 
   @override

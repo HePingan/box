@@ -67,15 +67,24 @@ const List<int> _pngBytes = [
 ];
 
 /// 假图片缓存：直接给一个真 PNG 文件（不下载），并记下取过哪些图。
+///
+/// [failFirstTimes] > 0 时前几次抛"被掐断"（transient）—— 用来验自动重试。
 class _FakeCache extends ComicImageCache {
-  _FakeCache(this.file);
+  _FakeCache(this.file, {this.failFirstTimes = 0});
 
   final File file;
+  final int failFirstTimes;
   final List<String> fetched = <String>[];
 
   @override
   Future<File> fetch(String url, {bool lowPriority = false, File? dest}) async {
     fetched.add(url);
+    if (fetched.length <= failFirstTimes) {
+      throw ComicImageException(
+        '图床连不上（tuer.justpic01pt.com）：连接被掐断',
+        transient: true,
+      );
+    }
     return file;
   }
 
@@ -99,6 +108,7 @@ Widget _page(
   ComicOnlineProgressStore? progressStore,
   ComicReaderPrefs? readerPrefs,
   String? initialBookUrl,
+  bool autoResume = false,
   Widget Function(String sourceName)? selfCheckPageBuilder,
 }) {
   return MaterialApp(
@@ -122,6 +132,7 @@ Widget _page(
             cacheStore: CacheStore.inMemory('online_page_prefs_default'),
           ),
       initialBookUrl: initialBookUrl,
+      autoResume: autoResume,
       progressStore:
           progressStore ??
           ComicOnlineProgressStore(
@@ -1166,6 +1177,57 @@ void main() {
         contains('slot=33'),
         reason: '挑话之后要真的去取那一话',
       );
+    });
+
+    testWidgets('图床掐断：自己等一会儿再试，不用用户去点「重试」', (tester) async {
+      // 第 1 次取图被掐断（图床对短时并发敏感，实测就是这种一闪而过），第 2 次成功。
+      final cache = _FakeCache(png, failFirstTimes: 1);
+      final target = threeChapters();
+      await openHost(tester, _host(target, cache));
+      await openChapterAt(tester, '第1话');
+
+      // 刚失败时可能看到重试按钮；等自动重试（1.5s 退避）跑完就该自己好。
+      await tester.pump(const Duration(seconds: 2));
+      await _settle(tester);
+
+      expect(cache.fetched.length >= 2, isTrue, reason: '要自己再试一次');
+      expect(find.byType(Image), findsWidgets, reason: '重试成功后图片要出来');
+      expect(find.text('重试'), findsNothing, reason: '不该停在要用户点重试的态');
+    });
+
+    testWidgets('续读：带着进度进来，直接接着那一话（不是停在详情页）', (tester) async {
+      final target = threeChapters();
+      // 进度：上次读到第 2 话
+      final progress = ComicOnlineProgressStore(
+        cacheStore: CacheStore.inMemory('resume_progress'),
+      );
+      await progress.save(
+        const ComicOnlineProgress(
+          bookUrl: 'https://cn.baozimhcn.com/comic/haizeiwang',
+          chapterUrl: '/user/page_direct?slot=22',
+          chapterTitle: '第2话',
+          index: 0,
+        ),
+      );
+
+      await tester.pumpWidget(
+        _page(
+          target,
+          _FakeCache(png),
+          progressStore: progress,
+          initialBookUrl: 'https://cn.baozimhcn.com/comic/haizeiwang',
+          autoResume: true,
+        ),
+      );
+      await _settle(tester);
+
+      expect(
+        target.requests.join(' '),
+        contains('slot=22'),
+        reason: '续读要接着上次那一话取图',
+      );
+      expect(find.text('1 / 1 张'), findsOneWidget, reason: '进来就该在阅读器里');
+      expect(find.text('共 3 话'), findsNothing, reason: '不该停在详情页');
     });
 
     testWidgets('长按图片：开全屏放大查看，关掉回到原来那一张', (tester) async {

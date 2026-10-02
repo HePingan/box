@@ -263,6 +263,59 @@ void main() {
     // 假时钟下，真磁盘 IO 的续体不归它管，硬在这里验会把用例变成"看运气"。
   });
 
+  testWidgets('点「下载 → 整本」：正在看的这一话排在最前面', (tester) async {
+    // 三话的书，进来先读第 2 话，然后选「整本」。
+    final source = _seed();
+    final card = source.searchRules['bookList']!;
+    final container = firstSelectorRule(source.bookInfoRules['tocUrl']!)!;
+    final target = FakeComicTarget(
+      counts: {card: 1, container: 3},
+      perElement: {
+        '$card|${source.searchRules['name']}': ['航海王'],
+        '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
+        '$container|${source.tocRules['chapterName']}': ['第1话', '第2话', '第3话'],
+        '$container|${source.tocRules['chapterUrl']}': [
+          '/user/page_direct?slot=11',
+          '/user/page_direct?slot=22',
+          '/user/page_direct?slot=33',
+        ],
+      },
+      values: {source.bookInfoRules['name']!: ['航海王']},
+      jsSegment: '<img src="https://s1.bzcdn.net/a/1.jpg">',
+    );
+
+    final dl = ComicOfflineDownloader(
+      store: store,
+      cache: cache,
+      loadImages: (chapterUrl) async => [_img1],
+      networkAllowed: () async => true,
+    );
+
+    await tester.pumpWidget(page(target, downloader: dl));
+    dl.setLoadImages((chapterUrl) async => [_img1]);
+    dl.setNetworkAllowed(() async => true);
+    await settle(tester);
+
+    // 读第 2 话（"正在看的这一话"）
+    await tester.tap(find.text('第2话'));
+    await settle(tester);
+
+    // 回到详情页点「下载」→ 选整本
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await settle(tester);
+    await tester.tap(find.text('下载'));
+    await settle(tester);
+    await tester.tap(find.textContaining('整本').last);
+    await settle(tester);
+
+    expect(dl.jobs.length, 3, reason: '整本=三话都排队');
+    expect(
+      dl.jobs.first.chapterTitle,
+      '第2话',
+      reason: '正在看的那一话要排最前（不然要等前面几十话下完）',
+    );
+  });
+
   testWidgets('管理页：列出来、显示占用、能删整本', (tester) async {
     seedDownloaded();
     final dl = ComicOfflineDownloader(store: store, cache: cache);
