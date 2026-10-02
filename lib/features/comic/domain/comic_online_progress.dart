@@ -67,6 +67,9 @@ class ComicOnlineProgressStore {
     );
   }
 
+  /// 全部进度（跨设备同步要的是全量，不是"最近几本"）。
+  Future<Map<String, ComicOnlineProgress>> all() => _all();
+
   /// 最近读过的若干本（按时间倒序）。
   Future<List<ComicOnlineProgress>> recent({int limit = 5}) async {
     final all = await _all();

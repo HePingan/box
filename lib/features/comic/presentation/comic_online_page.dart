@@ -26,7 +26,9 @@ import '../domain/comic_prefetch.dart';
 import '../domain/comic_reader_prefs.dart';
 import '../domain/comic_update_watch.dart';
 import '../domain/comic_online_service.dart';
+import '../data/comic_sync_ops.dart';
 import '../domain/comic_relay.dart';
+import '../domain/comic_sync.dart';
 import '../domain/comic_source.dart';
 import '../domain/comic_source_diagnostics.dart'
     show ComicSourceTarget, describeComicProbeError;
@@ -97,6 +99,7 @@ class ComicOnlinePage extends StatefulWidget {
     this.readerPrefs,
     this.initialBookUrl,
     this.relayToken,
+    this.syncService,
     this.autoResume = false,
     this.waitTimeout = const Duration(seconds: 15),
     this.listTimeout = const Duration(seconds: 12),
@@ -135,6 +138,10 @@ class ComicOnlinePage extends StatefulWidget {
   /// 传空串 = "明确没有令牌"（测试用，避免真的去读设置；也就是走直连）。
   final String? relayToken;
 
+  /// 跨设备同步（收藏 / 阅读进度）。用例注入假的；null = 按手机上存的令牌现建
+  /// （没配令牌就是"这台设备不同步"，页面静默跳过 —— 不是错误）。
+  final ComicSyncService? syncService;
+
   /// 书架的存储（「加入书架」用；测试里注入内存版）。
   final ComicLibraryStore? libraryStore;
 
@@ -170,6 +177,12 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
 
   /// 当前生效的中转（源带 relay + 有令牌才有；否则 null = 老路）。
   ComicRelay? _relay;
+
+  /// 跨设备同步：懒建（第一次真要用才去读设置/建客户端）。
+  ComicSyncService? _sync;
+  bool _syncResolved = false;
+  bool _syncBusy = false;
+  Timer? _syncTimer;
 
   /// 中转令牌（注入的优先；没有就去设置里读一次）。
   String _relayToken = '';
@@ -320,6 +333,9 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             ? _sources.first
             : ComicSource.tryParse(kSeedComicSourceJson)!);
     _relayToken = widget.relayToken?.trim() ?? '';
+    // 进页面顺带同步一次：换台设备打开就能看到另一台的收藏与进度。
+    // 不 await（同步是顺带做的事，绝不能挡住开页面），失败也只记在状态里。
+    unawaited(_syncSoon(immediate: true));
     if (widget.targetBuilder != null) {
       _target = widget.targetBuilder!();
     } else {
@@ -434,6 +450,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     }
     _chromeTimer?.cancel();
     _dimHudTimer?.cancel();
+    _syncTimer?.cancel();
     _pageController.dispose();
     _keyController.dispose();
     _scrollController.dispose();
@@ -822,6 +839,54 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     }
   }
 
+  /// 同步入口：合并"进页面""收藏变了""进度变了"这些触发点，避免每动一下就发一次请求。
+  ///
+  /// 为什么必须防抖：翻页每翻一次都会存进度，直连打的是 `/opsapi/sync`，
+  /// 不合并的话一话能打上百次请求 —— 服务端有速率限制，用户也会白耗流量。
+  Future<void> _syncSoon({bool immediate = false}) async {
+    _syncTimer?.cancel();
+    if (!immediate) {
+      _syncTimer = Timer(const Duration(seconds: 5), () {
+        unawaited(_syncNow());
+      });
+      return;
+    }
+    await _syncNow();
+  }
+
+  /// 真同步一次。**任何失败都吞掉**：同步不该在看书时弹错、更不该打断翻页。
+  Future<void> _syncNow() async {
+    if (_syncBusy) return;
+    if (!_syncResolved) {
+      _syncResolved = true;
+      try {
+        _sync =
+            widget.syncService ??
+            await createComicSyncService(
+              libraryStore: _library,
+              progressStore: _progress,
+            );
+      } catch (_) {
+        _sync = null;
+      }
+    }
+    final sync = _sync;
+    if (sync == null) return;
+    _syncBusy = true;
+    try {
+      final outcome = await sync.syncNow();
+      if (!mounted || outcome.skipped) return;
+      // 别处加了/删了收藏：书架状态要跟着刷新（按钮上写着"加入书架"就还是没加）。
+      if (outcome.addedBooks > 0 || outcome.removedBooks > 0) {
+        await _refreshShelfFlags();
+      }
+    } catch (_) {
+      // 网络/令牌/服务端问题：下次自然还会再试一次。
+    } finally {
+      _syncBusy = false;
+    }
+  }
+
   /// 这本书在不在书架里 + 上次读到哪一话（两个都读真的，不猜）。
   Future<void> _refreshShelfFlags() async {
     final book = _book;
@@ -863,6 +928,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         ),
       );
       await _refreshShelfFlags();
+      unawaited(_syncSoon());
       if (!mounted) return;
       // 给一句回执并说清去哪里找：用户点完会去「内容 → 漫画收藏」翻，
       // 只有按钮变三个字的话，他不知道收藏落到了哪儿（2026-10-02 的报障语境）。
@@ -1111,6 +1177,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           ),
         )
         .catchError((_) {});
+    unawaited(_syncSoon());
     _maybePrefetchNext(book, chapter, index);
   }
 

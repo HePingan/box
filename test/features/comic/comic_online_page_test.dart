@@ -16,10 +16,14 @@ import 'package:box/features/comic/domain/comic_image_cache.dart';
 import 'package:box/features/comic/domain/comic_library_store.dart';
 import 'package:box/features/comic/domain/comic_online_progress.dart';
 import 'package:box/features/comic/domain/comic_reader_prefs.dart';
+import 'package:box/features/comic/domain/comic_sync.dart';
+import 'package:box/features/extensions/plugins/server_ops/server_ops_api_client.dart';
 import 'package:box/features/comic/domain/comic_source.dart';
 import 'package:box/features/comic/domain/sources/seed_comic_source.dart';
 import 'package:box/features/comic/presentation/comic_online_page.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_secret_store.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'fake_comic_target.dart';
@@ -110,6 +114,7 @@ Widget _page(
   String? initialBookUrl,
   bool autoResume = false,
   Widget Function(String sourceName)? selfCheckPageBuilder,
+  ComicSyncService? syncService,
 }) {
   return MaterialApp(
     home: ComicOnlinePage(
@@ -133,6 +138,7 @@ Widget _page(
           ),
       initialBookUrl: initialBookUrl,
       autoResume: autoResume,
+      syncService: syncService,
       progressStore:
           progressStore ??
           ComicOnlineProgressStore(
@@ -1460,5 +1466,60 @@ void main() {
       );
       expect(find.textContaining('亮度'), findsNothing);
     });
+  });
+
+  testWidgets('进页面顺带同步一次：另一台的收藏/进度会被拉过来（失败也静默）', (tester) async {
+    final target = FakeComicTarget();
+    final cache = _FakeCache(png);
+    final requests = <String>[];
+    final sync = ComicSyncService(
+      api: OpsApiClient(
+        baseUrl: 'https://sync.test/opsapi',
+        token: 't',
+        client: MockClient((req) async {
+          requests.add(req.method);
+          return http.Response.bytes(
+            utf8.encode(
+              jsonEncode({
+                'books': [
+                  {
+                    'id': '/book/96/',
+                    'title': '别处的书',
+                    'sourceType': 'online',
+                    'onlineUrl': '/book/96/',
+                    'bookUrl': '/book/96/',
+                    'createdAt': 1,
+                    'pages': <String>[],
+                    'updatedAt': '2026-10-02T15:00:00+08:00',
+                  },
+                ],
+                'progress': {
+                  '/book/96/': {
+                    'bookUrl': '/book/96/',
+                    'chapterUrl': '/c/1',
+                    'chapterTitle': '第一话',
+                    'index': 0,
+                    'updatedAt': '2026-10-02T15:00:00+08:00',
+                  },
+                },
+                'updatedAt': '2026-10-02T15:00:00+08:00',
+              }),
+            ),
+            200,
+            headers: const {'content-type': 'application/json; charset=utf-8'},
+          );
+        }),
+      ),
+      libraryStore: ComicLibraryStore(cacheStore: CacheStore.inMemory('wiring_lib')),
+      progressStore: ComicOnlineProgressStore(cacheStore: CacheStore.inMemory('wiring_prog')),
+      cacheStore: CacheStore.inMemory('wiring_sync'),
+    );
+
+    await tester.pumpWidget(_page(target, cache, syncService: sync));
+    await tester.pumpAndSettle();
+
+    // 拉一次 + 推一次（合并结果要推回去，别的设备才看得到）。
+    expect(requests.where((m) => m == 'GET'), hasLength(1));
+    expect(requests.where((m) => m == 'POST'), hasLength(1));
   });
 }

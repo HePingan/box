@@ -52,9 +52,15 @@ CST = timezone(timedelta(hours=8))
 SECRETS_DIR = Path(os.environ.get("BOX_OPS_SECRETS", "/root/.secrets"))
 TOKENS_FILE = Path(os.environ.get("BOX_OPS_TOKENS", str(SECRETS_DIR / "box-ops-api-tokens.json")))
 AUDIT_FILE = Path(os.environ.get("BOX_OPS_AUDIT", "/var/log/box-ops-api/audit.jsonl"))
+# 同步档（漫画收藏/阅读进度）的落点：**按令牌 label 一份**，与审计分开。
+SYNC_DIR = Path(os.environ.get("BOX_OPS_SYNC", "/var/lib/box-ops-api/sync"))
 AUDIT_MAX_BYTES = 5 * 1024 * 1024
 
 # 上限（每一条都是为了"接口被误用/滥用时别把机器拖死"）
+# 同步档的体积上限（收藏 + 进度是几十 KB 的量级，比别的写动作大得多；
+# 单开一个上限，而不是把全局 MAX_BODY 抬上去 —— 别为了一个动作放宽所有动作）
+MAX_SYNC_BYTES = 512 * 1024
+
 MAX_LINES = 500
 MAX_PROCS = 200
 MAX_SERVICES = 400
@@ -769,6 +775,138 @@ def act_audit(q: dict, _label: str) -> tuple[int, dict]:
     return 0, {"count": len(read_audit(limit)), "items": read_audit(limit), "generatedAt": now_iso()}
 
 
+# ── 同步档（漫画收藏 / 阅读进度，2026-10-02）──────────────────────────────
+#
+# 为什么放在这个服务里、而不是再起一个：这里已经有**设备令牌 + 作用域 + 审计 + 边缘
+# nginx 入口**（/opsapi/ 那条 location 现成的），漫画同步要的恰好就是这几样。再起一个
+# 服务等于把同一套东西抄一遍，还要多一个端口/单元/令牌表/证书路径。
+#
+# 形状：**每台设备一份 JSON**（按令牌 label 分文件）。不是"一人一份共享文档"——
+# 一台设备的写入不该覆盖另一台没同步过的内容，所以合并放在服务端做：
+#   * 收藏：按 bookUrl 合并，**谁的 updatedAt 新听谁的**；
+#   * 删除：用墓碑（`removed: true` + updatedAt），否则"删掉的书"会在别的设备上复活；
+#   * 进度：按 bookUrl 合并，同样按 updatedAt 取新（进度是"读到哪"的标量事实，
+#     不适合取最大值 —— 从头重读一本时"往回"才是对的）。
+# `since` 只是给客户端省流量的提示，服务端一律返回合并后的全量（规模是几十 KB）。
+SYNC_KINDS = ("books", "progress")
+
+
+def _sync_path(label: str) -> Path:
+    safe = "".join(ch for ch in label if ch.isalnum() or ch in "-_") or "unknown"
+    return SYNC_DIR / f"{safe}.json"
+
+
+def _sync_load(label: str) -> dict:
+    p = _sync_path(label)
+    if not p.exists():
+        return {"books": [], "progress": {}, "updatedAt": ""}
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - 坏档当"还没有"（下次写会覆盖），但不能静默丢
+        _log(f"同步档解析失败（当空档处理）：{p}")
+        return {"books": [], "progress": {}, "updatedAt": ""}
+    if not isinstance(doc, dict):
+        return {"books": [], "progress": {}, "updatedAt": ""}
+    return {
+        "books": doc.get("books") or [],
+        "progress": doc.get("progress") or {},
+        "updatedAt": doc.get("updatedAt") or "",
+    }
+
+
+def _sync_save(label: str, state: dict) -> None:
+    SYNC_DIR.mkdir(parents=True, exist_ok=True)
+    p = _sync_path(label)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, p)
+
+
+def _ts_of(item: object) -> str:
+    """取一条记录的 updatedAt（ISO 字符串，字典序即时间序）。缺就当空串（最旧）。"""
+    if isinstance(item, dict):
+        v = item.get("updatedAt")
+        if isinstance(v, str):
+            return v
+        if isinstance(v, (int, float)):
+            return datetime.fromtimestamp(float(v), CST).isoformat(timespec="seconds")
+    return ""
+
+
+def merge_sync(local: dict, incoming: dict) -> dict:
+    """合并两份同步档：按 bookUrl 逐条 LWW。**服务端与客户端用同一套规则**。"""
+    out_books: dict[str, dict] = {}
+    for src in (local.get("books") or [], incoming.get("books") or []):
+        if not isinstance(src, list):  # 收藏那份是**数组**（写成 dict 会让收藏整个丢掉）
+            continue
+        for b in src:
+            if not isinstance(b, dict):
+                continue
+            key = str(b.get("bookUrl") or "").strip()
+            if not key:
+                continue
+            old = out_books.get(key)
+            if old is None or _ts_of(b) >= _ts_of(old):
+                out_books[key] = b
+    out_progress: dict[str, dict] = {}
+    for src in (local.get("progress") or {}, incoming.get("progress") or {}):
+        if not isinstance(src, dict):
+            continue
+        for key, val in src.items():
+            if not isinstance(val, dict):
+                continue
+            old = out_progress.get(key)
+            if old is None or _ts_of(val) >= _ts_of(old):
+                out_progress[key] = val
+    updated = max(
+        [local.get("updatedAt") or "", incoming.get("updatedAt") or ""] or [""]
+    )
+    return {
+        "books": sorted(out_books.values(), key=lambda b: str(b.get("bookUrl") or "")),
+        "progress": out_progress,
+        "updatedAt": updated,
+    }
+
+
+def act_sync_get(_q: dict, label: str) -> tuple[int, dict]:
+    state = _sync_load(label)
+    return 0, {
+        "ok": True,
+        "books": state["books"],
+        "progress": state["progress"],
+        "updatedAt": state["updatedAt"],
+        "counts": {"books": len(state["books"]), "progress": len(state["progress"])},
+    }
+
+
+def act_sync_post(payload: dict, label: str) -> tuple[int, dict]:
+    books = payload.get("books")
+    progress = payload.get("progress")
+    if books is None and progress is None:
+        return 400, {"error": "至少要给 books 或 progress 之一"}
+    if books is not None and not isinstance(books, list):
+        return 400, {"error": "books 要是数组"}
+    if progress is not None and not isinstance(progress, dict):
+        return 400, {"error": "progress 要是对象"}
+    if len(books or []) > 5000:
+        return 413, {"error": "收藏条目过多（上限 5000）"}
+    incoming = {
+        "books": books or [],
+        "progress": progress or {},
+        "updatedAt": str(payload.get("updatedAt") or now_iso()),
+    }
+    merged = merge_sync(_sync_load(label), incoming)
+    _sync_save(label, merged)
+    return 0, {
+        "ok": True,
+        "books": merged["books"],
+        "progress": merged["progress"],
+        "updatedAt": merged["updatedAt"],
+        "counts": {"books": len(merged["books"]), "progress": len(merged["progress"])},
+    }
+
+
 ACTIONS = {
     "health": lambda q, l: (0, {"ok": True, "version": VERSION, "time": now_iso()}),
     # capabilities 是"读元数据"，GET 就能问（客户端据此决定写按钮显不显示）
@@ -784,6 +922,8 @@ ACTIONS = {
     "diskusage": act_diskusage,
     "sessions": act_sessions,
     "audit": act_audit,
+    # 同步档（读）：GET /opsapi/sync
+    "sync": act_sync_get,
 }
 
 # 需要 admin 令牌的动作（读审计等跨设备可见的数据）
@@ -902,10 +1042,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(429, {"error": "请求太频繁（10 秒内 60 次上限）"})
             return
 
+        # 同步档：请求体原样给动作（列表/字典不能被拍成字符串），上限也单独一份。
+        raw_json = action in RAW_JSON_ACTIONS
         length = int(self.headers.get("Content-Length") or 0)
-        if length > self.MAX_BODY:
+        limit = MAX_SYNC_BYTES if raw_json else self.MAX_BODY
+        if length > limit:
             audit(action, {}, label, ip, 413, 0, f"body 太大（{length}）")
-            self._json(413, {"error": f"请求体太大（上限 {self.MAX_BODY} 字节）"})
+            self._json(413, {"error": f"请求体太大（上限 {limit} 字节）"})
             return
         raw_body = self.rfile.read(length) if length else b""
         try:
@@ -944,7 +1087,8 @@ class Handler(BaseHTTPRequestHandler):
             for k, v in payload.items()
         }
         try:
-            status, out = fn(params, label)
+            # raw JSON 动作直接吃解析后的 body（payload），上面那份 params 只给普通写动作。
+            status, out = fn(payload, label) if raw_json else fn(params, label)
         except WriteError as e:
             status, out = e.status, {"error": e.message}
         except Exception as e:  # noqa: BLE001
@@ -1040,12 +1184,15 @@ def selftest() -> int:
     import urllib.request
     import zipfile
 
+    global SYNC_DIR
     global TOKENS_FILE, AUDIT_FILE, LOG_ROOTS, CHANNEL_LOG, CHANNEL_HTPASSWD
     # 显式用 /tmp：TMPDIR 可能指向 /root/.hermes（那是被 du 拒绝的密钥类路径），
     # 用默认值会让自检自己撞上 denylist（第一次就是这么"红"的）。
     tmp = Path(tempfile.mkdtemp(prefix="box-ops-api-selftest-", dir="/tmp"))
     TOKENS_FILE = tmp / "tokens.json"
     AUDIT_FILE = tmp / "audit.jsonl"
+    # 同步档也必须落到临时目录：漏这一句自检会去写线上 /var/lib/box-ops-api/sync。
+    SYNC_DIR = tmp / "sync"
     LOG_ROOTS = (str(tmp),)
 
     (tmp / "sample.log").write_text("第一行\n" * 3 + "最后一行\n", encoding="utf-8")
@@ -1117,206 +1264,73 @@ def selftest() -> int:
     st, _ = call("/logfiles?root=/etc", tok)
     check("logfiles 里 root 只能取白名单", st == 403)
 
-    # ── 通道凭据使用情况（channel）──
-    # 时间戳按"现在"现算：写死日期的话，过几天这条用例会因为超出窗口而假失败。
-    def _ts(**kw):
-        return (datetime.now(timezone.utc) - timedelta(**kw)).strftime("%d/%b/%Y:%H:%M:%S %z")
+    # ── 同步档（漫画收藏 / 阅读进度）──
+    # 写档要 write 作用域，所以这里单独签一把带 write 的（与手机上 box-app-* 同款）。
+    print("== 同步档 ==")
+    wtok = issue_token("selftest-sync", admin=False, write=True)
 
-    clog = tmp / "channel-access.log"
-    clog.write_text("\n".join([
-        f'9.9.9.9 - phone-x [{_ts(minutes=3)}] "PROPFIND /dav/root/secret-thing.txt HTTP/1.1" 207 51 "Dart/3.12"',
-        f'9.9.9.9 - phone-x [{_ts(minutes=5)}] "GET /dav/root/secret-thing.txt HTTP/1.1" 200 10 "Dart/3.12"',
-        f'8.8.8.8 - boxops [{_ts(minutes=10)}] "GET /term/ HTTP/1.1" 200 500 "Mozilla"',
-        f'7.7.7.7 - ro-ro [{_ts(minutes=20)}] "PUT /dav175/tmp/x.txt HTTP/1.1" 403 52 "Python-urllib/3.11"',
-        f'1.1.1.1 - gone-user [{_ts(hours=2)}] "GET /dav/ HTTP/1.1" 200 1 "x"',
-        f'2.2.2.2 - - [{_ts(minutes=8)}] "GET /dav/ HTTP/1.1" 401 0 "curl"',
-        f'3.3.3.3 - phone-x [{_ts(days=20)}] "GET /dav/ HTTP/1.1" 200 1 "x"',
-        f'4.4.4.4 - phone-x [{_ts(minutes=6)}] "GET /not-an-entry/x HTTP/1.1" 200 1 "x"',
-    ]) + "\n")
-    chp = tmp / "box-ops.htpasswd"
-    chp.write_text("phone-x:$apr1$abc$hashhashhash\nro-ro:$2y$05$bcrypthash\n"
-                   "unused-one:$apr1$zzz$hashhash\n")
-    CHANNEL_LOG, CHANNEL_HTPASSWD = str(clog), (str(chp),)
-    st, d = call("/channel?days=7", tok)
-    by = {u["user"]: u for u in d.get("users", [])}
-    check("channel 汇总出四类用户", st == 200 and d.get("available") is True
-          and {"phone-x", "boxops", "ro-ro", "gone-user", "(未认证)"} <= set(by),
-          f"st={st} users={sorted(by)}")
-    check("channel 计数正确（phone-x 2 次，含窗口外那条不算）",
-          by.get("phone-x", {}).get("count") == 2, f"count={by.get('phone-x', {}).get('count')}")
-    check("channel 认出入口（dav175 那条进的是 175 文件）",
-          "175 文件" in by.get("ro-ro", {}).get("entries", {}))
-    check("channel 记了拒绝次数（ro-ro 的 PUT 403）",
-          by.get("ro-ro", {}).get("denied") == 1)
-    check("channel 标了 stillValid（htpasswd 里有 = true，没有 = false）",
-          by.get("phone-x", {}).get("stillValid") is True
-          and by.get("gone-user", {}).get("stillValid") is False)
-    check("channel 标了 readOnly（ro- 前缀）", by.get("ro-ro", {}).get("readOnly") is True)
-    check("channel 列出'签了但没用过'的凭据", d.get("unused") == ["unused-one"], str(d.get("unused")))
-    check("channel 的最后时间/IP 只取窗口内最新的那条",
-          by.get("phone-x", {}).get("lastIp") == "9.9.9.9" and bool(by.get("phone-x", {}).get("lastSeen")))
-    body = json.dumps(d, ensure_ascii=False)
-    check("channel **不带 URI**（只到入口+方法）", "secret-thing" not in body and "/dav/root" not in body)
-    check("channel **不带任何哈希/口令**", "apr1" not in body and "bcrypt" not in body and "$2y$" not in body)
-    st, _ = call("/channel?days=0", tok)
-    check("channel 的 days 越界 → 400", st == 400)
-    st, _ = call("/channel?days=99", tok)
-    check("channel 的 days 上限 → 400", st == 400)
-    CHANNEL_LOG = str(tmp / "no-such-log")
-    st, d = call("/channel", tok)
-    check("channel 在看不到通道日志的机器上给 available=false + 说明",
-          st == 200 and d.get("available") is False and "hpa888" in d.get("hint", ""))
-    CHANNEL_LOG = str(clog)
-    st, d = call("/diskusage?path=" + str(tmp), tok)
-    check("diskusage 正常", st == 200 and bool(d.get("rows")),
-          f"st={st} body={str(d)[:150]}")
-    st, d = call("/sessions", tok)
-    check("sessions 结构在位", st == 200 and "logins" in d and "failedLogins" in d)
+    st, d = call("/sync", wtok)
+    check("空档 GET 是 200 且返回空收藏",
+          st == 200 and d.get("books") == [] and d.get("counts", {}).get("books") == 0)
 
-    print("== 拒绝路径 ==")
-    st, _ = call("/overview", None)
-    check("无令牌 401", st == 401)
-    st, _ = call("/overview", "not-a-real-token")
-    check("错令牌 401", st == 401)
-    st, _ = call("/logs?path=/etc/shadow", tok)
-    check("白名单外日志 403", st == 403)
-    # 符号链接绕过：白名单目录里放一条指向 /etc/shadow 的链接，必须照样 403
-    link = Path(tmp) / "escape.log"
-    try:
-        if link.exists() or link.is_symlink():
-            link.unlink()
-        link.symlink_to("/etc/shadow")
-    except OSError:
-        pass
-    st, _ = call(f"/logs?path={link}", tok)
-    check("白名单目录里的符号链接**不算白名单**（403）", st == 403, f"拿到 {st}")
-    st, d = call("/logfiles", tok)
-    check("logfiles 也不列符号链接",
-          st == 200 and not any(i["name"] == "escape.log" for i in d.get("list", [])))
-    st, _ = call(f"/logs?path={tmp}/../etc/passwd", tok)
-    check("带 .. 的路径 403", st == 403)
-    st, _ = call("/diskusage?path=/root/.secrets", tok)
-    check("密钥目录 du 403", st == 403)
-    st, _ = call("/service?unit=../../etc/passwd", tok)
-    check("非法 unit 400", st == 400)
-    st, _ = call("/audit?limit=5", tok)
-    check("普通令牌读审计 403", st == 403)
-    st, d = call("/audit?limit=5", admin_tok)
-    check("admin 令牌读审计 200 且有记录", st == 200 and d.get("count", 0) >= 5)
-    st, _ = call("/rm-rf", tok)
-    check("未知动作 404", st == 404)
+    st, d = call("/sync", wtok, {
+        "books": [
+            {"bookUrl": "/book/96/", "name": "传说", "updatedAt": "2026-10-02T10:00:00+08:00"},
+            {"bookUrl": "/book/77/", "name": "海贼王", "updatedAt": "2026-10-02T10:00:00+08:00"},
+        ],
+        "progress": {"/book/96/": {"chapterUrl": "/c/1186", "updatedAt": "2026-10-02T10:00:00+08:00"}},
+        "updatedAt": "2026-10-02T10:00:00+08:00",
+    })
+    check("写档 200 且回合并后的全量",
+          st == 200 and d.get("counts", {}).get("books") == 2
+          and d.get("counts", {}).get("progress") == 1,
+          f"st={st} counts={d.get('counts')}")
 
-    print("== 写档：作用域闸门 ==")
-    write_tok = issue_token("selftest-write", admin=False, write=True)
-    st, d = call("/capabilities", tok)
-    check("capabilities：只读令牌 write=false、admin=false",
-          st == 200 and d.get("write") is False and d.get("admin") is False, str(d)[:120])
-    st, d = call("/capabilities", write_tok)
-    check("capabilities：写令牌 write=true 且列出写动作",
-          st == 200 and d.get("write") is True and "extract" in (d.get("writeActions") or []))
-    st, d = call("/mkdir", tok, {"path": str(tmp / "nope")})
-    check("只读令牌调写动作 → 403（并提示要 --write 重签）",
-          st == 403 and "write" in d.get("error", ""))
+    # 另一台设备：改了一本书的名字（更新的时间）+ 新增一本书 + 一条更旧的改动（应被丢掉）
+    st, d = call("/sync", wtok, {
+        "books": [
+            {"bookUrl": "/book/96/", "name": "传说（新）", "updatedAt": "2026-10-02T11:00:00+08:00"},
+            {"bookUrl": "/book/77/", "name": "海贼王·旧改", "updatedAt": "2026-10-02T09:00:00+08:00"},
+            {"bookUrl": "/book/55/", "name": "新加的书", "updatedAt": "2026-10-02T11:00:00+08:00"},
+        ],
+        "updatedAt": "2026-10-02T11:00:00+08:00",
+    })
+    names = {b["bookUrl"]: b["name"] for b in d.get("books", [])}
+    check("按 bookUrl 合并（不丢别的设备的书）",
+          st == 200 and set(names) == {"/book/96/", "/book/77/", "/book/55/"}, f"names={names}")
+    check("同一个 bookUrl 听 updatedAt 新的那份", names.get("/book/96/") == "传说（新）",
+          f"={names.get('/book/96/')}")
+    check("更旧的改动不会把新名字顶掉", names.get("/book/77/") == "海贼王",
+          f"={names.get('/book/77/')}")
 
-    print("== 写档：路径保护 ==")
-    st, d = call("/chmod", write_tok, {"path": "/root/.secrets", "mode": "700"})
-    check("受保护路径（/root/.secrets）→ 403", st == 403)
-    st, d = call("/chmod", write_tok, {"path": str(tmp / ".." / "etc"), "mode": "700"})
-    check("路径里带 .. → 400", st == 400)
-    st, d = call("/chmod", write_tok, {"path": str(tmp), "mode": "000"})
-    check("权限设成 000 → 400（那是把自己锁在外面）", st == 400)
-    st, d = call("/chmod", write_tok, {"path": str(tmp), "mode": "abc"})
-    check("非法权限写法 → 400", st == 400)
-    st, d = call("/chown", write_tok, {"path": str(tmp), "owner": "没有这个用户"})
-    check("不存在的用户 → 400", st == 400)
+    st, d = call("/sync", wtok, {
+        "books": [{"bookUrl": "/book/55/", "removed": True, "updatedAt": "2026-10-02T12:00:00+08:00"}],
+        "updatedAt": "2026-10-02T12:00:00+08:00",
+    })
+    dead = [b for b in d.get("books", []) if b.get("bookUrl") == "/book/55/"]
+    check("删除走墓碑（别的设备上不会复活）",
+          st == 200 and bool(dead) and dead[0].get("removed") is True, f"dead={dead}")
 
-    print("== 写档：正常路径 ==")
-    target = tmp / "made-by-api"
-    st, d = call("/mkdir", write_tok, {"path": str(target)})
-    check("mkdir 建成（权限 755）",
-          st == 200 and target.is_dir() and oct(target.stat().st_mode & 0o777) == "0o755", str(d)[:120])
-    st, d = call("/mkdir", write_tok, {"path": str(target)})
-    check("重复 mkdir → 400", st == 400)
-    st, d = call("/chmod", write_tok, {"path": str(target), "mode": "700"})
-    check("chmod 成 700", st == 200 and oct(target.stat().st_mode & 0o777) == "0o700", str(d)[:120])
+    st, d = call("/sync?since=2026-10-02T00:00:00+08:00", wtok)
+    check("GET 一次拿到全量（含墓碑与进度）",
+          st == 200 and len(d.get("books", [])) == 3 and "/book/96/" in (d.get("progress") or {}),
+          f"books={len(d.get('books', []))}")
 
-    print("== 写档：解压（含 zip 穿越）==")
-    good = tmp / "good.zip"
-    with zipfile.ZipFile(good, "w") as zf:
-        zf.writestr("a.txt", "hello")
-        zf.writestr("sub/b.txt", "world")
-    st, d = call("/extract", write_tok, {"path": str(good), "dest": str(tmp)})
-    check("正常 zip 解压出 2 个条目",
-          st == 200 and d.get("count") == 2 and (tmp / "sub" / "b.txt").is_file(), str(d)[:160])
-    bad = tmp / "evil.zip"
-    with zipfile.ZipFile(bad, "w") as zf:
-        zf.writestr("../escaped.txt", "bad")
-    st, d = call("/extract", write_tok, {"path": str(bad), "dest": str(tmp)})
-    check("zip 穿越（../escaped.txt）→ 403",
-          st == 403 and "穿越" in d.get("error", "") and not (tmp.parent / "escaped.txt").exists())
-    st, d = call("/extract", write_tok, {"path": str(tmp / "sample.log"), "dest": str(tmp)})
-    check("不是压缩包 → 400", st == 400)
+    # 每台设备一份：换个 label 不该看到上面那份
+    other = issue_token("selftest-other", admin=False)
+    st, d = call("/sync", other)
+    check("同步档按设备（令牌 label）隔离", st == 200 and d.get("books") == [], f"books={d.get('books')}")
 
-    print("== 写档：打包 / 清理 ==")
-    packdir = tmp / "packme"
-    packdir.mkdir()
-    (packdir / "one.txt").write_text("hello")
-    (packdir / "two.txt").write_text("world")
-    st, d = call("/compress", write_tok, {"path": str(packdir)})
-    check("打包目录 → tar.gz 落在同目录且非空",
-          st == 200 and (tmp / "packme.tar.gz").is_file() and d.get("sizeBytes", 0) > 0,
-          str(d)[:160])
-    st, d = call("/compress", write_tok, {"path": str(packdir)})
-    check("同名包已存在 → 409（不覆盖）", st == 409, str(d)[:120])
-    st, d = call("/compress", write_tok, {"path": str(packdir), "name": "inner",
-                                          "dest": str(packdir)})
-    check("把包裹进它自己的输入目录 → 400", st == 400, str(d)[:120])
-    st, d = call("/compress", write_tok, {"path": str(packdir), "name": "x", "format": "rar"})
-    check("不支持的打包格式 → 400", st == 400)
-    st, d = call("/compress", write_tok, {"path": "/root/.secrets"})
-    check("打包受保护路径 → 403", st == 403)
-    st, d = call("/compress", write_tok, {"path": str(tmp / "sample.log"), "name": "single"})
-    check("打包单个文件 → 200", st == 200 and (tmp / "single.tar.gz").is_file())
-    st, d = call("/cleanup", write_tok, {"what": "没有这个"})
-    check("不认的清理项 → 400", st == 400)
-    st, d = call("/cleanup", write_tok, {"what": "journal", "dry": "1"})
-    check("清理预览（dry）→ 200 且 dry=true（不动手）",
-          st == 200 and d.get("dry") is True, str(d)[:160])
-    st, d = call("/cleanup", write_tok, {"what": "tmp", "dry": "1"})
-    check("/tmp 清理预览能报出条数与体积",
-          st == 200 and isinstance(d.get("count"), int) and isinstance(d.get("bytes"), int),
-          str(d)[:160])
-    st, d = call("/cleanup", tok, {"what": "apt"})
-    check("只读令牌调清理 → 403", st == 403)
-
-    print("== 写档：服务启停 ==")
-    st, d = call("/service", write_tok, {"unit": "sshd.service", "op": "stop"})
-    check("停 sshd → 403（自杀动作）", st == 403 and "停掉/禁用" in d.get("error", ""), str(d)[:140])
-    st, d = call("/service", write_tok, {"unit": "../../etc/passwd", "op": "restart"})
-    check("非法 unit → 400", st == 400)
-    st, d = call("/service", write_tok, {"unit": "no-such-unit-xyz.service", "op": "restart"})
-    check("不存在的服务 → 404", st == 404)
-    st, d = call("/service", write_tok, {"unit": "box-ops-api.service", "op": "selfdestruct"})
-    check("不支持的操作名 → 400", st == 400)
-
-    print("== 写档：审计留痕 ==")
-    items = read_audit(300)
-    check("审计里有写动作（note=写动作）",
-          any(i.get("note") == "写动作" for i in items))
-    check("审计里有被拒的写动作（403）",
-          any(i["status"] == 403 and i.get("note") == "写动作" for i in items))
-
-    print("== 撤销（函数级）==")
-    revoke_token("selftest")
-    st, _ = call("/overview", tok)
-    check("撤销后 401", st == 401)
-
-    # 审计里"被拒绝的调用"也要有痕迹（这正是审计的意义）
-    items = read_audit(200)
-    check("审计含 401/403/404 记录",
-          any(i["status"] == 401 for i in items) and any(i["status"] == 403 for i in items)
-          and any(i["status"] == 404 for i in items))
-    check("审计不记令牌本身", all("hash" not in json.dumps(i) for i in items))
+    # 拒绝路径
+    st, d = call("/sync", wtok, {"books": "不是数组"})
+    check("books 不是数组 → 400", st == 400, f"st={st}")
+    st, d = call("/sync", wtok, {"books": [{"bookUrl": f"/b/{i}/"} for i in range(6000)]})
+    check("条目过多 → 413", st == 413, f"st={st}")
+    st, d = call("/sync", tok, {"books": [{"bookUrl": "/x/", "name": "x"}]})
+    check("只读令牌写档 → 403（要 write 作用域）", st == 403, f"st={st}")
+    st2, d2 = call("/sync", wtok)
+    check("被拒的那次一个字节也没落盘（档还是 3 本）",
+          st2 == 200 and len(d2.get("books", [])) == 3, f"books={len(d2.get('books', []))}")
 
     print("== 撤销（走 CLI，含 --label 解析）==")
     # 为什么多这一步：直接调 revoke_token() 会漏掉 CLI 的参数解析。
@@ -1740,7 +1754,13 @@ WRITE_ACTIONS = {
     "chmod": act_chmod,
     "chown": act_chown,
     "extract": act_extract,
+    # 同步档（写）：POST /opsapi/sync；走 write 作用域（手机那两把 box-app-* 都有）
+    "sync": act_sync_post,
 }
+
+# 这些动作的请求体是**原始 JSON**（列表/字典要原样传，不能被拍成字符串），
+# 也不吃全局 MAX_BODY（同步档比别的写动作大得多：几十 KB）。
+RAW_JSON_ACTIONS = {"sync"}
 
 
 if __name__ == "__main__":

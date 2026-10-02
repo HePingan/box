@@ -10,6 +10,7 @@ import 'package:box/features/comic/domain/comic_offline_store.dart';
 import 'package:box/features/comic/domain/comic_library_store.dart';
 import 'package:box/features/comic/domain/comic_online_progress.dart';
 import 'package:box/features/comic/domain/comic_update_watch.dart';
+import 'package:box/features/comic/data/comic_sync_ops.dart';
 import 'package:box/features/comic/presentation/comic_online_page.dart';
 import 'package:box/features/comic/domain/comic_reader_state.dart';
 import 'package:box/features/comic/infrastructure/comic_importer_widget.dart';
@@ -253,7 +254,22 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
 
     if (confirmed != true) return;
     await _store.remove(book.id);
+    // 把"删了这本书"记成墓碑再同步：不然别的设备上它还留着，下次同步又把它推回来
+    // （删除必须传得出去，这是跨设备同步最容易漏的一环）。
+    if (book.sourceType == ComicSourceType.online) {
+      unawaited(_syncRemoved(book.onlineUrl ?? book.id));
+    }
     if (mounted) _reload();
+  }
+
+  /// 记墓碑 + 顺带同步一次；失败不弹错（删除已经落本地了，同步下次还会再试）。
+  Future<void> _syncRemoved(String bookUrl) async {
+    try {
+      final sync = await createComicSyncService();
+      if (sync == null) return;
+      await sync.recordRemoved(bookUrl);
+      await sync.syncNow();
+    } catch (_) {}
   }
 
   @override

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
@@ -5,7 +7,9 @@ import 'package:share_plus/share_plus.dart';
 import '../../../design_system/app_tokens.dart';
 import '../../account/data/personal_center_cache_service.dart';
 import '../../backup/local_backup_service.dart';
+import '../../comic/data/comic_sync_ops.dart';
 import '../../comic/domain/comic_image_cache.dart';
+import '../../comic/domain/comic_sync.dart';
 import '../../comic/domain/comic_offline_downloader.dart';
 import '../../comic/domain/comic_offline_prefs.dart';
 import '../../comic/domain/comic_offline_store.dart';
@@ -27,6 +31,7 @@ class DataSettingsPage extends StatefulWidget {
     this.cacheService,
     this.offlineStore,
     this.offlinePrefs,
+    this.syncFactory,
   });
 
   /// 单测注入：离线库（不注入就走真实目录）。
@@ -43,6 +48,9 @@ class DataSettingsPage extends StatefulWidget {
 
   /// 单测注入：不注入就走真实现（清图片/阅读器/漫画图片三类缓存）。
   final PersonalCenterCacheService? cacheService;
+
+  /// 单测注入：跨设备同步服务（不注入就按手机上存的令牌现建；没配令牌 = null）。
+  final Future<ComicSyncService?> Function()? syncFactory;
 
   @override
   State<DataSettingsPage> createState() => _DataSettingsPageState();
@@ -64,6 +72,10 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
   late final ComicOfflinePrefs _offlinePrefs =
       widget.offlinePrefs ?? ComicOfflinePrefs();
 
+  /// 跨设备同步的状态行 + 同步中（拦重复点击）。
+  String _syncNote = '';
+  bool _syncing = false;
+
   /// 离线内容占用（null = 还没量出来；量不到就不显示数字）。
   int? _offlineBytes;
   int _offlineBooks = 0;
@@ -76,6 +88,66 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
     super.initState();
     _loadComicCacheSize();
     _loadOfflineUsage();
+    unawaited(_loadSyncState());
+  }
+
+  /// 跨设备同步这一行：没配令牌就说清去哪儿配，配了就把"上次同步"摊开给用户看。
+  Future<void> _loadSyncState() async {
+    String note = '';
+    try {
+      final sync = await (widget.syncFactory ?? createComicSyncService)();
+      if (sync == null) {
+        note = '没配设备令牌（设置 → 服务器 → 设备令牌），不会同步';
+      } else {
+        final at = await sync.lastSyncAt();
+        final msg = await sync.lastMessage();
+        note = at == null
+            ? '还没同步过（点一下立刻同步）'
+            : '上次同步 ${_fmtTime(at)}${msg.isEmpty ? '' : ' · $msg'}';
+      }
+    } catch (_) {
+      note = '同步状态读不出来（不影响看书）';
+    }
+    if (!mounted) return;
+    setState(() => _syncNote = note);
+  }
+
+  /// 点一下立刻同步：结果如实回报（没配令牌 / 同步失败都要说人话）。
+  Future<void> _syncNow() async {
+    setState(() => _syncing = true);
+    String text;
+    try {
+      final sync = await (widget.syncFactory ?? createComicSyncService)();
+      if (sync == null) {
+        text = '没配设备令牌：设置 → 服务器 → 设备令牌';
+      } else {
+        final r = await sync.syncNow();
+        text = r.skipped
+            ? r.message
+            : (r.ok ? '同步完成：${r.message}' : '同步失败：${r.message}');
+      }
+    } catch (e) {
+      text = '同步失败：$e';
+    }
+    if (!mounted) return;
+    setState(() => _syncing = false);
+    await _loadSyncState();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text), duration: const Duration(seconds: 3)),
+    );
+  }
+
+  /// 时间给人看的（今天只给时分，其它给月-日 时:分）。
+  String _fmtTime(DateTime t) {
+    final local = t.toLocal();
+    final now = DateTime.now();
+    String two(int v) => v < 10 ? '0$v' : '$v';
+    final hm = '${two(local.hour)}:${two(local.minute)}';
+    if (local.year == now.year && local.month == now.month && local.day == now.day) {
+      return hm;
+    }
+    return '${local.month}-${local.day} $hm';
   }
 
   Future<void> _loadOfflineUsage() async {
@@ -186,6 +258,14 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
                     // 回来重新量一次（用户可能刚在里面删了东西）。
                     await _loadOfflineUsage();
                   },
+                ),
+                const Divider(height: 1, color: AppTokens.divider),
+                _DataTile(
+                  icon: Icons.sync_outlined,
+                  title: '跨设备同步',
+                  subtitle: _syncNote.isEmpty ? '收藏与阅读进度在几台设备间对齐' : _syncNote,
+                  busy: _syncing,
+                  onTap: _syncing ? null : () => unawaited(_syncNow()),
                 ),
                 const Divider(height: 1, color: AppTokens.divider),
                 // 外面那层 Container 有底色：SwitchListTile 必须有自己的 Material，
