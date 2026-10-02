@@ -76,7 +76,8 @@
 | 项 | 现状 | 建议 | 代价 |
 |---|---|---|---|
 | ~~条目摘要没露出来~~ | **本轮已做**（见改动 #9）：AI 行标题下加摘要，最多 2 行 | —— | 每行高约 +30dp（两行摘要 + 间距）；AI 页签不是首屏页签，热闻页签（默认）不受影响 |
-| 「为什么入选」的 `reason`（v1 新字段） | 未解析、未显示：它和 `summary` 说的是两件事（前者是入选理由，后者是内容摘要） | 想显示可以让 `summary` 空时回落 `reason` | 小；但两个都显示会让行更长，建议只留一个 |
+| 「为什么入选」的 `reason`（v1 新字段） | 未解析、未显示。2026-10-02 实测 50/50 条都有 `summary`，`reason`（入选理由）和它说的是两件事 | **建议不做**：没有「缺摘要」的条目，回落逻辑永远走不到；两个都显示则每行更长 | —— |
+| 站外原文想真正在浏览器里打开 | 现在只能「复制链接」（项目没有 `url_launcher`，4 处注释为证）。实测 50/50 条都有站内条目页，说明页是罕见兜底 | **建议不做**：要加依赖或写原生通道，换来的是一条一年也碰不到几次的兜底路径 | 中 |
 | 时间窗 `7d` vs `24h` | 现在 `7d`，与迁移前条数/新鲜度一致（实测 7d→50 条上限、24h→24 条） | 想更「新」可以把首页预览改成 `24h` | 极端时段（早上）可能只剩几条甚至空态；空态有重试与缓存兜底，但不划算，建议维持 `7d` |
 | ETag / `If-None-Match` | 未做 | 上游建议带上（变化时返回 304 省流量） | 5 分钟客户端缓存已把请求压到 12 次/小时（限流约 60 次/分钟），收益低，且要多一份需要持久化的状态 |
 | 分页 `page.nextCursor` | 未读（首页只看前几条） | 等真的做「AI 热点列表页」时再接 | —— |
@@ -86,3 +87,34 @@
 上游公告里明确请接入方把这条转告用户：**旧接口 `/api/public/*` 与旧域名 `aihot.virxact.com` 于 2026-10-31 停用**。
 本版已迁到 `https://aihot.news/api/v1`，所以只要这一版发出去就不受影响；若这一版一直不发，10-31 之后首页 AI 页签会退化成
 「拿不到内容 → 显示上次缓存（标注缓存）→ 最终空态」。
+
+## 六、下一轮（354）：把「假设 vs 事实」的对照做成工具
+
+353 真正暴露的问题不是那一个白名单写错，而是**客户端的手写假设和上游的事实之间
+没有任何自动对照**：夹具手写 → 用例锁的是假设 → 白名单写错也一路绿，直到真机点开。
+这一轮把它做成闭环（三项，都在 354 里）。
+
+| # | 改动 | 落点 | 判据 |
+|---|---|---|---|
+| A1 | 分类标签补三档：`ai-products`→产品、`industry`→行业、`tip`→教程 | `lib/features/home/data/ai_hot_models.dart` 的 `categoryLabel` | 2026-10-02 拉 50 条精选实测分布 `ai-products 13 / tip 11 / ai-models 11 / industry 10 / paper 5`；修复前这三档全部落到 `default`，首页 AI 行的标签位直接显示英文 slug。中文名照抄上游 `/api/v1/agent` 的官方说法，不自己另起名字 |
+| B1 | `tool/refresh_ai_hot_fixture.py`：从上游抓真实响应写进夹具（**每个分类留一条，字段字节未改**），并报告主机 / 分类 / 字段相对客户端假设的差异；`--check` 可当闸门（夹具过期退 1） | 新文件 + `test/fixtures/ai_hot_selected_v1.json` | 跑一次输出 `条目页主机: aihot.news / 白名单: ✅ / 分类: ✅`；两个用例文件改为读这份夹具（不再手写） |
+| B2 | `tool/check_ai_hot_live.dart`：拿**客户端自己的**模型和白名单打一次当天真实接口 —— 解析条数对不上、条目页主机不在白名单、分类没中文标签 → 退 1；上游不可达 → 打印「跳过」并退 0（离线不阻断发版） | 新文件 + 接进 `tool/build_release_with_update_sign.sh`（入口守卫之后、Gradle 之前） | 反证：临时摘掉 `tip` 一档 → `dart run` 退 1 并指名「分类 tip 没有中文标签」；恢复后通过。**正证**：`上游 50 条 · 条目页主机 aihot.news · 分类 industry→行业, tip→教程, ai-models→模型, ai-products→产品, paper→论文` |
+
+为什么闸门要「不可达就跳过」：发版机离线或上游限流都不该阻断发布，
+但**上游可达而假设漂了**必须当场断 —— 那正是 353 那个 bug 的形状。
+
+### 验证（都跑过）
+
+| 验证 | 命令 | 结果 |
+|---|---|---|
+| 静态检查 | `flutter analyze --no-fatal-infos` | **28 issues**（与基线一致，0 error / 0 warning；新增的两个 `tool/` 脚本自身 0 issue） |
+| 定向用例 | `flutter test test/daily_news_page_host_allowlist_test.dart test/features/home/ai_hot_feed_test.dart test/features/home/home_feed_tabs_test.dart` | **47 passed**（含新增「每个分类都有中文标签」） |
+| 全量 | `flutter test --exclude-tags live` | **All tests passed!**（4198 passed / 0 failed / 3 skipped） |
+| 真连上游 | `flutter test --tags live test/features/home/ai_hot_live_e2e_test.dart` | All tests passed |
+| 活体闸门（正证） | `dart run tool/check_ai_hot_live.dart` | 退 0：`上游 50 条 · 条目页主机 aihot.news · 分类 industry→行业, tip→教程, ai-models→模型, ai-products→产品, paper→论文` |
+| 活体闸门（反证） | 临时摘掉 `case 'tip'` 后重跑 | 退 1，指名 `✗ 分类 tip 没有中文标签（界面上会直接显示英文 slug）`；恢复后回 0 |
+| 夹具刷新 | `python3 tool/refresh_ai_hot_fixture.py` → 再 `--check` | 首次「需要更新」并写盘；复跑报「与上游一致」（退 0） |
+| 悬挂 API | `python3 tool/scan_dangling_apis.py` | 悬挂 0 个 |
+| 静默失败 | `python3 tool/scan_silent_failures.py --baseline 48` | 候选 **48 = 基线**（未新增） |
+
+> 没拿到「发」之前，这一轮同样只到「代码 + 工具 + 用例 + 本地提交」。
