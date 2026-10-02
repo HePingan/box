@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:box/core/storage/cache_store.dart';
@@ -1076,6 +1077,150 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
       await tester.pump(const Duration(milliseconds: 200));
       expect(chromeOpacity(), 0, reason: '几秒后自己收起');
+    });
+    testWidgets('页漫：点左右两侧翻一张，点中间收/放控制栏，到头有说明', (tester) async {
+      final source = _seed();
+      final card = source.searchRules['bookList']!;
+      final container = firstSelectorRule(source.bookInfoRules['tocUrl']!)!;
+      final target = FakeComicTarget(
+        counts: {card: 1, container: 1},
+        perElement: {
+          '$card|${source.searchRules['name']}': ['海贼王'],
+          '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
+          '$container|${source.tocRules['chapterName']}': ['第1话'],
+          '$container|${source.tocRules['chapterUrl']}': ['/user/page_direct?slot=11'],
+        },
+        values: {
+          source.bookInfoRules['name']!: ['航海王'],
+          source.bookInfoRules['author']!: ['尾田荣一郎'],
+        },
+        // 一话 3 张：够验证"左右各翻一张"和"到头"两种情况
+        jsSegment: [
+          for (var i = 1; i <= 3; i++)
+            '<img src="https://s1.bzcdn.net/a/$i.jpg">',
+        ].join(),
+      );
+
+      await openHost(tester, _host(target, _FakeCache(png)));
+      await openChapterAt(tester, '第1话');
+
+      // 切成左右翻页（页漫）
+      await tester.tap(find.byIcon(Icons.view_carousel_outlined));
+      await _settle(tester);
+      expect(find.text('1 / 3 张'), findsOneWidget);
+
+      // 右侧 1/3 → 下一张（800 宽的面板，700 落在右区）
+      await tester.tapAt(const Offset(700, 250));
+      await tester.pump(const Duration(milliseconds: 100));
+      await _settle(tester);
+      expect(find.text('2 / 3 张'), findsOneWidget, reason: '点右边该翻到下一张');
+
+      // 左侧 1/3 → 回上一张
+      await tester.tapAt(const Offset(100, 250));
+      await _settle(tester);
+      expect(find.text('1 / 3 张'), findsOneWidget, reason: '点左边该回到上一张');
+
+      // 已经是第一张再往左：给一句说明，不能"点了没反应"
+      await tester.tapAt(const Offset(100, 250));
+      await _settle(tester);
+      expect(find.text('已经是第一张了'), findsOneWidget);
+
+      // 点中间（400 = 正中间）→ 收/放控制栏，不翻页
+      await tester.pump(const Duration(seconds: 5)); // 先让它自动收起
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.tapAt(const Offset(400, 250));
+      await _settle(tester);
+      expect(find.text('1 / 3 张'), findsOneWidget, reason: '中间不翻页');
+      final opacity = tester
+          .widget<AnimatedOpacity>(
+            find.ancestor(
+              of: find.text('1 / 3 张'),
+              matching: find.byType(AnimatedOpacity),
+            ),
+          )
+          .opacity;
+      expect(opacity, 1, reason: '点中间把控制栏叫回来');
+    });
+
+    testWidgets('阅读器里能直接挑话（不用退回详情页）', (tester) async {
+      final target = threeChapters();
+      await openHost(tester, _host(target, _FakeCache(png)));
+      await openChapterAt(tester, '第1话');
+      expect(target.requests.join(' '), isNot(contains('slot=33')));
+
+      // 控制栏 4 秒后自己收起：先把它叫出来再点（不然点在被忽略的透明处）
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.tapAt(const Offset(400, 250));
+      await _settle(tester);
+
+      // 目录按钮 → 弹出话列表 → 点第 3 话
+      await tester.tap(find.byTooltip('目录（直接挑话）'));
+      await _settle(tester);
+      expect(find.text('第2话'), findsWidgets, reason: '目录里该有话列表');
+
+      await tester.tap(find.text('第3话').last);
+      await _settle(tester);
+      expect(
+        target.requests.join(' '),
+        contains('slot=33'),
+        reason: '挑话之后要真的去取那一话',
+      );
+    });
+
+    testWidgets('长按图片：开全屏放大查看，关掉回到原来那一张', (tester) async {
+      final target = threeChapters();
+      await openHost(tester, _host(target, _FakeCache(png)));
+      await openChapterAt(tester, '第1话');
+
+      // 长按图片 → 放大（用长按而不是双击：双击会把单击拖慢，实测过）
+      await tester.longPressAt(tester.getCenter(find.byType(Image).first));
+      await _settle(tester);
+
+      expect(find.byType(InteractiveViewer), findsOneWidget, reason: '长按要放大来看');
+      expect(find.textContaining('捏合放大'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('关闭（也可以双击图片）'));
+      await _settle(tester);
+      expect(find.byType(InteractiveViewer), findsNothing);
+      expect(find.text('1 / 1 张'), findsOneWidget, reason: '关掉回到原来那一张');
+    });
+
+    testWidgets('进阅读器隐藏状态栏（沉浸），退出来恢复', (tester) async {
+      final modes = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'SystemChrome.setEnabledSystemUIMode') {
+            modes.add('${call.arguments}');
+          }
+          return null;
+        },
+      );
+      addTearDown(() {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        );
+      });
+
+      final target = threeChapters();
+      await openHost(tester, _host(target, _FakeCache(png)));
+      await openChapterAt(tester, '第1话');
+      expect(
+        modes.any((m) => m.contains('immersiveSticky')),
+        isTrue,
+        reason: '进阅读器要隐藏状态栏/导航条',
+      );
+
+      // 返回详情：状态栏还回去
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await _settle(tester);
+      expect(
+        modes.any((m) => m.contains('edgeToEdge')),
+        isTrue,
+        reason: '离开阅读器要把状态栏还回来',
+      );
     });
   });
 }

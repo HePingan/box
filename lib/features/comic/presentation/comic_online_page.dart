@@ -13,6 +13,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../domain/comic_book.dart';
 import '../domain/comic_image_cache.dart';
@@ -178,12 +180,46 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   /// 一层层返回：退到了返回 true；没有上一层（该退出本页）返回 false。
   ///
   /// 左上角箭头与**系统返回**（手势 / 返回键）都走这里，两条路同一个口径。
+  /// 切模式。阅读器的进入/退出有好几个入口（点目录、继续看、翻话、返回、系统返回），
+  /// 沉浸态（隐藏状态栏 + 屏幕常亮）在这里**统一开关**，散着写迟早漏一处。
+  void _setMode(_Mode mode) {
+    _mode = mode;
+    _syncReaderImmersive();
+  }
+
+  /// 屏幕常亮开关。平台通道缺失（测试环境、被裁剪的构建）不该影响看书：
+  /// 失败就吞掉 —— 这只是"看得更舒服"，不是功能本身。
+  void _setWakelock(bool on) {
+    unawaited(
+      (on ? WakelockPlus.enable() : WakelockPlus.disable()).catchError((_) {}),
+    );
+  }
+
+  /// 进阅读器：隐藏状态栏/导航条 + 屏幕常亮；出来恢复。
+  ///
+  /// 常亮这条是刚需：长图一页要看很久，看到一半黑屏是纯损失
+  /// （本地阅读器和小说阅读器早就在做了，在线漫画这边漏了）。
+  void _syncReaderImmersive() {
+    final reader = _mode == _Mode.reader;
+    if (reader == _readerImmersive) return;
+    _readerImmersive = reader;
+    if (reader) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      _setWakelock(true);
+    } else {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      _setWakelock(false);
+    }
+  }
+
   void _back() {
     if (_levels.isEmpty) {
       Navigator.of(context).maybePop();
       return;
     }
-    setState(() => _mode = _levels.removeLast());
+    // 走 _setMode：从阅读器退出来时要把状态栏/常亮还回去
+    // （测试先逮到的：只改 _mode 不动沉浸态，退回详情页后状态栏一直藏着）。
+    setState(() => _setMode(_levels.removeLast()));
   }
 
   bool _busy = false;
@@ -244,6 +280,9 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   /// （2026-10-02 用户报"最下面这个影响观看，不能隐藏" —— 一直压着画面确实碍事。）
   bool _chromeVisible = true;
   Timer? _chromeTimer;
+
+  /// 阅读器里是否已经开了"屏幕常亮 + 沉浸全屏"（进出各做一次，别反复设）。
+  bool _readerImmersive = false;
 
   /// 整话的图**还在取**：这时 `_images.length` 只是"已经取到几张"，
   /// 不能拿它当总数写出来（用户看到过"1 / 1 张"，其实整话 209 张 —— 就是"页数不对"）。
@@ -359,6 +398,12 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
 
   @override
   void dispose() {
+    // 退出页面时把状态栏和常亮还回去（在阅读器里被 pop 掉也要还）。
+    if (_readerImmersive) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      _setWakelock(false);
+      _readerImmersive = false;
+    }
     _chromeTimer?.cancel();
     _pageController.dispose();
     _keyController.dispose();
@@ -409,7 +454,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         _category = null; // 搜索与分类共用这份列表；搜了就退出分类态
         _nextUrl = null;
         _pathNote = _describePath();
-        _mode = _Mode.search;
+        _setMode(_Mode.search);
         _levels.clear(); // 回到顶层：层级栈一起清掉（新的一轮从列表开始）
       });
     }, '正在搜索「$key」…（最多等 ${_service.openTimeout.inSeconds} 秒）');
@@ -445,7 +490,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       _pathNote = null;
       _categoryNote = null;
       _error = null;
-      _mode = _Mode.search;
+      _setMode(_Mode.search);
       _levels.clear(); // 换源 = 从头开始
     });
     // 换到的源可能也走中转（比如从包子换回野蛮）——令牌按新源再确认一次。
@@ -468,7 +513,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         _category = cat;
         _nextUrl = page.nextUrl; // 到底了就是 null：不显示"加载更多"，也不假装还有
         _hits = more ? [..._hits, ...page.hits] : page.hits;
-        _mode = _Mode.search;
+        _setMode(_Mode.search);
         if (!more) _levels.clear(); // 分类浏览也回到"列表"这一层
       });
     }, '正在取「${cat.title}」…（最多等 ${_service.openTimeout.inSeconds} 秒）');
@@ -490,7 +535,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         // 从列表点进来的记一层（返回能退回列表）；从书架直接进来的不记
         // （后面本来就没有上一层，记了会退到一个空搜索页）。
         if (fromList && _mode != _Mode.book) _levels.add(_mode);
-        _mode = _Mode.book;
+        _setMode(_Mode.book);
         _pathNote = _describePath();
       });
     }, '正在打开这本书…（最多等 ${_service.openTimeout.inSeconds} 秒）');
@@ -529,7 +574,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             ComicChapterRef(title: c.title, url: c.url),
         ],
       );
-      _mode = _Mode.book;
+      _setMode(_Mode.book);
       _error = null;
       _pathNote = '离线';
       _offlineNote = '离线模式：站点没连上，这里列的是已下载的 ${s0.doneCount} 话';
@@ -733,7 +778,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           if (from != _Mode.reader) _levels.add(from);
           levelAdded = true;
         }
-        _mode = _Mode.reader;
+        _setMode(_Mode.reader);
         _imagesStreaming = partial;
         if (!partial) {
           _imageIndex = atIndex.clamp(
@@ -1396,10 +1441,14 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       // 左右翻页：一屏一张，左右滑（页漫用这个顺）
       return Stack(
         children: [
-          // 点画面收起/叫出底部控制栏（阅读时画面是主角）。
+          // 页漫的单手操作：左右 1/3 各翻一张，**中间**才收/放控制栏
+          //（滑动翻页照旧 —— 点按只是给够不到屏幕边缘的单手握持用）。
           GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: _toggleChrome,
+            onTapUp: (d) => _handleReaderTap(d.localPosition, pageTurn: true),
+            // 放大用**长按**，不用双击：双击识别器会把单击拖慢 ~300ms（实测），
+            // 而页漫"点一下就翻"是手感的命门。长按只在按住 500ms 后才抢手势。
+            onLongPress: () => _openZoom(_images[_imageIndex]),
             child: PageView.builder(
               controller: _pageController,
               itemCount: _images.length,
@@ -1437,6 +1486,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: _toggleChrome,
+          onLongPress: () => _openZoom(_images[_imageIndex]),
           child: NotificationListener<ScrollNotification>(
             onNotification: (n) {
               final count = _images.length;
@@ -1509,6 +1559,164 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     );
   }
 
+  /// 阅读器里直接挑话。
+  ///
+  /// 从第 3 话跳到第 50 话不该先退回详情页 —— 这是阅读器里最硬的一处缺口。
+  /// 列表里标出"已下载 / 读到这一话"，点一下直接跳。
+  Future<void> _pickChapter() async {
+    final book = _book;
+    if (book == null || book.chapters.isEmpty) return;
+    final currentUrl = _chapter?.url;
+
+    // 已下载的话：读离线清单（失败/卡住就当没有，绝不挡住挑话）。
+    //
+    // 加超时是被测试逼出来的：清单读不动时（存储没就绪）整个目录就打不开了 ——
+    // "读标记"是锦上添花，不该挡住"跳到第 50 话"这件正事。
+    final downloaded = <String>{};
+    try {
+      final manifest = await _offline
+          .loadBook(book.bookUrl)
+          .timeout(const Duration(milliseconds: 600), onTimeout: () => null);
+      for (final c in manifest?.chapters ?? const <ComicOfflineChapter>[]) {
+        if (c.isDone) downloaded.add(c.url);
+      }
+    } catch (_) {
+      // 清单读不出来不影响挑话。
+    }
+    if (!mounted) return;
+
+    final picked = await showModalBottomSheet<ComicChapterRef>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        // 打开时滚到正在读的那一话：200 话的书不用自己找。
+        final initial = book.chapters.indexWhere((c) => c.url == currentUrl);
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(sheetContext).size.height * 0.6,
+            child: ListView.builder(
+              controller: initial > 0
+                  ? ScrollController(initialScrollOffset: initial * 52.0)
+                  : null,
+              itemCount: book.chapters.length,
+              itemBuilder: (context, i) {
+                final c = book.chapters[i];
+                final isCurrent = c.url == currentUrl;
+                return ListTile(
+                  dense: true,
+                  selected: isCurrent,
+                  leading: Text(
+                    '${i + 1}',
+                    style: TextStyle(
+                      color: isCurrent
+                          ? Theme.of(sheetContext).colorScheme.primary
+                          : null,
+                      fontWeight: isCurrent ? FontWeight.w600 : null,
+                    ),
+                  ),
+                  title: Text(
+                    c.title.isEmpty ? c.url : c.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: isCurrent
+                      ? const Text('正在读')
+                      : downloaded.contains(c.url)
+                      ? const Text('已下载')
+                      : null,
+                  onTap: () => Navigator.of(sheetContext).pop(c),
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+    if (picked != null && mounted) await _openChapter(picked);
+  }
+
+  /// 阅读器里的一次点击。
+  ///
+  /// 页漫（左右翻页）：左 1/3 上一张、右 1/3 下一张、中间收/放控制栏；
+  /// 条漫（竖向连续）：只有"收/放控制栏"（竖直滚动没有"上一张"这回事）。
+  void _handleReaderTap(Offset at, {required bool pageTurn}) {
+    if (!pageTurn) {
+      _toggleChrome();
+      return;
+    }
+    final width = context.size?.width ?? MediaQuery.of(context).size.width;
+    if (width <= 0) {
+      _toggleChrome();
+      return;
+    }
+    final third = width / 3;
+    if (at.dx < third) {
+      _turnPage(-1);
+    } else if (at.dx > third * 2) {
+      _turnPage(1);
+    } else {
+      _toggleChrome();
+    }
+  }
+
+  /// 翻一张（页漫）。到头了给一句说明 —— 点了没动静最容易被当成坏了。
+  void _turnPage(int delta) {
+    final target = _imageIndex + delta;
+    if (target < 0) {
+      _toast('已经是第一张了');
+      return;
+    }
+    if (target >= _images.length) {
+      _toast(
+        _imagesStreaming
+            ? '这一话还在取后面的图，稍等一下'
+            : (_neighbor(1) == null ? '已经是最后一张了' : '已经是最后一张了（可点「下一话」）'),
+      );
+      return;
+    }
+    _pageController.animateToPage(
+      target,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+    );
+  }
+
+  /// 长按放大：开一个**全屏查看器**（捏合缩放 + 拖动）。
+  ///
+  /// 为什么不就地套 `InteractiveViewer`：那会和 PageView / ListView 的手势打架
+  /// ——捏合和拖动一会儿翻页、一会儿缩放，谁都做不顺。单独一页最干净，
+  /// 关掉就回到原来那张（阅读位置不丢）。
+  Future<void> _openZoom(String url) async {
+    _chromeTimer?.cancel();
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => _ComicZoomView(
+          url: url,
+          cache: _cache,
+          offline: _offline,
+          offlineBookUrl: _book?.bookUrl ?? '',
+          offlineChapterUrl: _chapter?.url ?? '',
+        ),
+      ),
+    );
+  }
+
+  /// 一句短提示（不挡画面、不打断阅读）。
+  void _toast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(milliseconds: 1200),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
   /// 点画面：收起 / 叫出底部控制栏。
   void _toggleChrome() {
     setState(() => _chromeVisible = !_chromeVisible);
@@ -1573,6 +1781,15 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       child: Row(
         children: [
           // 左边 = 上一话，右边 = 下一话（跟翻页方向、常见阅读器一致）。
+          IconButton(
+            tooltip: '目录（直接挑话）',
+            onPressed: _busy ? null : _pickChapter,
+            icon: const Icon(
+              Icons.list_alt_outlined,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
           TextButton(
             onPressed: prev == null || _busy ? null : () => _openChapter(prev),
             child: const Text('上一话', style: TextStyle(color: Colors.white)),
@@ -1901,6 +2118,78 @@ class _PageImage extends StatelessWidget {
   }
 }
 
+/// 双击出来的全屏查看器：捏合放大、拖动看细节、双击或右上角关掉。
+class _ComicZoomView extends StatelessWidget {
+  const _ComicZoomView({
+    required this.url,
+    required this.cache,
+    this.offline,
+    this.offlineBookUrl = '',
+    this.offlineChapterUrl = '',
+  });
+
+  final String url;
+  final ComicImageCache cache;
+  final ComicOfflineStore? offline;
+  final String offlineBookUrl;
+  final String offlineChapterUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              onDoubleTap: () => Navigator.of(context).maybePop(),
+              child: InteractiveViewer(
+                minScale: 1,
+                maxScale: 5,
+                child: Center(
+                  child: _CachedImage(
+                    url: url,
+                    cache: cache,
+                    fit: BoxFit.contain,
+                    offline: offline,
+                    offlineBookUrl: offlineBookUrl,
+                    offlineChapterUrl: offlineChapterUrl,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topRight,
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: IconButton(
+                  tooltip: '关闭（也可以双击图片）',
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.close, color: Colors.white),
+                ),
+              ),
+            ),
+          ),
+          const SafeArea(
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: Text(
+                  '捏合放大 · 拖动看细节 · 双击关闭',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// 带缓存与重试的图片。
 class _CachedImage extends StatefulWidget {
   const _CachedImage({
@@ -1990,7 +2279,7 @@ class _CachedImageState extends State<_CachedImage> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<File>(
+    final content = FutureBuilder<File>(
       future: _future,
       builder: (context, snap) {
         if (snap.hasError) {
@@ -2023,5 +2312,6 @@ class _CachedImageState extends State<_CachedImage> {
         return Image.file(snap.data!, fit: widget.fit);
       },
     );
+    return content;
   }
 }
