@@ -1012,6 +1012,18 @@ void main() {
       }
     }
 
+    /// 等自动接话**真的接完**：footer 不再写着"正在接下一话…"。
+    ///
+    /// 为什么不能只 `_settle`：接一话要先把那一话的取图轮询跑完（一话 30 张的用例里
+    /// 1.6 秒假时钟不够），断言会撞在"正在接"那一态上。
+    Future<void> waitAppendDone(WidgetTester tester) async {
+      for (var i = 0; i < 400; i++) {
+        if (find.text('正在接下一话…').evaluate().isEmpty) return;
+        await tester.pump(const Duration(milliseconds: 20));
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
     Future<void> openChapterAt(WidgetTester tester, String title) async {
       await tester.enterText(find.byType(TextField), '海贼');
       await tester.tap(find.text('搜索'));
@@ -1287,7 +1299,13 @@ void main() {
       await _settle(tester);
 
       expect(cache.fetched.length >= 2, isTrue, reason: '要自己再试一次');
-      expect(find.byType(Image), findsWidgets, reason: '重试成功后图片要出来');
+      expect(
+        // skipOffstage: false：测试里假图是坏 PNG，解码不出来 → 图片高度 0，
+        // 而 ListView 视口的 onstage 遍历会把 0 高的项当"不在台上"跳过（产品里图片有真实高度，不受影响）。
+        find.byType(Image, skipOffstage: false),
+        findsWidgets,
+        reason: '重试成功后图片要出来',
+      );
       expect(find.text('重试'), findsNothing, reason: '不该停在要用户点重试的态');
     });
 
@@ -1336,7 +1354,12 @@ void main() {
       // 按**画面中间**长按，不按 `find.byType(Image)` 的 rect：测试里图片解码是异步的，
       // 那一瞬间 RenderImage 还没有图（高度 0），中心点会落到顶边上 —— 正好压在
       // 顶部控制栏底下（2026-10-02 改成压画面的控制栏之后用例当场逮到这条）。
-      final imgRect = tester.getRect(find.byType(Image).first);
+      //
+      // `skipOffstage: false`：假图解码不出来 → 高度 0 → ListView 视口的 onstage
+      // 遍历会把 0 高的项当"不在台上"（产品里图片有真实高度，不受影响）。
+      final imgRect = tester.getRect(
+        find.byType(Image, skipOffstage: false).first,
+      );
       final at = imgRect.height > 8
           ? imgRect.center
           : tester.getCenter(find.byType(Scaffold).first);
@@ -1405,8 +1428,11 @@ void main() {
       await tester.pump();
       await tester.drag(find.byType(ListView), const Offset(0, -200));
       await _settle(tester);
-      // 接话是异步的：等到"那一话真的被取"再断言（等固定帧数在全量跑时会不稳）。
+      // 接话是异步的：等到"那一话真的被取完"再断言（等固定帧数在全量跑时会不稳）。
       await waitForRequest(tester, target, 'slot=22');
+      await waitAppendDone(tester);
+      // 把在途的取图轮询也跑完：不跑完测试会以"还有定时器挂着"判失败（那是测试欠的账）。
+      await drainPolls(tester);
       await _settle(tester);
 
       expect(find.text('第2话'), findsWidgets, reason: '接上之后要在两话之间插一条分隔，并写上话名');
@@ -1480,8 +1506,11 @@ void main() {
         findsOneWidget,
         reason: '整屏换了一话，要给一句话说清楚为什么',
       );
-      // 换话本身是异步的：等到"第 2 话真的被取"再断言。
+      // 换话本身是异步的：等到"第 2 话真的被取完"再断言，并清掉在途的取图轮询
+      //（不跑完测试会以"还有定时器挂着"判失败）。
       await waitForRequest(tester, target, 'slot=22');
+      await waitAppendDone(tester);
+      await drainPolls(tester);
       await _settle(tester);
 
       expect(find.text('第2话'), findsWidgets, reason: '顶栏要变成正在读的第 2 话');
@@ -1490,6 +1519,84 @@ void main() {
         findsNothing,
         reason: '有下一话时不该让他再去点「下一话」',
       );
+    });
+
+    // ── 2026-10-02 第二批阅读优化：按屏宽解图 / 可拖进度 / 上限按张数 ──
+    testWidgets('阅读时按屏幕宽度解码，放大查看仍用原图', (tester) async {
+      final target = threeChapters();
+      await openHost(tester, _host(target, _FakeCache(png)));
+      await openChapterAt(tester, '第1话');
+
+      // 测试默认视口 800×600（逻辑像素）、密度 3.0 → 物理宽 2400，就按这个解码。
+      final inline = tester.widget<Image>(
+        find.byType(Image, skipOffstage: false).first,
+      );
+      expect(
+        inline.image,
+        isA<ResizeImage>(),
+        reason: '阅读那张要按屏宽压着解，不能整解原图（一页十几 MB 内存）',
+      );
+      expect(
+        (inline.image as ResizeImage).width,
+        2400,
+        reason: '按屏幕物理宽度解码（800 逻辑 × 3.0 密度）',
+      );
+
+      // 长按放大：那条路要的是原图清晰度，不该被压过。
+      final imgRect = tester.getRect(
+        find.byType(Image, skipOffstage: false).first,
+      );
+      final at = imgRect.height > 8
+          ? imgRect.center
+          : tester.getCenter(find.byType(Scaffold).first);
+      await tester.longPressAt(at);
+      await _settle(tester);
+
+      final providers = tester
+          .widgetList<Image>(find.byType(Image, skipOffstage: false))
+          .map((i) => i.image)
+          .toList();
+      expect(
+        providers.whereType<FileImage>(),
+        isNotEmpty,
+        reason: '放大查看要用原图（捏合放大两三倍时压过会糊）',
+      );
+    });
+
+    testWidgets('竖向连续能拖进度：拖到哪儿，页码就跟到哪儿', (tester) async {
+      final source = _seed();
+      final card = source.searchRules['bookList']!;
+      final container = firstSelectorRule(source.bookInfoRules['tocUrl']!)!;
+      final target = FakeComicTarget(
+        counts: {card: 1, container: 1},
+        perElement: {
+          '$card|${source.searchRules['name']}': ['海贼王'],
+          '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
+          '$container|${source.tocRules['chapterName']}': ['第1话'],
+          '$container|${source.tocRules['chapterUrl']}': ['/c/1'],
+        },
+        values: {
+          source.bookInfoRules['name']!: ['航海王'],
+          source.bookInfoRules['author']!: ['尾田荣一郎'],
+        },
+        // 一话 3 张：够验"拖到末尾页码要跟着变"
+        jsSegment: [
+          for (var i = 1; i <= 3; i++)
+            '<img src="https://s1.bzcdn.net/a/$i.jpg">',
+        ].join(),
+      );
+      await openHost(tester, _host(target, _FakeCache(png)));
+      await openChapterAt(tester, '第1话');
+
+      // 控制栏里的拖动条（竖向连续才有）
+      expect(find.byType(Slider), findsOneWidget, reason: '竖向连续要有一条能拖的进度');
+      expect(find.text('第 1 张'), findsOneWidget);
+
+      await tester.drag(find.byType(Slider), const Offset(400, 0));
+      await _settle(tester);
+
+      expect(find.text('第 3 张'), findsOneWidget, reason: '拖到最右就是最后一张（页码要跟着走）');
+      expect(find.text('3 / 3 张'), findsOneWidget);
     });
   });
 

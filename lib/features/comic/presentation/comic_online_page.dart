@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../domain/comic_auto_append.dart';
 import '../domain/comic_book.dart';
 import '../domain/comic_image_cache.dart';
 import '../domain/comic_offline_downloader.dart';
@@ -55,9 +56,6 @@ const int _kPrefetchTriggerPages = 2;
 /// 取成 1500 是"一屏半"左右 —— 用户还在读最后几张时请求就已经回来了，
 /// 接着往下滑是无缝的；再早去接会白花流量（他可能这次就读这一话）。
 const double _kAutoNextTriggerPx = 1500;
-
-/// 一次最多自动接几话：一话实测 209 张，接太多是拿流量和内存赌他不会读那么远。
-const int _kMaxAutoAppend = 3;
 
 /// 读中转要用的**设备令牌**（与只读运维 API 共用同一份）。
 ///
@@ -1264,6 +1262,17 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     setState(() => _imageIndex = index);
   }
 
+  /// 阅读时按屏幕宽度解码（物理像素）。
+  ///
+  /// 放大查看（`_ComicZoomView`）**不要用**这个值 —— 那条路要原图清晰度。
+  int _readerDecodeWidth() {
+    final mq = MediaQuery.maybeOf(context);
+    if (mq == null) return 1080;
+    final w = (mq.size.width * mq.devicePixelRatio).round();
+    // 分屏/小窗时别解得太小（低于 720 宽会明显糊）。
+    return w < 720 ? 720 : w;
+  }
+
   /// 显示用的**整条列表**：当前话的图 + 自动接上来的那几话的图。
   ///
   /// 每一项都自带"我属于哪一话、是本话第几张"—— 页码、进度、离线取图、
@@ -1300,8 +1309,11 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     return out;
   }
 
-  int get _flatCount =>
-      _images.length + _appended.fold<int>(0, (s, a) => s + a.images.length);
+  int get _flatCount => _images.length + _appendedImages;
+
+  /// 已经自动接上来多少张图（上限按张数算，见 `comic_auto_append.dart`）。
+  int get _appendedImages =>
+      _appended.fold<int>(0, (s, a) => s + a.images.length);
 
   /// 眼下这一张属于哪一话。
   ///
@@ -1317,8 +1329,8 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   /// 「增加一个自动加载下一话」）。
   Future<void> _appendNext() async {
     if (!_autoNext || _appending) return;
-    // 最多接 3 话：一话实测 209 张，接太多是拿流量和内存赌他不会读那么远。
-    if (_appended.length >= _kMaxAutoAppend) return;
+    // 上限按**张数**：短话能多接几话，长话不会一次接进来几百张（规则见 comic_auto_append.dart）。
+    if (!canAutoAppendMore(_appendedImages)) return;
     final next = _neighborFrom(_activeChapter, 1);
     if (next == null) return; // 已经是最后一话
     if (_appended.any((a) => a.chapter.url == next.url)) return;
@@ -1935,6 +1947,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
                     url: it.url,
                     cache: _cache,
                     fit: BoxFit.fitWidth,
+                    decodeWidth: _readerDecodeWidth(),
                     onDark: true,
                     offline: _offline,
                     offlineBookUrl: _book?.bookUrl ?? '',
@@ -1976,6 +1989,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     // 一次算好整条列表（当前话 + 已接上的话）：itemBuilder 里再算就是每张都重算一遍。
     final items = _flatItems;
     final count = items.length;
+    final decodeW = _readerDecodeWidth();
     return Stack(
       children: [
         // 同上：竖向连续也是黑底（图片是通栏的，空白只在最后一页下面）。
@@ -2025,6 +2039,7 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
                     _PageImage(
                       url: it.url,
                       cache: _cache,
+                      decodeWidth: decodeW,
                       offline: _offline,
                       offlineBookUrl: _book?.bookUrl ?? '',
                       offlineChapterUrl: it.chapter.url,
@@ -2097,8 +2112,10 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       retry = () => unawaited(_appendNext());
     } else if (next == null) {
       text = '已经是最后一话了';
-    } else if (_appended.length >= _kMaxAutoAppend) {
-      text = '这里已接上 ${_appended.length} 话，再往下请看「下一话」';
+    } else if (!canAutoAppendMore(_appendedImages)) {
+      text =
+          '这里已接上 $_appendedImages 张（${_appended.length} 话），'
+          '再往下请看「下一话」';
       retry = () => unawaited(_openChapter(next));
     } else if (_autoNext) {
       text = '往下滑会自动接「$nextTitle」（点这里立即接）';
@@ -2498,56 +2515,119 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         top: 4,
         bottom: 4 + MediaQuery.of(context).padding.bottom,
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // 左边 = 上一话，右边 = 下一话（跟翻页方向、常见阅读器一致）。
-          IconButton(
-            tooltip: '目录（直接挑话）',
-            onPressed: _busy ? null : _pickChapter,
-            icon: const Icon(
-              Icons.list_alt_outlined,
-              color: Colors.white,
-              size: 20,
-            ),
-          ),
-          TextButton(
-            onPressed: prev == null || _busy ? null : () => _openChapter(prev),
-            child: const Text('上一话', style: TextStyle(color: Colors.white)),
-          ),
-          IconButton(
-            tooltip: _pageTurn ? '换成竖向连续（条漫）' : '换成左右翻页（页漫）',
-            onPressed: _togglePageTurn,
-            icon: Icon(
-              _pageTurn
-                  ? Icons.view_day_outlined
-                  : Icons.view_carousel_outlined,
-              color: Colors.white,
-              size: 20,
-            ),
-          ),
-          IconButton(
-            tooltip: '画面亮度（压暗，夜里看不刺眼）',
-            onPressed: _openDimSheet,
-            icon: const Icon(
-              Icons.brightness_6_outlined,
-              color: Colors.white,
-              size: 20,
-            ),
-          ),
-          Expanded(
-            child: Text(
-              _pageLabel(),
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-            ),
-          ),
-          TextButton(
-            onPressed: next == null || _busy ? null : () => _openChapter(next),
-            child: const Text('下一话', style: TextStyle(color: Colors.white)),
+          // 竖向连续里给一条**能拖**的进度（页漫不用：一页一页本来就很清楚）。
+          // 放在控制栏**里面**、不另占一条：不用去算控制栏多高，也不会互相压住。
+          if (!_pageTurn && _flatCount > 1) _scrubRow(),
+          Row(
+            children: [
+              // 左边 = 上一话，右边 = 下一话（跟翻页方向、常见阅读器一致）。
+              IconButton(
+                tooltip: '目录（直接挑话）',
+                onPressed: _busy ? null : _pickChapter,
+                icon: const Icon(
+                  Icons.list_alt_outlined,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+              TextButton(
+                onPressed: prev == null || _busy
+                    ? null
+                    : () => _openChapter(prev),
+                child: const Text('上一话', style: TextStyle(color: Colors.white)),
+              ),
+              IconButton(
+                tooltip: _pageTurn ? '换成竖向连续（条漫）' : '换成左右翻页（页漫）',
+                onPressed: _togglePageTurn,
+                icon: Icon(
+                  _pageTurn
+                      ? Icons.view_day_outlined
+                      : Icons.view_carousel_outlined,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+              IconButton(
+                tooltip: '画面亮度（压暗，夜里看不刺眼）',
+                onPressed: _openDimSheet,
+                icon: const Icon(
+                  Icons.brightness_6_outlined,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  _pageLabel(),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                ),
+              ),
+              TextButton(
+                onPressed: next == null || _busy
+                    ? null
+                    : () => _openChapter(next),
+                child: const Text('下一话', style: TextStyle(color: Colors.white)),
+              ),
+            ],
           ),
         ],
       ),
     );
+  }
+
+  /// 竖向连续的拖动条：一话两百张时，想回到"刚才那一格"只能一直滑，拖一下就到位。
+  ///
+  /// 落点是**按比例折算**的近似值：一话两百张、高度各不相同，列表还是懒加载的
+  /// （没构建过的项没有高度），拿不到精确偏移。近似落点已经够用 —— 到附近再滑
+  /// 一两下就到，比"只能一直滑"强得多。
+  Widget _scrubRow() {
+    final n = _flatCount;
+    final v = n <= 1 ? 1.0 : ((_imageIndex + 1) / n).clamp(0.0, 1.0);
+    return Row(
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 10),
+          child: Text(
+            '第 ${_imageIndex + 1} 张',
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+        ),
+        Expanded(
+          child: Slider(
+            value: v,
+            activeColor: Colors.white70,
+            inactiveColor: Colors.white24,
+            onChanged: (x) {
+              if (n <= 1) return;
+              _jumpToImage((x * (n - 1)).round().clamp(0, n - 1));
+            },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(right: 10),
+          child: Text(
+            '/ $n',
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 拖进度条 → 先把页码跟上去，再把列表滚到按比例折算的位置。
+  void _jumpToImage(int index) {
+    setState(() => _imageIndex = index);
+    _saveProgress(index);
+    if (!_scrollController.hasClients) return;
+    final max = _scrollController.position.maxScrollExtent;
+    final n = _flatCount;
+    // 列表还没量出高度（或只有一张）时拖不动：页码照样更新，别当成坏了。
+    if (n <= 1 || max <= 0) return;
+    _scrollController.jumpTo(((index / (n - 1)) * max).clamp(0.0, max));
   }
 }
 
@@ -2849,6 +2929,7 @@ class _PageImage extends StatelessWidget {
   const _PageImage({
     required this.url,
     required this.cache,
+    this.decodeWidth,
     this.prefetch = const [],
     this.offline,
     this.offlineBookUrl = '',
@@ -2857,6 +2938,7 @@ class _PageImage extends StatelessWidget {
 
   final String url;
   final ComicImageCache cache;
+  final int? decodeWidth;
   final List<String> prefetch;
   final ComicOfflineStore? offline;
   final String offlineBookUrl;
@@ -2868,17 +2950,17 @@ class _PageImage extends StatelessWidget {
       // 预取失败无所谓（真正翻到时会再试并显示原因）。
       cache.fetch(p).catchError((_) => File(''));
     }
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: _CachedImage(
-        url: url,
-        cache: cache,
-        fit: BoxFit.fitWidth,
-        onDark: true,
-        offline: offline,
-        offlineBookUrl: offlineBookUrl,
-        offlineChapterUrl: offlineChapterUrl,
-      ),
+    // 竖向连续里**不留页间距**：一页一页贴成一条长图才是条漫该有的样子
+    //（2026-10-02 优化；自动接话时两话之间的那条「第X话」分隔仍然保留）。
+    return _CachedImage(
+      url: url,
+      cache: cache,
+      fit: BoxFit.fitWidth,
+      decodeWidth: decodeWidth,
+      onDark: true,
+      offline: offline,
+      offlineBookUrl: offlineBookUrl,
+      offlineChapterUrl: offlineChapterUrl,
     );
   }
 }
@@ -2962,6 +3044,7 @@ class _CachedImage extends StatefulWidget {
     required this.url,
     required this.cache,
     required this.fit,
+    this.decodeWidth,
     this.offline,
     this.offlineBookUrl = '',
     this.offlineChapterUrl = '',
@@ -2972,6 +3055,16 @@ class _CachedImage extends StatefulWidget {
   final String url;
   final ComicImageCache cache;
   final BoxFit fit;
+
+  /// 解码宽度（物理像素）。阅读时按**屏幕宽度**解码，别按原图尺寸解。
+  ///
+  /// 为什么（2026-10-02 定的优化）：一页 1500×2000 的原图整解要十几 MB 内存，
+  /// 竖向连续快速滑过去时会同时解好几张 —— 低内存机直接被系统杀掉。
+  /// 按屏宽解，内存和出图时间都省一截。
+  ///
+  /// **放大查看（`_ComicZoomView`）不要传**：那条路要的就是原图清晰度
+  /// （捏合放大到 2-3 倍时，按屏宽解出来的会糊）。
+  final int? decodeWidth;
 
   /// 离线库：有就先在本机找（**命中不发请求** → 飞行模式也能读）。
   final ComicOfflineStore? offline;
@@ -3117,7 +3210,12 @@ class _CachedImageState extends State<_CachedImage> {
             child: Center(child: CircularProgressIndicator()),
           );
         }
-        return Image.file(snap.data!, fit: widget.fit);
+        return Image.file(
+          snap.data!,
+          fit: widget.fit,
+          // 传了才按指定宽度解码；没传（放大查看/封面）就按原图，别擅自降清晰度。
+          cacheWidth: widget.decodeWidth,
+        );
       },
     );
     return content;
