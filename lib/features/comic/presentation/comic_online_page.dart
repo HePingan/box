@@ -31,6 +31,7 @@ import '../domain/comic_source_diagnostics.dart'
     show ComicSourceTarget, describeComicProbeError;
 import '../domain/comic_source_engine.dart' show ComicProbeException;
 import '../domain/sources/seed_comic_source.dart';
+import 'comic_chapter_list.dart';
 import 'comic_offline_page.dart';
 import 'comic_offline_wiring.dart';
 import 'comic_source_check_page.dart';
@@ -1425,28 +1426,20 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         else ...[
           const Divider(height: 1),
           Expanded(
-            child: ListView.builder(
-              itemCount: book.chapters.length,
-              itemBuilder: (context, i) {
-                final c = book.chapters[i];
-                return ListTile(
-                  dense: true,
-                  title: Text(
-                    c.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  trailing: ChapterOfflineAction(
-                    downloader: _downloader,
-                    store: _offline,
-                    bookUrl: book.bookUrl,
-                    bookTitle: book.name,
-                    cover: book.cover ?? '',
-                    chapter: c,
-                  ),
-                  onTap: _busy ? null : () => _openChapter(c),
-                );
-              },
+            // 与阅读器里的「目录」同一份列表：快速滑动 + 正序/倒序 + 跳话。
+            child: ComicChapterList(
+              chapters: book.chapters,
+              currentUrl: _chapter?.url,
+              prefs: _prefs,
+              trailing: (c) => ChapterOfflineAction(
+                downloader: _downloader,
+                store: _offline,
+                bookUrl: book.bookUrl,
+                bookTitle: book.name,
+                cover: book.cover ?? '',
+                chapter: c,
+              ),
+              onPick: _busy ? null : _openChapter,
             ),
           ),
         ],
@@ -1632,50 +1625,21 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (sheetContext) {
-        // 打开时滚到正在读的那一话：200 话的书不用自己找。
-        final initial = book.chapters.indexWhere((c) => c.url == currentUrl);
-        return SafeArea(
-          child: SizedBox(
-            height: MediaQuery.of(sheetContext).size.height * 0.6,
-            child: ListView.builder(
-              controller: initial > 0
-                  ? ScrollController(initialScrollOffset: initial * 52.0)
-                  : null,
-              itemCount: book.chapters.length,
-              itemBuilder: (context, i) {
-                final c = book.chapters[i];
-                final isCurrent = c.url == currentUrl;
-                return ListTile(
-                  dense: true,
-                  selected: isCurrent,
-                  leading: Text(
-                    '${i + 1}',
-                    style: TextStyle(
-                      color: isCurrent
-                          ? Theme.of(sheetContext).colorScheme.primary
-                          : null,
-                      fontWeight: isCurrent ? FontWeight.w600 : null,
-                    ),
-                  ),
-                  title: Text(
-                    c.title.isEmpty ? c.url : c.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: isCurrent
-                      ? const Text('正在读')
-                      : downloaded.contains(c.url)
-                      ? const Text('已下载')
-                      : null,
-                  onTap: () => Navigator.of(sheetContext).pop(c),
-                );
-              },
-            ),
+      builder: (sheetContext) => SafeArea(
+        child: SizedBox(
+          // 比原来高一点（0.6 → 0.72）：几百话的目录，一屏能多看几行就是省事。
+          height: MediaQuery.of(sheetContext).size.height * 0.72,
+          child: ComicChapterList(
+            chapters: book.chapters,
+            currentUrl: currentUrl,
+            downloaded: downloaded,
+            prefs: _prefs,
+            onPick: (c) => Navigator.of(sheetContext).pop(c),
           ),
-        );
-      },
+        ),
+      ),
     );
+
     if (picked != null && mounted) await _openChapter(picked);
   }
 
