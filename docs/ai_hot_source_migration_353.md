@@ -116,5 +116,9 @@
 | 夹具刷新 | `python3 tool/refresh_ai_hot_fixture.py` → 再 `--check` | 首次「需要更新」并写盘；复跑报「与上游一致」（退 0） |
 | 悬挂 API | `python3 tool/scan_dangling_apis.py` | 悬挂 0 个 |
 | 静默失败 | `python3 tool/scan_silent_failures.py --baseline 48` | 候选 **48 = 基线**（未新增） |
+| 产物核对（发布前） | `verify_release_apk.py <354包> <353包> d1749a3 1.20.97 354 --require-literal '行业' --control-literal '模型' --min-new-literals 1` | 版本/ABI/证书正确、包内无口令（0/0）、注入项 `行业` 0→1、控制组 `模型` 28→28。**阈值说明**：本轮功能改动是**标签重命名**，只有 `行业` 一条全新字面量（`教程` 1→2、`产品` 3→3 —— 这两个字符串 353 包里本来就有，`case 'ai-products': case 'product': return '产品'` 还共用一个字面量），另外两个产物是 dev 侧工具（不进包）；默认门槛 3 会把这个"真做完但字面量少"的版本卡住，故显式降到 1 并在此记录理由 —— 不另凑字面量 |
+| 发布（2026-10-02） | hpa888 `box-publish-apk.py`（演练后正式） | release **id=195** `1.20.97(354)` published，353 归档；公网包逐字节一致、HMAC 双算一致、353 客户端 `hasNewVersion=true` 且 `forceUpdate=false`（建议升级）、354 客户端不再提示；服务端临时包已清理 |
+| 未验证 | 真机 | 升级到 1.20.97 后，AI 页签的热点行分类标签应显示 **产品 / 教程 / 行业**（不再是英文 slug）；353 那两步验收若还没做，一并看 |
 
-> 没拿到「发」之前，这一轮同样只到「代码 + 工具 + 用例 + 本地提交」。
+> 构建脚本里的上游对账闸门这次是**在真实发版路径里跑的**（`build/release-354.log` 第 15-16 行，
+> 紧跟在入口守卫之后）：`上游 50 条 · 条目页主机 aihot.news · 分类 …` → `[通过]`。
