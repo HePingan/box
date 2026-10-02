@@ -1,10 +1,20 @@
 // lib/features/home/data/ai_hot_models.dart
 //
-// AI HOT（aihot.virxact.com）公开条目的数据模型。
+// AI HOT（aihot.news）公开条目的数据模型。
 //
-// 字段以实测响应为准（2026-09-01 抓取 /api/public/items?mode=selected）：
-//   id, title, title_en, url, permalink, source, publishedAt,
-//   discoveredAt, summary, category, score, selected, attribution{source,canonical}
+// 字段以实测响应为准（2026-10-02 抓取 https://aihot.news/api/v1/items?mode=selected&window=7d）：
+//   id, title, originalTitle, summary, source{name}, links{aihot,original},
+//   publishedAt, discoveredAt, category, score, selected, reason,
+//   attribution{name,url}
+//
+// 上游 2.0 把接口从 /api/public/* 搬到 /api/v1（旧接口 2026-10-31 停用），
+// 字段路径同时改了一批。两边都读，是为了让**老版本写进本机缓存的快照**还能显示：
+//   url        → links.original
+//   permalink  → links.aihot
+//   source     → source.name
+//   title_en   → originalTitle
+//   attribution{source,canonical} → attribution{name,url}
+// 顶层 count/hasNext/nextCursor → page.count/page.hasMore/page.nextCursor（首页不用分页，未读）
 //
 // 解析原则：只有 id/title 是硬要求，其余字段一律容错。上游加字段、改类型
 // （int 变 double、缺 summary）都不能让整批条目丢失——这是 A4 那次汇率
@@ -114,6 +124,8 @@ class AiHotItem {
   }
 
   /// 从单个 JSON 对象解析。id/title 缺失或为空返回 null（调用方跳过该条）。
+  ///
+  /// 同时吃 v1 与旧接口两种字段路径（见文件头的对照表）。
   static AiHotItem? tryParse(dynamic raw) {
     if (raw is! Map) return null;
     final map = Map<String, dynamic>.from(raw);
@@ -122,12 +134,22 @@ class AiHotItem {
     final title = _str(map['title']);
     if (id == null || title == null) return null;
 
+    // v1：links{aihot,original}；旧：permalink / url。
+    final links = map['links'] is Map
+        ? Map<String, dynamic>.from(map['links'] as Map)
+        : const <String, dynamic>{};
+    // v1：source.name；旧：source 直接是字符串。
+    final sourceRaw = map['source'];
+    final sourceName = sourceRaw is Map
+        ? _str(Map<String, dynamic>.from(sourceRaw)['name'])
+        : _str(sourceRaw);
+
     return AiHotItem(
       id: id,
       title: title,
-      url: _str(map['url']),
-      permalink: _str(map['permalink']),
-      source: _str(map['source']),
+      url: _str(links['original']) ?? _str(map['url']),
+      permalink: _str(links['aihot']) ?? _str(map['permalink']),
+      source: sourceName,
       summary: _str(map['summary']),
       category: _str(map['category']),
       publishedAt: _date(map['publishedAt']),
@@ -153,21 +175,22 @@ class AiHotFeed {
   const AiHotFeed({
     required this.items,
     this.attributionSource,
-    this.attributionCanonical,
     this.fromCache = false,
   });
 
   const AiHotFeed.empty()
     : items = const <AiHotItem>[],
       attributionSource = null,
-      attributionCanonical = null,
       fromCache = false;
 
   final List<AiHotItem> items;
 
-  /// 上游要求的署名名称（实测为 'AIHOT'）。
+  /// 上游要求的署名名称（v1 在 attribution.name，旧接口在 attribution.source，实测 'AIHOT'）。
+  ///
+  /// 只保留名称：署名要求回链的是**每一条自己的站内页**（item.permalink），
+  /// v1 的 attribution.url 与 links.aihot 是同一个地址，所以这里没有「站点级 canonical」
+  /// 这种东西。曾经按站点 canonical 用过一次，结果是「更多」打开的是第一条热点本身。
   final String? attributionSource;
-  final String? attributionCanonical;
 
   /// 这批数据是否来自本地缓存（网络失败降级时为 true）。
   /// UI 用它决定要不要提示「离线内容」。
@@ -182,11 +205,10 @@ class AiHotFeed {
   AiHotFeed copyWith({bool? fromCache}) => AiHotFeed(
     items: items,
     attributionSource: attributionSource,
-    attributionCanonical: attributionCanonical,
     fromCache: fromCache ?? this.fromCache,
   );
 
-  /// 解析 `/api/public/items` 响应体。
+  /// 解析 `/api/v1/items`（或旧 `/api/public/items`）响应体。
   ///
   /// 单条坏数据只跳过那一条，不让整批失败。
   static AiHotFeed fromJson(dynamic decoded) {
@@ -204,31 +226,26 @@ class AiHotFeed {
 
     // 署名挂在每条 item 上，取第一条有 attribution 的即可。
     String? attrSource;
-    String? attrCanonical;
     if (rawItems is List) {
       for (final entry in rawItems) {
         if (entry is Map && entry['attribution'] is Map) {
           final attr = Map<String, dynamic>.from(
             entry['attribution'] as Map,
           );
-          attrSource ??= AiHotItem._str(attr['source']);
-          attrCanonical ??= AiHotItem._str(attr['canonical']);
+          // v1 是 name，旧接口是 source。
+          attrSource ??= AiHotItem._str(attr['name']) ??
+              AiHotItem._str(attr['source']);
           if (attrSource != null) break;
         }
       }
     }
 
-    return AiHotFeed(
-      items: items,
-      attributionSource: attrSource,
-      attributionCanonical: attrCanonical,
-    );
+    return AiHotFeed(items: items, attributionSource: attrSource);
   }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'items': items.map((e) => e.toJson()).toList(),
     if (attributionSource != null) 'attributionSource': attributionSource,
-    if (attributionCanonical != null) 'attributionCanonical': attributionCanonical,
   };
 
   /// 从本地缓存快照还原（结构与 [toJson] 对应，非 API 原始结构）。
@@ -246,7 +263,6 @@ class AiHotFeed {
     return AiHotFeed(
       items: items,
       attributionSource: AiHotItem._str(map['attributionSource']),
-      attributionCanonical: AiHotItem._str(map['attributionCanonical']),
       fromCache: true,
     );
   }

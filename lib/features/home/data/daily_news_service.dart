@@ -100,6 +100,10 @@ class DailyNewsService {
   static const String _latestPath = '/api/4/news/latest';
   static const String _beforePath = '/api/4/news/before';
 
+  /// 内容源站点首页。首页卡片「更多」的落点 —— 列表是哪家的文章，
+  /// 「更多」就进哪家的站，否则用户点「更多」会看到另一个资讯站。
+  static const String siteUrl = 'https://daily.zhihu.com/';
+
   static const String _cacheKey = 'daily_news_v1';
 
   /// 无 TTL 的镜像键。CacheStore.read 过期会自己删掉并返回 null，

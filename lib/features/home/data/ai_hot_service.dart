@@ -2,10 +2,23 @@
 //
 // AI HOT 公开只读接口的客户端。
 //
-// 上游约束（来自接口文档实测）：
-//   - 限流 600 req/min/IP，且服务端已有 5 分钟缓存 → 客户端不做高频轮询
-//   - 默认走 mode=selected（每日精选），不用 mode=all（量大且杂）
-//   - 使用其数据必须署名 AI HOT 并可回链站内 permalink
+// 2026-10-02 迁移到 v1（上游公告：旧接口 /api/public/* 与旧域名 aihot.virxact.com
+// 于 2026-10-31 一起停用，之后旧域名只做跳转 —— 公告原文在
+// https://aihot.news/agent?tab=api 的「旧接口和旧域名」一节）：
+//   - 主机 aihot.virxact.com → aihot.news（**条目页也在 aihot.news**，
+//     这正是「点开一条热点看到视界日报门户页」那个 bug 的根因，见 daily_news_url_policy.dart）
+//   - 路径 /api/public/items → /api/v1/items
+//   - 参数 take → limit（v1 只认 OpenAPI 里声明过的参数，带未知参数直接 400，
+//     所以旧名不能留着做兼容）
+//   - 新增 window（只认 24h / 7d 这类枚举；不传 = 服务端默认）。这里显式给 7d，
+//     与旧接口的默认窗口对齐，首页的条数/新鲜度不会因为迁移而变。
+//
+// 上游约束（实测）：
+//   - 匿名只读，不需要 key；同一 IP 每分钟约 60 次以上返回 429（客户端 5 分钟缓存足够）
+//   - 建议开压缩 + 带 If-None-Match（304 表示没变化）。压缩 dart:io 的 HttpClient
+//     默认已开（autoUncompress）。ETag 没做：5 分钟客户端缓存已经把它压到 12 次/小时，
+//     离限流很远，收益不值得多一份需要持久化的状态。
+//   - 使用其数据必须署名 AI HOT 并可回链站内条目页
 library;
 
 import 'dart:async';
@@ -25,11 +38,20 @@ class AiHotService {
   final http.Client _client;
   final CacheStore _cache;
 
-  static const String _host = 'aihot.virxact.com';
+  /// 接口主机。注意与条目页主机是同一个（aihot.news），但不是旧域名。
+  static const String _host = 'aihot.news';
 
-  /// AI HOT 站点首页，「全部」按钮在拿不到 canonical 时的回落地址。
-  static const String siteUrl = 'https://aihot.virxact.com/';
-  static const String _itemsPath = '/api/public/items';
+  /// AI HOT 站点首页（「更多」的落点：站内条目列表）。
+  ///
+  /// 不用「第一条的 canonical」当站点地址 —— 那是**单条**条目页，
+  /// 用它做「更多」会点开第一条热点本身（曾经就是这样）。
+  static const String siteUrl = 'https://aihot.news/';
+  static const String _itemsPath = '/api/v1/items';
+
+  /// 时间窗：只认 24h / 7d 这类枚举值（实测 1h/6h/30d 都返回 400）。
+  /// 取 7d 是为了与旧接口的默认窗口对齐。
+  static const String _window = '7d';
+
   static const String _cacheKey = 'selected_feed_v1';
 
   /// 与服务端缓存同量级。上游 items 端点本身有 5 分钟缓存，
@@ -59,7 +81,9 @@ class AiHotService {
     try {
       final uri = Uri.https(_host, _itemsPath, <String, String>{
         'mode': 'selected',
-        'take': '${take.clamp(1, 50)}',
+        'window': _window,
+        // v1 的参数名是 limit（旧接口的 take 会直接 400）。
+        'limit': '${take.clamp(1, 50)}',
       });
 
       final resp = await _client

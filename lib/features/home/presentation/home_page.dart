@@ -378,9 +378,17 @@ class _HomePageState extends State<HomePage>
                 newsError: _newsError,
                 onOpenNews: _openNewsItem,
                 onOpenNewsAll: () {
+                  // 落点是**这条列表的内容源首页**（知乎日报）。
+                  // 之前打开的是「视界日报」门户页：那是更早的数据源留下的入口，
+                  // 列表里明明是知乎日报的文章，点「更多」却跳到另一个资讯站。
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => const DailyNewsPage()),
+                    MaterialPageRoute(
+                      builder: (_) => const DailyNewsPage(
+                        initialUrl: DailyNewsService.siteUrl,
+                        title: '知乎日报',
+                      ),
+                    ),
                   );
                 },
                 isLoadingAiHot: _isLoadingAiHot,
@@ -694,10 +702,6 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  /// 打开某条 AI 热点。
-  ///
-  /// 走站内 WebView（DailyNewsPage）而不是外部浏览器：和「今日热闻」
-  /// 的行为保持一致，用户返回时还在 App 里。
   /// 打开一条热闻。
   ///
   /// 抽成方法而不是内联在卡片里：合并后的资讯卡是独立 widget，
@@ -709,6 +713,12 @@ class _HomePageState extends State<HomePage>
     );
   }
 
+  /// 打开某条 AI 热点。
+  ///
+  /// 走站内 WebView（DailyNewsPage）而不是外部浏览器：和「今日热闻」
+  /// 的行为保持一致，用户返回时还在 App 里。条目的 openUrl 是站内条目页
+  /// （aihot.news/items/…，在白名单里）；只有拿不到站内页的条目会落到原文，
+  /// 那时页面会如实说明「要在浏览器里打开」并给出可复制的地址。
   void _openAiHotItem(AiHotItem item) {
     final url = item.openUrl;
     if (url == null) {
@@ -725,13 +735,17 @@ class _HomePageState extends State<HomePage>
     );
   }
 
+  /// AI 页签的「更多」：进站内条目列表。
+  ///
+  /// 之前用的是第一条热点的 attribution canonical（也就是**那一条自己的**
+  /// 条目页），于是「更多」点开的是列表里的第一条。站点首页才是列表。
   void _openAiHotSite() {
-    final canonical = _aiHotFeed?.attributionCanonical;
     Navigator.push(
       context,
       MaterialPageRoute<void>(
-        builder: (_) => DailyNewsPage(
-          initialUrl: canonical ?? AiHotService.siteUrl,
+        builder: (_) => const DailyNewsPage(
+          initialUrl: AiHotService.siteUrl,
+          title: 'AI 热点',
         ),
       ),
     );

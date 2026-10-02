@@ -1,7 +1,10 @@
 // AI HOT 数据层契约测试。
 //
-// 用的是 2026-09-01 从 aihot.virxact.com 实测抓下来的真实响应片段，
-// 不是我编的样例——字段名/类型/时间格式都以真实上游为准。
+// 两份夹具都是**实测抓下来的真实响应**，不是我编的样例：
+//   - kRealLegacyResponse：2026-09-01 从旧接口 /api/public/items 抓的（take=2）
+//   - kRealV1Response：2026-10-02 从 /api/v1/items 抓的（limit=2）
+// 两份都要能解析：上游 2.0 换了接口与字段路径（2026-10-31 旧接口停用），
+// 而**老版本 App 写进本机缓存的快照是旧形状**，升级后不能变成一片空白。
 import 'dart:convert';
 
 import 'package:box/core/storage/cache_store.dart';
@@ -11,8 +14,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-/// 真实响应片段（take=2，已保留原始字段与类型）。
-const String kRealResponse = '''
+/// 真实响应片段（旧接口 take=2，已保留原始字段与类型）。
+const String kRealLegacyResponse = '''
 {
   "count": 2,
   "hasNext": true,
@@ -55,6 +58,47 @@ const String kRealResponse = '''
 }
 ''';
 
+/// 真实响应片段（v1，limit=1，字段字节未改）。
+///
+/// 与上面那份旧形状的差别就是 2026-10-31 那次迁移的全部内容：
+/// url/permalink → links.original / links.aihot，source → source.name，
+/// attribution{source,canonical} → {name,url}。
+const String kRealV1Response = r'''
+{
+  "schemaVersion": 1,
+  "items": [
+    {
+      "id": "nab0yosxdtyh7sbvoo0usb1iq",
+      "title": "Bloomberg：Anthropic 为可能估值近 2 万亿美元的 IPO 邀请机构投资者质询高管",
+      "originalTitle": "Bloomberg: Anthropic has invited institutional investors to question its executives ahead of the possible IPO they value near $2T.",
+      "summary": "Bloomberg 报道，Anthropic 已邀请机构投资者在其可能估值近 2 万亿美元的 IPO 前质询高管。10 月 14 日的会议之后，最早 11 月 9 日当周启动正式路演，感恩节前上市；按 SEC 规则需在 10 月下旬公布 S-1 文件。OpenAI 则相反，以安全担忧为由排除 2026 年上市，正以约 1.4 万亿美元估值私下寻求至少 300 亿美元融资。",
+      "source": {
+        "name": "X：Rohan Paul (@rohanpaul_ai)"
+      },
+      "links": {
+        "aihot": "https://aihot.news/items/nab0yosxdtyh7sbvoo0usb1iq",
+        "original": "https://x.com/rohanpaul_ai/status/2105921530211508488"
+      },
+      "publishedAt": "2026-10-02T07:23:13.000Z",
+      "discoveredAt": "2026-10-02T07:36:32.395Z",
+      "category": "industry",
+      "score": 76,
+      "selected": true,
+      "reason": "原文梳理了 Anthropic 上市时间线和 OpenAI 的相反选择，读者可以对照两家头部 AI 公司的资本路径差异。",
+      "attribution": {
+        "name": "AIHOT",
+        "url": "https://aihot.news/items/nab0yosxdtyh7sbvoo0usb1iq"
+      }
+    }
+  ],
+  "page": {
+    "count": 4,
+    "hasMore": true,
+    "nextCursor": "it3.eyJhIjoxNzkwOTAxMjAzODk4LCJpIjoidWtrMnF3NWwxcjlqcWhzeWtxYWkyY2YzMCIsImMiOiJjMDlkODMzNGQ0M2MifQ"
+  }
+}
+''';
+
 /// 构造一个带 UTF-8 正文的响应。
 ///
 /// 坑：`http.Response(String, ...)` 在没有 charset 的情况下用 **latin1**
@@ -78,7 +122,7 @@ http.Client _stubClient(
 void main() {
   group('AiHotFeed 解析真实响应', () {
     test('解析出全部条目与署名', () {
-      final feed = AiHotFeed.fromJson(jsonDecode(kRealResponse));
+      final feed = AiHotFeed.fromJson(jsonDecode(kRealLegacyResponse));
 
       expect(feed.items, hasLength(2));
       expect(feed.items.first.title, contains('Anthropic'));
@@ -93,7 +137,7 @@ void main() {
     });
 
     test('publishedAt 解析为时间且转本地时区', () {
-      final feed = AiHotFeed.fromJson(jsonDecode(kRealResponse));
+      final feed = AiHotFeed.fromJson(jsonDecode(kRealLegacyResponse));
       final at = feed.items.first.publishedAt;
       expect(at, isNotNull);
       expect(at!.toUtc().year, 2026);
@@ -102,7 +146,7 @@ void main() {
     });
 
     test('openUrl 优先站内 permalink 而不是站外原文', () {
-      final feed = AiHotFeed.fromJson(jsonDecode(kRealResponse));
+      final feed = AiHotFeed.fromJson(jsonDecode(kRealLegacyResponse));
       expect(
         feed.items.first.openUrl,
         startsWith('https://aihot.virxact.com/items/'),
@@ -163,19 +207,65 @@ void main() {
     });
   });
 
+  group('AiHotFeed 解析 v1 真实响应', () {
+    test('v1 的 links / source / attribution 都能读出来', () {
+      final feed = AiHotFeed.fromJson(jsonDecode(kRealV1Response));
+      expect(feed.items, hasLength(1));
+
+      final item = feed.items.first;
+      expect(item.title, isNotEmpty);
+      expect(
+        item.permalink,
+        startsWith('https://aihot.news/items/'),
+        reason: 'v1 把站内条目页挪到了 links.aihot',
+      );
+      expect(
+        item.source,
+        isNotEmpty,
+        reason: 'v1 把来源挪到了 source.name，读不到就会少一行信息',
+      );
+      expect(
+        feed.attributionLabel,
+        'AIHOT',
+        reason: '署名在 attribution.name（旧接口叫 source）',
+      );
+    });
+
+    test('openUrl 在 v1 形状下仍优先站内条目页而不是原文', () {
+      final feed = AiHotFeed.fromJson(jsonDecode(kRealV1Response));
+      expect(
+        feed.items.first.openUrl,
+        startsWith('https://aihot.news/items/'),
+        reason: '回链要指向 AI HOT 站内页（署名要求），原文链接只在没有站内页时用',
+      );
+    });
+
+    test('老形状（旧接口/老缓存）照样能解析', () {
+      final feed = AiHotFeed.fromJson(jsonDecode(kRealLegacyResponse));
+      expect(feed.items, hasLength(2));
+      expect(feed.items.first.permalink, startsWith('https://aihot.virxact.com/items/'));
+    });
+  });
+
   group('AiHotService 缓存与降级', () {
     test('200 正常响应写入缓存并返回条目', () async {
       var calls = 0;
       final service = AiHotService(
         client: _stubClient((request) {
           calls++;
-          expect(request.url.host, 'aihot.virxact.com');
+          expect(request.url.host, 'aihot.news');
+          expect(request.url.path, '/api/v1/items');
           expect(
             request.url.queryParameters['mode'],
             'selected',
             reason: '首页应走每日精选，不是量大且杂的全量池',
           );
-          return _json(kRealResponse);
+          expect(
+            request.url.queryParameters['window'],
+            '7d',
+            reason: '窗口必须是上游认的枚举值（实测 1h/6h/30d 直接 400）',
+          );
+          return _json(kRealLegacyResponse);
         }),
         cache: CacheStore.inMemory('ai_hot_test_ok'),
       );
@@ -198,7 +288,7 @@ void main() {
       final service = AiHotService(
         client: _stubClient((request) {
           if (fail) return _json('boom', 500);
-          return _json(kRealResponse);
+          return _json(kRealLegacyResponse);
         }),
         cache: cache,
       );
@@ -248,18 +338,23 @@ void main() {
       expect(feed.isEmpty, isTrue);
     });
 
-    test('take 参数被夹在合法区间内', () async {
-      String? sentTake;
+    test('limit 参数被夹在合法区间内，且不带旧参数名 take', () async {
+      Map<String, String>? sentQuery;
       final service = AiHotService(
         client: _stubClient((request) {
-          sentTake = request.url.queryParameters['take'];
-          return _json(kRealResponse);
+          sentQuery = request.url.queryParameters;
+          return _json(kRealV1Response);
         }),
-        cache: CacheStore.inMemory('ai_hot_test_take'),
+        cache: CacheStore.inMemory('ai_hot_test_limit'),
       );
 
       await service.fetchSelected(take: 999);
-      expect(int.parse(sentTake!), lessThanOrEqualTo(50));
+      expect(int.parse(sentQuery!['limit']!), lessThanOrEqualTo(50));
+      expect(
+        sentQuery!.containsKey('take'),
+        isFalse,
+        reason: 'v1 只接受 OpenAPI 里声明过的参数，多带一个 take 就是 400',
+      );
     });
   });
 }
