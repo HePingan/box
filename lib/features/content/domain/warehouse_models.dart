@@ -72,6 +72,7 @@ class WarehouseItem {
     required this.sourceLabel,
     required this.createdAt,
     this.raw,
+    this.newChapters = 0,
   });
 
   final String id;
@@ -84,6 +85,29 @@ class WarehouseItem {
   final String sourceLabel;
   final int createdAt;
   final dynamic raw;
+
+  /// 追更查到的新话数（漫画收藏用；其它分类恒为 0）。
+  ///
+  /// 为什么放在通用条目上：内容页三个分区共用一套卡片，为了一个角标另起一套卡片，
+  /// 就会出现"一处加上了、另一处还是老样子"。默认 0 = 不显示角标。
+  final int newChapters;
+
+  bool get hasNewChapters => newChapters > 0;
+
+  /// 带上"新话数"的一份拷贝（不改原对象：条目是 const 的）。
+  WarehouseItem withNewChapters(int count) => WarehouseItem(
+    id: id,
+    title: title,
+    subtitle: subtitle,
+    coverUrl: coverUrl,
+    detailUrl: detailUrl,
+    meta: meta,
+    category: category,
+    sourceLabel: sourceLabel,
+    createdAt: createdAt,
+    raw: raw,
+    newChapters: count < 0 ? 0 : count,
+  );
 
   String get uniqueKey {
     final detail = detailUrl.trim();

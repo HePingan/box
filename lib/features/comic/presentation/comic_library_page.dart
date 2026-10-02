@@ -9,6 +9,7 @@ import 'package:box/features/comic/domain/comic_image_cache.dart';
 import 'package:box/features/comic/domain/comic_offline_store.dart';
 import 'package:box/features/comic/domain/comic_library_store.dart';
 import 'package:box/features/comic/domain/comic_online_progress.dart';
+import 'package:box/features/comic/domain/comic_update_watch.dart';
 import 'package:box/features/comic/presentation/comic_online_page.dart';
 import 'package:box/features/comic/domain/comic_reader_state.dart';
 import 'package:box/features/comic/infrastructure/comic_importer_widget.dart';
@@ -18,9 +19,18 @@ import 'package:box/features/comic/presentation/comic_cover_image.dart';
 
 /// 书架一行的展示数据：漫画本体 + 它的真实阅读进度（没读过就是 null）。
 class _ShelfEntry {
-  const _ShelfEntry({required this.book, this.progress, this.onlineProgress});
+  const _ShelfEntry({
+    required this.book,
+    this.progress,
+    this.onlineProgress,
+    this.newChapters = 0,
+  });
 
   final ComicBook book;
+
+  /// 追更查到的新话数（在线书才有；本地漫画恒为 0）。
+  final int newChapters;
+
   final ComicReaderState? progress;
 
   /// 在线书的阅读进度（读到哪一话）；本地书为 null。
@@ -96,6 +106,10 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
   late final ComicOfflineStore _offline =
       widget.offlineStore ?? ComicOfflineStore();
 
+  /// 追更记录本（与内容页是**同一份记录**：两处看到的是同一个"有没有新话"）。
+  ComicUpdateWatch? _updates;
+  bool _updatesReady = false;
+
   @override
   void initState() {
     super.initState();
@@ -103,6 +117,10 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
     // 预热离线库：下载过的书断网时封面/阅读都能直接读本机那份。
     unawaited(_offline.warmUp());
     _future = _load();
+    unawaited(() async {
+      await _ensureUpdates();
+      await _checkComicUpdates();
+    }());
     // 令牌读一次就够（用户改了设置再进本页也会重新读）。读不出来保持 null：
     // 在线页会自己去读，读不到就直连站点（不是错误）。
     loadComicRelayToken().then((t) {
@@ -110,8 +128,39 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
     });
   }
 
+  Future<void> _ensureUpdates() async {
+    if (_updatesReady) return;
+    _updatesReady = true;
+    final source = ComicUpdateWatch.defaultComicSource();
+    if (source == null) return;
+    var token = '';
+    try {
+      token = await loadComicRelayToken();
+    } catch (_) {
+      token = '';
+    }
+    _updates = ComicUpdateWatch(
+      source: source,
+      fetcher: comicUpdateFetcher(source, token),
+    );
+  }
+
+  Future<void> _checkComicUpdates({bool force = false}) async {
+    final watch = _updates;
+    if (watch == null) return;
+    final urls = <String>[
+      for (final e in await _store.fetch())
+        if (e.isOnline) e.onlineUrl!,
+    ];
+    if (urls.isEmpty) return;
+    final got = await watch.checkDue(urls, force: force);
+    if (!mounted || !got.values.any((r) => r.hasNew)) return;
+    setState(() => _future = _load()); // 有动静才重画
+  }
+
   Future<List<_ShelfEntry>> _load() async {
     final books = await _store.fetch();
+    await _ensureUpdates();
     final entries = <_ShelfEntry>[];
     final onlineStore = widget.onlineProgressStore ?? ComicOnlineProgressStore();
     for (final book in books) {
@@ -122,10 +171,23 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
           progress: isOnline ? null : await _store.loadProgress(book.id),
           onlineProgress:
               isOnline ? await onlineStore.load(book.onlineUrl!) : null,
+          newChapters: isOnline ? await _newChaptersOf(book.onlineUrl!) : 0,
         ),
       );
     }
     return entries;
+  }
+
+  /// 这本书查到的新话数（没查过/没有就是 0）。
+  Future<int> _newChaptersOf(String bookUrl) async {
+    final watch = _updates;
+    if (watch == null) return 0;
+    try {
+      final rec = await watch.read(bookUrl);
+      return rec?.newCount ?? 0;
+    } catch (_) {
+      return 0; // 读不出来就是"没有新话"：角标不值得让整页出错
+    }
   }
 
   void _reload() {
@@ -317,6 +379,7 @@ class _ComicBookCard extends StatelessWidget {
     final book = entry.book;
     final percent = entry.percent;
     final onlineLabel = entry.onlineLabel;
+    final newChapters = entry.newChapters;
 
     return GestureDetector(
       onTap: onTap,
@@ -350,6 +413,30 @@ class _ComicBookCard extends StatelessWidget {
                     const Center(
                       child:
                           Icon(Icons.collections_bookmark_outlined, size: 48),
+                    ),
+                  // 「有新话」角标（追更）：和内容页那个是同一份记录。
+                  if (newChapters > 0)
+                    Positioned(
+                      left: 6,
+                      top: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE53935),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          newChapters > 1 ? '新 $newChapters 话' : '有新话',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                     ),
                   if (onlineLabel != null)
                     Positioned(

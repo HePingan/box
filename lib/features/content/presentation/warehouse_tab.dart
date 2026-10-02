@@ -11,6 +11,7 @@ import 'package:box/features/comic/presentation/comic_library_page.dart';
 import 'package:box/features/comic/domain/comic_book.dart';
 import 'package:box/features/comic/domain/comic_library_store.dart';
 import 'package:box/features/comic/presentation/comic_reader_page.dart';
+import 'package:box/features/comic/domain/comic_update_watch.dart';
 import 'package:box/features/comic/presentation/comic_online_page.dart';
 import 'package:box/novel/core/models.dart';
 import 'package:box/novel/pages/reader_page.dart';
@@ -68,6 +69,13 @@ class WarehouseTabState extends State<WarehouseTab>
   String? _busyHint;
 
   final ComicLibraryStore _comicStore = ComicLibraryStore();
+
+  /// 追更记录本：收藏里的**在线**书"有没有新话"（2026-10-02）。
+  ///
+  /// 解析用内置默认源（野蛮漫画）的规则 —— 收藏里没存"来自哪个源"，别的站的书
+  /// 解析不出来就是"没有新话"，不会误报（见 `ComicUpdateWatch` 头部注释）。
+  ComicUpdateWatch? _updates;
+  bool _updatesReady = false;
   final FavoritesRepository _favoritesRepo = FavoritesRepository();
 
   // 搜索状态
@@ -140,11 +148,77 @@ class WarehouseTabState extends State<WarehouseTab>
     }
   }
 
+  /// 备好追更记录本（源 + 取数器各一次就够）。取不到源就是没有这个能力，不当错误。
+  Future<void> _ensureUpdates() async {
+    if (_updatesReady) return;
+    _updatesReady = true;
+    final source = ComicUpdateWatch.defaultComicSource();
+    if (source == null) return;
+    var token = '';
+    try {
+      token = await loadComicRelayToken();
+    } catch (_) {
+      token = '';
+    }
+    _updates = ComicUpdateWatch(
+      source: source,
+      fetcher: comicUpdateFetcher(source, token),
+    );
+  }
+
+  /// 在线书的书链（本地漫画没有"新话"这回事）。
+  String? _onlineUrlOf(WarehouseItem item) {
+    final raw = item.raw;
+    if (raw is ComicBook && raw.isOnline) return raw.onlineUrl;
+    return null;
+  }
+
+  /// 把"新话数"贴到条目上（读本地记录，很便宜）。
+  Future<List<WarehouseItem>> _withUpdateBadges(
+    List<WarehouseItem> items,
+  ) async {
+    final watch = _updates;
+    if (watch == null) return items;
+    final out = <WarehouseItem>[];
+    for (final item in items) {
+      final url = _onlineUrlOf(item);
+      if (url == null) {
+        out.add(item);
+        continue;
+      }
+      final rec = await watch.read(url);
+      out.add(
+        rec != null && rec.hasNew ? item.withNewChapters(rec.newCount) : item,
+      );
+    }
+    return out;
+  }
+
+  /// 查一遍"有没有新话"。**限流在记录本里**（默认 6 小时），一次最多几本；
+  /// [force] = 用户下拉刷新（跳过限流）。
+  Future<void> _checkComicUpdates({bool force = false}) async {
+    final watch = _updates;
+    if (watch == null) return;
+    final urls = <String>[];
+    for (final item in _comicItems) {
+      final url = _onlineUrlOf(item);
+      if (url != null) urls.add(url);
+    }
+    if (urls.isEmpty) return;
+    final got = await watch.checkDue(urls, force: force);
+    if (!mounted || got.isEmpty) return;
+    if (!got.values.any((r) => r.hasNew)) return; // 没动静就不重画
+    final withBadges = await _withUpdateBadges(_comicItems);
+    if (!mounted) return;
+    setState(() => _comicItems = withBadges);
+  }
+
   /// 漫画收藏（CacheStore `comic_library`，本地导入的 CBZ/ZIP/文件夹）。
   Future<void> _loadComics() async {
     try {
       final books = await _comicStore.fetch();
-      final items = warehouseItemsFromComicBooks(books);
+      await _ensureUpdates();
+      final items = await _withUpdateBadges(warehouseItemsFromComicBooks(books));
       if (mounted) {
         setState(() {
           _comicItems = items;
@@ -152,6 +226,8 @@ class WarehouseTabState extends State<WarehouseTab>
           _comicsError = false;
         });
       }
+      // 顺手查一次"有没有新话"：不 await（别让内容页等站点），失败了也无所谓。
+      unawaited(_checkComicUpdates());
     } catch (_) {
       if (mounted) {
         setState(() {
@@ -173,6 +249,8 @@ class WarehouseTabState extends State<WarehouseTab>
 
   Future<void> _refresh() async {
     await _loadAllData();
+    // 下拉刷新 = 用户明确想看"哪里更了"：跳过限流查一遍。
+    await _checkComicUpdates(force: true);
   }
 
   /// 被切到前台时重读一遍三条通道。

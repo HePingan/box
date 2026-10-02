@@ -965,6 +965,33 @@ class WarehouseCard extends StatelessWidget {
                             errorBuilder: (_, _, _) => _buildFallback(),
                           ),
                   ),
+                  // 「有新话」角标：追更的人一眼看出哪本更了（2026-10-02）。
+                  if (item.hasNewChapters && !editMode)
+                    Positioned(
+                      top: 4,
+                      left: 4,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE53935),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          item.newChapters > 1
+                              ? '新 ${item.newChapters} 话'
+                              : '有新话',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            height: 1.2,
+                          ),
+                        ),
+                      ),
+                    ),
                   if (editMode)
                     Positioned(
                       top: 4,

@@ -24,6 +24,7 @@ import '../domain/comic_library_store.dart';
 import '../domain/comic_online_progress.dart';
 import '../domain/comic_prefetch.dart';
 import '../domain/comic_reader_prefs.dart';
+import '../domain/comic_update_watch.dart';
 import '../domain/comic_online_service.dart';
 import '../domain/comic_relay.dart';
 import '../domain/comic_source.dart';
@@ -264,6 +265,9 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
 
   /// 左右翻页（true）/ 竖向连续长条（false）。竖向是默认，条漫更顺。
   bool _pageTurn = false;
+
+  /// 追更记录本（只用来"记下我看到的目录"；查询在收藏那两页做）。
+  late final ComicUpdateWatch _updates = ComicUpdateWatch();
 
   /// 阅读器的**压暗**档位（0~0.8）：夜里看漫画嫌亮，压一层黑就够了（见 ComicReaderPrefs.dimLevel）。
   double _dim = 0;
@@ -547,6 +551,20 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   Future<void> _openBook(ComicSearchHit hit) =>
       _openBookUrl(hit.bookUrl, name: hit.name);
 
+  /// 记下"这本书的目录我看过了"（追更角标用；失败不算错，写不进去最多是角标多挂一会）。
+  Future<void> _markCatalogSeen(ComicBookDetail book) async {
+    if (book.chapters.isEmpty) return;
+    try {
+      await _updates.seen(
+        bookUrl: book.bookUrl,
+        titles: [for (final c in book.chapters) c.title],
+        urls: [for (final c in book.chapters) c.url],
+      );
+    } catch (_) {
+      // 记不住不影响看书。
+    }
+  }
+
   Future<void> _openBookUrl(
     String url, {
     String? name,
@@ -563,6 +581,9 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         _setMode(_Mode.book);
         _pathNote = _describePath();
       });
+      // 目录已经摆在用户面前了 → 追更的"有新话"角标据此清掉
+      // （收藏里挂着红点、点进去却是自己早看过的话，就是骗人）。
+      unawaited(_markCatalogSeen(book));
     }, '正在打开这本书…（最多等 ${_service.openTimeout.inSeconds} 秒）');
     // 站点打不开（断网 / 被掐断）**或目录是空的**：这本书下过的话，就从离线清单
     // 把书名/封面/目录摆出来。"下过了却连目录都进不去"是最不像话的一种失败。
