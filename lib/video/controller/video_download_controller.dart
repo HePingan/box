@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/video_download_task.dart';
 import '../services/video_download_gateway.dart';
 import '../services/video_download_repository.dart';
+import '../utils/play_url_policy.dart';
 
 class VideoDownloadController extends ChangeNotifier {
   VideoDownloadController({
@@ -65,6 +66,12 @@ class VideoDownloadController extends ChangeNotifier {
     // Only allow HTTPS URLs for security
     if (!task.mediaUrl.startsWith('https://')) {
       _setMessage('仅支持 HTTPS 地址');
+      return false;
+    }
+    // 云播页（`/play/<id>`、`/share/<id>`）不是媒体流，下下来会是一个网页文件。
+    // 让用户先换线路再下载，而不是生成一个打不开的「视频」。
+    if (PlayUrlPolicy.isCloudPage(Uri.tryParse(task.mediaUrl.trim()))) {
+      _setMessage('该线路是网页线路，请换线路后下载');
       return false;
     }
     try {

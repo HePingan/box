@@ -1,5 +1,6 @@
 import '../../models/video_source.dart';
 import '../../models/vod_item.dart';
+import '../../utils/play_url_policy.dart';
 import 'detail_models.dart';
 
 /// 详情页播放数据解析器
@@ -72,7 +73,16 @@ class DetailPlayParser {
       }
     }
 
-    final lineIndex = lines.indexWhere((line) => line.episodes.isNotEmpty);
+    // 默认线路优先选「给的是真媒体地址」的那条：实测 21 部影片里 10 部的第一条
+    // 线路是云播网页（`/play/<id>`、`/share/<id>`），默认选中它点开就是失败。
+    final mediaLineIndex = lines.indexWhere(
+      (line) =>
+          line.episodes.isNotEmpty &&
+          _looksLikeMediaUrl(line.episodes.first.url),
+    );
+    final lineIndex = mediaLineIndex >= 0
+        ? mediaLineIndex
+        : lines.indexWhere((line) => line.episodes.isNotEmpty);
     final safeLineIndex = lineIndex >= 0 ? lineIndex : 0;
     final line = lines[safeLineIndex];
 
@@ -87,6 +97,12 @@ class DetailPlayParser {
       url: firstEpisode.url,
       name: firstEpisode.name,
     );
+  }
+
+  /// 这条线路给的是不是真媒体地址（.m3u8 / .mp4 / ...）。
+  static bool _looksLikeMediaUrl(String? raw) {
+    return PlayUrlPolicy.shapeOf(Uri.tryParse((raw ?? '').trim())) ==
+        PlayUrlShape.media;
   }
 
   static String resolvePlayUrl(String rawUrl, {required VideoSource source}) {

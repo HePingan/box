@@ -3,7 +3,9 @@ import 'dart:io';
 import '../models/video_category.dart';
 import '../models/video_source.dart';
 import '../models/vod_item.dart';
+import '../utils/play_url_policy.dart';
 import '../services/video_api_service.dart';
+import 'cloud_play_url_resolver.dart';
 
 /// Real playback-chain stages. The ordered list is safe to render in admin UI.
 enum SourceHealthStage {
@@ -216,10 +218,13 @@ class SourceHealthService {
         );
       }
 
-      // CDN 字节探测仅作参考信号：媒体地址常在非标端口、带 refer/UA/geo
-      // 校验，裸 HttpClient 的 HEAD/Range 会被拒或被网络挡，而真正播放时
-      // ExoPlayer 带完整头能正常播。因此只要能解析出“格式合法的绝对
-      // 播放地址”，就判定源可用；探测失败仅降级为提示，绝不据此把源判死。
+      // 判定规则（2026-10-02 收紧）：以前只要是「格式合法的绝对播放地址」就判可用，
+      // 于是云播页（`/play/<id>`、`/share/<id>`）和指向 HTML 首页的地址全被判成
+      // 「可用」，播不了的源永远显示健康。现在的规则分三档：
+      //   - 拿到媒体（HLS 清单 / 二进制体）           → 可用；
+      //   - 没拿到响应（超时 / 连接被拒 / DNS）        → 仍判可用（保留原判断：
+      //     媒体常带非标端口、refer、geo 校验，裸探测会被拒，ExoPlayer 带完整头能播）；
+      //   - 服务器答了但答的不是媒体（HTML 页、404）    → 播放阶段失败，如实记录。
       final normalizedPlayable = _normalizeUrl(playableUrl, detailBaseUrl);
       final playableUri = normalizedPlayable == null
           ? null
@@ -244,18 +249,44 @@ class SourceHealthService {
         );
       }
 
-      final playable = await _probePlayableUrl(
+      // 播放地址形态先过一遍：云播页（`/play/<id>`、`/share/<id>`）要么被
+      // 归一化成真流，要么如实记成「网页线路」——以前这两种情况都报「可用」，
+      // 于是播不了的源永远显示健康（2026-10-02 定位）。
+      final resolvedPlayUrl = await _resolveCloudPageIfNeeded(
         playableUrl,
         baseUrl: detailBaseUrl,
         headers: _buildHeaders(source),
       );
 
+      final resolvedUri = Uri.tryParse(resolvedPlayUrl);
+      final isCloudPage = PlayUrlPolicy.isCloudPage(resolvedUri);
+
+      final probeVerdict = isCloudPage
+          ? PlayProbeVerdict.answeredButNotMedia
+          : await _probePlayableUrlVerdict(
+              resolvedPlayUrl,
+              baseUrl: detailBaseUrl,
+              headers: _buildHeaders(source),
+            );
+
+      // 「没拿到响应」不算死：媒体常带非标端口 / refer / geo 校验，裸探测会被拒，
+      // 而真正播放时 ExoPlayer 带完整头能播（保留原判断）。但「答了却不是媒体」
+      // （HTML 页、404）是能确定的事实，必须如实记成播放阶段失败。
+      final canPlay = probeVerdict == PlayProbeVerdict.playable;
+      final unknown = probeVerdict == PlayProbeVerdict.unreachable;
+
       return SourceCheckResult(
         source: source,
-        success: true,
+        success: canPlay || unknown,
         stage: SourceHealthStage.play,
-        message: playable ? '可用' : '可用（播放地址已解析，实际播放以播放器为准）',
-        playableUrl: playableUrl,
+        message: canPlay
+            ? (resolvedPlayUrl == playableUrl ? '可用' : '可用（已从网页线路解析出真流）')
+            : unknown
+            ? '可用（未探测到响应，实际播放以播放器为准）'
+            : isCloudPage
+            ? '播放地址是网页线路，需二次解析'
+            : '播放地址不是媒体流',
+        playableUrl: canPlay ? resolvedPlayUrl : playableUrl,
         categoryCount: categories.length,
         videoCount: videos.length,
         checkedAt: now,
@@ -413,52 +444,69 @@ class SourceHealthService {
     }
   }
 
-  Future<bool> _probePlayableUrl(
+  /// 探测播放地址并给出判定（见 _checkOne 里的三档规则）。
+  Future<PlayProbeVerdict> _probePlayableUrlVerdict(
     String rawUrl, {
     required String baseUrl,
     required Map<String, String> headers,
   }) async {
     final url = _normalizeUrl(rawUrl, baseUrl);
-    if (url == null || url.trim().isEmpty) return false;
+    if (url == null || url.trim().isEmpty) {
+      return PlayProbeVerdict.answeredButNotMedia;
+    }
 
-    final isM3u8 = url.toLowerCase().contains('.m3u8');
     final client = HttpClient()
       ..connectionTimeout = timeout
       ..idleTimeout = timeout;
 
     try {
       final uri = Uri.parse(url);
-
-      try {
-        final headReq = await client.headUrl(uri);
-        headers.forEach((k, v) => headReq.headers.set(k, v));
-        final headResp = await headReq.close().timeout(timeout);
-
-        if (headResp.statusCode >= 200 &&
-            headResp.statusCode < 400 &&
-            !isM3u8) {
-          return true;
-        }
-      } catch (_) {}
-
       final getReq = await client.getUrl(uri);
       headers.forEach((k, v) => getReq.headers.set(k, v));
-      if (isM3u8) {
-        getReq.headers.set('Range', 'bytes=0-1023');
-      } else {
-        getReq.headers.set('Range', 'bytes=0-0');
-      }
+      // 只读前 1KB：HLS 清单第一行就是 #EXTM3U，网页开头几十字节也能认出来。
+      getReq.headers.set('Range', 'bytes=0-1023');
 
       final resp = await getReq.close().timeout(timeout);
-      if (resp.statusCode < 200 || resp.statusCode >= 400) return false;
-      if (!isM3u8) return true;
-
       final body = await utf8.decodeStream(resp.take(1024));
-      return body.contains('#EXTM3U') || body.contains('#EXT-X');
+
+      String? contentType;
+      try {
+        contentType = resp.headers.contentType?.mimeType;
+      } catch (_) {}
+
+      return PlayUrlPolicy.classifyProbe(
+        statusCode: resp.statusCode,
+        contentType: contentType,
+        body: body,
+      );
     } catch (_) {
-      return false;
+      // 连不上 = 探测不到，不算「服务器说是网页」。
+      return PlayProbeVerdict.unreachable;
     } finally {
       client.close(force: true);
+    }
+  }
+
+  /// 云播页 → 真流地址（尽力而为：判定不了就原样返回）。
+  Future<String> _resolveCloudPageIfNeeded(
+    String rawUrl, {
+    required String baseUrl,
+    required Map<String, String> headers,
+  }) async {
+    final normalized = _normalizeUrl(rawUrl, baseUrl);
+    if (normalized == null || normalized.trim().isEmpty) return rawUrl;
+
+    final uri = Uri.tryParse(normalized);
+    if (uri == null || !PlayUrlPolicy.isCloudPage(uri)) return normalized;
+
+    try {
+      final resolved = await const CloudPlayUrlResolver().resolve(
+        uri,
+        headers: headers,
+      );
+      return resolved.toString();
+    } catch (_) {
+      return normalized;
     }
   }
 

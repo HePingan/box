@@ -31,6 +31,28 @@ void main() {
         expect(gateway.enqueued, ['task-1']);
       },
     );
+
+    test('拒绝云播页线路：下下来会是一个网页，不是视频', () async {
+      final repository = _MemoryRepository();
+      final gateway = _FakeGateway();
+      final controller = VideoDownloadController(
+        repository: repository,
+        gateway: gateway,
+      );
+
+      await controller.load();
+
+      await controller.enqueue(
+        _task('https://play.xluuss.com/play/9aAjlRPb'),
+      );
+      expect(controller.tasks, isEmpty);
+      expect(controller.message, contains('网页线路'));
+
+      await controller.enqueue(
+        _task('https://play.xluuss.com/20240523/x/index.m3u8'),
+      );
+      expect(controller.tasks, hasLength(1));
+    });
   });
 
   test(

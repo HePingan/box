@@ -102,6 +102,60 @@ void main() {
       expect(DetailPlayParser.formatPosition(61 * 1000), '01:01');
       expect(DetailPlayParser.formatPosition(3661 * 1000), '01:01:01');
     });
+
+    test('默认线路优先选真媒体，而不是云播网页线路', () {
+      // 实测：21 部影片里 10 部的第一条线路是云播网页，默认选中点开就是失败。
+      const lines = [
+        DetailPlayLine(
+          name: 'xlyun',
+          episodes: [
+            DetailPlayEpisode(
+              name: '第1集',
+              url: 'https://play.xluuss.com/play/9aAjlRPb',
+            ),
+          ],
+        ),
+        DetailPlayLine(
+          name: 'xlm3u8',
+          episodes: [
+            DetailPlayEpisode(
+              name: '第1集',
+              url: 'https://play.xluuss.com/20240523/x/index.m3u8',
+            ),
+          ],
+        ),
+      ];
+
+      final selection = DetailPlayParser.pickDefaultSelection(lines);
+      expect(selection.lineIndex, 1);
+      expect(selection.url, 'https://play.xluuss.com/20240523/x/index.m3u8');
+    });
+
+    test('全部是网页线路时退回第一条（不改变旧行为）', () {
+      const lines = [
+        DetailPlayLine(
+          name: '线路1',
+          episodes: [
+            DetailPlayEpisode(
+              name: '第1集',
+              url: 'https://play.xluuss.com/play/9aAjlRPb',
+            ),
+          ],
+        ),
+        DetailPlayLine(
+          name: '线路2',
+          episodes: [
+            DetailPlayEpisode(
+              name: '第1集',
+              url: 'https://v.lzcdn28.com/share/abc',
+            ),
+          ],
+        ),
+      ];
+
+      final selection = DetailPlayParser.pickDefaultSelection(lines);
+      expect(selection.lineIndex, 0);
+    });
   });
 
   group('player stream pure helpers', () {

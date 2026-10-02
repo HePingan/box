@@ -11,7 +11,10 @@ import 'package:video_player/video_player.dart';
 
 import '../../utils/app_logger.dart';
 import '../controller/history_controller.dart';
+import '../services/cloud_play_url_resolver.dart';
+import '../utils/play_url_policy.dart';
 import 'player/custom_video_controls.dart';
+import 'player/line_failover_policy.dart';
 import 'player/player_history_tracker.dart';
 import 'player/player_overlays.dart';
 import 'player/player_request_headers.dart';
@@ -113,9 +116,19 @@ class VideoPlayContainer extends StatefulWidget {
 class _VideoPlayContainerState extends State<VideoPlayContainer>
     with WidgetsBindingObserver {
   static const Duration _resolveTimeout = Duration(seconds: 8);
+
+  /// 云播页归一化的总时限：比单次 fetch 宽（要串几次探测），但必须封顶，
+  /// 不能让一条网页线路把起播卡住。
+  static const Duration _cloudPageResolveTimeout = Duration(seconds: 12);
   static const Duration _initTimeout = Duration(seconds: 12);
 
   final PlayerStreamResolver _streamResolver = const PlayerStreamResolver();
+
+  /// 云播页（`/play/<id>`、`/share/<id>`）→ 真流地址。
+  final CloudPlayUrlResolver _cloudPageResolver = const CloudPlayUrlResolver();
+
+  /// 线路失败计数（跨重试保留：见 LineFailoverPolicy 里的说明）。
+  final LineFailoverPolicy _lineFailover = LineFailoverPolicy();
 
   VideoPlayerController? _videoPlayerController;
   ChewieController? _chewieController;
@@ -202,9 +215,6 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     }
   }
 
-  /// 播放失败计数——用于连续失败回退。
-  int _consecutiveFailures = 0;
-
   void _onPlayerStateChanged() {
     if (!mounted) return;
     final controller = _videoPlayerController;
@@ -212,20 +222,14 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
 
     final value = controller.value;
     if (value.hasError) {
-      // B2：连续失败回退——换线重试仍然失败时，回退到上一线路的同一集。
-      _consecutiveFailures++;
-      if (_consecutiveFailures >= 2 && widget.onFallbackLine != null) {
-        widget.onFallbackLine!();
-        _consecutiveFailures = 0;
-        return;
-      }
-      _failFast(value.errorDescription ?? '视频流已断开或无效');
+      // 播放中报错也算这条线路失败一次；换线重试仍然失败就自动回退。
+      _handleLineFailure(value.errorDescription ?? '视频流已断开或无效');
       return;
     }
 
-    // 成功起播或恢复播放时重置计数器。
-    if (!_playbackFailed) {
-      _consecutiveFailures = 0;
+    // 只有真正起播成功才清零失败计数——「这次没报错」不算成功。
+    if (value.isInitialized && !value.isCompleted) {
+      _lineFailover.recordPlaybackStarted();
     }
 
     if (value.isCompleted && !_hasSavedCompletion) {
@@ -361,7 +365,8 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
       _playbackFailed = false;
       _hasSavedCompletion = false;
       _isFullScreen = false;
-      _consecutiveFailures = 0;
+      // 注意：线路失败计数**不在这里清零**。手动重试后计数器必须保留，
+      // 否则「重试仍失败 → 自动换线路」永远触发不了（见 LineFailoverPolicy）。
     });
 
     // ── 离线播放：优先使用本地文件 ──
@@ -397,8 +402,20 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         extraHeaders: widget.httpHeaders,
       );
 
+      // 云播页（`/play/<id>`、`/share/<id>`）先换成真流地址。换不了就明确判死，
+      // 而不是把一个 HTML 页面丢给播放器 —— 那样用户只会看到一句「播放失败」。
+      final mediaUri = await _cloudPageResolver
+          .resolve(uri, headers: headers)
+          .timeout(_cloudPageResolveTimeout);
+
+      if (!mounted || token != _initToken) return;
+
+      if (PlayUrlPolicy.isCloudPage(mediaUri)) {
+        throw const _UnresolvedPageUrlException();
+      }
+
       final playableUri = await _streamResolver
-          .resolveDirectM3u8(uri, headers: headers)
+          .resolveDirectM3u8(mediaUri, headers: headers)
           .timeout(_resolveTimeout);
 
       if (!mounted || token != _initToken) return;
@@ -535,22 +552,44 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     } catch (e, st) {
       if (token != _initToken) return;
       AppLogger.instance.logError(e, st, 'PLAYER');
+      // 网页线路重试也还是网页，属于「无需再试」的失败 —— 直接换线路。
+      final isPageUrl = e is _UnresolvedPageUrlException;
       final String msg;
-      if (e is _StreamRejectedException) {
+      if (isPageUrl) {
+        msg = '该线路是网页线路，已自动换线路';
+      } else if (e is _StreamRejectedException) {
         msg = '该线路服务器拒绝连接';
       } else if (e is TimeoutException) {
         msg = '连接超时';
       } else {
         msg = '播放失败';
       }
-      _failFast(msg);
+      _handleLineFailure(msg, decisive: isPageUrl);
     }
+  }
+
+  /// 记一次线路失败：够阈值或本次失败已无重试价值 → 自动换线路；
+  /// 否则维持原来的行为，把错误显示给用户（错误层里也有「换线路重试」按钮）。
+  void _handleLineFailure(String msg, {bool decisive = false}) {
+    final fallback = widget.onFallbackLine;
+    if (fallback != null &&
+        _lineFailover.recordFailure(
+          hasFallbackLine: true,
+          decisive: decisive,
+        )) {
+      AppLogger.instance.log(
+        '线路连续失败，自动换线路（$msg）',
+        tag: 'PLAYER',
+      );
+      fallback();
+      return;
+    }
+    _failFast(msg);
   }
 
   void _failFast(String msg) {
     if (_playbackFailed) return;
     _playbackFailed = true;
-    _consecutiveFailures = 0;
     _disposePlayer();
     if (!mounted) return;
     setState(() {
@@ -656,4 +695,11 @@ class _StreamRejectedException implements Exception {
   const _StreamRejectedException();
   @override
   String toString() => '该线路服务器拒绝连接';
+}
+
+/// 云播页地址归一化之后仍然不是媒体流：重试也还是网页，属于无需再试的失败。
+class _UnresolvedPageUrlException implements Exception {
+  const _UnresolvedPageUrlException();
+  @override
+  String toString() => '该线路是网页线路';
 }
