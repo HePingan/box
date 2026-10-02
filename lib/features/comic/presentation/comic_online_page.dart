@@ -587,18 +587,35 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   Future<void> _addToShelf() async {
     final book = _book;
     if (book == null) return;
-    await _library.add(
-      ComicBook(
-        id: book.bookUrl,
-        title: book.name,
-        coverPath: book.cover,
-        sourceType: ComicSourceType.online,
-        onlineUrl: book.bookUrl,
-        author: book.author,
-        createdAt: DateTime.now().millisecondsSinceEpoch,
-      ),
-    );
-    await _refreshShelfFlags();
+    try {
+      await _library.add(
+        ComicBook(
+          id: book.bookUrl,
+          title: book.name,
+          coverPath: book.cover,
+          sourceType: ComicSourceType.online,
+          onlineUrl: book.bookUrl,
+          author: book.author,
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+      await _refreshShelfFlags();
+      if (!mounted) return;
+      // 给一句回执并说清去哪里找：用户点完会去「内容 → 漫画收藏」翻，
+      // 只有按钮变三个字的话，他不知道收藏落到了哪儿（2026-10-02 的报障语境）。
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('已加入书架 · 在「内容 → 漫画收藏」里'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      // 失败要说人话：静默失败会让人以为"点了收藏"，其实没存进去。
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('加入书架失败：${_describe(e)}')),
+      );
+    }
   }
 
   /// 「下载」：选下载范围。

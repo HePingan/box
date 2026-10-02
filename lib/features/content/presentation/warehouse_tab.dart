@@ -28,10 +28,12 @@ class WarehouseTab extends StatefulWidget {
   const WarehouseTab({super.key});
 
   @override
-  State<WarehouseTab> createState() => _WarehouseTabState();
+  State<WarehouseTab> createState() => WarehouseTabState();
 }
 
-class _WarehouseTabState extends State<WarehouseTab>
+/// 状态类故意是**公开**的：`app_shell` 在切到本 tab 时要叫它重读一遍
+/// （见 [WarehouseTabState.refreshOnShow]）。
+class WarehouseTabState extends State<WarehouseTab>
     with AutomaticKeepAliveClientMixin {
   final WarehouseStore _store = WarehouseStore();
 
@@ -170,6 +172,17 @@ class _WarehouseTabState extends State<WarehouseTab>
   }
 
   Future<void> _refresh() async {
+    await _loadAllData();
+  }
+
+  /// 被切到前台时重读一遍三条通道。
+  ///
+  /// 内容页是 keep-alive 的（数据只在 initState 读一次）。用户在别的页面加了收藏
+  /// ——漫画详情页「加入书架」、影视详情页收藏——再切回来看到的是**旧画面**：
+  /// 2026-10-02 用户报的「漫画点击收藏了，没有进到内容页的漫画收藏」就是这个。
+  /// 存储那条路是好的（在线书进书架能原样读回来），缺的就是这一步重读。
+  Future<void> refreshOnShow() async {
+    if (!mounted) return;
     await _loadAllData();
   }
 

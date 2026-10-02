@@ -40,6 +40,13 @@ class MainAppShell extends StatefulWidget {
 
 class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver {
   int _currentIndex = 0;
+
+  /// 「内容」tab 的下标（切到它时要让它重读数据，见 [_onTabShown]）。
+  static const int _contentTabIndex = 2;
+
+  /// 拿「内容」tab 的状态用来叫它重读（它自己是公开的 `WarehouseTabState`）。
+  final GlobalKey<WarehouseTabState> _contentKey =
+      GlobalKey<WarehouseTabState>();
   late final PageController _pageController;
   bool _novelBootstrapPromptShown = false;
 
@@ -54,10 +61,10 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
       icon: Icons.grid_view_rounded,
       widget: ToolPage(),
     ),
-    const _TabItem(
+    _TabItem(
       title: '内容',
       icon: Icons.collections_bookmark_rounded,
-      widget: WarehouseTab(),
+      widget: WarehouseTab(key: _contentKey),
     ),
     const _TabItem(
       title: '扩展',
@@ -167,6 +174,20 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
         }),
       );
     }
+  }
+
+  /// 切到某个 tab：叫它重读一遍自己的数据。
+  ///
+  /// 内容页是 keep-alive 的，数据只在 initState 读一次：用户在别处加了收藏
+  /// （漫画「加入书架」/ 影视收藏）再切回来，看到的会是一直是**旧画面**。
+  /// 2026-10-02 用户报的「漫画点击收藏了，没有进到内容页的漫画收藏」就是这个
+  /// ——存储那条路是好的，缺的就是这次重读。
+  void _onTabShown(int index) {
+    if (index != _contentTabIndex) return;
+    // 等这一帧把页面挂上再叫（PageView 是懒建的，第一次切过去时 State 可能还没有）。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _contentKey.currentState?.refreshOnShow();
+    });
   }
 
   void _onItemTapped(int index) {
@@ -309,6 +330,7 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
                 if (_currentIndex != index) {
                   setState(() => _currentIndex = index);
                 }
+                _onTabShown(index);
               },
               children: _tabs.map((tab) => tab.widget).toList(),
             ),
@@ -331,6 +353,7 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
           if (_currentIndex != index) {
             setState(() => _currentIndex = index);
           }
+          _onTabShown(index);
         },
         children: _tabs.map((tab) => tab.widget).toList(),
       ),
