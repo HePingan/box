@@ -11,11 +11,12 @@
   1. site      手机 UA 取搜索页，200 且里面有卡片（站点活着）
   2. img666    从搜索页里**现取**一个封面地址（图床 :666），200 且是图片
   3. img443    同一路径去掉端口（443）—— 只 666 挂 = 运营商/网关拦端口
-  4. img_ip    抽 3 个边缘 IP，按域名做 SNI 直连取图（只看能通几个）
+  4. img_ip    **全扫**域名解析出的每个边缘 IP（SNI 直连取图）—— 抽样会漏掉
+               "域名里混着一半死 IP"这种真问题（2026-10-02 实测 10 个里 5 个全死）
 
 判据：
   crit = 站点挂了，或 666 与 443 **都**挂
-  warn = 只挂一条，或边缘 IP 通不过半数
+  warn = 只挂一条，或 ≥70% 的边缘 IP 取不到图（全死另判 crit）
   连续 **2 轮**同类才算数（约 20 分钟）—— 单轮抖动发消息就是噪声（去重策略见技能）。
   状态翻转才发飞书：掉下去报一次、恢复报一次，平时一个字都不发。
 
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from concurrent import futures
 import os
 import re
 import socket
@@ -104,8 +106,14 @@ def check_image(url: str) -> dict:
         return {"ok": False, "ms": None, "note": f"{type(e).__name__}: {str(e)[:80]}"}
 
 
-def check_edges(cover: str, sample: int = EDGE_SAMPLE) -> dict:
-    """抽几个边缘 IP：TCP → TLS（**SNI 必须写域名**，写 IP 会得到假失败）→ 发一个 GET 看首行。"""
+def check_edges(cover: str, sample: int = 0) -> dict:
+    """扫域名解析出的**每个**边缘 IP：哪个能取图、哪个不行。
+
+    为什么要全扫（2026-10-02 实测发现）：`tuer.justpic01pt.com` 解析出 10 个 IP，
+    其中 **5 个全死**（185.13.110.21~25 整段，两个端口都连不上），走域名每次新建连接
+    只有 10/15 成功，直连一个通着的 IP 是 15/15。以前"抽 3 个"正好抽到好的，于是
+    这里一直报 3/3 通 —— **真问题被抽样掩盖了**。所以现在全扫，并把死的 IP 写进报告。
+    """
     host = re.sub(r"^https?://", "", cover).split("/")[0].split(":")[0]
     port = 666 if (":" in re.sub(r"^https?://", "", cover).split("/")[0]) else 443
     path = "/" + cover.split("/", 3)[3]
@@ -113,26 +121,48 @@ def check_edges(cover: str, sample: int = EDGE_SAMPLE) -> dict:
         infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
         ips = sorted({i[4][0] for i in infos})
     except Exception as e:                                    # noqa: BLE001
-        return {"ok": False, "note": f"解析失败：{type(e).__name__}: {str(e)[:60]}", "good": 0, "total": 0}
+        return {"ok": False, "note": f"解析失败：{type(e).__name__}: {str(e)[:60]}",
+                "good": 0, "total": 0, "dead_ips": []}
+    if sample:
+        ips = ips[:sample]
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    good, tried = 0, 0
-    for ip in ips[:sample]:
-        tried += 1
+
+    def one(ip: str) -> bool:
         try:
-            s = socket.create_connection((ip, port), timeout=8)
+            s = socket.create_connection((ip, port), timeout=5)
             ss = ctx.wrap_socket(s, server_hostname=host)
             ss.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {UA}\r\n"
                         "Accept: image/*\r\nConnection: close\r\n\r\n").encode())
             head = ss.recv(64).split(b"\r\n", 1)[0].decode("latin1", "replace")
             ss.close()
-            if "200" in head:
-                good += 1
+            return "200" in head
         except Exception:                                     # noqa: BLE001
-            pass
-    return {"ok": good > tried / 2, "note": f"{good}/{tried} 个边缘 IP 能取到图",
-            "good": good, "total": tried}
+            return False
+
+    good_ips, dead_ips = [], []
+    # 并发扫（每个 IP 一次，5 秒超时）：全扫也不能把一轮探针拖到几分钟。
+    workers = min(6, len(ips)) or 1
+    with futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        for ip, ok in zip(ips, pool.map(one, ips)):
+            (good_ips if ok else dead_ips).append(ip)
+    total, good = len(ips), len(good_ips)
+    note = f"{good}/{total} 个边缘 IP 能取到图"
+    if dead_ips:
+        note += f"（取不到：{', '.join(dead_ips[:6])}{' …' if len(dead_ips) > 6 else ''}）"
+    # 判据：全死 = 真出事；大面积（≥70%）死 = 值得提醒（用户那边会"有时能开有时不能"）；
+    # 少数死 = 正常波动，只在 note 里带一句 —— 我们的 App 现在会优先直连通着的 IP。
+    if total == 0:
+        ok = False
+    elif good == 0:
+        ok = False
+    elif good / total < 0.3:
+        ok = False
+    else:
+        ok = True
+    return {"ok": ok, "note": note, "good": good, "total": total,
+            "good_ips": good_ips, "dead_ips": dead_ips}
 
 
 def decide(legs: dict) -> tuple[str, str]:

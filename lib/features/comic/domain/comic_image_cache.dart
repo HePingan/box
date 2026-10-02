@@ -11,6 +11,8 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
+import 'comic_image_edges.dart';
+
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path_provider/path_provider.dart';
@@ -35,11 +37,17 @@ class ComicImageCache {
     this.maxAttempts = defaultMaxAttempts,
     this.maxParallel = defaultMaxParallel,
     this.foregroundReserved = defaultForegroundReserved,
-  }) : headerFor = headerFor ?? _noHeaders,
+    ComicImageEdges? edges,
+  }) : edges = edges ?? ComicImageEdges(),
+       headerFor = headerFor ?? _noHeaders,
        tempDirProvider = tempDirProvider ?? getTemporaryDirectory;
 
   /// 可注入（测试用）：默认走 `HttpClient()`。
   final HttpClient Function()? httpClientFactory;
+
+  /// 图床边缘 IP 记忆：域名解析出的 IP 里混着一半死 IP（2026-10-02 实测），
+  /// 记住哪个通、失败时直连它 —— 详见 [ComicImageEdges]。
+  final ComicImageEdges edges;
 
   /// 可注入（测试用）：缓存根目录，默认系统临时目录。
   final Future<Directory> Function() tempDirProvider;
@@ -155,7 +163,8 @@ class ComicImageCache {
     // 失败是「被掐断」这类**一闪而过**的错时，把原地址再排一次 —— 2026-10-01 用户实测
     // 同样的地址在手机浏览器里能打开，说明那条路本身通，被掐断多半是偶发（图床对同一
     // 来源的短时并发敏感），重试一次往往就成了。
-    final queue = Queue<Uri>()..addAll(_candidatesFor(uri));
+    final queue = Queue<_Candidate>()..addAll(await _candidatesFor(uri));
+    final triedIps = <String>{};
     var attempts = 0;
     ComicImageException? last;
     await _acquire(low: low);
@@ -163,16 +172,34 @@ class ComicImageCache {
       while (queue.isNotEmpty && attempts < maxAttempts) {
         final candidate = queue.removeFirst();
         attempts++;
+        final ip = candidate.ip;
+        if (ip != null) triedIps.add(ip);
         try {
           final file = await _transfer(candidate, url, host, dest: dest);
-          _usedAddress[url] = candidate.toString();
+          _usedAddress[url] = candidate.label;
+          if (ip != null) {
+            // 直连这个 IP 通了：记住它，下次先走它。
+            // 实测：走域名 10/15（随机挑 IP，一半是死的），直连好 IP 15/15。
+            edges.markGood(host, ip).catchError((_) {});
+          }
           return file;
         } on ComicImageException catch (e) {
           // 只有**网络层**的失败才值得换个地址再来一次：HTTP 码、0 字节、地址不合法
           // 再试一百次也是一样的结果。
           if (!e.retryable) rethrow;
           last = e;
-          if (e.transient) queue.add(uri);
+          if (ip != null) {
+            // 直连这个 IP 也没通：标坏（30 分钟内不再用它），再从没试过的 IP 里
+            // 补一个进队列 —— 域名给的那串里一半是死的，换一个试比原地址硬重试有用。
+            edges.markBad(host, ip).catchError((_) {});
+            final more = await edges
+                .fallbackIps(host, tried: triedIps, limit: 1)
+                .catchError((_) => const <String>[]);
+            final fresh = more.isEmpty ? null : more.first;
+            if (fresh != null) queue.add(_Candidate(uri, fresh));
+          } else if (e.transient) {
+            queue.add(_Candidate(uri, null));
+          }
         }
       }
     } finally {
@@ -189,12 +216,42 @@ class ComicImageCache {
 
   static const int defaultMaxAttempts = 3;
 
-  /// 这张图按什么顺序试地址：原地址在前，其次换端口的同一张图（见 [alternatePorts]）。
-  List<Uri> _candidatesFor(Uri uri) {
+  /// 这张图按什么顺序试地址。
+  ///
+  /// 顺序（2026-10-02 按实测重排）：**已知通着的边缘 IP 直连** → 域名原地址 →
+  /// 换端口的域名地址 → 没试过的别的 IP 直连。以前只有后两条，而域名解析出的
+  /// 10 个 IP 里有 5 个是全死的 —— 走域名等于掷硬币（10/15），直连好 IP 是 15/15。
+  Future<List<_Candidate>> _candidatesFor(Uri uri) async {
     final port = uri.hasPort ? uri.port : (uri.scheme == 'https' ? 443 : 80);
     final alt = alternatePorts[port];
-    if (alt == null || alt == port) return <Uri>[uri];
-    return <Uri>[uri, uri.replace(port: alt)];
+    final out = <_Candidate>[];
+
+    String? good;
+    try {
+      good = await edges.preferred(uri.host);
+    } catch (_) {
+      // 记忆读不出来就按老路走（不联网、不报错）。
+    }
+    if (good != null) out.add(_Candidate(uri, good));
+    out.add(_Candidate(uri, null));
+    if (alt != null && alt != port) {
+      final altUri = uri.replace(port: alt);
+      if (good != null) out.add(_Candidate(altUri, good));
+      out.add(_Candidate(altUri, null));
+    }
+    if (good == null) {
+      // 还不知道哪个通：把解析出来、没进坏名单的 IP 排在后面，当"最后再试一格"。
+      List<String> ips = const <String>[];
+      try {
+        ips = await edges.fallbackIps(uri.host, limit: 1);
+      } catch (_) {
+        ips = const <String>[];
+      }
+      for (final ip in ips) {
+        out.add(_Candidate(uri, ip));
+      }
+    }
+    return out;
   }
 
   static String _triedLabel(Uri uri) {
@@ -280,6 +337,18 @@ class ComicImageCache {
     if (low) _runningLow++;
   }
 
+  /// 直连某个 IP 的客户端：`connectionFactory` 只换连接地址，
+  /// URL / SNI / 证书校验仍然都是域名那一套。
+  HttpClient _pinnedClient(String ip) {
+    final client = HttpClient();
+    // 注意别写成级联：lambda 体是表达式，`..` 会被吃进 lambda 里。
+    client.connectionFactory = (Uri uri, String? proxyHost, int? proxyPort) =>
+        Socket.startConnect(ip, uri.port);
+    client.connectionTimeout = connectTimeout;
+    client.idleTimeout = idleTimeout;
+    return client;
+  }
+
   void _release({required bool low}) {
     _running--;
     if (low) _runningLow--;
@@ -301,8 +370,17 @@ class ComicImageCache {
   }
 
   /// 真正下这一张（[uri] 是本次要连的地址，[url] 是**缓存键 / 请求头判据**用的原始地址）。
-  Future<File> _transfer(Uri uri, String url, String host, {File? dest}) async {
-    final client = _http();
+  Future<File> _transfer(
+    _Candidate candidate,
+    String url,
+    String host, {
+    File? dest,
+  }) async {
+    final uri = candidate.uri;
+    final pinned = candidate.ip;
+    // 直连某个边缘 IP：连接层换地址，TLS 仍按域名验证（见 [ComicImageEdges]）。
+    // 这种客户端绑死一个 IP，用完就关 —— 留着没意义。
+    final client = pinned == null ? _http() : _pinnedClient(pinned);
     try {
       final HttpClientRequest req;
       try {
@@ -379,8 +457,9 @@ class ComicImageCache {
         transient: _isTransientNetError(e),
       );
     } finally {
-      // 注意：**不关**这个 client —— 它是整个缓存实例共用的（见 [_http]），
-      // 每张图各开一条新连接正是被图床掐的原因之一。
+      // 共用那个 client **不关**（见 [_http]）：每张图各开一条新连接正是被图床
+      // 掐的原因之一。但**直连 IP 的一次性 client 必须关**（它绑死了某个地址）。
+      if (pinned != null) client.close(force: true);
     }
   }
 
@@ -626,4 +705,21 @@ class ComicImageException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// 一个"要试的地址"：URL + 可选的"直连哪个 IP"。
+///
+/// 直连只换**连接层**地址（见 [ComicImageCache._pinnedClient]）：请求里的 Host、
+/// TLS 的 SNI 与证书校验仍按 URL 里的域名来 —— 因此不是"绕过证书"，是"避开
+/// 域名里那半死不活的 A 记录"。
+class _Candidate {
+  const _Candidate(this.uri, this.ip);
+
+  final Uri uri;
+
+  /// null = 走域名解析（老路）。
+  final String? ip;
+
+  /// 日志/排查用：这张图最后是从哪儿取到的。
+  String get label => ip == null ? uri.toString() : '${uri.toString()} @$ip';
 }

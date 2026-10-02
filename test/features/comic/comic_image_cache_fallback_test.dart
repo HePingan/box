@@ -7,7 +7,9 @@
 // 用**真的本地 HTTP 服务器**验（不 mock socket，要验的正是连接层）。
 import 'dart:io';
 
+import 'package:box/core/storage/cache_store.dart';
 import 'package:box/features/comic/domain/comic_image_cache.dart';
+import 'package:box/features/comic/domain/comic_image_edges.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -24,10 +26,12 @@ void main() {
   ComicImageCache cacheFor(
     Map<int, int> alternatePorts, {
     int maxParallel = 4,
+    ComicImageEdges? edges,
   }) => ComicImageCache(
     tempDirProvider: () async => tmp,
     alternatePorts: alternatePorts,
     maxParallel: maxParallel,
+    edges: edges,
     connectTimeout: const Duration(seconds: 3),
     idleTimeout: const Duration(seconds: 3),
     totalTimeout: const Duration(seconds: 10),
@@ -79,6 +83,92 @@ void main() {
     });
     return s;
   }
+
+  // ── 边缘 IP 直连（2026-10-02 实测：域名解析出的 10 个 IP 里 5 个全死）──
+  //
+  // 走域名每次新建连接是 10/15，直连一个通着的 IP 是 15/15。这里用**真的本地
+  // HTTP 服务器**验：用一个**根本解析不了**的域名（.invalid）当"域名的 A 记录是死的"，
+  // 能不能靠直连拿到图。
+  group('边缘 IP 直连', () {
+    test('学过好 IP：域名解析不了也能直连把图取回来', () async {
+      final paths = <String>[];
+      final srv = await startImageServer(paths: paths);
+      final edges = ComicImageEdges(
+        cacheStore: CacheStore.inMemory('edges_learned'),
+        resolver: (h) async => ['127.0.0.1'],
+      );
+      final cache = cacheFor(const {}, edges: edges);
+      await edges.markGood('img.invalid', '127.0.0.1');
+
+      final f = await cache.fetch('http://img.invalid:${srv.port}/a.jpg');
+
+      expect(await f.readAsString(), body, reason: '直连好 IP 应当拿到完整的图');
+      expect(paths.single, startsWith('GET /a.jpg'));
+      expect(
+        cache.usedAddress('http://img.invalid:${srv.port}/a.jpg'),
+        contains('@127.0.0.1'),
+        reason: '自检要能说清"是直连某个 IP 才通的"',
+      );
+      await srv.close();
+    });
+
+    test('还没学过：试的过程中自己学会（下次直接走它）', () async {
+      final srv = await startImageServer();
+      final edges = ComicImageEdges(
+        cacheStore: CacheStore.inMemory('edges_learn'),
+        resolver: (h) async => ['127.0.0.1'],
+      );
+      final cache = cacheFor(const {}, edges: edges);
+
+      final url = 'http://img.invalid:${srv.port}/b.jpg';
+      expect(await (await cache.fetch(url)).readAsString(), body);
+      expect(
+        await edges.preferred('img.invalid'),
+        '127.0.0.1',
+        reason: '通了就该记住它，下次先走它',
+      );
+
+      // 第二次：直接命中学到的 IP（再取一张，服务器照样回）
+      expect(await (await cache.fetch(url)).readAsString(), body);
+      await srv.close();
+    });
+
+    test('哪个 IP 都不通：如实报错，不假装成功', () async {
+      final edges = ComicImageEdges(
+        cacheStore: CacheStore.inMemory('edges_none'),
+        resolver: (h) async => const <String>[],
+      );
+      final cache = cacheFor(const {}, edges: edges);
+      await expectLater(
+        cache.fetch('http://nowhere.invalid:9/x.jpg'),
+        throwsA(isA<ComicImageException>()),
+      );
+    });
+
+    test('直连过的 IP 坏掉：标坏之后不再先试它', () async {
+      var goodHits = 0;
+      final dead = await startKiller(onHit: () => goodHits++);
+      final edges = ComicImageEdges(
+        cacheStore: CacheStore.inMemory('edges_demote'),
+        resolver: (h) async => ['127.0.0.1'],
+      );
+      final cache = cacheFor(const {}, edges: edges);
+      // 先"学会"一个其实已经不通的 IP
+      await edges.markGood('img.invalid', '127.0.0.1');
+
+      await expectLater(
+        cache.fetch('http://img.invalid:${dead.port}/c.jpg'),
+        throwsA(isA<ComicImageException>()),
+      );
+      expect(goodHits, greaterThanOrEqualTo(1), reason: '先试过它');
+      expect(
+        await edges.preferred('img.invalid'),
+        isNull,
+        reason: '不通的 IP 不能继续当"好 IP"',
+      );
+      await dead.close();
+    });
+  });
 
   test('原端口把连接掐断 → 自动换到备选端口把这张图取回来', () async {
     var badHits = 0;
