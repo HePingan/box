@@ -9,12 +9,19 @@ import 'package:box/core/storage/cache_store.dart';
 /// 阅读器偏好（CacheStore 存，清数据时和书架一起清掉）。
 class ComicReaderPrefs {
   ComicReaderPrefs({CacheStore? cacheStore})
-      : _cache = cacheStore ?? CacheStore(namespace: 'comic_reader_prefs');
+    : _cache = cacheStore ?? CacheStore(namespace: 'comic_reader_prefs');
 
   final CacheStore _cache;
 
   static const String _keyPageTurn = 'page_turn';
   static const String _keyChapterDescending = 'chapter_descending';
+
+  /// 自动加载下一话：滚到本话最后一张，就把下一话接上来（页漫 = 翻到最后一张再往后自动进下一话）。
+  ///
+  /// 默认**开**（2026-10-02 用户：「增加一个自动加载下一话」）。做成开关是因为这动作
+  /// 既要花流量、又会把"读到哪了"往前推 —— 哪天他不想这样，得能关掉；关掉后回到
+  /// 手动点「下一话」，行为跟以前一模一样。
+  static const String _keyAutoNext = 'auto_next_chapter';
 
   /// 「要不要换成竖向连续」那句提示看过没有（只提示一次）。
   ///
@@ -79,5 +86,18 @@ class ComicReaderPrefs {
 
   Future<void> setDimLevel(double value) async {
     await _cache.write(_keyDim, value.clamp(0.0, maxDim).toDouble());
+  }
+
+  /// 自动加载下一话开着没有。
+  ///
+  /// **默认开**（读不出来也当开）：这是用户点名要的行为，装上就该生效 ——
+  /// 跟"读不出来就当最保守"的翻页方式不同，这里保守反而等于没实现。
+  Future<bool> autoNextChapter() async {
+    final raw = await _cache.read(_keyAutoNext);
+    return raw != false;
+  }
+
+  Future<void> setAutoNextChapter(bool value) async {
+    await _cache.write(_keyAutoNext, value);
   }
 }

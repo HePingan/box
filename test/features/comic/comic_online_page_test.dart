@@ -62,12 +62,73 @@ class _FakeOpsSecretStore implements OpsSecretStore {
 
 /// 1×1 的透明 PNG（够 Image.file 解码）。
 const List<int> _pngBytes = [
-  0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
-  0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-  0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
-  0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
-  0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
-  0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+  0x89,
+  0x50,
+  0x4E,
+  0x47,
+  0x0D,
+  0x0A,
+  0x1A,
+  0x0A,
+  0x00,
+  0x00,
+  0x00,
+  0x0D,
+  0x49,
+  0x48,
+  0x44,
+  0x52,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x08,
+  0x06,
+  0x00,
+  0x00,
+  0x00,
+  0x1F,
+  0x15,
+  0xC4,
+  0x89,
+  0x00,
+  0x00,
+  0x00,
+  0x0A,
+  0x49,
+  0x44,
+  0x41,
+  0x54,
+  0x78,
+  0x9C,
+  0x63,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x05,
+  0x00,
+  0x01,
+  0x0D,
+  0x0A,
+  0x2D,
+  0xB4,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x49,
+  0x45,
+  0x4E,
+  0x44,
+  0xAE,
+  0x42,
+  0x60,
+  0x82,
 ];
 
 /// 假图片缓存：直接给一个真 PNG 文件（不下载），并记下取过哪些图。
@@ -81,7 +142,12 @@ class _FakeCache extends ComicImageCache {
   final List<String> fetched = <String>[];
 
   @override
-  Future<File> fetch(String url, {bool lowPriority = false, File? dest, int? maxAttempts}) async {
+  Future<File> fetch(
+    String url, {
+    bool lowPriority = false,
+    File? dest,
+    int? maxAttempts,
+  }) async {
     fetched.add(url);
     if (fetched.length <= failFirstTimes) {
       throw ComicImageException(
@@ -157,6 +223,7 @@ Widget _host(
   ComicSource? source,
   String? relayToken,
   String? initialBookUrl,
+  ComicReaderPrefs? readerPrefs,
 }) {
   return MaterialApp(
     home: Scaffold(
@@ -177,9 +244,11 @@ Widget _host(
                   libraryStore: ComicLibraryStore(
                     cacheStore: CacheStore.inMemory('host_shelf'),
                   ),
-                  readerPrefs: ComicReaderPrefs(
-                    cacheStore: CacheStore.inMemory('host_prefs'),
-                  ),
+                  readerPrefs:
+                      readerPrefs ??
+                      ComicReaderPrefs(
+                        cacheStore: CacheStore.inMemory('host_prefs'),
+                      ),
                   progressStore: ComicOnlineProgressStore(
                     cacheStore: CacheStore.inMemory('host_progress'),
                   ),
@@ -249,7 +318,9 @@ void main() {
         '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
         '$card|${source.searchRules['author']}': ['尾田荣一郎'],
         '$container|${source.tocRules['chapterName']}': ['第1186话'],
-        '$container|${source.tocRules['chapterUrl']}': ['/user/page_direct?slot=1186'],
+        '$container|${source.tocRules['chapterUrl']}': [
+          '/user/page_direct?slot=1186',
+        ],
       },
       values: {
         source.bookInfoRules['name']!: ['航海王'],
@@ -304,8 +375,7 @@ void main() {
     expect(find.textContaining('书链一条都没取到'), findsOneWidget);
   });
 
-  testWidgets('搜索失败时给「自检这个源」，带的是**当前这份源**（用户只有手机，这是他拿结论的路）',
-      (tester) async {
+  testWidgets('搜索失败时给「自检这个源」，带的是**当前这份源**（用户只有手机，这是他拿结论的路）', (tester) async {
     final source = _seed(); // 包子漫画（优）—— 内置清单第二份，"预选"和"默认第一份"能区分开
     final card = source.searchRules['bookList']!;
     final target = FakeComicTarget(
@@ -343,8 +413,11 @@ void main() {
     final target = FakeComicTarget(
       counts: {_seed().searchRules['bookList']!: 1},
       perElement: {
-        '${_seed().searchRules['bookList']}|${_seed().searchRules['name']}': ['甲'],
-        '${_seed().searchRules['bookList']}|${_seed().searchRules['bookUrl']}': ['/comic/a'],
+        '${_seed().searchRules['bookList']}|${_seed().searchRules['name']}': [
+          '甲',
+        ],
+        '${_seed().searchRules['bookList']}|${_seed().searchRules['bookUrl']}':
+            ['/comic/a'],
       },
     );
     String? passedName;
@@ -403,9 +476,13 @@ void main() {
         '$card|${source.searchRules['name']}': ['海贼王'],
         '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
         '$container|${source.tocRules['chapterName']}': ['第1186话'],
-        '$container|${source.tocRules['chapterUrl']}': ['/user/page_direct?slot=1186'],
+        '$container|${source.tocRules['chapterUrl']}': [
+          '/user/page_direct?slot=1186',
+        ],
       },
-      values: {source.bookInfoRules['name']!: ['航海王']},
+      values: {
+        source.bookInfoRules['name']!: ['航海王'],
+      },
       jsSegment: '',
     );
 
@@ -431,8 +508,14 @@ void main() {
 
   testWidgets('分类浏览：顶部列出分类，点一下按分类出书（不用打字）', (tester) async {
     final cats = [
-      {'title': '全部', 'url': 'https://cn.baozimhcn.com/api/list?type=all&page={{page}}'},
-      {'title': '恋爱', 'url': 'https://cn.baozimhcn.com/api/list?type=lianai&page={{page}}'},
+      {
+        'title': '全部',
+        'url': 'https://cn.baozimhcn.com/api/list?type=all&page={{page}}',
+      },
+      {
+        'title': '恋爱',
+        'url': 'https://cn.baozimhcn.com/api/list?type=lianai&page={{page}}',
+      },
     ];
     const allUrl = 'https://cn.baozimhcn.com/api/list?type=all&page=1';
     final target = FakeComicTarget(
@@ -447,8 +530,9 @@ void main() {
         }),
       },
     );
-    final png = File('${Directory.systemTemp.path}/comic_online_cat_${DateTime.now().microsecondsSinceEpoch}.png')
-      ..writeAsBytesSync(_pngBytes);
+    final png = File(
+      '${Directory.systemTemp.path}/comic_online_cat_${DateTime.now().microsecondsSinceEpoch}.png',
+    )..writeAsBytesSync(_pngBytes);
 
     await tester.pumpWidget(_page(target, _FakeCache(png)));
     await _settle(tester);
@@ -487,8 +571,9 @@ void main() {
         source.bookInfoRules['author']!: ['尾田荣一郎'],
       },
     );
-    final png = File('${Directory.systemTemp.path}/comic_online_init_${DateTime.now().microsecondsSinceEpoch}.png')
-      ..writeAsBytesSync(_pngBytes);
+    final png = File(
+      '${Directory.systemTemp.path}/comic_online_init_${DateTime.now().microsecondsSinceEpoch}.png',
+    )..writeAsBytesSync(_pngBytes);
 
     await tester.pumpWidget(
       _page(
@@ -526,8 +611,9 @@ void main() {
     final lib = ComicLibraryStore(
       cacheStore: CacheStore.inMemory('online_page_shelf'),
     );
-    final png = File('${Directory.systemTemp.path}/comic_online_shelf_${DateTime.now().microsecondsSinceEpoch}.png')
-      ..writeAsBytesSync(_pngBytes);
+    final png = File(
+      '${Directory.systemTemp.path}/comic_online_shelf_${DateTime.now().microsecondsSinceEpoch}.png',
+    )..writeAsBytesSync(_pngBytes);
 
     await tester.pumpWidget(_page(target, _FakeCache(png), libraryStore: lib));
     await _settle(tester);
@@ -578,8 +664,9 @@ void main() {
         index: 2,
       ),
     );
-    final png = File('${Directory.systemTemp.path}/comic_online_resume_${DateTime.now().microsecondsSinceEpoch}.png')
-      ..writeAsBytesSync(_pngBytes);
+    final png = File(
+      '${Directory.systemTemp.path}/comic_online_resume_${DateTime.now().microsecondsSinceEpoch}.png',
+    )..writeAsBytesSync(_pngBytes);
 
     await tester.pumpWidget(
       _page(target, _FakeCache(png), progressStore: progress),
@@ -615,12 +702,11 @@ void main() {
     final prefs = ComicReaderPrefs(
       cacheStore: CacheStore.inMemory('online_page_prefs_test'),
     );
-    final png = File('${Directory.systemTemp.path}/comic_online_turn_${DateTime.now().microsecondsSinceEpoch}.png')
-      ..writeAsBytesSync(_pngBytes);
+    final png = File(
+      '${Directory.systemTemp.path}/comic_online_turn_${DateTime.now().microsecondsSinceEpoch}.png',
+    )..writeAsBytesSync(_pngBytes);
 
-    await tester.pumpWidget(
-      _page(target, _FakeCache(png), readerPrefs: prefs),
-    );
+    await tester.pumpWidget(_page(target, _FakeCache(png), readerPrefs: prefs));
     await _settle(tester);
     await tester.enterText(find.byType(TextField).first, '海贼');
     await tester.tap(find.text('搜索'));
@@ -660,8 +746,9 @@ void main() {
         '<a href="/comic/haizeiwang"><amp-img src="https://c/a.jpg"></amp-img></a>'
         '<div class="comics-card__title text-truncate">海贼王</div></div></body></html>';
     final target = FakeComicTarget(responses: {searchUrl: html});
-    final png = File('${Directory.systemTemp.path}/comic_online_path_${DateTime.now().microsecondsSinceEpoch}.png')
-      ..writeAsBytesSync(_pngBytes);
+    final png = File(
+      '${Directory.systemTemp.path}/comic_online_path_${DateTime.now().microsecondsSinceEpoch}.png',
+    )..writeAsBytesSync(_pngBytes);
 
     await tester.pumpWidget(_page(target, _FakeCache(png)));
     await _settle(tester);
@@ -1049,7 +1136,8 @@ void main() {
         },
         // 一话 5 张：刚进来还在第 1 张，离末尾还差 4 张
         jsSegment: [
-          for (var i = 1; i <= 5; i++) '<img src="https://s1.bzcdn.net/a/$i.jpg">',
+          for (var i = 1; i <= 5; i++)
+            '<img src="https://s1.bzcdn.net/a/$i.jpg">',
         ].join(),
       );
 
@@ -1105,7 +1193,9 @@ void main() {
           '$card|${source.searchRules['name']}': ['海贼王'],
           '$card|${source.searchRules['bookUrl']}': ['/comic/haizeiwang'],
           '$container|${source.tocRules['chapterName']}': ['第1话'],
-          '$container|${source.tocRules['chapterUrl']}': ['/user/page_direct?slot=11'],
+          '$container|${source.tocRules['chapterUrl']}': [
+            '/user/page_direct?slot=11',
+          ],
         },
         values: {
           source.bookInfoRules['name']!: ['航海王'],
@@ -1298,6 +1388,109 @@ void main() {
         reason: '离开阅读器要把状态栏还回来',
       );
     });
+
+    // ── 自动加载下一话（2026-10-02 用户：「增加一个自动加载下一话」）──
+    testWidgets('竖向连续滚到本话末尾，下一话自己接上来', (tester) async {
+      final target = threeChapters();
+      await openHost(tester, _host(target, _FakeCache(png)));
+      await openChapterAt(tester, '第1话');
+      expect(find.text('第2话'), findsNothing, reason: '还没滚到本话末尾，不该已经接上第 2 话');
+
+      // 竖向连续没有"翻页"事件，滚动是唯一的进度信号 —— 手指往下滑，滚到本话末尾。
+      // 这个假图是 1x1 且不完整（测试里只保证"有 Image 这个控件"），高度接近 0 ——
+      // 把视口调矮，让"列表末尾那条分隔"本身就超出一屏，滚动才真的能发生。
+      tester.view.physicalSize = const Size(800, 120);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pump();
+      await tester.drag(find.byType(ListView), const Offset(0, -200));
+      await _settle(tester);
+      // 接话是异步的：等到"那一话真的被取"再断言（等固定帧数在全量跑时会不稳）。
+      await waitForRequest(tester, target, 'slot=22');
+      await _settle(tester);
+
+      expect(find.text('第2话'), findsWidgets, reason: '接上之后要在两话之间插一条分隔，并写上话名');
+      expect(
+        find.text('已经是最后一话了'),
+        findsNothing,
+        reason: '第 1 话后面还有话，不能说"已经是最后一话"',
+      );
+    });
+
+    testWidgets('已经是最后一话：不接，末尾写清楚"是最后一话"', (tester) async {
+      final target = threeChapters();
+      await openHost(tester, _host(target, _FakeCache(png)));
+      await openChapterAt(tester, '第3话');
+
+      await tester.drag(find.byType(ListView), const Offset(0, -1200));
+      await _settle(tester);
+
+      expect(find.text('已经是最后一话了'), findsOneWidget);
+      expect(
+        find.textContaining('接下一话「'),
+        findsNothing,
+        reason: '没有下一话就别摆一个点了没反应的按钮',
+      );
+    });
+
+    testWidgets('关掉「自动加载下一话」：不会自己去取下一话', (tester) async {
+      final prefs = ComicReaderPrefs(
+        cacheStore: CacheStore.inMemory('auto_next_off_test'),
+      );
+      await prefs.setAutoNextChapter(false);
+      final target = threeChapters();
+      await openHost(
+        tester,
+        _host(target, _FakeCache(png), readerPrefs: prefs),
+      );
+      await openChapterAt(tester, '第1话');
+
+      await tester.drag(find.byType(ListView), const Offset(0, -1200));
+      await _settle(tester);
+
+      expect(
+        find.textContaining('自动加载下一话已关'),
+        findsOneWidget,
+        reason: '关掉之后末尾要说明"是关掉的"，不是"接不上"',
+      );
+      expect(find.text('第2话'), findsNothing, reason: '关掉了就不该把第 2 话接上来');
+    });
+
+    testWidgets('页漫：最后一张再往后翻 = 自动进下一话（不用手动点「下一话」）', (tester) async {
+      final prefs = ComicReaderPrefs(
+        cacheStore: CacheStore.inMemory('auto_next_pageturn_test'),
+      );
+      await prefs.setPageTurn(true);
+      await prefs.setPageTurnHintSeen();
+      final target = threeChapters();
+      await openHost(
+        tester,
+        _host(target, _FakeCache(png), readerPrefs: prefs),
+      );
+      await openChapterAt(tester, '第1话');
+      expect(find.byType(PageView), findsOneWidget, reason: '左右翻页模式');
+
+      // 点右侧 1/3：翻一张。第 1 话只有一张，再往后翻就是"进下一话"。
+      await tester.tapAt(const Offset(700, 300));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      // 那句话只挂 1.2 秒 —— 要在它还在的时候看（后面 _settle 推的是假时钟，会把它推没）。
+      expect(
+        find.textContaining('已进入「第2话」'),
+        findsOneWidget,
+        reason: '整屏换了一话，要给一句话说清楚为什么',
+      );
+      // 换话本身是异步的：等到"第 2 话真的被取"再断言。
+      await waitForRequest(tester, target, 'slot=22');
+      await _settle(tester);
+
+      expect(find.text('第2话'), findsWidgets, reason: '顶栏要变成正在读的第 2 话');
+      expect(
+        find.text('已经是最后一张了（可点「下一话」）'),
+        findsNothing,
+        reason: '有下一话时不该让他再去点「下一话」',
+      );
+    });
   });
 
   // ── 画面亮度（压暗一层，2026-10-02）──
@@ -1328,12 +1521,8 @@ void main() {
       required _FakeCache cache,
       required String prefsKey,
     }) async {
-      final prefs = ComicReaderPrefs(
-        cacheStore: CacheStore.inMemory(prefsKey),
-      );
-      await tester.pumpWidget(
-        _page(oneChapter(), cache, readerPrefs: prefs),
-      );
+      final prefs = ComicReaderPrefs(cacheStore: CacheStore.inMemory(prefsKey));
+      await tester.pumpWidget(_page(oneChapter(), cache, readerPrefs: prefs));
       await _settle(tester);
       await tester.enterText(find.byType(TextField).first, '海贼');
       await tester.tap(find.text('搜索'));
@@ -1345,9 +1534,9 @@ void main() {
       return prefs;
     }
 
-    File tmpPng(String tag) =>
-        File('${Directory.systemTemp.path}/comic_dim_${tag}_${DateTime.now().microsecondsSinceEpoch}.png')
-          ..writeAsBytesSync(_pngBytes);
+    File tmpPng(String tag) => File(
+      '${Directory.systemTemp.path}/comic_dim_${tag}_${DateTime.now().microsecondsSinceEpoch}.png',
+    )..writeAsBytesSync(_pngBytes);
 
     testWidgets('「亮度」面板可以调暗，档位记在本机', (tester) async {
       final prefs = await openReader(
@@ -1404,11 +1593,7 @@ void main() {
       await _settle(tester);
 
       expect(find.textContaining('亮度 '), findsNothing, reason: '上下滑不该弹出亮度提示');
-      expect(
-        await prefs.dimLevel(),
-        0,
-        reason: '上下滑不许改亮度（用户明确说过：上下滑是他的读的动作）',
-      );
+      expect(await prefs.dimLevel(), 0, reason: '上下滑不许改亮度（用户明确说过：上下滑是他的读的动作）');
     });
 
     testWidgets('页漫里提示一次「换成竖向连续」：点一下就切过去，之后不再出现', (tester) async {
@@ -1443,7 +1628,9 @@ void main() {
       );
       await prefs.setPageTurn(true);
       await prefs.setPageTurnHintSeen();
-      await tester.pumpWidget(_page(oneChapter(), _FakeCache(tmpPng('seen')), readerPrefs: prefs));
+      await tester.pumpWidget(
+        _page(oneChapter(), _FakeCache(tmpPng('seen')), readerPrefs: prefs),
+      );
       await _settle(tester);
       await tester.enterText(find.byType(TextField).first, '海贼');
       await tester.tap(find.text('搜索'));
@@ -1467,11 +1654,7 @@ void main() {
       await tester.dragFrom(const Offset(200, 500), const Offset(0, -140));
       await tester.pump();
 
-      expect(
-        await prefs.dimLevel(),
-        0,
-        reason: '条漫的上下滑是滚动，抢了就成"滑不动反而变暗"',
-      );
+      expect(await prefs.dimLevel(), 0, reason: '条漫的上下滑是滚动，抢了就成"滑不动反而变暗"');
       expect(find.textContaining('亮度'), findsNothing);
     });
 
@@ -1545,7 +1728,10 @@ void main() {
       expect(find.byType(SingleChildScrollView), findsOneWidget);
 
       // 页内上下滑：页码不该变（滚动被内层接住，不会翻到下一张）。
-      await tester.drag(find.byType(SingleChildScrollView), const Offset(0, -120));
+      await tester.drag(
+        find.byType(SingleChildScrollView),
+        const Offset(0, -120),
+      );
       await _settle(tester);
       expect(find.text('1 / 1 张'), findsOneWidget, reason: '页内滚不等于翻页');
     });
@@ -1593,8 +1779,12 @@ void main() {
           );
         }),
       ),
-      libraryStore: ComicLibraryStore(cacheStore: CacheStore.inMemory('wiring_lib')),
-      progressStore: ComicOnlineProgressStore(cacheStore: CacheStore.inMemory('wiring_prog')),
+      libraryStore: ComicLibraryStore(
+        cacheStore: CacheStore.inMemory('wiring_lib'),
+      ),
+      progressStore: ComicOnlineProgressStore(
+        cacheStore: CacheStore.inMemory('wiring_prog'),
+      ),
       cacheStore: CacheStore.inMemory('wiring_sync'),
     );
 

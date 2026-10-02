@@ -51,6 +51,14 @@ const Object _kSelfCheckItem = 'comicSourceSelfCheck';
 /// 那几张图下完。设成 0（读到最后一张才取）就来不及了 —— 那时候用户已经在点了。
 const int _kPrefetchTriggerPages = 2;
 
+/// 竖向连续里"快到底了"的距离：滚到离末尾这么近就把下一话接上来。
+/// 取成 1500 是"一屏半"左右 —— 用户还在读最后几张时请求就已经回来了，
+/// 接着往下滑是无缝的；再早去接会白花流量（他可能这次就读这一话）。
+const double _kAutoNextTriggerPx = 1500;
+
+/// 一次最多自动接几话：一话实测 209 张，接太多是拿流量和内存赌他不会读那么远。
+const int _kMaxAutoAppend = 3;
+
 /// 读中转要用的**设备令牌**（与只读运维 API 共用同一份）。
 ///
 /// **取哪一台的令牌 = 中转服务真正跑在哪台**（175，`builtInTencent175Id`）。
@@ -305,6 +313,23 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   ComicChapterRef? _chapter;
   List<String> _images = const [];
   int _imageIndex = 0;
+
+  /// 自动接上来的**下一话**（竖向连续里滚到本话末尾就接，见 [_appendNext]）。
+  ///
+  /// 为什么不直接拼进 `_images`：`_images` 是"当前这一话"，取图、逐批显示、预取
+  /// 三种逻辑都围着它转；拼进去会把这三种逻辑一起带歪（预取的"下一话"会变成自己、
+  /// 逐批显示会把上一话的张数当成本话的）。所以显示层另用一个"整条列表"视图
+  /// （[_flatItems]）把"当前话 + 已接上的几话"看成一串，取图逻辑一行都不用改。
+  List<_AppendedChapter> _appended = const [];
+
+  /// 正在接下一话：滚动会反复触发，得挡住重复请求。
+  bool _appending = false;
+
+  /// 接下一话失败的原因（写在列表末尾那条分隔上 —— 不弹窗、不打断正在读的这一话）。
+  String _appendError = '';
+
+  /// 自动加载下一话（默认开，可在亮度面板里关）。关掉 = 回到手动点「下一话」。
+  bool _autoNext = true;
 
   /// 底部控制栏是否显示。默认显示几秒后自己收起；点画面任意处可再叫出来 / 收起来。
   /// （2026-10-02 用户报"最下面这个影响观看，不能隐藏" —— 一直压着画面确实碍事。）
@@ -675,20 +700,24 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     bool v = false;
     double dim = 0;
     bool hintSeen = true;
+    bool autoNext = true;
     try {
       v = await _prefs.pageTurn();
       dim = await _prefs.dimLevel();
       hintSeen = await _prefs.pageTurnHintSeen();
+      autoNext = await _prefs.autoNextChapter();
     } catch (_) {
       v = false;
       dim = 0;
       hintSeen = true;
+      autoNext = true;
     }
     if (!mounted) return;
     setState(() {
       _pageTurn = v;
       _dim = dim;
       _pageTurnHintSeen = hintSeen;
+      _autoNext = autoNext;
       // 只在「左右翻页」时提示一次：竖向连续本来就是他要的，没什么可切的。
       _showPageTurnHint = v && !hintSeen;
     });
@@ -816,6 +845,20 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
                     ),
                   ],
                 ),
+                const Divider(height: 1),
+                // 自动加载下一话：用户点名要的（2026-10-02「增加一个自动加载下一话」），
+                // 默认开；做成开关是因为它要花流量、还会把"读到哪了"往前推。
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _autoNext,
+                  title: const Text('自动加载下一话'),
+                  subtitle: const Text('滚到本话最后一张，自动把下一话接上来（页漫：翻到最后再往后 = 进下一话）'),
+                  onChanged: (v) {
+                    setState(() => _autoNext = v);
+                    setSheetState(() {});
+                    unawaited(_prefs.setAutoNextChapter(v));
+                  },
+                ),
               ],
             ),
           ),
@@ -941,9 +984,9 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     } catch (e) {
       // 失败要说人话：静默失败会让人以为"点了收藏"，其实没存进去。
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('加入书架失败：${_describe(e)}')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('加入书架失败：${_describe(e)}')));
     }
   }
 
@@ -1067,6 +1110,12 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     void enterReader(List<String> images, {required bool partial}) {
       if (!mounted) return;
       setState(() {
+        // 换话就把自动接上来的那几话丢掉：新的一话要接的是**它自己的**下一话，
+        // 而且"哪些话已经接过了"也得跟着清空（否则接话去重会误判）。
+        if (_chapter?.url != chapter.url) {
+          _appended = const [];
+          _appendError = '';
+        }
         _chapter = chapter;
         _images = images;
         if (!levelAdded) {
@@ -1165,7 +1214,11 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   /// 进度随手记；失败不影响阅读（不弹错、不中断，下次再存）。
   void _saveProgress(int index) {
     final book = _book;
-    final chapter = _chapter;
+    // 进度要落在**这一张所属的那一话**上，而且是"本话第几张"：
+    // 自动接话之后 index 是整条列表里的位置，直接存会把下一话的位置记成当前话的。
+    final item = _itemAt(index);
+    final chapter = item?.chapter ?? _chapter;
+    final inChapter = item?.indexInChapter ?? index;
     if (book == null || chapter == null) return;
     _progress
         .save(
@@ -1173,12 +1226,12 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             bookUrl: book.bookUrl,
             chapterUrl: chapter.url,
             chapterTitle: chapter.title,
-            index: index,
+            index: inChapter,
           ),
         )
         .catchError((_) {});
     unawaited(_syncSoon());
-    _maybePrefetchNext(book, chapter, index);
+    _maybePrefetchNext(book, chapter, inChapter);
   }
 
   /// 快读到本话末尾时，顺手把**下一话**开头几张图取回来缓存。
@@ -1211,16 +1264,112 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     setState(() => _imageIndex = index);
   }
 
-  /// 上一话 / 下一话。
+  /// 显示用的**整条列表**：当前话的图 + 自动接上来的那几话的图。
   ///
-  /// 目录是**正序**的（index 大的更晚）：实测 `https://yemancomic.com/book/7530/`
-  /// 页面里第 1 条是「1卷」、最后一条是「第1193话」，规则引擎按文档顺序取，所以
-  /// App 拿到的 `book.chapters` 也是第 1 话在前。
-  ///
-  /// 这里曾经按"倒序"写反过：左边那颗按钮标着「下一话」却打开上一话（2026-09-30 修）。
-  ComicChapterRef? _neighbor(int delta) {
-    final book = _book;
+  /// 每一项都自带"我属于哪一话、是本话第几张"—— 页码、进度、离线取图、
+  /// 章节分隔都靠它（自动接话之后，"第几张"必须按**本话**算，不能按整条算）。
+  List<_ReaderItem> get _flatItems {
+    final out = <_ReaderItem>[];
     final chapter = _chapter;
+    if (chapter != null) {
+      for (var i = 0; i < _images.length; i++) {
+        out.add(
+          _ReaderItem(
+            url: _images[i],
+            chapter: chapter,
+            indexInChapter: i,
+            chapterImageCount: _images.length,
+            chapterStart: i == 0,
+          ),
+        );
+      }
+    }
+    for (final a in _appended) {
+      for (var i = 0; i < a.images.length; i++) {
+        out.add(
+          _ReaderItem(
+            url: a.images[i],
+            chapter: a.chapter,
+            indexInChapter: i,
+            chapterImageCount: a.images.length,
+            chapterStart: i == 0,
+          ),
+        );
+      }
+    }
+    return out;
+  }
+
+  int get _flatCount =>
+      _images.length + _appended.fold<int>(0, (s, a) => s + a.images.length);
+
+  /// 眼下这一张属于哪一话。
+  ///
+  /// 自动接过话之后 `_chapter`（"进来的那一话"）不再等于"正在读的那一话"：
+  /// 页码文案、顶栏标题、上一话/下一话都得看这个，不能再看 `_chapter`。
+  ComicChapterRef? get _activeChapter =>
+      _itemAt(_imageIndex)?.chapter ?? _chapter;
+
+  /// 快读到本话末尾时把下一话接上来（竖向连续）。
+  ///
+  /// 为什么要"接成一整条"而不是读完自动跳转：竖向连续里用户的手一直在往下滑，
+  /// 到末尾突然整屏换一话，会以为滑错了；接在下面接着滑才顺（2026-10-02 用户
+  /// 「增加一个自动加载下一话」）。
+  Future<void> _appendNext() async {
+    if (!_autoNext || _appending) return;
+    // 最多接 3 话：一话实测 209 张，接太多是拿流量和内存赌他不会读那么远。
+    if (_appended.length >= _kMaxAutoAppend) return;
+    final next = _neighborFrom(_activeChapter, 1);
+    if (next == null) return; // 已经是最后一话
+    if (_appended.any((a) => a.chapter.url == next.url)) return;
+    setState(() {
+      _appending = true;
+      _appendError = '';
+    });
+    try {
+      // 逐批接：一话实测 209 张、要 21 次往返。等整话取完再插进去，用户滑到底
+      // 会先干等几秒（本话取图踩过同一个坑：整话取完再显示 = 一直转圈）。
+      var got = 0;
+      final images = await _imagesFor(
+        next,
+        onPartial: (partial) {
+          if (!mounted || partial.isEmpty) return;
+          if (partial.length <= got) return; // 只有变多了才刷新
+          got = partial.length;
+          setState(() {
+            // 按话名去重后再拼：这样"换过话 / 被清空"也不会把旧的那份又加回来。
+            _appended = [
+              ..._appended.where((a) => a.chapter.url != next.url),
+              _AppendedChapter(chapter: next, images: partial),
+            ];
+          });
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _appended = [
+          ..._appended.where((a) => a.chapter.url != next.url),
+          _AppendedChapter(chapter: next, images: images),
+        ];
+      });
+    } catch (e) {
+      // 接不上不该打断正在读的这一话：把原因写进末尾那条分隔里。
+      if (!mounted) return;
+      setState(() => _appendError = '「${next.title}」没取到：$e');
+    } finally {
+      if (mounted) setState(() => _appending = false);
+    }
+  }
+
+  _ReaderItem? _itemAt(int index) {
+    final items = _flatItems;
+    if (items.isEmpty) return null;
+    return items[index.clamp(0, items.length - 1)];
+  }
+
+  /// 从**指定的一话**数相邻话（自动接话之后"当前话"是算出来的，不能再看字段）。
+  ComicChapterRef? _neighborFrom(ComicChapterRef? chapter, int delta) {
+    final book = _book;
     if (book == null || chapter == null) return null;
     final i = book.chapters.indexWhere((c) => c.url == chapter.url);
     if (i < 0) return null;
@@ -1228,6 +1377,15 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
     if (j < 0 || j >= book.chapters.length) return null;
     return book.chapters[j];
   }
+
+  /// 上一话 / 下一话。
+  ///
+  /// 目录是**正序**的（index 大的更晚）：实测 `https://yemancomic.com/book/7530/`
+  /// 页面里第 1 条是「1卷」、最后一条是「第1193话」，规则引擎按文档顺序取，所以
+  /// App 拿到的 `book.chapters` 也是第 1 话在前。
+  ///
+  /// 这里曾经按"倒序"写反过：左边那颗按钮标着「下一话」却打开上一话（2026-09-30 修）。
+  ComicChapterRef? _neighbor(int delta) => _neighborFrom(_activeChapter, delta);
 
   @override
   Widget build(BuildContext context) {
@@ -1753,10 +1911,10 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             // 上下滑在任何模式下都不再改亮度。
             // 放大用**长按**，不用双击：双击识别器会把单击拖慢 ~300ms（实测），
             // 而页漫"点一下就翻"是手感的命门。长按只在按住 500ms 后才抢手势。
-            onLongPress: () => _openZoom(_images[_imageIndex]),
+            onLongPress: () => _openZoom(_itemAt(_imageIndex)?.url ?? ''),
             child: PageView.builder(
               controller: _pageController,
-              itemCount: _images.length,
+              itemCount: _flatCount,
               onPageChanged: (i) {
                 setState(() => _imageIndex = i);
                 _saveProgress(i);
@@ -1767,17 +1925,23 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
               // 上下各留一条等高的空白（实测约 15% 屏高，用户看到的就是「最上面空太多了」，
               // 2026-10-02 报障）。现在空白挤到下面去 —— 那儿本来就压着底部控制栏，不碍事；
               // 一页比一屏还高（长条页）时**页内可以上下滚**，不再缩成两边留白，也不裁掉下半张。
-              itemBuilder: (context, i) => SingleChildScrollView(
-                child: _CachedImage(
-                  url: _images[i],
-                  cache: _cache,
-                  fit: BoxFit.fitWidth,
-                  onDark: true,
-                  offline: _offline,
-                  offlineBookUrl: _book?.bookUrl ?? '',
-                  offlineChapterUrl: _chapter?.url ?? '',
-                ),
-              ),
+              itemBuilder: (context, i) {
+                final it = _itemAt(i);
+                if (it == null) return const SizedBox.shrink();
+                // 页漫不插"第 X 话"分隔（一屏就是一页，插一条会挡掉第一张的顶部）；
+                // 换话那一下用一句 toast 说清楚（见 `_turnPage`）。
+                return SingleChildScrollView(
+                  child: _CachedImage(
+                    url: it.url,
+                    cache: _cache,
+                    fit: BoxFit.fitWidth,
+                    onDark: true,
+                    offline: _offline,
+                    offlineBookUrl: _book?.bookUrl ?? '',
+                    offlineChapterUrl: it.chapter.url,
+                  ),
+                );
+              },
             ),
           ),
           // 后面的图还在取：顶部挂一条进度，别让人以为是卡住了。
@@ -1809,6 +1973,9 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         ],
       );
     }
+    // 一次算好整条列表（当前话 + 已接上的话）：itemBuilder 里再算就是每张都重算一遍。
+    final items = _flatItems;
+    final count = items.length;
     return Stack(
       children: [
         // 同上：竖向连续也是黑底（图片是通栏的，空白只在最后一页下面）。
@@ -1816,21 +1983,26 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: _toggleChrome,
-          onLongPress: () => _openZoom(_images[_imageIndex]),
+          onLongPress: () => _openZoom(_itemAt(_imageIndex)?.url ?? ''),
           child: NotificationListener<ScrollNotification>(
             onNotification: (n) {
-              final count = _images.length;
               if (count == 0) return false;
               final max = n.metrics.maxScrollExtent;
+              // 快到底了就把下一话接上来（自动加载下一话）：
+              // 在**这里**触发是因为竖向连续没有"翻页"事件，滚动是唯一可靠的进度信号。
+              if (max > 0 && n.metrics.pixels >= max - _kAutoNextTriggerPx) {
+                unawaited(_appendNext());
+              }
               // 折算出"滚到第几张"：顶部=第 1 张，底部=最后一张。
               // 老写法 `per = max / count` 在**底部**会算出 count（越界一位），
               // 页面就写成 "210 / 209 张" 这种；用 (count-1) 并夹住范围才两头都对
               // （2026-10-02 用户报"最下面页数显示不对"）。
               final idx = max <= 0
                   ? 0
-                  : ((n.metrics.pixels / max) * (count - 1))
-                        .round()
-                        .clamp(0, count - 1);
+                  : ((n.metrics.pixels / max) * (count - 1)).round().clamp(
+                      0,
+                      count - 1,
+                    );
               if (idx != _imageIndex) {
                 setState(() => _imageIndex = idx);
                 _saveProgress(idx);
@@ -1839,16 +2011,33 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             },
             child: ListView.builder(
               controller: _scrollController,
-              itemCount: _images.length,
-              itemBuilder: (context, i) => _PageImage(
-                url: _images[i],
-                cache: _cache,
-                offline: _offline,
-                offlineBookUrl: _book?.bookUrl ?? '',
-                offlineChapterUrl: _chapter?.url ?? '',
-                // 预取后面两张：翻页时基本就是本地读盘了。
-                prefetch: _images.skip(i + 1).take(2).toList(),
-              ),
+              // 末尾多一项：那条"接着接下一话"的分隔（正在接 / 没取到 / 到底是最后一话）。
+              itemCount: count + 1,
+              itemBuilder: (context, i) {
+                if (i >= count) return _appendFooter();
+                final it = items[i];
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // 自动接话之后必须在两话之间插一条分隔：不插的话两话的图
+                    // 首尾相接，看不出已经换了一话。
+                    if (it.chapterStart && i > 0) _chapterDivider(it.chapter),
+                    _PageImage(
+                      url: it.url,
+                      cache: _cache,
+                      offline: _offline,
+                      offlineBookUrl: _book?.bookUrl ?? '',
+                      offlineChapterUrl: it.chapter.url,
+                      // 预取后面两张：翻页时基本就是本地读盘了。
+                      prefetch: items
+                          .skip(i + 1)
+                          .take(2)
+                          .map((e) => e.url)
+                          .toList(),
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -1865,6 +2054,72 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         Positioned(left: 0, right: 0, top: 0, child: _readerTopChrome()),
         Positioned(left: 0, right: 0, bottom: 0, child: _readerChrome()),
       ],
+    );
+  }
+
+  /// 两话之间那条「第 X 话」分隔（自动接话用）。
+  ///
+  /// 为什么非要一条看得见的分隔：接成一整条之后，上一话最后一格和下一话第一格
+  /// 是紧挨着的，没有分隔就分不清"这是新的一话"还是"同一话的下一格"。
+  Widget _chapterDivider(ComicChapterRef chapter) {
+    return Container(
+      color: Colors.black,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      child: Row(
+        children: [
+          const Expanded(child: Divider(color: Colors.white24, height: 1)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              chapter.title,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ),
+          const Expanded(child: Divider(color: Colors.white24, height: 1)),
+        ],
+      ),
+    );
+  }
+
+  /// 整条列表末尾那一格：正在接 / 没接上（可点重试）/ 到底了。
+  ///
+  /// 三种状态都要说清楚，因为"底下没动静"最容易被当成 App 卡住了：
+  /// 正在接要写"在接哪一话"，失败了要写"哪一话、为什么、点哪儿重试"。
+  Widget _appendFooter() {
+    final next = _neighbor(1);
+    final nextTitle = next?.title ?? '';
+    final String text;
+    VoidCallback? retry;
+    if (_appending) {
+      text = '正在接下一话…';
+    } else if (_appendError.isNotEmpty) {
+      text = '$_appendError（点这里重试）';
+      retry = () => unawaited(_appendNext());
+    } else if (next == null) {
+      text = '已经是最后一话了';
+    } else if (_appended.length >= _kMaxAutoAppend) {
+      text = '这里已接上 ${_appended.length} 话，再往下请看「下一话」';
+      retry = () => unawaited(_openChapter(next));
+    } else if (_autoNext) {
+      text = '往下滑会自动接「$nextTitle」（点这里立即接）';
+      retry = () => unawaited(_appendNext());
+    } else {
+      text = '自动加载下一话已关，下方「下一话」继续';
+      retry = () => unawaited(_appendNext());
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 18, 12, 40),
+      child: Column(
+        children: [
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          if (retry != null && nextTitle.isNotEmpty)
+            TextButton(onPressed: retry, child: Text('接下一话「$nextTitle」')),
+        ],
+      ),
     );
   }
 
@@ -1976,7 +2231,16 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       _toast('已经是第一张了');
       return;
     }
-    if (target >= _images.length) {
+    if (target >= _flatCount) {
+      // 页漫的「自动加载下一话」：最后一张再往后翻 **就是** 进下一话第一张。
+      // 这里不拼接（一屏就是一页，拼接没意义），也不把 already-last 的提示
+      // 摆在他面前让他再点一次 —— 他要的就是"不用手动点下一话"。
+      final next = _neighbor(1);
+      if (_autoNext && !_imagesStreaming && next != null) {
+        unawaited(_openChapter(next));
+        _toast('已进入「${next.title}」');
+        return;
+      }
       _toast(
         _imagesStreaming
             ? '这一话还在取后面的图，稍等一下'
@@ -2041,17 +2305,25 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   }
 
   /// 页码文案。取完才给总数；还在取时只说"已取到几张"。
+  ///
+  /// 自动接过话之后要写成「第2话 · 3 / 20 张」：整条列表的长度已经不是"这一话有几张"了，
+  /// 直接写 `位置 / 总数` 会变成"读到 210 / 209 张"这种越界页数（用户报过页数不对）。
   String _pageLabel() {
-    final n = _images.length;
+    final items = _flatItems;
+    final n = items.length;
     if (n == 0) return '第 1 张';
     final at = (_imageIndex + 1).clamp(1, n);
     if (_imagesStreaming) return '第 $at 张 · 整话还在取（已取到 $n 张）';
+    if (_appended.isNotEmpty) {
+      final it = items[at - 1];
+      return '${it.chapter.title} · ${it.indexInChapter + 1} / ${it.chapterImageCount} 张';
+    }
     return '$at / $n 张';
   }
 
   /// 常驻的一条 2px 进度线：收起控制栏时也知道读到哪了（占位极小，不挡画面）。
   Widget _readerProgressLine() {
-    final n = _images.length;
+    final n = _flatCount;
     final v = n <= 1 ? 1.0 : ((_imageIndex + 1) / n).clamp(0.0, 1.0);
     return IgnorePointer(
       child: LinearProgressIndicator(
@@ -2181,7 +2453,9 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           ),
           Expanded(
             child: Text(
-              _chapter?.title ?? '阅读',
+              // 自动接上下一话之后，标题要写**正在读的那一话**（`_activeChapter`），
+              // 不能写"进来时那一话"—— 否则读到下一话，顶上还挂着上一话的名字。
+              _activeChapter?.title ?? '阅读',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -2537,6 +2811,39 @@ class _ChapterOfflineActionState extends State<ChapterOfflineAction> {
   }
 }
 
+/// 阅读列表里的一项：一张图 + 它属于哪一话。
+///
+/// 自动加载下一话之后，一屏列表会跨好几话 —— 页码、进度、离线取图都得按
+/// **这一项所属的那一话**算，不能按"进来时那一话"算（那是 2026-10-02 加自动接话
+/// 之前的老假设）。
+class _ReaderItem {
+  const _ReaderItem({
+    required this.url,
+    required this.chapter,
+    required this.indexInChapter,
+    required this.chapterImageCount,
+    required this.chapterStart,
+  });
+
+  final String url;
+  final ComicChapterRef chapter;
+  final int indexInChapter;
+
+  /// 这一话一共几张（页码文案要用"本话第几张 / 本话共几张"）。
+  final int chapterImageCount;
+
+  /// 是不是某一话的第一张（要在它前面插一条"第 X 话"的分隔）。
+  final bool chapterStart;
+}
+
+/// 自动接上来的一话（整话的图）。
+class _AppendedChapter {
+  const _AppendedChapter({required this.chapter, required this.images});
+
+  final ComicChapterRef chapter;
+  final List<String> images;
+}
+
 /// 阅读页的一张图（本地缓存优先；失败可点重试）。
 class _PageImage extends StatelessWidget {
   const _PageImage({
@@ -2710,9 +3017,7 @@ class _CachedImageState extends State<_CachedImage> {
         if (e is! ComicImageException || !e.transient) return;
         _autoRetries++;
         // 等差退避：1.5s、然后 3s —— 图床对短时并发敏感，立刻再撞上去没意义。
-        await Future<void>.delayed(
-          Duration(milliseconds: 1500 * _autoRetries),
-        );
+        await Future<void>.delayed(Duration(milliseconds: 1500 * _autoRetries));
         if (!mounted) return;
         // 注意用块体：箭头体返回的是"赋值表达式的值"（一个 Future），
         // setState 会当场断言失败（这条是被用例逮出来的）。
