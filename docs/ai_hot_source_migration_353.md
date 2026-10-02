@@ -50,14 +50,15 @@
 | 6 | `lib/features/home/presentation/home_page.dart:388,747`；`daily_news_service.dart:105` | AI 页签「更多」→ `https://aihot.news/`（站点列表）；热闻「更多」→ `https://daily.zhihu.com/`（列表是知乎日报的内容，此前跳的是视界日报门户） | 两个落点都在白名单内，单测覆盖 |
 | 7 | `test/daily_news_page_host_allowlist_test.dart`（重写） | 主机/字段**全部从真实响应快照里取**（v1，2026-10-02），断言「每条 hot 的链接原样通过白名单」+ 仿冒后缀/非 http scheme 仍被拒 | 这条断言就是这个 bug 的回归锁 |
 | 8 | `test/features/home/ai_hot_feed_test.dart`、`ai_hot_live_e2e_test.dart` | 加 v1 夹具与解析用例；live 用例新增「真实上游今天给的主机必须在白名单里」这道端到端闸门；真连上游的超时从 30 秒放宽到 2 分钟（有负载时同一条链路实测 5s→65s，会把「机器忙」误报成「上游坏了」） | —— |
+| 9 | `lib/features/home/presentation/widgets/ai_hot_section.dart`（`AiHotRow`） | AI 行标题下加**摘要**（上游每条都给 `summary`，此前解析了却没人显示 —— 想知道这条讲什么只能点开，而原文常在 x.com）；最多 2 行 + 省略号，`summaryMaxLines` 是公开常量、用例锁住它 | `home_feed_tabs_test.dart`：有摘要要渲染且 `maxLines == 2`；没有摘要不许留空行（行高控制组） |
 
 ## 三、验证（都跑过，输出可复算）
 
 | 验证 | 命令 | 结果 |
 |---|---|---|
 | 静态检查（CI 口径） | `flutter analyze --no-fatal-infos` | **28 issues = 本轮开始时的基线 28**（`git stash` 前后各跑一次），0 error / 0 warning |
-| 定向用例 | `flutter test test/daily_news_page_host_allowlist_test.dart test/features/home/ai_hot_feed_test.dart test/features/home/home_feed_tabs_test.dart test/features/home/home_news_empty_state_test.dart` | 47 passed |
-| 全量（CI 口径） | `flutter test --exclude-tags live` | **All tests passed!**（4195 passed / 0 failed / 3 skipped） |
+| 定向用例 | `flutter test test/daily_news_page_host_allowlist_test.dart test/features/home/ai_hot_feed_test.dart test/features/home/home_feed_tabs_test.dart test/features/home/home_news_empty_state_test.dart` | **49 passed**（含新增的摘要两条用例） |
+| 全量（CI 口径） | `flutter test --exclude-tags live` | **All tests passed!**（4197 passed / 0 failed / 3 skipped） |
 | 真连上游（e2e） | `flutter test --tags live test/features/home/ai_hot_live_e2e_test.dart` | All tests passed（真实 v1 响应 + 解析 + 白名单一致性） |
 | 未验证 | 真机 | 需要发一版才能看到；验收见下 |
 
@@ -72,7 +73,8 @@
 
 | 项 | 现状 | 建议 | 代价 |
 |---|---|---|---|
-| 条目摘要没露出来 | `summary`（v1 还有「为什么入选」的 `reason`）解析了但界面一个字都没用 —— 行里只有标题/分类/来源/时间 | 在 AI 行标题下加一行摘要（最多 2 行，超长省略），点开前就知道这条讲什么 | 首页每行高约 +18dp；AI 页签默认不是首屏页签，影响有限 |
+| ~~条目摘要没露出来~~ | **本轮已做**（见改动 #9）：AI 行标题下加摘要，最多 2 行 | —— | 每行高约 +30dp（两行摘要 + 间距）；AI 页签不是首屏页签，热闻页签（默认）不受影响 |
+| 「为什么入选」的 `reason`（v1 新字段） | 未解析、未显示：它和 `summary` 说的是两件事（前者是入选理由，后者是内容摘要） | 想显示可以让 `summary` 空时回落 `reason` | 小；但两个都显示会让行更长，建议只留一个 |
 | 时间窗 `7d` vs `24h` | 现在 `7d`，与迁移前条数/新鲜度一致（实测 7d→50 条上限、24h→24 条） | 想更「新」可以把首页预览改成 `24h` | 极端时段（早上）可能只剩几条甚至空态；空态有重试与缓存兜底，但不划算，建议维持 `7d` |
 | ETag / `If-None-Match` | 未做 | 上游建议带上（变化时返回 304 省流量） | 5 分钟客户端缓存已把请求压到 12 次/小时（限流约 60 次/分钟），收益低，且要多一份需要持久化的状态 |
 | 分页 `page.nextCursor` | 未读（首页只看前几条） | 等真的做「AI 热点列表页」时再接 | —— |
