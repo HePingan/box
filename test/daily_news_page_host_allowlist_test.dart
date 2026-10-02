@@ -10,8 +10,9 @@
 // 'https://aihot.virxact.com/items/…' 当作「真实 permalink 形态」，
 // 而真实响应里从来没有这个地址 —— 用例锁的是我们的假设，不是上游的事实。
 // 所以本文件的主机/字段全部从下面这份**真实响应快照**里取（2026-10-02 抓的
-// /api/v1/items 响应，只截到前两条，字段字节未改）。
+// /api/v1/items 响应，每个分类一条，字段字节未改）。
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:box/daily_news_url_policy.dart';
 import 'package:box/features/home/data/ai_hot_models.dart';
@@ -19,65 +20,11 @@ import 'package:box/features/home/data/ai_hot_service.dart';
 import 'package:box/features/home/data/daily_news_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// 真实响应快照：AIHOT v1（/api/v1/items?mode=selected&window=7d&limit=2）。
-const String kRealV1Response = r'''
-{
- "schemaVersion": 1,
- "items": [
-  {
-   "id": "nab0yosxdtyh7sbvoo0usb1iq",
-   "title": "Bloomberg：Anthropic 为可能估值近 2 万亿美元的 IPO 邀请机构投资者质询高管",
-   "originalTitle": "Bloomberg: Anthropic has invited institutional investors to question its executives ahead of the possible IPO they value near $2T.",
-   "summary": "Bloomberg 报道，Anthropic 已邀请机构投资者在其可能估值近 2 万亿美元的 IPO 前质询高管。10 月 14 日的会议之后，最早 11 月 9 日当周启动正式路演，感恩节前上市；按 SEC 规则需在 10 月下旬公布 S-1 文件。OpenAI 则相反，以安全担忧为由排除 2026 年上市，正以约 1.4 万亿美元估值私下寻求至少 300 亿美元融资。",
-   "source": {
-    "name": "X：Rohan Paul (@rohanpaul_ai)"
-   },
-   "links": {
-    "aihot": "https://aihot.news/items/nab0yosxdtyh7sbvoo0usb1iq",
-    "original": "https://x.com/rohanpaul_ai/status/2105921530211508488"
-   },
-   "publishedAt": "2026-10-02T07:23:13.000Z",
-   "discoveredAt": "2026-10-02T07:36:32.395Z",
-   "category": "industry",
-   "score": 76,
-   "selected": true,
-   "reason": "原文梳理了 Anthropic 上市时间线和 OpenAI 的相反选择，读者可以对照两家头部 AI 公司的资本路径差异。",
-   "attribution": {
-    "name": "AIHOT",
-    "url": "https://aihot.news/items/nab0yosxdtyh7sbvoo0usb1iq"
-   }
-  },
-  {
-   "id": "rn5q4m7qlqukq9q8g4ne975lj",
-   "title": "Manus 分享视频生成与时间线编辑工作流",
-   "originalTitle": "推出 Manus 2.0 视频编辑器：人人都能制作值得分享的视频",
-   "summary": "Manus 分享使用既有视频能力的创作经验：先由 AI 搜索参考、制作镜头与代码视觉元素，再在 Manus Studio 的视频编辑器中逐轨调整画面、字幕、配乐和音效。教程还演示导入本地素材、自动转录与编排初剪，以及将长视频剪成短片；作者以 125 段旅行素材整理成约 11 分钟成片为例，说明如何把生成初稿继续打磨为可发布作品。",
-   "source": {
-    "name": "Manus：Blog（网页）"
-   },
-   "links": {
-    "aihot": "https://aihot.news/items/rn5q4m7qlqukq9q8g4ne975lj",
-    "original": "https://manus.im/zh-cn/blog/introducing-video-editor"
-   },
-   "publishedAt": "2026-09-30T16:00:00.000Z",
-   "discoveredAt": "2026-10-02T03:59:23.719Z",
-   "category": "tip",
-   "score": 72,
-   "selected": true,
-   "reason": "作者结合真实项目，介绍从导入素材、转录和编排初剪，到逐轨调整字幕、画面与音频的工作流，读者可将这些方法用于自己的视频制作。",
-   "attribution": {
-    "name": "AIHOT",
-    "url": "https://aihot.news/items/rn5q4m7qlqukq9q8g4ne975lj"
-   }
-  }
- ],
- "page": {
-  "count": 4,
-  "hasMore": true,
-  "nextCursor": "it3.eyJhIjoxNzkwOTAxMjAzODk4LCJpIjoidWtrMnF3NWwxcjlqcWhzeWtxYWkyY2YzMCIsImMiOiJjMDlkODMzNGQ0M2MifQ"
- }
-}
-''';
+/// 真实响应快照：AIHOT v1（上游 /api/v1/items?mode=selected&window=7d&limit=50，
+/// 每个分类留一条，字段字节未改）。**由 tool/refresh_ai_hot_fixture.py 抓取写盘**，
+/// 不要再手写 —— 手写的那份正是 353 漏网的原因（见文件头）。
+final String kRealV1Response =
+    File('test/fixtures/ai_hot_selected_v1.json').readAsStringSync();
 
 void main() {
   final AiHotFeed feed = AiHotFeed.fromJson(jsonDecode(kRealV1Response));

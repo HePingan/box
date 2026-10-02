@@ -2,10 +2,12 @@
 //
 // 两份夹具都是**实测抓下来的真实响应**，不是我编的样例：
 //   - kRealLegacyResponse：2026-09-01 从旧接口 /api/public/items 抓的（take=2）
-//   - kRealV1Response：2026-10-02 从 /api/v1/items 抓的（limit=2）
+//   - kRealV1Response：从 test/fixtures/ai_hot_selected_v1.json 读（上游真实快照，
+//     每个分类一条；用 tool/refresh_ai_hot_fixture.py 刷新）
 // 两份都要能解析：上游 2.0 换了接口与字段路径（2026-10-31 旧接口停用），
 // 而**老版本 App 写进本机缓存的快照是旧形状**，升级后不能变成一片空白。
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:box/core/storage/cache_store.dart';
 import 'package:box/features/home/data/ai_hot_models.dart';
@@ -58,46 +60,18 @@ const String kRealLegacyResponse = '''
 }
 ''';
 
-/// 真实响应片段（v1，limit=1，字段字节未改）。
+/// 真实响应快照（v1）：**从上游抓的，不是手写的**。
 ///
-/// 与上面那份旧形状的差别就是 2026-10-31 那次迁移的全部内容：
-/// url/permalink → links.original / links.aihot，source → source.name，
-/// attribution{source,canonical} → {name,url}。
-const String kRealV1Response = r'''
-{
-  "schemaVersion": 1,
-  "items": [
-    {
-      "id": "nab0yosxdtyh7sbvoo0usb1iq",
-      "title": "Bloomberg：Anthropic 为可能估值近 2 万亿美元的 IPO 邀请机构投资者质询高管",
-      "originalTitle": "Bloomberg: Anthropic has invited institutional investors to question its executives ahead of the possible IPO they value near $2T.",
-      "summary": "Bloomberg 报道，Anthropic 已邀请机构投资者在其可能估值近 2 万亿美元的 IPO 前质询高管。10 月 14 日的会议之后，最早 11 月 9 日当周启动正式路演，感恩节前上市；按 SEC 规则需在 10 月下旬公布 S-1 文件。OpenAI 则相反，以安全担忧为由排除 2026 年上市，正以约 1.4 万亿美元估值私下寻求至少 300 亿美元融资。",
-      "source": {
-        "name": "X：Rohan Paul (@rohanpaul_ai)"
-      },
-      "links": {
-        "aihot": "https://aihot.news/items/nab0yosxdtyh7sbvoo0usb1iq",
-        "original": "https://x.com/rohanpaul_ai/status/2105921530211508488"
-      },
-      "publishedAt": "2026-10-02T07:23:13.000Z",
-      "discoveredAt": "2026-10-02T07:36:32.395Z",
-      "category": "industry",
-      "score": 76,
-      "selected": true,
-      "reason": "原文梳理了 Anthropic 上市时间线和 OpenAI 的相反选择，读者可以对照两家头部 AI 公司的资本路径差异。",
-      "attribution": {
-        "name": "AIHOT",
-        "url": "https://aihot.news/items/nab0yosxdtyh7sbvoo0usb1iq"
-      }
-    }
-  ],
-  "page": {
-    "count": 4,
-    "hasMore": true,
-    "nextCursor": "it3.eyJhIjoxNzkwOTAxMjAzODk4LCJpIjoidWtrMnF3NWwxcjlqcWhzeWtxYWkyY2YzMCIsImMiOiJjMDlkODMzNGQ0M2MifQ"
-  }
-}
-''';
+/// 353 的 bug 就坏在夹具是手写的 —— 那份「真实 permalink 形态」
+/// （https://aihot.virxact.com/items/…）在上游响应里从来不出现，
+/// 用例锁的是我们的假设而不是上游的事实，于是白名单写错主机也一路绿。
+///
+/// 现在夹具放在 test/fixtures/ai_hot_selected_v1.json，由
+/// `python3 tool/refresh_ai_hot_fixture.py` 从 /api/v1/items 抓取
+/// （每个分类留一条，字段字节未改）；刷新时 diff 直接看得出上游变了什么。
+/// 发版前的活体闸门（tool/check_ai_hot_live.dart）再拿当天真响应复核一次。
+final String kRealV1Response =
+    File('test/fixtures/ai_hot_selected_v1.json').readAsStringSync();
 
 /// 构造一个带 UTF-8 正文的响应。
 ///
@@ -210,25 +184,54 @@ void main() {
   group('AiHotFeed 解析 v1 真实响应', () {
     test('v1 的 links / source / attribution 都能读出来', () {
       final feed = AiHotFeed.fromJson(jsonDecode(kRealV1Response));
-      expect(feed.items, hasLength(1));
+      expect(feed.items, isNotEmpty, reason: '夹具空了，下面的断言就是空的');
 
-      final item = feed.items.first;
-      expect(item.title, isNotEmpty);
-      expect(
-        item.permalink,
-        startsWith('https://aihot.news/items/'),
-        reason: 'v1 把站内条目页挪到了 links.aihot',
-      );
-      expect(
-        item.source,
-        isNotEmpty,
-        reason: 'v1 把来源挪到了 source.name，读不到就会少一行信息',
-      );
+      for (final AiHotItem item in feed.items) {
+        expect(item.title, isNotEmpty);
+        expect(
+          item.permalink,
+          startsWith('https://aihot.news/items/'),
+          reason: 'v1 把站内条目页挪到了 links.aihot',
+        );
+        expect(
+          item.source,
+          isNotEmpty,
+          reason: 'v1 把来源挪到了 source.name，读不到就会少一行信息',
+        );
+      }
       expect(
         feed.attributionLabel,
         'AIHOT',
         reason: '署名在 attribution.name（旧接口叫 source）',
       );
+    });
+
+    test('快照里出现的每个分类都有中文标签（否则行上直接显示英文 slug）', () {
+      final feed = AiHotFeed.fromJson(jsonDecode(kRealV1Response));
+      expect(feed.items, isNotEmpty);
+
+      final Map<String, String> seen = <String, String>{};
+      for (final AiHotItem item in feed.items) {
+        final String? category = item.category;
+        if (category == null || category.isEmpty) continue;
+        seen[category] = item.categoryLabel;
+        expect(
+          item.categoryLabel,
+          isNot(category),
+          reason: '分类 $category 没有中文标签 —— 上游新增分类时要在这里补一档',
+        );
+      }
+
+      // 2026-10-02 实测上游精选在用的全部取值（名字照抄 /api/v1/agent 的官方说法）。
+      // 这一行是这次修复的判据：修复前 ai-products / tip / industry 三档都落到
+      // default、行上写着英文 slug。
+      expect(
+        seen.keys,
+        containsAll(<String>['ai-models', 'ai-products', 'industry', 'paper', 'tip']),
+      );
+      expect(seen['ai-products'], '产品');
+      expect(seen['industry'], '行业');
+      expect(seen['tip'], '教程');
     });
 
     test('openUrl 在 v1 形状下仍优先站内条目页而不是原文', () {

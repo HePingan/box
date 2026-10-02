@@ -1,0 +1,122 @@
+{
+ "schemaVersion": 1,
+ "source": "https://aihot.news/api/v1/items?mode=selected&window=7d&limit=50",
+ "note": "真实响应快照（tool/refresh_ai_hot_fixture.py 生成；每个分类一条，字段字节未改）",
+ "items": [
+  {
+   "id": "jhshh53c18f71tkzk44izbs25",
+   "title": "Artificial Analysis：Claude Sonnet 5.5、GPT-6.1 Sol 与 Gemini 4 Argon 登顶 Coding Agent Index 榜单但成本差异大",
+   "originalTitle": "This week Claude Sonnet 5.5, GPT-6.1 Sol and Gemini 4 Argon all launched near the top of the Coding Agent Index leaderboard, but each has...",
+   "summary": "Artificial Analysis 发布 Coding Agent Index 榜单，Claude Sonnet 5.5 (max) 在 Claude Code 以 68 分居首，但每任务成本最高达 $14.19。",
+   "source": {
+    "name": "X：Artificial Analysis (@ArtificialAnlys)"
+   },
+   "links": {
+    "aihot": "https://aihot.news/items/jhshh53c18f71tkzk44izbs25",
+    "original": "https://x.com/ArtificialAnlys/status/2105814318294114720"
+   },
+   "publishedAt": "2026-10-02T00:17:12.000Z",
+   "discoveredAt": "2026-10-02T00:34:22.629Z",
+   "category": "ai-models",
+   "score": 73,
+   "selected": true,
+   "reason": "原文对比了三个新模型在 Coding Agent Index 的成绩和每任务成本，读者可据此权衡性能与价格的组合。",
+   "attribution": {
+    "name": "AIHOT",
+    "url": "https://aihot.news/items/jhshh53c18f71tkzk44izbs25"
+   }
+  },
+  {
+   "id": "rnjrj40fmm98d9duz9lcuk8u2",
+   "title": "Suno 推出 Speech beta：语音与背景音乐一体生成",
+   "originalTitle": "Introducing Speech (beta) By Jack Brody, Chief Product Officer·Oct 1, 2026 A new way to express yourself creatively Product Update",
+   "summary": "Suno 推出 Speech beta，称其为首个能把语音与原创背景音乐作为一条完整曲目生成的音频模型。用户输入文字并描述想要的声音和音乐风格即可创作，beta 已向所有用户开放，官方提示仍存在口音漂移、停顿过重等问题并将持续改进。",
+   "source": {
+    "name": "Suno：Blog（网页）"
+   },
+   "links": {
+    "aihot": "https://aihot.news/items/rnjrj40fmm98d9duz9lcuk8u2",
+    "original": "https://suno.com/blog/introducing-speech-beta"
+   },
+   "publishedAt": "2026-10-01T20:35:00.000Z",
+   "discoveredAt": "2026-10-02T00:01:22.827Z",
+   "category": "ai-products",
+   "score": 71,
+   "selected": true,
+   "reason": "官方介绍了 Speech 的玩法和 beta 限制，还附了官方博客链接，想试用或了解语音加音乐一体生成的可以看看。",
+   "attribution": {
+    "name": "AIHOT",
+    "url": "https://aihot.news/items/rnjrj40fmm98d9duz9lcuk8u2"
+   }
+  },
+  {
+   "id": "nab0yosxdtyh7sbvoo0usb1iq",
+   "title": "Bloomberg：Anthropic 为可能估值近 2 万亿美元的 IPO 邀请机构投资者质询高管",
+   "originalTitle": "Bloomberg: Anthropic has invited institutional investors to question its executives ahead of the possible IPO they value near $2T.",
+   "summary": "Bloomberg 报道，Anthropic 已邀请机构投资者在其可能估值近 2 万亿美元的 IPO 前质询高管。10 月 14 日的会议之后，最早 11 月 9 日当周启动正式路演，感恩节前上市；按 SEC 规则需在 10 月下旬公布 S-1 文件。OpenAI 则相反，以安全担忧为由排除 2026 年上市，正以约 1.4 万亿美元估值私下寻求至少 300 亿美元融资。",
+   "source": {
+    "name": "X：Rohan Paul (@rohanpaul_ai)"
+   },
+   "links": {
+    "aihot": "https://aihot.news/items/nab0yosxdtyh7sbvoo0usb1iq",
+    "original": "https://x.com/rohanpaul_ai/status/2105921530211508488"
+   },
+   "publishedAt": "2026-10-02T07:23:13.000Z",
+   "discoveredAt": "2026-10-02T07:36:32.395Z",
+   "category": "industry",
+   "score": 76,
+   "selected": true,
+   "reason": "原文梳理了 Anthropic 上市时间线和 OpenAI 的相反选择，读者可以对照两家头部 AI 公司的资本路径差异。",
+   "attribution": {
+    "name": "AIHOT",
+    "url": "https://aihot.news/items/nab0yosxdtyh7sbvoo0usb1iq"
+   }
+  },
+  {
+   "id": "uli2rb6y55e3p9z1rh1t8efld",
+   "title": "Epoch AI 推出 ChatGPT usage explorer，基于5000名美国用户三年聊天记录",
+   "originalTitle": "How do people actually use ChatGPT?",
+   "summary": "Epoch AI 与 YouGov 合作推出 ChatGPT usage explorer，发布5000名美国 YouGov 样本用户的 ChatGPT 聊天元数据，覆盖约66万对话、830万条消息，部分记录追溯至2022年11月发布后数周。",
+   "source": {
+    "name": "Epoch AI：研究、数据与评测"
+   },
+   "links": {
+    "aihot": "https://aihot.news/items/uli2rb6y55e3p9z1rh1t8efld",
+    "original": "https://epoch.ai/latest/introducing-the-chatgpt-usage-explorer"
+   },
+   "publishedAt": "2026-10-01T00:00:00.000Z",
+   "discoveredAt": "2026-10-01T22:24:24.301Z",
+   "category": "paper",
+   "score": 60,
+   "selected": true,
+   "reason": "原文基于5000名用户的真实聊天记录做独立分析，给出使用强度变化数据和样本局限说明，读者可了解其实际使用趋势。",
+   "attribution": {
+    "name": "AIHOT",
+    "url": "https://aihot.news/items/uli2rb6y55e3p9z1rh1t8efld"
+   }
+  },
+  {
+   "id": "rn5q4m7qlqukq9q8g4ne975lj",
+   "title": "Manus 分享视频生成与时间线编辑工作流",
+   "originalTitle": "推出 Manus 2.0 视频编辑器：人人都能制作值得分享的视频",
+   "summary": "Manus 分享使用既有视频能力的创作经验：先由 AI 搜索参考、制作镜头与代码视觉元素，再在 Manus Studio 的视频编辑器中逐轨调整画面、字幕、配乐和音效。教程还演示导入本地素材、自动转录与编排初剪，以及将长视频剪成短片；作者以 125 段旅行素材整理成约 11 分钟成片为例，说明如何把生成初稿继续打磨为可发布作品。",
+   "source": {
+    "name": "Manus：Blog（网页）"
+   },
+   "links": {
+    "aihot": "https://aihot.news/items/rn5q4m7qlqukq9q8g4ne975lj",
+    "original": "https://manus.im/zh-cn/blog/introducing-video-editor"
+   },
+   "publishedAt": "2026-09-30T16:00:00.000Z",
+   "discoveredAt": "2026-10-02T03:59:23.719Z",
+   "category": "tip",
+   "score": 72,
+   "selected": true,
+   "reason": "作者结合真实项目，介绍从导入素材、转录和编排初剪，到逐轨调整字幕、画面与音频的工作流，读者可将这些方法用于自己的视频制作。",
+   "attribution": {
+    "name": "AIHOT",
+    "url": "https://aihot.news/items/rn5q4m7qlqukq9q8g4ne975lj"
+   }
+  }
+ ]
+}

@@ -138,6 +138,21 @@ echo
 # 这里就会暴露，而不是等到「某天 plain build 又漏过去」才发现。
 bash "$REPO_ROOT/tool/preflight_release_guard.sh"
 
+# ---- 上游对账闸门（活体，需要网络）------------------------------------------
+# 拿客户端自己的模型/白名单去打一次上游真实接口：条目页主机还在白名单里吗？
+# 分类都有中文标签吗？353 那个「点开热点是门户页」的 bug 就是这里漂的 ——
+# 本地用例用的是人手写的夹具，绿得毫无意义，只有对真实响应才查得出来。
+# 上游不可达时脚本自己跳过（exit 0）：离线/限流不该阻断发版；
+# 只有「上游可达但假设已经漂了」才 exit 1，在这里阻断。
+dart run "$REPO_ROOT/tool/check_ai_hot_live.dart" || {
+  echo
+  echo "构建已阻断：AI HOT 上游与客户端假设不一致（见上）。"
+  echo "修法：主机进 lib/daily_news_url_policy.dart 的 allowedHosts；"
+  echo "      分类进 lib/features/home/data/ai_hot_models.dart 的 categoryLabel；"
+  echo "      并跑 python3 tool/refresh_ai_hot_fixture.py 更新快照夹具。"
+  exit 1
+}
+
 flutter build apk --release \
   --target-platform "$TARGET_PLATFORM" \
   "${OBFUSCATE_ARGS[@]}" \

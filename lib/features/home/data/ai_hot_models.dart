@@ -62,14 +62,34 @@ class AiHotItem {
 
   /// 分类的中文显示名。未知分类回显原值，不硬编码成「其它」——
   /// 上游新增分类时用户至少还能看到真实标签。
+  ///
+  /// 映射必须覆盖**上游实际在用的分类**，否则中文界面上会直接出现英文 slug。
+  /// 2026-10-02 拉 50 条精选实测的分布是：
+  ///   ai-products 13 / tip 11 / ai-models 11 / industry 10 / paper 5
+  /// 而当时的映射只认 paper、ai-models（另有 product/funding/policy/research/tool/opinion
+  /// 这些**旧接口**的取值）—— 于是最常出现的三类全部落到 default，行上写着
+  /// `ai-products`、`tip`、`industry`。
+  ///
+  /// 中文名照抄上游自己的说法（`https://aihot.news/api/v1/agent`：
+  /// 「category=ai-models（模型）、ai-products（产品）、industry（行业）、paper（论文）
+  /// 或 tip（教程与观点）」），不要自己另起名字。
+  /// `test/features/home/ai_hot_feed_test.dart` 里有一条夹具驱动的用例：
+  /// 快照中出现过的分类都必须有中文标签 —— 换夹具（tool/refresh_ai_hot_fixture.py）
+  /// 时若上游加了新分类，用例会当场红，提示补这一档。
   String get categoryLabel {
     switch (category) {
       case 'paper':
         return '论文';
       case 'ai-models':
         return '模型';
+      // 现役取值（v1）。legacy 的 product 也留一份，老缓存里是它。
+      case 'ai-products':
       case 'product':
         return '产品';
+      case 'industry':
+        return '行业';
+      case 'tip':
+        return '教程';
       case 'funding':
         return '融资';
       case 'policy':
