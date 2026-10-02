@@ -16,6 +16,13 @@ class ComicReaderPrefs {
   static const String _keyPageTurn = 'page_turn';
   static const String _keyChapterDescending = 'chapter_descending';
 
+  /// 「要不要换成竖向连续」那句提示看过没有（只提示一次）。
+  ///
+  /// 为什么值得记（2026-10-02 用户：「我还是喜欢上下滑动，现在上下滑动变成亮度调节了」）：
+  /// 翻页方式是个图标按钮，靠 tooltip 在手机上根本看不见；他喜欢上下滑（竖向连续），
+  /// 却因为当前是左右翻页而滑不动 —— 提示一次、点一下就能切，比让他去猜图标强。
+  static const String _keyPageTurnHint = 'page_turn_hint_seen';
+
   /// 是否用「左右翻页」（false = 竖向连续长条，适合条漫）。
   ///
   /// 读不出来就当 false（竖向连续）：默认值要选"不会让人误以为卡住"的那个。
@@ -26,6 +33,16 @@ class ComicReaderPrefs {
 
   Future<void> setPageTurn(bool value) async {
     await _cache.write(_keyPageTurn, value);
+  }
+
+  /// 读过那句「换成竖向连续」的提示没有（读不出来当没读过 —— 提示一次不算打扰）。
+  Future<bool> pageTurnHintSeen() async {
+    final raw = await _cache.read(_keyPageTurnHint);
+    return raw == true;
+  }
+
+  Future<void> setPageTurnHintSeen() async {
+    await _cache.write(_keyPageTurnHint, true);
   }
 
   /// 目录是否"倒序"（最新一话在最上面）。

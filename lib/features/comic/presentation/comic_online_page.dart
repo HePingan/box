@@ -657,18 +657,58 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   Future<void> _loadPrefs() async {
     bool v = false;
     double dim = 0;
+    bool hintSeen = true;
     try {
       v = await _prefs.pageTurn();
       dim = await _prefs.dimLevel();
+      hintSeen = await _prefs.pageTurnHintSeen();
     } catch (_) {
       v = false;
       dim = 0;
+      hintSeen = true;
     }
     if (!mounted) return;
     setState(() {
       _pageTurn = v;
       _dim = dim;
+      _pageTurnHintSeen = hintSeen;
+      // 只在「左右翻页」时提示一次：竖向连续本来就是他要的，没什么可切的。
+      _showPageTurnHint = v && !hintSeen;
     });
+  }
+
+  /// 只提示一次的那条要不要显示。
+  bool _showPageTurnHint = false;
+
+  /// 那条提示"已经看过了"没有（点提示本身、或点 ✕ 才算看过）。
+  ///
+  /// **手动切到左右翻页不算"看过"**：他可能只是点着玩，并不知道这个图标和上下滑有关系
+  /// —— 而那正是他抱怨的场景（在页漫里上下滑，结果只是屏幕变暗）。
+  bool _pageTurnHintSeen = true;
+
+  /// 点提示：直接切成竖向连续（用户说的"我还是喜欢上下滑动"）。
+  Future<void> _useVerticalScroll() async {
+    setState(() {
+      _pageTurn = false;
+      _showPageTurnHint = false;
+    });
+    try {
+      await _prefs.setPageTurn(false);
+    } catch (_) {
+      // 记不住不算错：这次先按用户点的显示。
+    }
+    await _markPageTurnHintSeen();
+  }
+
+  /// 关掉提示（包括"我自己切过了，别再提"）。
+  Future<void> _markPageTurnHintSeen() async {
+    _pageTurnHintSeen = true;
+    if (_showPageTurnHint) setState(() => _showPageTurnHint = false);
+    try {
+      await _prefs.setPageTurnHintSeen();
+    } catch (_) {
+      // 记不住不算错：下次进来会再提一次。
+    }
   }
 
   /// 改压暗档位。界面立刻变（这是手感），写盘在手松开之后（拖动里每帧写盘是白花钱）。
@@ -770,7 +810,11 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
   /// 切换翻页方式（记下来，下次进来还是这个）。
   Future<void> _togglePageTurn() async {
     final next = !_pageTurn;
-    setState(() => _pageTurn = next);
+    setState(() {
+      _pageTurn = next;
+      // 切到左右翻页时，正好把"想上下滑就点这里"摆出来（只在那次提示还没看过时）。
+      _showPageTurnHint = next && !_pageTurnHintSeen;
+    });
     try {
       await _prefs.setPageTurn(next);
     } catch (_) {
@@ -1623,14 +1667,12 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTapUp: (d) => _handleReaderTap(d.localPosition, pageTurn: true),
-            // 左半屏**上下滑**调亮暗（手电筒式的手感）。只有页漫给这条：
-            // 条漫的上下滑是滚动，抢了就变成"滑不动页面反而变暗"。
-            onVerticalDragUpdate: (d) {
-              final width = context.size?.width ?? 0;
-              if (width > 0 && d.localPosition.dx > width / 2) return;
-              _setDim(_dim - d.delta.dy / 400);
-            },
-            onVerticalDragEnd: (_) => unawaited(_saveDim()),
+            // **这里原来有一条"左半屏上下滑 = 调亮暗"的手势，2026-10-02 撤了。**
+            // 用户的原话：「我还是喜欢上下滑动，现在上下滑动变成亮度调节了」——
+            // 上下滑在他那儿是"读漫画"的动作，变成调亮度就是把这个动作抢走了；
+            // 何况同一个动作在两种翻页模式下含义不同（页漫=亮度、条漫=滚动），
+            // 这本身就是最容易踩的坑。**亮度只剩底栏那个滑块**（点一下就看得见、还有百分比），
+            // 上下滑在任何模式下都不再改亮度。
             // 放大用**长按**，不用双击：双击识别器会把单击拖慢 ~300ms（实测），
             // 而页漫"点一下就翻"是手感的命门。长按只在按住 500ms 后才抢手势。
             onLongPress: () => _openZoom(_images[_imageIndex]),
@@ -1656,6 +1698,13 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           // 后面的图还在取：顶部挂一条进度，别让人以为是卡住了。
           if (_busy)
             Positioned(top: 0, left: 0, right: 0, child: _loadingBanner()),
+          // 只提示一次：「喜欢上下滑动读？点这里换成竖向连续」。
+          Positioned(
+            left: 0,
+            right: 0,
+            top: _busy ? 44 : 8,
+            child: _pageTurnHintBar(),
+          ),
           Positioned(
             left: 0,
             right: 0,
@@ -1922,6 +1971,53 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       child: ColoredBox(
         color: Colors.black.withValues(alpha: _dim),
         child: const SizedBox.expand(),
+      ),
+    );
+  }
+
+  /// 只提示一次的「喜欢上下滑动读？」那条（点一下切成竖向连续）。
+  ///
+  /// 为什么要有它：翻页方式只是个带 tooltip 的图标按钮，手机上 tooltip 根本看不见。
+  /// 用户的原话是「**我还是喜欢上下滑动**，现在上下滑动变成亮度调节了」—— 他要的
+  /// 动作是"上下滑"，那就把"怎么得到上下滑"摆在他面前，而不是让他去猜图标。
+  Widget _pageTurnHintBar() {
+    if (!_showPageTurnHint) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Material(
+          color: Colors.black.withValues(alpha: 0.72),
+          borderRadius: BorderRadius.circular(20),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () => unawaited(_useVerticalScroll()),
+            child: Padding(
+              padding: const EdgeInsets.only(left: 12, right: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.swap_vert, color: Colors.white, size: 16),
+                  const SizedBox(width: 6),
+                  const Text(
+                    '喜欢上下滑动读？点这里换成竖向连续',
+                    style: TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                  IconButton(
+                    tooltip: '知道了',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => unawaited(_markPageTurnHintSeen()),
+                    icon: const Icon(
+                      Icons.close,
+                      color: Colors.white70,
+                      size: 16,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
