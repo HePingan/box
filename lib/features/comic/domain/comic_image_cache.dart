@@ -125,11 +125,21 @@ class ComicImageCache {
   /// 不进 temp 缓存、也不参与那套 300MB/4000 张的淘汰。其余一模一样：同样的每次连接
   /// 截止时间、同样的 `:666` → 443 换端口、同样的"被掐断就按同一地址重试"。
   /// 这么做的理由：离线下载没必要再写一套取图逻辑，写一套就一定会漏掉上面某一条。
-  Future<File> fetch(String url, {bool lowPriority = false, File? dest}) {
+  Future<File> fetch(
+    String url, {
+    bool lowPriority = false,
+    File? dest,
+    int? maxAttempts,
+  }) {
     final key = url;
     final running = _inFlight[key];
     if (running != null) return running;
-    final future = _fetchOnce(url, low: lowPriority, dest: dest).whenComplete(() {
+    final future = _fetchOnce(
+      url,
+      low: lowPriority,
+      dest: dest,
+      attemptBudget: maxAttempts,
+    ).whenComplete(() {
       // 注意：这里**必须是块体**（返回 void）。写成 `=> _inFlight.remove(key)`
       // 的话，`whenComplete` 会把"回调的返回值"当成还要再等的 Future —— 而
       // `remove` 返回的正是**这个 Future 自己**，于是它永远在等自己完成。
@@ -143,7 +153,12 @@ class ComicImageCache {
     return future;
   }
 
-  Future<File> _fetchOnce(String url, {required bool low, File? dest}) async {
+  Future<File> _fetchOnce(
+    String url, {
+    required bool low,
+    File? dest,
+    int? attemptBudget,
+  }) async {
     if (dest != null) {
       // 离线下载：目标文件已经在了就直接用（**离线下载的续传就靠这一条** ——
       // 不数计数、不认清单里的 done，文件在就算下过，杀进程重启后天然接着下）。
@@ -169,7 +184,8 @@ class ComicImageCache {
     ComicImageException? last;
     await _acquire(low: low);
     try {
-      while (queue.isNotEmpty && attempts < maxAttempts) {
+      final budget = attemptBudget ?? maxAttempts;
+      while (queue.isNotEmpty && attempts < budget) {
         final candidate = queue.removeFirst();
         attempts++;
         final ip = candidate.ip;
@@ -206,8 +222,12 @@ class ComicImageCache {
       _release(low: low);
     }
     // 一条都没成：把"试过哪几个端口、试了几次"说出来，用户才知道不是我们没试。
+    // 注意**把 transient/retryable 带出去**：聚合之后的这句话才是调用方（离线下载）
+    // 看到的错误，丢了标记它就无从判断"值不值得等一会儿重来"。
     throw ComicImageException(
       '${last!.message}（${_triedLabel(uri)}共试了 $attempts 次）',
+      retryable: last.retryable,
+      transient: last.transient,
     );
   }
 
@@ -227,31 +247,42 @@ class ComicImageCache {
     final out = <_Candidate>[];
 
     String? good;
+    var ips = const <String>[];
     try {
       good = await edges.preferred(uri.host);
+      // 解析 + 滤掉已知坏 IP（`comic_img_edges` 记着哪几个通）。上限 4：够换了，
+      // 再多也只是把 attempts 烧在同一批死 IP 上。
+      ips = await edges.fallbackIps(uri.host, limit: 4);
     } catch (_) {
       // 记忆读不出来就按老路走（不联网、不报错）。
     }
+
+    // **自己挑 IP，不交给系统掷硬币。** 2026-10-02 实测（175）：图床域名解析出 10 个 IP，
+    // 其中 5 个整段全死；**走域名连发 30 张失败 9 成**（用户看到的"下到第 1 张就 reset"
+    // 就是这个），自己逐个直连通着的那几个：0 失败。所以解析出来的 IP 全排在前面，
+    // 域名只当"IP 都没成"的最后兜底。
     if (good != null) out.add(_Candidate(uri, good));
-    out.add(_Candidate(uri, null));
+    for (final ip in ips) {
+      if (ip != good) out.add(_Candidate(uri, ip));
+    }
     if (alt != null && alt != port) {
       final altUri = uri.replace(port: alt);
-      if (good != null) out.add(_Candidate(altUri, good));
+      final altIps = <String>[...ips];
+      if (good != null) altIps.insert(0, good);
+      for (final ip in altIps) {
+        out.add(_Candidate(altUri, ip));
+      }
       out.add(_Candidate(altUri, null));
     }
-    if (good == null) {
-      // 还不知道哪个通：把解析出来、没进坏名单的 IP 排在后面，当"最后再试一格"。
-      List<String> ips = const <String>[];
-      try {
-        ips = await edges.fallbackIps(uri.host, limit: 1);
-      } catch (_) {
-        ips = const <String>[];
-      }
-      for (final ip in ips) {
-        out.add(_Candidate(uri, ip));
-      }
-    }
+    out.add(_Candidate(uri, null));
     return out;
+  }
+
+  /// 自检/排查用：这张图会按什么顺序、试哪些地址。
+  @visibleForTesting
+  Future<List<String>> debugCandidateLabels(String url) async {
+    final uri = Uri.parse(url);
+    return [for (final c in await _candidatesFor(uri)) c.label];
   }
 
   static String _triedLabel(Uri uri) {
@@ -339,15 +370,32 @@ class ComicImageCache {
 
   /// 直连某个 IP 的客户端：`connectionFactory` 只换连接地址，
   /// URL / SNI / 证书校验仍然都是域名那一套。
+  ///
+  /// **按 IP 复用**（不是每张图各建一个）：否则直连虽然躲开了死 IP，却把
+  /// "同一条连接连续取图"这个 345 就修好的东西又丢了 —— 每张图一次 TLS 握手，
+  /// 图床对这种小突发同样敏感（那条用例 `顺序取多张会复用同一条连接` 就是钉它的）。
   HttpClient _pinnedClient(String ip) {
+    final cached = _pinnedClients[ip];
+    if (cached != null) return cached;
     final client = HttpClient();
     // 注意别写成级联：lambda 体是表达式，`..` 会被吃进 lambda 里。
-    client.connectionFactory = (Uri uri, String? proxyHost, int? proxyPort) =>
-        Socket.startConnect(ip, uri.port);
+    client.connectionFactory =
+        (Uri uri, String? proxyHost, int? proxyPort) {
+          // 配了代理就走代理（别绕过它直连 IP —— 那种网络下直连多半是不通的）；
+          // 没配代理才把连接地址换成这个 IP，URL/SNI/证书仍然都是域名那一套。
+          if (proxyHost != null) {
+            return Socket.startConnect(proxyHost, proxyPort ?? uri.port);
+          }
+          return Socket.startConnect(ip, uri.port);
+        };
     client.connectionTimeout = connectTimeout;
     client.idleTimeout = idleTimeout;
+    _pinnedClients[ip] = client;
     return client;
   }
+
+  /// 直连用到的 client（按 IP 存，随缓存实例一起活）。
+  final Map<String, HttpClient> _pinnedClients = {};
 
   void _release({required bool low}) {
     _running--;
@@ -457,9 +505,8 @@ class ComicImageCache {
         transient: _isTransientNetError(e),
       );
     } finally {
-      // 共用那个 client **不关**（见 [_http]）：每张图各开一条新连接正是被图床
-      // 掐的原因之一。但**直连 IP 的一次性 client 必须关**（它绑死了某个地址）。
-      if (pinned != null) client.close(force: true);
+      // 两种 client 都**不关**：共享 pool 才能复用连接（每张图各开一条新连接正是
+      // 被图床掐的原因之一，见 [_http]）；直连那个按 IP 复用，见 [_pinnedClient]。
     }
   }
 

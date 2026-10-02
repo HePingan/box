@@ -14,6 +14,8 @@ library;
 
 import 'dart:async';
 
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 
 import 'comic_image_cache.dart';
@@ -70,10 +72,20 @@ class ComicOfflineDownloader extends ChangeNotifier {
     ComicImageCache? cache,
     Future<List<String>> Function(String chapterUrl)? loadImages,
     Future<bool> Function()? networkAllowed,
+    this.imageAttempts = defaultImageAttempts,
+    this.retryDelay = const Duration(milliseconds: 1200),
   }) : store = store ?? ComicOfflineStore(),
        cache = cache ?? ComicImageCache(maxParallel: 2),
        _loadImages = loadImages,
        _networkAllowed = networkAllowed ?? (() async => true);
+
+  /// 单张图允许试几个地址（默认比前台读图多：下载是连发几百张，一次抖动
+  /// 就废掉整话，代价完全不对等）。
+  static const int defaultImageAttempts = 6;
+
+  /// 一轮都不成时，等一会儿再整轮重来一次（图床那种"掐断"多是短时状态）。
+  final Duration retryDelay;
+  final int imageAttempts;
 
   /// 全 App 共用一份：**下载要在离开这个页面之后继续**，所以不能是页面级对象。
   static ComicOfflineDownloader? _shared;
@@ -212,6 +224,34 @@ class ComicOfflineDownloader extends ChangeNotifier {
     unawaited(_pump());
   }
 
+  /// 取一张图（下载用）：先让缓存按候选地址自己试 [imageAttempts] 个地址，
+  /// 整轮都不成就**等一会儿再整轮重来一次**。
+  ///
+  /// 为什么要多这一层（2026-10-02 用户截图）：下载是连发几百张，一张图被图床掐断
+  /// 就让整话失败，用户看到的是「0/1 章 · 1 KB」这种最没用的结果 —— 而重试一次的
+  /// 成功率远高于"再排一个地址"（掐断是短时状态，隔一秒就过去了）。
+  Future<void> _fetchImage(String url, File dest) async {
+    try {
+      await cache.fetch(
+        url,
+        lowPriority: true,
+        dest: dest,
+        maxAttempts: imageAttempts,
+      );
+    } on ComicImageException catch (e) {
+      // 只有"一闪而过"（被掐断 / 连接被提前关掉 / 5xx）才值得整轮重来：
+      // HTTP 404、0 字节、地址不合法这种，等一会儿也一样，别拿用户的时间赌。
+      if (!e.transient && !e.retryable) rethrow;
+      if (retryDelay > Duration.zero) await Future<void>.delayed(retryDelay);
+      await cache.fetch(
+        url,
+        lowPriority: true,
+        dest: dest,
+        maxAttempts: imageAttempts,
+      );
+    }
+  }
+
   /// 顺手把封面也下下来。
   ///
   /// 封面失败**不影响**下载结果：一本书读得了比封面重要得多，所以这里吞掉异常，
@@ -221,7 +261,7 @@ class ComicOfflineDownloader extends ChangeNotifier {
     try {
       final dest = await store.coverFile(bookUrl, cover);
       if (await dest.exists()) return;
-      await cache.fetch(cover, lowPriority: true, dest: dest);
+      await _fetchImage(cover, dest);
     } on ComicImageException {
       // 封面是"顺带"，失败不打扰任何人。
     } on FormatException {
@@ -433,7 +473,7 @@ class ComicOfflineDownloader extends ChangeNotifier {
           job.bytes += await already.length();
           continue;
         }
-        await cache.fetch(url, lowPriority: true, dest: dest);
+        await _fetchImage(url, dest);
         job.done++;
         job.bytes += await dest.length();
         entry.done = job.done;

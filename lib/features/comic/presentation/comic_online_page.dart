@@ -2081,12 +2081,14 @@ class _ChapterOfflineActionState extends State<ChapterOfflineAction> {
         icon = const Icon(Icons.pause_circle_outline, size: 20);
         tip = '已暂停：${job?.error ?? ''}';
       case ComicOfflineJobState.failed:
+        // 失败时给的是**重试**的样子（不再是"报错"的样子）：点一下就是重试，
+        // 而"下不动了怎么办"正是用户在这一格上要找的（2026-10-02 报下载失败）。
         icon = Icon(
-          Icons.error_outline,
+          Icons.refresh_rounded,
           size: 20,
           color: theme.colorScheme.error,
         );
-        tip = '下载失败：${job?.error ?? ''}';
+        tip = '下载失败：${job?.error ?? ''}（点这里重试）';
       case ComicOfflineJobState.done:
         icon = Icon(
           Icons.check_circle,

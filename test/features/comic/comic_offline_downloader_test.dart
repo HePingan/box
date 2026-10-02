@@ -19,6 +19,9 @@ class _TestImageHost {
   /// 这些前缀一律 500（模拟图床抽风 / 那张图挂了）。
   final Set<String> failPrefixes = <String>{};
 
+  /// 这些前缀回指定状态码（用来区分"值得再试"和"再来也一样"）。
+  final Map<String, int> statusByPrefix = <String, int>{};
+
   int get port => _server!.port;
 
   String img(String name) => 'http://127.0.0.1:$port/img/$name';
@@ -34,6 +37,15 @@ class _TestImageHost {
       if (_running > peak) peak = _running;
       try {
         await Future<void>.delayed(const Duration(milliseconds: 5));
+        final forced = statusByPrefix.entries
+            .where((e) => path.startsWith(e.key))
+            .map((e) => e.value)
+            .firstOrNull;
+        if (forced != null) {
+          req.response.statusCode = forced;
+          await req.response.close();
+          return;
+        }
         if (failPrefixes.any(path.startsWith)) {
           req.response.statusCode = 500;
           await req.response.close();
@@ -77,12 +89,14 @@ void main() {
   ComicOfflineDownloader downloader({
     required Map<String, List<String>> imagesOf,
     bool wifi = true,
+    ComicImageCache? cache,
+    Duration retryDelay = Duration.zero,
   }) => ComicOfflineDownloader(
     store: store,
-    cache: ComicImageCache(
-      maxParallel: 2,
-      tempDirProvider: () async => cacheTmp,
-    ),
+    cache:
+        cache ??
+        ComicImageCache(maxParallel: 2, tempDirProvider: () async => cacheTmp),
+    retryDelay: retryDelay,
     loadImages: (chapterUrl) async {
       for (final e in imagesOf.entries) {
         if (chapterUrl.endsWith(e.key)) return e.value;
@@ -255,4 +269,116 @@ void main() {
     expect(await f.exists(), isFalse);
     expect(await store.loadBook(bookUrl), isNull, reason: '一话都没下完就不该留空壳书');
   });
+
+  // ── 单张图被掐断：整轮重试一次，不直接废掉整话（2026-10-02 用户截图）──
+  group('单张图重试', () {
+    test('一张图第一次整轮失败：等一会儿整轮再来，这一话照样下完', () async {
+      final cache = _FlakyCache(
+        failOnce: {host.img('1.jpg')},
+        tempDirProvider: () async => cacheTmp,
+      );
+      final dl = downloader(
+        imagesOf: {
+          'ch1.html': [host.img('1.jpg'), host.img('2.jpg')],
+        },
+        cache: cache,
+      );
+
+      await dl.enqueue(
+        bookUrl: bookUrl,
+        chapters: [chapter('第一话', [host.img('1.jpg'), host.img('2.jpg')])],
+      );
+      await _waitFor(() => dl.jobs.single.isDone, what: '这一话下完');
+
+      expect(dl.jobs.single.state, ComicOfflineJobState.done, reason: '重试一次就成了，不该标失败');
+      expect(dl.jobs.single.done, 2);
+      expect(
+        cache.budgets,
+        everyElement(ComicOfflineDownloader.defaultImageAttempts),
+        reason: '下载必须比前台读图多给几次机会',
+      );
+    });
+
+    test('HTTP 404 这种"再来也一样"的错：不白等一轮，直接报出来', () async {
+      host.statusByPrefix['/img/1.jpg'] = 404;
+      final cache = ComicImageCache(maxParallel: 2, tempDirProvider: () async => cacheTmp);
+      final dl = downloader(
+        imagesOf: {
+          'ch1.html': [host.img('1.jpg')],
+        },
+        cache: cache,
+        retryDelay: const Duration(milliseconds: 10),
+      );
+
+      await dl.enqueue(
+        bookUrl: bookUrl,
+        chapters: [chapter('第一话', [host.img('1.jpg')])],
+      );
+      await _waitFor(
+        () => dl.jobs.single.state == ComicOfflineJobState.failed,
+        what: '这一话标失败',
+      );
+
+      expect(dl.jobs.single.error, contains('HTTP 404'));
+      expect(host.hits['/img/1.jpg'], 1, reason: '4xx 再来也一样，不该白取第二次');
+    });
+
+    test('一直掐断才把这一话标失败，并把原因留给用户', () async {
+      final cache = _FlakyCache(
+        failAlways: {host.img('1.jpg')},
+        tempDirProvider: () async => cacheTmp,
+      );
+      final dl = downloader(
+        imagesOf: {
+          'ch1.html': [host.img('1.jpg')],
+        },
+        cache: cache,
+      );
+
+      await dl.enqueue(
+        bookUrl: bookUrl,
+        chapters: [chapter('第一话', [host.img('1.jpg')])],
+      );
+      await _waitFor(
+        () => dl.jobs.single.state == ComicOfflineJobState.failed,
+        what: '这一话标失败',
+      );
+
+      expect(dl.jobs.single.error, contains('被掐断'));
+      expect(cache.budgets.length, 2, reason: '整轮试了两次（各 6 个地址）');
+    });
+  });
+}
+
+/// 取图会先失败几次的假缓存：只钉"下载侧怎么应对失败"，不碰真网络。
+class _FlakyCache extends ComicImageCache {
+  _FlakyCache({
+    Set<String>? failOnce,
+    Set<String>? failAlways,
+    super.tempDirProvider,
+  }) : _failOnce = {...?failOnce},
+       _failAlways = {...?failAlways};
+
+  final Set<String> _failOnce;
+  final Set<String> _failAlways;
+
+  /// 每次调用实际传下来的 attempts（钉"下载给了几次机会"）。
+  final List<int?> budgets = [];
+
+  @override
+  Future<File> fetch(
+    String url, {
+    bool lowPriority = false,
+    File? dest,
+    int? maxAttempts,
+  }) async {
+    budgets.add(maxAttempts);
+    if (_failAlways.contains(url)) {
+      throw ComicImageException('测试：被掐断（一直不通）', retryable: true, transient: true);
+    }
+    if (_failOnce.remove(url)) {
+      throw ComicImageException('测试：被掐断（下一轮就好）', retryable: true, transient: true);
+    }
+    return super.fetch(url, lowPriority: lowPriority, dest: dest, maxAttempts: maxAttempts);
+  }
 }

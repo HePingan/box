@@ -185,12 +185,114 @@ void main() {
     expect(paths.single, startsWith('GET /pic.jpg'), reason: '备选端口用同一个路径');
     expect(
       cache.usedAddress(url),
-      'http://127.0.0.1:${good.port}/pic.jpg',
-      reason: '自检要拿它说清"是换了端口才通的"',
+      startsWith('http://127.0.0.1:${good.port}/pic.jpg'),
+      reason: '自检要拿它说清"是换了端口才通的"（现在会优先直连 IP，标签可能带 @IP）',
     );
 
     await bad.close();
     await good.close();
+  });
+
+  // ── 自己挑 IP + 下载要更多机会（2026-10-02）──
+  group('自己挑 IP，不交给系统掷硬币', () {
+    test('候选顺序：解析出的 IP 排前面，域名只当兜底', () async {
+      final edges = ComicImageEdges(
+        cacheStore: CacheStore.inMemory('order_none'),
+        resolver: (h) async => ['10.0.0.1', '10.0.0.2', '10.0.0.3'],
+      );
+      final labels = await cacheFor(
+        const {},
+        edges: edges,
+      ).debugCandidateLabels('http://img.test:666/a.jpg');
+
+      expect(labels, [
+        'http://img.test:666/a.jpg @10.0.0.1',
+        'http://img.test:666/a.jpg @10.0.0.2',
+        'http://img.test:666/a.jpg @10.0.0.3',
+        'http://img.test:666/a.jpg',
+      ], reason: '走域名等于掷硬币（实测 30 张失败 9 成），所以 IP 全排前面');
+    });
+
+    test('学过的好 IP 排第一（其余 IP 仍留着当备份，域名仍垫底）', () async {
+      final edges = ComicImageEdges(
+        cacheStore: CacheStore.inMemory('order_good'),
+        resolver: (h) async => ['10.0.0.1', '10.0.0.2', '10.0.0.3'],
+      );
+      await edges.markGood('img.test', '10.0.0.2');
+      final labels = await cacheFor(
+        const {},
+        edges: edges,
+      ).debugCandidateLabels('http://img.test:666/a.jpg');
+
+      expect(labels.first, 'http://img.test:666/a.jpg @10.0.0.2');
+      expect(labels.last, 'http://img.test:666/a.jpg');
+      expect(labels, contains('http://img.test:666/a.jpg @10.0.0.1'));
+    });
+
+    test('解析不出来就退回域名老路（不因为"记不住"取不到图）', () async {
+      final edges = ComicImageEdges(
+        cacheStore: CacheStore.inMemory('order_fail'),
+        resolver: (h) async => throw const SocketException('解析不了'),
+      );
+      final labels = await cacheFor(
+        const {},
+        edges: edges,
+      ).debugCandidateLabels('http://img.test:666/a.jpg');
+
+      expect(labels, ['http://img.test:666/a.jpg']);
+    });
+
+    test('下载要更多机会：maxAttempts 覆写前 3 次不够、覆写后够（同一台服务器分开比）', () async {
+      // 两个阶段各用一台服务器 + 一份全新的记忆，否则第一阶段的"坏 IP 标记"
+      // 会漏到第二阶段，测出来的就不是"预算"了（自己给自己放水）。
+      Future<ServerSocket> killer(int kills, {required List<int> counter}) async {
+        final srv = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
+        srv.listen((c) async {
+          counter[0]++;
+          if (counter[0] <= kills) {
+            c.destroy();
+            return;
+          }
+          await c.cast<List<int>>().transform(const SystemEncoding().decoder).first;
+          c.write(
+            'HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\n'
+            'Connection: close\r\n\r\n$body',
+          );
+          await c.flush();
+          await c.close();
+        });
+        return srv;
+      }
+
+      ComicImageEdges freshEdges(String ns) => ComicImageEdges(
+        cacheStore: CacheStore.inMemory(ns),
+        resolver: (h) async => ['127.0.0.1', '127.0.0.2', '127.0.0.3', '127.0.0.4'],
+      );
+
+      // 阶段一：全部掐断，默认 3 次机会 → 失败（这就是用户截图里的形态）。
+      final hitsA = [0];
+      final srvA = await killer(99, counter: hitsA);
+      final urlA = 'http://127.0.0.1:${srvA.port}/pic.jpg';
+      await expectLater(
+        cacheFor(const {}, edges: freshEdges('budget_fore')).fetch(urlA),
+        throwsA(isA<ComicImageException>()),
+      );
+      expect(hitsA[0], 3, reason: '前台默认就试 3 个地址');
+      await srvA.close();
+
+      // 阶段二：前 4 条掐断、第 5 条回图。下载传 6 → 必须成，而且真的试到第 5 个。
+      final hitsB = [0];
+      final srvB = await killer(4, counter: hitsB);
+      final urlB = 'http://127.0.0.1:${srvB.port}/pic.jpg';
+      final f = await cacheFor(
+        const {},
+        edges: freshEdges('budget_dl'),
+      ).fetch(urlB, maxAttempts: 6);
+
+      expect(await f.readAsString(), body);
+      expect(hitsB[0], 5, reason: '前 4 个地址死了，第 5 个才通 —— 默认的 3 次到这里就没了');
+      await srvB.close();
+    });
   });
 
   test('被掐断 → 同一个地址再试一次（共 3 次机会）', () async {

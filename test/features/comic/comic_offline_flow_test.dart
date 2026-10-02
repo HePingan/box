@@ -100,7 +100,7 @@ class _FakeCache extends ComicImageCache {
   final List<String> asked = <String>[];
 
   @override
-  Future<File> fetch(String url, {bool lowPriority = false, File? dest}) async {
+  Future<File> fetch(String url, {bool lowPriority = false, File? dest, int? maxAttempts}) async {
     asked.add(url);
     final f = dest ?? File('/dev/null');
     if (dest != null) {

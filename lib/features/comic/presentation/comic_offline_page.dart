@@ -179,7 +179,9 @@ class _ComicOfflinePageState extends State<ComicOfflinePage> {
   /// `0/0 张` 要避免：那是"**还没开始**"（图地址还没取），写成 `0/0 张` 看着像下不动。
   String _chapterSubtitle(ComicOfflineChapter c) {
     if (c.isDone) return '已下载 ${_mb(c.bytes)}';
-    if (c.state == ComicOfflineState.failed) return '下载失败：${c.error}';
+    if (c.state == ComicOfflineState.failed) {
+      return '下载失败：${c.error}（点右边可重试）';
+    }
     if (c.total == 0) {
       if (c.error.contains('Wi-Fi')) return '还没开始（按设置只在 Wi-Fi 下下载）';
       return c.state == ComicOfflineState.paused ? '已暂停' : '准备下载…';
