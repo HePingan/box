@@ -380,18 +380,42 @@ class ComicImageCache {
     final client = HttpClient();
     // 注意别写成级联：lambda 体是表达式，`..` 会被吃进 lambda 里。
     client.connectionFactory =
-        (Uri uri, String? proxyHost, int? proxyPort) {
+        (Uri uri, String? proxyHost, int? proxyPort) async {
           // 配了代理就走代理（别绕过它直连 IP —— 那种网络下直连多半是不通的）；
           // 没配代理才把连接地址换成这个 IP，URL/SNI/证书仍然都是域名那一套。
-          if (proxyHost != null) {
-            return Socket.startConnect(proxyHost, proxyPort ?? uri.port);
-          }
-          return Socket.startConnect(ip, uri.port);
+          final task = proxyHost != null
+              ? await Socket.startConnect(proxyHost, proxyPort ?? uri.port)
+              : await Socket.startConnect(ip, uri.port);
+          return _tlsOn(task, uri);
         };
     client.connectionTimeout = connectTimeout;
     client.idleTimeout = idleTimeout;
     _pinnedClients[ip] = client;
     return client;
+  }
+
+  /// 把裸连接按**域名**套上 TLS（SNI/证书都用域名，证书该拒还是拒）。
+  ///
+  /// 为什么非得自己套这一层（2026-10-02 实测，这是个真事故）：`connectionFactory`
+  /// 返回的是"**已经连好的裸连接**"，dart:io 不会再替它做 TLS 握手。以前这里直接
+  /// `return Socket.startConnect(...)`，于是直连 IP 的那几次请求是**明文 HTTP 发到
+  /// HTTPS 端口**，服务端一句 `400 Client sent an HTTP request to an HTTPS server.`
+  /// 打回来；而 400 又被判成"不用重试"，域名兜底那一步根本走不到 —— 用户看到的就是
+  /// "每张图都下失败（HTTP 400）"。348 就是这么发出去的（直连 IP 是候选里的第一条
+  /// 地址，所以它会把每一次取图都撞掉）。修法：连上以后自己做客户端握手。
+  Future<ConnectionTask<Socket>> _tlsOn(
+    ConnectionTask<Socket> task,
+    Uri uri,
+  ) async {
+    if (uri.scheme != 'https') return task;
+    final raw = await task.socket;
+    // `onBadCertificate` 不给：证书验不过就让它失败 —— 直连只是换了"连到哪台机器"，
+    // **不是**绕过证书（见 [ComicImageEdges] 的说明）。
+    final secure = await SecureSocket.secure(raw, host: uri.host);
+    return ConnectionTask.fromSocket<Socket>(
+      Future<Socket>.value(secure),
+      task.cancel,
+    );
   }
 
   /// 直连用到的 client（按 IP 存，随缓存实例一起活）。
@@ -462,13 +486,21 @@ class ComicImageCache {
         );
       }
       if (resp.statusCode != 200) {
+        // 直连某个 IP 时撞到 4xx（典型就是 400）：这是**这个地址**的问题，不是这张图的
+        // 问题 —— 必须允许换下一个候选（域名兜底就在队列末尾）。2026-10-02 实测：直连
+        // 那条路曾把明文 HTTP 发到 HTTPS 端口换来一句 400，而 400 当时被当成"再试也没用"
+        // 直接整张判死，域名兜底永远走不到。
         // 把正文丢掉再抛：不读干会留着这条连接（force close 也不保证对端立刻释放）。
         await resp.drain<void>().catchError((_) {});
         throw ComicImageException(
           '这张图没下来（HTTP ${resp.statusCode}，$host）',
           // 5xx 是服务端一时抽风（CDN 节点过载常见），换条路再试有意义；
           // 4xx（404/403）说明这个地址本来就没有，别白试。
-          retryable: resp.statusCode >= 500,
+          // 404 这种"这张图本来就不在"的码，换地址也一样，直接判死（前台读图和
+          // 下载都靠这条省时间）；但 400 要区别对待：直连某个 IP 时撞到 400 说明的是
+          // "这个地址方式不对"，换个候选（域名兜底在队列末尾）通常就好 —— 见 _tlsOn。
+          retryable: resp.statusCode >= 500 ||
+              (pinned != null && resp.statusCode == HttpStatus.badRequest),
           transient: resp.statusCode >= 500,
         );
       }

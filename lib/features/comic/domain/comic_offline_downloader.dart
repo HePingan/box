@@ -3,7 +3,7 @@
 // 形状与理由：
 //   * **一话一个任务、任务之间串行**（一话下完再下一话）。漫画一话 20~200 张，
 //     几话同时去挤图床正是 2026-10-01 那次"连接被掐断（errno 104）"的起因之一；
-//     话内的并发交给 `ComicImageCache`（这里传 maxParallel: 2，比阅读时的 4 更保守）。
+//     话内的并发交给 `ComicImageCache`，取值见 [defaultChapterParallel]（比阅读时的 4 更保守）。
 //   * **续传认"文件在不在"，不认计数**（见 `ComicImageCache.fetch(dest:)`）：杀进程、
 //     手机关机、用户点暂停之后，重新开始时缺哪张下哪张 —— 计数会飘，文件不会。
 //   * 取图**不另写一套**：走 `ComicImageCache.fetch(dest:)`，于是图床那套"每次连接
@@ -19,6 +19,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import 'comic_image_cache.dart';
+import 'comic_download_keepalive.dart';
 import 'comic_offline_store.dart';
 
 /// 一个下载任务的状态。
@@ -79,12 +80,24 @@ class ComicOfflineDownloader extends ChangeNotifier {
     ComicImageCache? cache,
     Future<List<String>> Function(String chapterUrl)? loadImages,
     Future<bool> Function()? networkAllowed,
+    ComicDownloadKeepAlive? keepAlive,
     this.imageAttempts = defaultImageAttempts,
     this.retryDelay = const Duration(milliseconds: 1200),
   }) : store = store ?? ComicOfflineStore(),
-       cache = cache ?? ComicImageCache(maxParallel: 2),
+       cache = cache ?? ComicImageCache(maxParallel: defaultChapterParallel),
+       _keepAlive = keepAlive ?? ComicDownloadKeepAlive(),
        _loadImages = loadImages,
        _networkAllowed = networkAllowed ?? (() async => true);
+
+  /// 一话之内同时下几张图。
+  ///
+  /// **取 3 是量出来的（2026-10-02，同一批 10 张图各跑两轮，失败都是 0）**：
+  /// 并发 2 → 6.0s / 3 → 4.5s / 4 → 6.2s。3 比 2 快约四分之一，再往上反而变慢
+  /// （对端开始推回来，连接建立成了瓶颈）。想重新量：
+  /// `flutter test --tags live test/features/comic/comic_download_parallel_live_test.dart`
+  /// （默认 footprint 很小 —— 一口气打几百个请求的话图床会回 400，量到的就不是并发的锅）。
+  /// 话与话之间仍然串行：整本一起挤上去正是 2026-10-01 那次「连接被掐断」的起因。
+  static const int defaultChapterParallel = 3;
 
   /// 单张图允许试几个地址（默认比前台读图多：下载是连发几百张，一次抖动
   /// 就废掉整话，代价完全不对等）。
@@ -178,6 +191,72 @@ class ComicOfflineDownloader extends ChangeNotifier {
 
   void setLoadImages(Future<List<String>> Function(String chapterUrl) fn) {
     _loadImages = fn;
+  }
+
+  /// 开始/继续一段下载：把前台保活挂上（幂等），并从头数这一轮的账。
+  ///
+  /// 为什么在"真的挑到任务"时才挂（而不是 enqueue 就挂）：入队之后可能立刻被
+  /// "仅 Wi-Fi"拦下 —— 那种情况一个字节都不会下，挂个"正在下载"的通知就是骗人。
+  void _startKeepAlive(String text) {
+    if (!_keepAliveOn) {
+      _keepAliveOn = true;
+      _sessionDone = 0;
+      _sessionFailed = 0;
+    }
+    _lastNoticeAt = DateTime.now();
+    unawaited(_keepAlive.start(title: '漫画下载中', text: text));
+  }
+
+  /// 更新通知文案（有节流：默认 2 秒最多一次）。
+  void _updateKeepAlive(String text, {bool force = false}) {
+    if (!_keepAliveOn) return;
+    final now = DateTime.now();
+    final last = _lastNoticeAt;
+    if (!force && last != null && now.difference(last) < const Duration(seconds: 2)) {
+      return;
+    }
+    _lastNoticeAt = now;
+    unawaited(_keepAlive.update(text: text));
+  }
+
+  /// 队列空了：收工。
+  ///
+  /// [userStopped] = 用户自己暂停/取消（那就不用告诉他"下载完成"，直接把通知撤掉）。
+  void _stopKeepAlive({required bool userStopped}) {
+    if (!_keepAliveOn) return;
+    _keepAliveOn = false;
+    _lastNoticeAt = null;
+    if (userStopped) {
+      unawaited(_keepAlive.stop());
+      return;
+    }
+    if (_sessionDone == 0 && _sessionFailed == 0) {
+      // 一件都没做成（比如全被拦下/全失败在入队阶段）：不该留"下载完成"的通知。
+      unawaited(_keepAlive.stop());
+      return;
+    }
+    final text = _sessionFailed > 0
+        ? '完成 $_sessionDone 话 · 失败 $_sessionFailed 话（可在「离线下载」里重试）'
+        : '共 $_sessionDone 话，已存到本机';
+    unawaited(
+      _keepAlive.finish(
+        title: _sessionFailed > 0 ? '漫画下载有失败' : '漫画下载完成',
+        text: text,
+      ),
+    );
+  }
+
+  /// 队列里的状态文案：通知与界面用的是同一份事实。
+  String _queueSummary() {
+    final running = _jobs.where((j) => j.state == ComicOfflineJobState.running);
+    final waiting = _jobs
+        .where((j) => j.state == ComicOfflineJobState.queued)
+        .length;
+    final cur = running.isEmpty ? null : running.first;
+    if (cur == null) return '还剩 $waiting 话';
+    final title = cur.chapterTitle.trim().isEmpty ? '这一话' : cur.chapterTitle;
+    final pages = cur.total > 0 ? '（${cur.done}/${cur.total} 张）' : '';
+    return '$title$pages · 还剩 $waiting 话';
   }
 
   void setNetworkAllowed(Future<bool> Function() fn) {
@@ -281,6 +360,7 @@ class ComicOfflineDownloader extends ChangeNotifier {
     final job = jobFor(bookUrl, chapterUrl);
     if (job == null) return;
     job.userPaused = true;
+    _userStoppedThisRound = true;
     if (job.state == ComicOfflineJobState.running) {
       _pauseRequested = true;
     } else {
@@ -292,6 +372,7 @@ class ComicOfflineDownloader extends ChangeNotifier {
 
   /// 暂停全部。
   void pauseAll() {
+    _userStoppedThisRound = true;
     for (final j in _jobs) {
       j.userPaused = true;
       if (j.state == ComicOfflineJobState.running) {
@@ -391,6 +472,7 @@ class ComicOfflineDownloader extends ChangeNotifier {
 
   /// 取消这一话：队列里去掉 + **把已经下来的文件删掉**（留着会变成看不见的占用）。
   Future<void> cancel(String bookUrl, String chapterUrl) async {
+    _userStoppedThisRound = true; // 用户取消：收工不留"下载完成"的通知
     final job = jobFor(bookUrl, chapterUrl);
     if (job != null && job.state == ComicOfflineJobState.running) {
       _cancelRequested = true;
@@ -405,10 +487,28 @@ class ComicOfflineDownloader extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 下载期间的前台保活（通知栏常驻）+ 下完那条通知。
+  ///
+  /// 为什么要它：Dart 的任务拦不住系统回收进程 —— app 退到后台、内存一紧就被回收，
+  /// 队列直接断掉（用户回来只看到进度不动了）。仓库里视频下载 / 远端传输都是同一个模式：
+  /// 各起一个前台服务、**通知 ID 分开**（1001 / 1002，这里是 1003），互不干扰。
+  final ComicDownloadKeepAlive _keepAlive;
+
+  /// 保活服务现在挂着没有（挂着才需要更新/收工，避免无谓的平台调用）。
+  bool _keepAliveOn = false;
+
+  /// 这轮（本次保活）下完了多少话、失败多少话 —— 收工那条通知要报数，不报数等于没说。
+  int _sessionDone = 0;
+  int _sessionFailed = 0;
+
+  /// 上次更新通知的时间：进度通知不必每张图都刷（平台调用也是有代价的）。
+  DateTime? _lastNoticeAt;
+
   /// 启动时把"上次下到一半就没了"的任务改成暂停。
   ///
   /// 不自动继续：自动继续意味着**可能在移动网络上**自己开始下几百兆 ——
   /// 用户点一下"继续"才是对的（而且他点的时候知道自己现在什么网）。
+
   /// 上次被杀掉、这次被叫回来的任务（`bookUrl|chapterUrl`）—— 启动续下只认这些。
   final Set<String> _interrupted = <String>{};
 
@@ -475,14 +575,31 @@ class ComicOfflineDownloader extends ChangeNotifier {
           break;
         }
 
+        _startKeepAlive(_queueSummary());
         final ok = await _runJob(job);
+        if (ok) {
+          _sessionDone++;
+        } else {
+          _sessionFailed++; // 失败或用户暂停，下面按队列状态区分怎么收工
+        }
         if (!ok) break; // 失败/被暂停：停下，剩下的留在队列里等用户
       }
     } finally {
       _pumping = false;
       notifyListeners();
+      // 队列空了才算收工；还有排队的（比如刚才被拦下）就继续挂着。
+      if (_nextQueued == null && !_pumping) {
+        final paused = _jobs.any(
+          (j) => j.state == ComicOfflineJobState.paused && j.userPaused,
+        );
+        _stopKeepAlive(userStopped: paused || _userStoppedThisRound);
+        _userStoppedThisRound = false;
+      }
     }
   }
+
+  /// 这一轮里用户点过暂停/取消（用来决定"收工"时留不留"下载完成"的通知）。
+  bool _userStoppedThisRound = false;
 
   /// 跑一话。返回 false 表示队列该停了（暂停/失败）。
   Future<bool> _runJob(ComicOfflineJob job) async {
@@ -538,6 +655,7 @@ class ComicOfflineDownloader extends ChangeNotifier {
         // 每 5 张落一次清单：太勤是白写盘，太懒则杀进程后丢进度。
         if (saved % 5 == 0) await store.saveBook(book);
         notifyListeners();
+        _updateKeepAlive(_queueSummary());
       }
 
       _interrupted.remove(_key(job.bookUrl, job.chapterUrl));

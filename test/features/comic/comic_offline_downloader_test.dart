@@ -5,6 +5,7 @@
 import 'dart:io';
 
 import 'package:box/features/comic/domain/comic_image_cache.dart';
+import 'package:box/features/comic/domain/comic_download_keepalive.dart';
 import 'package:box/features/comic/domain/comic_offline_downloader.dart';
 import 'package:box/features/comic/domain/comic_offline_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -63,6 +64,35 @@ class _TestImageHost {
   Future<void> stop() async => _server?.close(force: true);
 }
 
+/// 记账用的假保活：只记"调了什么"，不碰平台通道。
+///
+/// 断言的是**行为**：什么时候挂上、文案报什么、下完留不留通知、用户停了还留不留。
+class _FakeKeepAlive extends ComicDownloadKeepAlive {
+  final List<String> calls = <String>[];
+  final List<String> texts = <String>[];
+
+  @override
+  Future<void> start({required String title, required String text}) async {
+    calls.add('start');
+    texts.add('$title | $text');
+  }
+
+  @override
+  Future<void> update({required String text}) async {
+    calls.add('update');
+    texts.add(text);
+  }
+
+  @override
+  Future<void> finish({required String title, required String text}) async {
+    calls.add('finish');
+    texts.add('$title | $text');
+  }
+
+  @override
+  Future<void> stop() async => calls.add('stop');
+}
+
 Future<void> _waitFor(
   bool Function() cond, {
   Duration timeout = const Duration(seconds: 20),
@@ -91,8 +121,10 @@ void main() {
     bool wifi = true,
     ComicImageCache? cache,
     Duration retryDelay = Duration.zero,
+    ComicDownloadKeepAlive? keepAlive,
   }) => ComicOfflineDownloader(
     store: store,
+    keepAlive: keepAlive,
     cache:
         cache ??
         ComicImageCache(maxParallel: 2, tempDirProvider: () async => cacheTmp),
@@ -220,6 +252,84 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 200));
     expect(host.totalHits(), 0, reason: '不点继续就不该自己开始下（可能在移动网络上）');
     expect((await store.loadBook(bookUrl))!.chapters.single.state, ComicOfflineState.paused);
+  });
+
+  // ── 前台保活 + 下完的通知（2026-10-02：用户提的"切后台别停 + 下完告诉我"）──
+  group('下载期间的前台保活与完成通知', () {
+    test('下完一话：挂着"下载中"，收工留一条"下载完成"（报话数）', () async {
+      final c = chapter('c30', [host.img('k1.jpg'), host.img('k2.jpg')]);
+      final notes = _FakeKeepAlive();
+      final dl = downloader(imagesOf: {'c30': c.images}, keepAlive: notes);
+
+      await dl.enqueue(bookUrl: bookUrl, chapters: [c]);
+      await _waitFor(() => dl.jobs.single.isDone, what: '这一话下完');
+
+      expect(notes.calls.first, 'start');
+      expect(notes.calls.last, 'finish');
+      expect(
+        notes.texts.last,
+        contains('共 1 话'),
+        reason: '通知要报数：只说"下载完成"，用户还得自己翻',
+      );
+      expect(notes.calls, isNot(contains('stop')), reason: '正常下完不是"撤掉通知"');
+    });
+
+    test('下失败：留的通知说"有失败"，并指路去哪重试', () async {
+      host.failPrefixes.add('/img/');
+      final c = chapter('c31', [host.img('bad/k1.jpg')]);
+      final notes = _FakeKeepAlive();
+      final dl = downloader(imagesOf: {'c31': c.images}, keepAlive: notes);
+
+      await dl.enqueue(bookUrl: bookUrl, chapters: [c]);
+      await _waitFor(
+        () => dl.jobs.single.state == ComicOfflineJobState.failed,
+        what: '这一话失败',
+      );
+
+      expect(notes.calls.last, 'finish');
+      expect(notes.texts.last, contains('失败 1 话'));
+    });
+
+    test('被「仅 Wi-Fi」拦下：一个通知调用都不发（不能骗用户"正在下载"）', () async {
+      final c = chapter('c32', [host.img('k3.jpg')]);
+      final notes = _FakeKeepAlive();
+      final dl = downloader(
+        imagesOf: {'c32': c.images},
+        wifi: false,
+        keepAlive: notes,
+      );
+
+      await dl.enqueue(bookUrl: bookUrl, chapters: [c]);
+      await _waitFor(
+        () => dl.jobs.single.state == ComicOfflineJobState.paused,
+        what: '被拦下',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+
+      expect(notes.calls, isEmpty);
+    });
+
+    test('用户自己暂停：撤掉通知，不留"下载完成"', () async {
+      final c = chapter(
+        'c33',
+        [for (var i = 0; i < 12; i++) host.img('slow$i.jpg')],
+      );
+      final notes = _FakeKeepAlive();
+      final dl = downloader(imagesOf: {'c33': c.images}, keepAlive: notes);
+
+      await dl.enqueue(bookUrl: bookUrl, chapters: [c]);
+      await _waitFor(() => dl.jobs.single.state == ComicOfflineJobState.running,
+          what: '开始下');
+      dl.pause(bookUrl, c.url);
+      await _waitFor(
+        () => dl.jobs.single.state == ComicOfflineJobState.paused,
+        what: '停住',
+      );
+
+      expect(notes.calls, contains('start'));
+      expect(notes.calls, contains('stop'));
+      expect(notes.calls, isNot(contains('finish')));
+    });
   });
 
   // ── 启动续下（2026-10-02）──

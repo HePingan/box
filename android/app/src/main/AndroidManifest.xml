@@ -130,6 +130,12 @@
             android:foregroundServiceType="dataSync"
             android:exported="false" />
 
+        <!-- 漫画离线下载保活前台服务（2026-10-02）：通知 ID 1003，与视频 1001、传输 1002 分开 -->
+        <service
+            android:name=".ComicKeepAliveService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
