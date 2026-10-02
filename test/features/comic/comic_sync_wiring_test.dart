@@ -12,8 +12,6 @@ import 'package:box/features/extensions/plugins/server_ops/server_ops_api_client
 import 'package:box/features/settings/presentation/data_settings_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 
 /// 假同步服务：记下被叫了几次，按 [outcome] 回结果。
 class _FakeSync extends ComicSyncService {

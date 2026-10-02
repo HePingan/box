@@ -1241,18 +1241,24 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
         _back();
       },
       child: Scaffold(
-        appBar: AppBar(
-          title: Text(switch (_mode) {
-            _Mode.search => '在线漫画',
-            _Mode.book => _book?.name ?? '详情',
-            _Mode.reader => _chapter?.title ?? '阅读',
-          }),
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: _back,
-          ),
-          actions: [_sourceMenu()],
-        ),
+        // 阅读态**不要 AppBar**（2026-10-02 用户报「最上面空太多了，争取漫画铺满全屏」）：
+        // AppBar 是常驻的，一进阅读就先吃掉一整条屏高（状态栏 + 56），而标题/返回
+        // 在读的时候并不需要。阅读态改用压在画面上的 `_readerTopBar()`，
+        // 与底部控制栏同一条命：点一下出现、4 秒自己收。
+        appBar: _mode == _Mode.reader
+            ? null
+            : AppBar(
+                title: Text(switch (_mode) {
+                  _Mode.search => '在线漫画',
+                  _Mode.book => _book?.name ?? '详情',
+                  _Mode.reader => _chapter?.title ?? '阅读',
+                }),
+                leading: IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: _back,
+                ),
+                actions: [_sourceMenu()],
+              ),
         body: Stack(
           children: [
             Positioned.fill(child: _body()),
@@ -1729,6 +1735,11 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
       // 左右翻页：一屏一张，左右滑（页漫用这个顺）
       return Stack(
         children: [
+          // 画面区**黑底**：一页铺满宽度后，剩下的那点空白就成了一圈黑边
+          //（阅读器的常规做法），不再是白花花一片"这里是不是缺了东西"
+          //（2026-10-02 用户报「最上面空太多了…争取漫画铺满全屏」）。
+          // 只铺在画面这一层：加载/报错那些字还是深色，得留在浅色底上。
+          const Positioned.fill(child: ColoredBox(color: Colors.black)),
           // 页漫的单手操作：左右 1/3 各翻一张，**中间**才收/放控制栏
           //（滑动翻页照旧 —— 点按只是给够不到屏幕边缘的单手握持用）。
           GestureDetector(
@@ -1750,11 +1761,18 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
                 setState(() => _imageIndex = i);
                 _saveProgress(i);
               },
-              itemBuilder: (context, i) => Center(
+              // 一页按**宽度铺满**、从**最上面**排下来。
+              //
+              // 老写法是 `Center` + `BoxFit.contain`：一页的宽高比与手机对不上时，
+              // 上下各留一条等高的空白（实测约 15% 屏高，用户看到的就是「最上面空太多了」，
+              // 2026-10-02 报障）。现在空白挤到下面去 —— 那儿本来就压着底部控制栏，不碍事；
+              // 一页比一屏还高（长条页）时**页内可以上下滚**，不再缩成两边留白，也不裁掉下半张。
+              itemBuilder: (context, i) => SingleChildScrollView(
                 child: _CachedImage(
                   url: _images[i],
                   cache: _cache,
-                  fit: BoxFit.contain,
+                  fit: BoxFit.fitWidth,
+                  onDark: true,
                   offline: _offline,
                   offlineBookUrl: _book?.bookUrl ?? '',
                   offlineChapterUrl: _chapter?.url ?? '',
@@ -1764,12 +1782,18 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           ),
           // 后面的图还在取：顶部挂一条进度，别让人以为是卡住了。
           if (_busy)
-            Positioned(top: 0, left: 0, right: 0, child: _loadingBanner()),
+            Positioned(
+              top: _readerTopInset,
+              left: 0,
+              right: 0,
+              child: _loadingBanner(),
+            ),
           // 只提示一次：「喜欢上下滑动读？点这里换成竖向连续」。
+          // 排在取图进度**下面**：两条都在顶上时不能互相盖住（提示条是要点的）。
           Positioned(
             left: 0,
             right: 0,
-            top: _busy ? 44 : 8,
+            top: _readerTopInset + (_busy ? 30 : 4),
             child: _pageTurnHintBar(),
           ),
           Positioned(
@@ -1780,12 +1804,15 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           ),
           Positioned.fill(child: _dimOverlay()),
           Positioned.fill(child: _dimHudView()),
+          Positioned(left: 0, right: 0, top: 0, child: _readerTopChrome()),
           Positioned(left: 0, right: 0, bottom: 0, child: _readerChrome()),
         ],
       );
     }
     return Stack(
       children: [
+        // 同上：竖向连续也是黑底（图片是通栏的，空白只在最后一页下面）。
+        const Positioned.fill(child: ColoredBox(color: Colors.black)),
         GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: _toggleChrome,
@@ -1826,10 +1853,16 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
           ),
         ),
         if (_busy)
-          Positioned(top: 0, left: 0, right: 0, child: _loadingBanner()),
+          Positioned(
+            top: _readerTopInset,
+            left: 0,
+            right: 0,
+            child: _loadingBanner(),
+          ),
         Positioned(left: 0, right: 0, bottom: 0, child: _readerProgressLine()),
         Positioned.fill(child: _dimOverlay()),
         Positioned.fill(child: _dimHudView()),
+        Positioned(left: 0, right: 0, top: 0, child: _readerTopChrome()),
         Positioned(left: 0, right: 0, bottom: 0, child: _readerChrome()),
       ],
     );
@@ -2105,6 +2138,65 @@ class _ComicOnlinePageState extends State<ComicOnlinePage> {
             style: const TextStyle(color: Colors.white, fontSize: 13),
           ),
         ),
+      ),
+    );
+  }
+
+  /// 阅读器顶部控制栏压掉的高度（图标按钮 48 + 上下留白 8 + 状态栏）。
+  ///
+  /// 顶上那两条提示（取图进度 / 换翻页方式）必须躲开它 —— 它们是 `Positioned(top: 0)`
+  /// 画的，压在控制栏底下就**点不到**（用例当场逮到过：点提示点到了控制栏）。
+  double get _readerTopInset => MediaQuery.of(context).padding.top + 56;
+
+  /// 阅读器顶部那条（返回 + 标题 + 切源）——**压在画面上**，高度不占版面。
+  ///
+  /// 与底部控制栏同一条命（`_chromeVisible`）：读的时候它是隐的，画面就是整屏。
+  Widget _readerTopChrome() {
+    return IgnorePointer(
+      ignoring: !_chromeVisible,
+      child: AnimatedOpacity(
+        opacity: _chromeVisible ? 1 : 0,
+        duration: const Duration(milliseconds: 180),
+        child: _readerTopBar(),
+      ),
+    );
+  }
+
+  Widget _readerTopBar() {
+    return Container(
+      color: Colors.black54,
+      padding: EdgeInsets.only(
+        left: 4,
+        right: 4,
+        // 沉浸态下状态栏本来就没了；万一还看得见（切进切出那一瞬间），别压到它下面。
+        top: 4 + MediaQuery.of(context).padding.top,
+        bottom: 4,
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: '返回',
+            onPressed: _back,
+            icon: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+          ),
+          Expanded(
+            child: Text(
+              _chapter?.title ?? '阅读',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          // 读的时候也能换源（这一话取不到图时要能当场换一个），图标压成白的。
+          IconTheme(
+            data: const IconThemeData(color: Colors.white, size: 20),
+            child: _sourceMenu(),
+          ),
+        ],
       ),
     );
   }
@@ -2475,6 +2567,7 @@ class _PageImage extends StatelessWidget {
         url: url,
         cache: cache,
         fit: BoxFit.fitWidth,
+        onDark: true,
         offline: offline,
         offlineBookUrl: offlineBookUrl,
         offlineChapterUrl: offlineChapterUrl,
@@ -2516,6 +2609,7 @@ class _ComicZoomView extends StatelessWidget {
                     url: url,
                     cache: cache,
                     fit: BoxFit.contain,
+                    onDark: true,
                     offline: offline,
                     offlineBookUrl: offlineBookUrl,
                     offlineChapterUrl: offlineChapterUrl,
@@ -2565,6 +2659,7 @@ class _CachedImage extends StatefulWidget {
     this.offlineBookUrl = '',
     this.offlineChapterUrl = '',
     this.offlineCover = false,
+    this.onDark = false,
   });
 
   final String url;
@@ -2578,6 +2673,9 @@ class _CachedImage extends StatefulWidget {
 
   /// 这是**封面**（按"这本书的封面"去找，而不是按某一话的图去找）。
   final bool offlineCover;
+
+  /// 这张图落在**黑底**上（阅读器画面区）：报错文案要浅色，深色会看不见。
+  final bool onDark;
 
   @override
   State<_CachedImage> createState() => _CachedImageState();
@@ -2696,7 +2794,10 @@ class _CachedImageState extends State<_CachedImage> {
                     Text(
                       '${snap.error}',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 12),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: widget.onDark ? Colors.white70 : null,
+                      ),
                     ),
                     TextButton(onPressed: _retry, child: const Text('重试')),
                   ],

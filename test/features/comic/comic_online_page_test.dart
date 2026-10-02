@@ -1242,7 +1242,15 @@ void main() {
       await openChapterAt(tester, '第1话');
 
       // 长按图片 → 放大（用长按而不是双击：双击会把单击拖慢，实测过）
-      await tester.longPressAt(tester.getCenter(find.byType(Image).first));
+      //
+      // 按**画面中间**长按，不按 `find.byType(Image)` 的 rect：测试里图片解码是异步的，
+      // 那一瞬间 RenderImage 还没有图（高度 0），中心点会落到顶边上 —— 正好压在
+      // 顶部控制栏底下（2026-10-02 改成压画面的控制栏之后用例当场逮到这条）。
+      final imgRect = tester.getRect(find.byType(Image).first);
+      final at = imgRect.height > 8
+          ? imgRect.center
+          : tester.getCenter(find.byType(Scaffold).first);
+      await tester.longPressAt(at);
       await _settle(tester);
 
       expect(find.byType(InteractiveViewer), findsOneWidget, reason: '长按要放大来看');
@@ -1465,6 +1473,81 @@ void main() {
         reason: '条漫的上下滑是滚动，抢了就成"滑不动反而变暗"',
       );
       expect(find.textContaining('亮度'), findsNothing);
+    });
+
+    // ── 排版：铺满全屏（2026-10-02 用户报「最上面空太多了」）────────────
+
+    testWidgets('阅读态不再挂常驻 AppBar：标题与返回改压在画面上（点一下才出现）', (tester) async {
+      await openReader(
+        tester,
+        cache: _FakeCache(tmpPng('appbar')),
+        prefsKey: 'reader_appbar_test',
+      );
+      await tester.tap(find.byIcon(Icons.view_carousel_outlined));
+      await _settle(tester);
+
+      expect(
+        find.byType(AppBar),
+        findsNothing,
+        reason: 'AppBar 常驻会先吃掉一整条屏高，而用户要的是"漫画铺满全屏"',
+      );
+      // 但返回/标题不能丢：它们还在，只是压在画面上（跟着控制栏一起隐现）。
+      expect(find.byIcon(Icons.arrow_back), findsOneWidget);
+      expect(find.text('第1186话'), findsWidgets, reason: '标题要还在（顶栏里那条）');
+
+      // 点一下画面中间能收/放控制栏（顶栏跟着一起动）。
+      await tester.tapAt(tester.getCenter(find.byType(PageView).first));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.byType(AppBar), findsNothing, reason: '收了控制栏也不该冒出 AppBar');
+    });
+
+    testWidgets('页漫：一页按宽度铺满、从最上面排（不再上下居中留白）', (tester) async {
+      await openReader(
+        tester,
+        cache: _FakeCache(tmpPng('fill')),
+        prefsKey: 'reader_fill_test',
+      );
+      await tester.tap(find.byIcon(Icons.view_carousel_outlined));
+      await _settle(tester);
+      expect(find.byType(PageView), findsOneWidget, reason: '已经在页漫里');
+
+      // 注意：widget 用例里图片解码是**真异步**（`pump` 不推它），所以量出来的
+      // RenderImage 是"还没解码"的那一版（宽 = 铺满、高 = 0）。这不影响判据 ——
+      // 老写法（Center + contain）在同样这一刻量出来是 0×0、被摆在屏幕正中，
+      // 新写法是"通栏宽 + 贴顶"，两者差得很远：
+      final screen = tester.getSize(find.byType(PageView));
+      final scv = tester.getRect(find.byType(SingleChildScrollView));
+      final img = tester.getRect(find.byType(Image).first);
+      expect(scv.width, screen.width, reason: '页内容铺满整宽');
+      expect(scv.top, lessThan(8), reason: '从最上面排，不留顶部那条空白');
+      expect(img.left, scv.left, reason: '左贴边（不再居中缩一圈）');
+      expect(img.top, scv.top, reason: '顶对齐');
+      expect(img.width, screen.width, reason: '按宽度铺满（左右不留白）');
+      expect(
+        tester.widget<Image>(find.byType(Image).first).fit,
+        BoxFit.fitWidth,
+        reason: '老写法是 BoxFit.contain（上下各留一条 ~15% 屏高的空白）',
+      );
+    });
+
+    testWidgets('页漫：一页比一屏还高时，页内能上下滚（不缩图、不裁掉下半张）', (tester) async {
+      await openReader(
+        tester,
+        cache: _FakeCache(tmpPng('tall')),
+        prefsKey: 'reader_tall_test',
+      );
+      await tester.tap(find.byIcon(Icons.view_carousel_outlined));
+      await _settle(tester);
+
+      // 一页比一屏高时靠这个滚动视图看全（假图在用例里解不出真尺寸，
+      // 所以这里钉"结构上是可滚的、且不翻页"，真机上滚不滚由它自己算）。
+      expect(find.byType(SingleChildScrollView), findsOneWidget);
+
+      // 页内上下滑：页码不该变（滚动被内层接住，不会翻到下一张）。
+      await tester.drag(find.byType(SingleChildScrollView), const Offset(0, -120));
+      await _settle(tester);
+      expect(find.text('1 / 1 张'), findsOneWidget, reason: '页内滚不等于翻页');
     });
   });
 
