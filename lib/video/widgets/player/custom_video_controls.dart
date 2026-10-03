@@ -5,6 +5,8 @@ import 'package:chewie/chewie.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../../../design_system/app_tokens.dart';
+import 'player_gesture_channel.dart';
+import 'player_overlays.dart';
 
 /// Serializes seek commands while coalescing requests made in the same UI turn.
 ///
@@ -107,6 +109,18 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
   bool _wasPlayingBeforeScrub = false;
   LatestSeekCommandQueue? _seekQueue;
 
+  // ④ 亮度 / 音量：左半屏上下拖 = 亮度，右半屏上下拖 = 音量。
+  // 与主流播放器一致（右手持机时拇指在右半屏）。
+  final PlayerGestureChannel _gestureChannel = PlayerGestureChannel.instance;
+  bool _gestureIsBrightness = true;
+  bool _gestureReady = false;
+  bool _gestureHudVisible = false;
+  double _gestureValue = 0.5;
+  Timer? _gestureHudTimer;
+
+  // 亮度是**窗口级**的：不还原的话，退出播放器后整个 App 还留在暗（或亮）里。
+  bool _brightnessTouched = false;
+
   int _lastTapTime = 0;
   Timer? _singleTapTimer;
   bool _showControlsBeforeTap = true;
@@ -163,6 +177,11 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     _hideTimer?.cancel();
     _singleTapTimer?.cancel();
     _doubleTapHintTimer?.cancel();
+    _gestureHudTimer?.cancel();
+    // 亮度是窗口级的：交还给系统，别把整个 App 留在播放器调过的亮度上。
+    if (_brightnessTouched) {
+      unawaited(_gestureChannel.setBrightness(-1));
+    }
     super.dispose();
   }
 
@@ -398,6 +417,79 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     }
   }
 
+  // ============== 亮度 / 音量手势（④）==============
+
+  /// 左半屏 = 亮度，右半屏 = 音量。起手值先向原生问一次当前值，
+  /// 免得一按就跳变（亮度跟随系统时读到 -1，用中间值起手）。
+  void _onVerticalDragStart(DragStartDetails details) {
+    if (_isLocked) return;
+    final width = context.size?.width ?? MediaQuery.sizeOf(context).width;
+    _gestureIsBrightness = PlayerGestureMath.isBrightnessSide(
+      dx: details.localPosition.dx,
+      width: width,
+    );
+    _gestureHudTimer?.cancel();
+    _gestureReady = false;
+    if (_gestureIsBrightness) {
+      unawaited(_beginBrightnessGesture());
+    } else {
+      unawaited(_beginVolumeGesture());
+    }
+  }
+
+  Future<void> _beginBrightnessGesture() async {
+    final raw = await _gestureChannel.getBrightness();
+    if (!mounted || _isLocked) return;
+    setState(() {
+      _gestureValue = PlayerGestureMath.normalizeBrightness(raw);
+      _gestureReady = true;
+      _gestureHudVisible = true;
+    });
+  }
+
+  Future<void> _beginVolumeGesture() async {
+    final raw = await _gestureChannel.getVolume();
+    if (!mounted || _isLocked) return;
+    if (raw == null) {
+      // 拿不到音量（桌面 / 测试环境 / 个别 ROM）：不显示浮层，也不接管手势，
+      // 让页面该滚动还能滚动。
+      _gestureReady = false;
+      return;
+    }
+    setState(() {
+      _gestureValue = raw.clamp(0.0, 1.0);
+      _gestureReady = true;
+      _gestureHudVisible = true;
+    });
+  }
+
+  void _onVerticalDragUpdate(DragUpdateDetails details) {
+    if (_isLocked || !_gestureReady) return;
+    final height = context.size?.height ?? MediaQuery.sizeOf(context).height;
+    final next = PlayerGestureMath.applyDelta(
+      current: _gestureValue,
+      deltaY: details.delta.dy,
+      trackHeight: height,
+    );
+    if (next == _gestureValue) return;
+    setState(() => _gestureValue = next);
+    if (_gestureIsBrightness) {
+      _brightnessTouched = true;
+      unawaited(_gestureChannel.setBrightness(next));
+    } else {
+      unawaited(_gestureChannel.setVolume(next));
+    }
+  }
+
+  void _onVerticalDragEnd(DragEndDetails details) {
+    _gestureReady = false;
+    _gestureHudTimer?.cancel();
+    _gestureHudTimer = Timer(const Duration(milliseconds: 800), () {
+      if (!mounted) return;
+      setState(() => _gestureHudVisible = false);
+    });
+  }
+
   // ============== UI 构建 ==============
 
   @override
@@ -449,6 +541,9 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
                   ? null
                   : _onHorizontalDragUpdate,
               onHorizontalDragEnd: _isLocked ? null : (d) => _endScrub(),
+              onVerticalDragStart: _isLocked ? null : _onVerticalDragStart,
+              onVerticalDragUpdate: _isLocked ? null : _onVerticalDragUpdate,
+              onVerticalDragEnd: _isLocked ? null : _onVerticalDragEnd,
             ),
           ),
 
@@ -484,6 +579,13 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
           if (_isScrubbing) _buildScrubOverlay(),
           if (_isLongPressSpeeding) _buildSpeedHint(),
           if (_doubleTapSeekHint != null) _buildDoubleTapSeekHint(),
+
+          // ④ 亮度 / 音量手势浮层（只显示，不拦手势）
+          if (_gestureHudVisible)
+            PlayerGestureHud(
+              isBrightness: _gestureIsBrightness,
+              value: _gestureValue,
+            ),
         ],
       ),
     );

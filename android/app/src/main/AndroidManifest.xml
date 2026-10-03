@@ -18,6 +18,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- 分贝仪要读麦克风振幅。运行时动态申请（record 插件的 hasPermission）。 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 播放器右侧上下拖调音量（④）：改媒体流音量。普通权限，无需运行时申请。 -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- 说明：曾声明 USE_EXACT_ALARM（注释称"断点续传恢复"），已于本次移除。
          原生侧全库没有 AlarmManager / setExact / canScheduleExactAlarms 的调用，
          续传实际靠 VideoDownloadService 前台服务 + DownloadTaskStore 落盘，

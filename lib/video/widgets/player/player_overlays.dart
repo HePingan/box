@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'player_gesture_channel.dart';
+
 class PlayerBufferingOverlay extends StatelessWidget {
   const PlayerBufferingOverlay({super.key, this.label = '加载中…'});
 
@@ -127,6 +129,79 @@ class PlayerDebugOverlay extends StatelessWidget {
             color: Colors.white,
             fontSize: 12,
             height: 1.35,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 亮度 / 音量手势浮层（④）：上下拖时显示图标 + 百分比 + 一条进度。
+///
+/// 浮层只负责显示，数值与平台调用都在控件层 —— 这样它能被 widget 测试直接渲染。
+class PlayerGestureHud extends StatelessWidget {
+  const PlayerGestureHud({
+    super.key,
+    required this.isBrightness,
+    required this.value,
+  });
+
+  /// true = 亮度（左半屏），false = 音量（右半屏）。
+  final bool isBrightness;
+
+  /// 0..1。
+  final double value;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Center(
+        child: Container(
+          width: 168,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.62),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    isBrightness
+                        ? Icons.brightness_6_rounded
+                        : Icons.volume_up_rounded,
+                    color: Colors.white,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    isBrightness ? '亮度' : '音量',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const Spacer(),
+                  Text(
+                    PlayerGestureMath.percentText(value),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: LinearProgressIndicator(
+                  value: value.clamp(0.0, 1.0),
+                  minHeight: 4,
+                  backgroundColor: Colors.white24,
+                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+            ],
           ),
         ),
       ),
