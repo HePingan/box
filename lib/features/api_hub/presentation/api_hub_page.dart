@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -11,6 +13,7 @@ import 'package:box/design_system/widgets/app_cards.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 
 import 'package:box/features/tools/application/tool_catalog.dart';
+import 'package:box/features/tools/application/tool_usage_store.dart';
 
 import '../application/public_api_registry.dart';
 import '../data/public_api_client.dart';
@@ -121,14 +124,6 @@ class _ApiHubPageState extends State<ApiHubPage> {
   PoetryResult? _poetry;
   String _directoryCategory = '全部';
   String _directoryStatus = '全部';
-  final List<String> _recentToolIds = [
-    'qr',
-    'shortlink',
-    'cover',
-    'avatar',
-    'dummy_image',
-    'currency',
-  ];
   double? _converted;
   Map<String, double> _rates = const {};
 
@@ -165,10 +160,18 @@ class _ApiHubPageState extends State<ApiHubPage> {
     _activeTool = widget.initialTool ?? 'weather';
     _activeGroup = PublicApiRegistry.byId(_activeTool).group;
     WidgetsBinding.instance.addPostFrameCallback((_) => _runActiveTool());
+    // 「最近使用」读的是共享的使用记录（工具页派发点也在往同一份里记）。
+    // 刻意不 await：首屏不该等一次 prefs 读。
+    ToolUsageStore.instance.addListener(_onUsageChanged);
+    ToolUsageStore.instance.ensureLoaded().then((_) {
+      if (!mounted) return;
+      _onUsageChanged();
+    });
   }
 
   @override
   void dispose() {
+    ToolUsageStore.instance.removeListener(_onUsageChanged);
     // 作废在途请求，回来后直接丢弃。
     _requestGeneration.invalidate();
     _amountController.dispose();
@@ -603,16 +606,47 @@ class _ApiHubPageState extends State<ApiHubPage> {
   @visibleForTesting
   bool get loadingForTesting => _loading;
 
+  /// 共享记录变了（在别处点过工具，或本页自己刚记了一笔）→ 重画「最近使用」。
+  void _onUsageChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  /// 最近用过的 API 面板 —— 来自共享的使用记录，不再是写死的 6 个 id。
+  ///
+  /// 记录以**工具名**为键（工具页的派发点就是这么记的），这里按 `kToolTargets`
+  /// 换成 API Hub 的面板 id。一条记录都没有时这一行整块不渲染：
+  /// 拿没点过的工具冒充「最近使用」，和工具页那个「计划中」是同一类假承诺。
+  List<PublicApiToolDefinition> get _recentTools {
+    final seen = <String>{};
+    final specs = <PublicApiToolDefinition>[];
+    for (final name in ToolUsageStore.instance.recentNames(limit: 20)) {
+      final target = kToolTargets[name];
+      if (target is! ApiHubToolTarget) continue;
+      final panelId = target.toolId;
+      if (panelId == null || !seen.add(panelId)) continue;
+      // 用 tryById 而不是 byId：byId 取不到会兜底成 weather，
+      // 那会在「最近使用」里凭空多出一个天气，用户会以为是自己点的。
+      final spec = PublicApiRegistry.tryById(panelId);
+      if (spec == null) continue;
+      specs.add(spec);
+      if (specs.length >= 6) break;
+    }
+    return specs;
+  }
+
   void _switchTool(String id) {
     final tool = PublicApiRegistry.byId(id);
+    // 记一笔到共享记录：键是**工具名**，和工具页的派发点同一份数据。
+    // 面板没有对应工具入口（`toolNameForApiHubPanel` 返回 null）就不记 ——
+    // 不为了凑一条记录硬造一个名字。
+    final toolName = toolNameForApiHubPanel(id);
+    if (toolName != null) {
+      unawaited(ToolUsageStore.instance.record(toolName));
+    }
     setState(() {
       _activeTool = id;
       _activeGroup = tool.group;
-      _recentToolIds.remove(id);
-      _recentToolIds.insert(0, id);
-      if (_recentToolIds.length > 5) {
-        _recentToolIds.removeRange(5, _recentToolIds.length);
-      }
     });
     _runActiveTool();
   }
@@ -803,9 +837,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
       child: OutlinedButton.icon(
         onPressed: () => setState(() => _browseAllTools = !_browseAllTools),
         icon: Icon(
-          _browseAllTools
-              ? Icons.expand_less_rounded
-              : Icons.grid_view_rounded,
+          _browseAllTools ? Icons.expand_less_rounded : Icons.grid_view_rounded,
           size: 18,
         ),
         label: Text(_browseAllTools ? '收起全部工具' : '切换其他工具'),
@@ -932,7 +964,8 @@ class _ApiHubPageState extends State<ApiHubPage> {
   }
 
   Widget _buildRecentTools() {
-    final recentTools = _recentToolIds.map(PublicApiRegistry.byId).toList();
+    final recentTools = _recentTools;
+    if (recentTools.isEmpty) return const SizedBox.shrink();
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
       child: Wrap(

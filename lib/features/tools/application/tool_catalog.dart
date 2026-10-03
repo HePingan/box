@@ -193,6 +193,22 @@ bool isToolAvailable(String toolName) => kToolTargets.containsKey(toolName);
 /// 某个工具的点击去向；未接线返回 null。
 ToolTarget? toolTargetOf(String toolName) => kToolTargets[toolName];
 
+/// API Hub 面板 id → 工具名（反查）。
+///
+/// 用途：ApiHub 页内部切面板时，要按**工具名**往共享的使用记录
+/// （`ToolUsageStore`）里记一笔 —— 那份记录以工具名为键，工具页的派发点也是工具名。
+/// 一个面板有多个工具入口时取目录顺序的第一个。
+/// 面板没有对应工具入口时返回 null（那就**不记**，不硬造一个名字出来）。
+String? toolNameForApiHubPanel(String panelId) {
+  for (final entry in kToolTargets.entries) {
+    final target = entry.value;
+    if (target is ApiHubToolTarget && target.toolId == panelId) {
+      return entry.key;
+    }
+  }
+  return null;
+}
+
 /// 一个工具条目：名字 + 它属于哪一类 + 点下去去哪。
 ///
 /// 之前目录条目只是 `String`，可用性要靠每个 UI 自己 `where(isToolAvailable)`

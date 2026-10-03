@@ -13,7 +13,7 @@
 | 「计划中」 | **56 条**，点进去只弹「【X】还没做，先别点了」 | 旧 `planned_tools_section.dart` + `available_tool_grid.dart:38-47` |
 | 顶部指标 | 「66 可用 · 56 计划」 | 旧 `tool_page.dart` `_buildHeroWithSearch()` |
 | 双份实现 | 6 个能力在工具页/扩展页各一份（`PluginToolbox` 约 750 行） | `extensions/plugins/plugin_toolbox.dart`（已删） |
-| 「最近/常用」 | 无（ApiHub 页有一份**写死 6 个 id** 的「最近使用」） | `api_hub_page.dart:124-131` |
+| 「最近/常用」 | 无（ApiHub 页有一份**写死 6 个 id** 的「最近使用」） | 原 `api_hub_page.dart` `_recentToolIds` |
 
 ## 二、新的版式
 
@@ -41,13 +41,18 @@
    目录里改成 `unwiredToolNames()`（**只在代码里留名单，不上界面**）；顶部指标去掉"计划"；
    补一行「想要什么工具？→ 关于 → 反馈」。
 4. **我的收藏收成一行**：默认 `_expanded = false`（空库时仍给引导），添加/导入导出/删除/展开照旧。
-5. **六个能力收敛成一份实现**：`builtin_json_formatter` / `base64` / `password_gen` / `timestamp` /
+5. **「最近使用」共用一份记录**：`ApiHubPage` 去掉写死的 `_recentToolIds`，改读 `ToolUsageStore`；
+   切面板（`_switchTool`）也记一笔（`toolNameForApiHubPanel()` 反查工具名）；空记录不渲染那一行。
+6. **六个能力收敛成一份实现**：`builtin_json_formatter` / `base64` / `password_gen` / `timestamp` /
    `url_codec` → `LocalToolPage(localId: …)`；`builtin_qrcode` → `ApiHubPage(initialTool: 'qr')`；
    删除 `plugin_toolbox.dart`（零引用）。
 
 ## 四、明确不做
 
-- 不动 API Hub 页（独立子系统，工具页只是它 26 个入口之一）；它的「最近使用」写死列表这轮没改。
+- API Hub 页的面板本体不动（独立子系统，工具页只是它 26 个入口之一）—— 但它那个
+  **写死 6 个 id 的「最近使用」**（`api_hub_page.dart` 原 `_recentToolIds = ['qr', …]`）
+  改成读同一份 `ToolUsageStore`：记录以工具名为键，用 `toolNameForApiHubPanel()` 换成面板 id；
+  一条记录都没有时整块不渲染（拿没点过的工具冒充「最近使用」也是假承诺）。
 - 不重写目录分类（那是 `tool_entry_structure_test` 钉住的唯一事实源）。
 - 不给工具加"描述副标题"（会让卡片更高，66 个的量级不值这个钱）。
 - 不按实现方式（API/本地/网页）分区 —— 那是实现细节；只用「离线可用」做一个筛选。

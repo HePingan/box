@@ -15,6 +15,11 @@ library;
 
 import 'dart:convert';
 
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+import 'package:box/features/api_hub/application/public_api_registry.dart';
+import 'package:box/features/api_hub/presentation/api_hub_page.dart';
 import 'package:box/features/tools/application/tool_catalog.dart';
 import 'package:box/features/tools/application/tool_usage_store.dart';
 import 'package:box/features/tools/presentation/widgets/available_tool_grid.dart';
@@ -193,6 +198,71 @@ void main() {
 
       expect(find.text('常用'), findsOneWidget);
       expect(find.text('科学计算器'), findsOneWidget);
+    });
+  });
+
+  group('ApiHub 页的「最近使用」也读这份记录（不再是写死的 6 个 id）', () {
+    MockClient stubClient() => MockClient(
+      (request) async => http.Response(
+        '{}',
+        200,
+        headers: {'content-type': 'application/json'},
+      ),
+    );
+
+    Future<void> pumpHub(WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1200, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        MaterialApp(home: ApiHubPage(httpClientForTesting: stubClient())),
+      );
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+    }
+
+    test('面板 id → 工具名（记一笔时用的反查）', () {
+      expect(toolNameForApiHubPanel('weather'), '天气预报');
+      expect(toolNameForApiHubPanel('currency'), '汇率换算');
+      expect(
+        toolNameForApiHubPanel('no_such_panel_xyz'),
+        isNull,
+        reason: '面板没有对应的工具入口时就不记 —— 不硬造一个名字凑数',
+      );
+    });
+
+    testWidgets('一条记录都没有时，「最近使用」整块不渲染', (tester) async {
+      await pumpHub(tester);
+
+      expect(
+        find.text('最近使用'),
+        findsNothing,
+        reason: '拿没点过的工具冒充「最近使用」，和「计划中」是同一类假承诺',
+      );
+    });
+
+    testWidgets('有记录时渲染出对应面板，点它还会再记一笔', (tester) async {
+      await ToolUsageStore.instance.record('天气预报');
+      await ToolUsageStore.instance.record('汇率换算');
+      await pumpHub(tester);
+
+      expect(find.text('最近使用'), findsOneWidget);
+
+      final weatherTitle = PublicApiRegistry.tryById('weather')!.title;
+      expect(find.text(weatherTitle), findsWidgets);
+
+      await tester.tap(find.text(weatherTitle).first);
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      expect(
+        ToolUsageStore.instance.countOf('天气预报'),
+        2,
+        reason: '在 ApiHub 里切面板也要记进同一份记录',
+      );
     });
   });
 }
