@@ -9,6 +9,10 @@ import '../pages/detail/detail_play_parser.dart';
 import '../services/video_api_service.dart';
 import '../services/play_line_memory_repository.dart';
 import '../services/favorites_repository.dart';
+import '../services/player_startup_resolver.dart';
+import '../widgets/player/player_request_headers.dart';
+import '../widgets/player/player_stream_resolver.dart';
+import '../widgets/video_play_container.dart';
 import '../../utils/app_logger.dart';
 
 typedef DetailFetcher = Future<VodItem?> Function();
@@ -431,6 +435,7 @@ class VideoDetailController extends ChangeNotifier {
       ),
     );
 
+    _prewarmCurrentEpisode();
     notifyListeners();
   }
 
@@ -450,7 +455,33 @@ class VideoDetailController extends ChangeNotifier {
     currentEpisodeUrl = episode.url;
     currentEpisodeName = episode.name;
     _resumeApplied = true;
+    _prewarmCurrentEpisode();
     notifyListeners();
+  }
+
+  /// 下一集的原始地址（可能还是云播页）—— 交给播放器在播放时预热。
+  String? get nextEpisodeRawUrl {
+    if (!canPlayNext()) return null;
+    final line = playLines[selectedLineIndex.clamp(0, playLines.length - 1)];
+    return line.episodes[selectedEpisodeIndex + 1].url;
+  }
+
+  /// 预热当前集（②）：用户点完集数通常还要一下才落到播放器，
+  /// 这段时间正好把「云播页归一化 + 直连解析」做掉。
+  /// 与播放器自己的解析共用同一个缓存与「在途合并」，不会重复解析。
+  void _prewarmCurrentEpisode() {
+    final raw = currentEpisodeUrl?.trim();
+    if (raw == null || raw.isEmpty) return;
+    final uri = Uri.tryParse(normalizePlayableUrl(raw));
+    if (uri == null || !isAllowedRemoteMediaUri(uri)) return;
+    PlayerStartupResolver.instance.prewarm(
+      uri,
+      // Referer / UA 必须与播放器一致（缓存键含 Referer，见 PlayerStartupResolver.keyFor）
+      headers: buildPlayerHeaders(
+        userAgent: VideoPlayContainer.defaultUserAgent,
+        referer: source.detailUrl.isNotEmpty ? source.detailUrl : source.url,
+      ),
+    );
   }
 
   void playPrevious() {

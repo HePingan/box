@@ -34,7 +34,7 @@ typedef MediaProbe = Future<MediaProbeResult> Function(Uri uri);
 class CloudPlayUrlResolver {
   /// 每次探测的等待上限。云播页最多会用到 4 次探测（候选 → 页面 → var main），
   /// 调用方（播放容器）另有一层总时限兜底。
-  const CloudPlayUrlResolver({this.probeTimeout = const Duration(seconds: 5)});
+  const CloudPlayUrlResolver({this.probeTimeout = const Duration(seconds: 4)});
 
   /// 探测只读响应体前 16KB —— 分享页的 `var main` 落在这段里（实测页面约 2KB）。
   static const int maxProbeBytes = 16 * 1024;

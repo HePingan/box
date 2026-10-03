@@ -202,6 +202,25 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
     );
   }
 
+  /// ⑤ 起播可见化：把播放器想说的话（换线路 / 起播过慢）变成一条提示。
+  /// 页面是 StatelessWidget，所以在这里把 messenger 抓稳；取不到就静默跳过，
+  /// 绝不因为一句提示影响播放。
+  void Function(String message)? _noticeVia(BuildContext context) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return null;
+    return (message) {
+      messenger
+        ..removeCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(message),
+            duration: const Duration(seconds: 4),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    };
+  }
+
   Widget _buildPlayerShell(VideoDetailController controller, dynamic detail) {
     return Container(
       width: double.infinity,
@@ -263,6 +282,10 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                           controller.selectFallbackLine(fallback);
                         }
                       },
+                // ③ 下一集的地址：播放时顺手预热，切集/自动续播就不用再等解析。
+                nextEpisodeUrl: controller.nextEpisodeRawUrl,
+                // ⑤ 起播可见化：换线路 / 起播过慢时把原因说一句。
+                onNotice: _noticeVia(context),
               )
             : const AspectRatio(
                 aspectRatio: 16 / 9,

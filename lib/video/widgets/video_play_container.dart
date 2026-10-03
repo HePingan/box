@@ -11,8 +11,7 @@ import 'package:video_player/video_player.dart';
 
 import '../../utils/app_logger.dart';
 import '../controller/history_controller.dart';
-import '../services/cloud_play_url_resolver.dart';
-import '../utils/play_url_policy.dart';
+import '../services/player_startup_resolver.dart';
 import 'player/custom_video_controls.dart';
 import 'player/line_failover_policy.dart';
 import 'player/player_history_tracker.dart';
@@ -65,6 +64,13 @@ class FullscreenToggleGate {
 }
 
 class VideoPlayContainer extends StatefulWidget {
+  /// 播放器默认 UA。详情页预热与播放器起播必须用同一个，否则同一地址
+  /// 可能被源站按 UA 给出不同结果（缓存键含 Referer 不含 UA，见
+  /// [PlayerStartupResolver.keyFor]）。
+  static const String defaultUserAgent =
+      'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/123.0 Mobile Safari/537.36';
+
   final String url;
   final String title;
   final String vodId;
@@ -80,6 +86,14 @@ class VideoPlayContainer extends StatefulWidget {
   final Map<String, String>? httpHeaders;
   final String userAgent;
   final bool showDebugInfo;
+
+  /// 下一集的原始地址（可能还是云播页）。播放开始后在后台预热，
+  /// 切下一集/自动续播时直接吃缓存 —— 不必再等一次解析
+  /// （实测正常线路 146ms~1.9s，坏线路最坏十几秒）。null = 没有下一集。
+  final String? nextEpisodeUrl;
+
+  /// 需要在播放器上说一句话（例如「已自动换线路」）时用。
+  final void Function(String message)? onNotice;
 
   /// 本地文件路径（离线播放时使用）。当此值非空时，优先使用本地文件播放。
   final String? localPath;
@@ -102,9 +116,10 @@ class VideoPlayContainer extends StatefulWidget {
     this.onFallbackLine,
     this.referer,
     this.httpHeaders,
-    this.userAgent =
-        'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Mobile Safari/537.36',
+    this.userAgent = defaultUserAgent,
     this.showDebugInfo = false,
+    this.nextEpisodeUrl,
+    this.onNotice,
     this.localPath,
     this.localFileExpectedBytes = 0,
   });
@@ -115,17 +130,30 @@ class VideoPlayContainer extends StatefulWidget {
 
 class _VideoPlayContainerState extends State<VideoPlayContainer>
     with WidgetsBindingObserver {
-  static const Duration _resolveTimeout = Duration(seconds: 8);
-
-  /// 云播页归一化的总时限：比单次 fetch 宽（要串几次探测），但必须封顶，
-  /// 不能让一条网页线路把起播卡住。
-  static const Duration _cloudPageResolveTimeout = Duration(seconds: 12);
+  /// 整段解析（云播页归一化 + 直连解析）的兜底上限。
+  ///
+  /// 实测（2026-10-03，走 App 同一条解析链）：正常线路整段 146ms ~ 1.9s，
+  /// 一条不可达线路会一直等到封顶。段内超时分别由 [PlayerStartupResolver]
+  /// 管（cloud 6s / stream 5s），这里只是「两段都没按时返回」时的最后一道。
+  /// 原来这里是 8s 与 12s 两段串行 —— 一条坏线路能让用户干等十几秒。
+  static const Duration _resolveTimeout = Duration(seconds: 12);
   static const Duration _initTimeout = Duration(seconds: 12);
+
+  /// 起播超过这个时长就主动告诉用户一句（⑤ 起播可见化）。
+  static const int _slowStartupNoticeMs = 3000;
 
   final PlayerStreamResolver _streamResolver = const PlayerStreamResolver();
 
-  /// 云播页（`/play/<id>`、`/share/<id>`）→ 真流地址。
-  final CloudPlayUrlResolver _cloudPageResolver = const CloudPlayUrlResolver();
+  /// 起播链（云播页归一化 → 真流地址）：带缓存与预热，与详情页共用。
+  final PlayerStartupResolver _startupResolver = PlayerStartupResolver.instance;
+
+  // ── 起播计时（日志与调试浮层都看得到）──
+  final Stopwatch _startupWatch = Stopwatch();
+  int _resolveMs = 0;
+  int _totalMs = 0;
+  bool _cameFromCache = false;
+  bool _prewarmedNext = false;
+  int _lineSwitches = 0;
 
   /// 线路失败计数（跨重试保留：见 LineFailoverPolicy 里的说明）。
   final LineFailoverPolicy _lineFailover = LineFailoverPolicy();
@@ -402,21 +430,17 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         extraHeaders: widget.httpHeaders,
       );
 
-      // 云播页（`/play/<id>`、`/share/<id>`）先换成真流地址。换不了就明确判死，
-      // 而不是把一个 HTML 页面丢给播放器 —— 那样用户只会看到一句「播放失败」。
-      final mediaUri = await _cloudPageResolver
+      // 起播链：云播页（`/play/<id>`、`/share/<id>`）先换成真流地址，再解析直连 m3u8。
+      // 归一化后仍是网页 → 明确判死（不再把一个 HTML 页面丢给播放器）。
+      // 结果进共享缓存：同一集再进来 / 切集切回来 / 刚被预热过 —— 直接命中，不再联网。
+      _cameFromCache = _startupResolver.isWarm(uri, headers);
+      _startupWatch
+        ..reset()
+        ..start();
+      final playableUri = await _startupResolver
           .resolve(uri, headers: headers)
-          .timeout(_cloudPageResolveTimeout);
-
-      if (!mounted || token != _initToken) return;
-
-      if (PlayUrlPolicy.isCloudPage(mediaUri)) {
-        throw const _UnresolvedPageUrlException();
-      }
-
-      final playableUri = await _streamResolver
-          .resolveDirectM3u8(mediaUri, headers: headers)
           .timeout(_resolveTimeout);
+      _resolveMs = _startupWatch.elapsedMilliseconds;
 
       if (!mounted || token != _initToken) return;
 
@@ -443,7 +467,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
         if (!kIsWeb && playableUri.path.toLowerCase().contains('.m3u8')) {
           final probeFuture = _streamResolver
               .probeHls(playableUri, headers: headers)
-              .timeout(const Duration(seconds: 6), onTimeout: () => false);
+              .timeout(const Duration(seconds: 4), onTimeout: () => false);
           final guard = Completer<void>();
 
           unawaited(
@@ -549,11 +573,30 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
       });
 
       _historyTracker?.setPlaying(controller.value.isPlaying);
+
+      // ⑤ 起播可见化：日志留一行（工期/是否吃缓存/换了几次线），
+      // 慢起播再主动说一句；数字同时进调试浮层。
+      _startupWatch.stop();
+      _totalMs = _startupWatch.elapsedMilliseconds;
+      AppLogger.instance.log(
+        '起播完成：解析 ${_resolveMs}ms${_cameFromCache ? '（缓存命中）' : ''}'
+        ' + 初始化 ${_totalMs - _resolveMs}ms，换线 $_lineSwitches 次',
+        tag: 'PLAYER',
+      );
+      if (_totalMs >= _slowStartupNoticeMs) {
+        widget.onNotice?.call(
+          '起播用了 ${(_totalMs / 1000).toStringAsFixed(1)}s'
+          '${_cameFromCache ? '（缓存命中）' : ''}',
+        );
+      }
+
+      // ③ 预取下一集：现在顺手解析好，切集/自动续播就零等待。
+      _prewarmNextEpisode(headers);
     } catch (e, st) {
       if (token != _initToken) return;
       AppLogger.instance.logError(e, st, 'PLAYER');
       // 网页线路重试也还是网页，属于「无需再试」的失败 —— 直接换线路。
-      final isPageUrl = e is _UnresolvedPageUrlException;
+      final isPageUrl = e is UnresolvedCloudPageException;
       final String msg;
       if (isPageUrl) {
         msg = '该线路是网页线路，已自动换线路';
@@ -577,14 +620,46 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
           hasFallbackLine: true,
           decisive: decisive,
         )) {
+      _lineSwitches++;
+      // 这条地址的解析结果作废：换回来时不该再从缓存里拿到同一个坏地址。
+      _invalidateResolvedAddress();
       AppLogger.instance.log(
         '线路连续失败，自动换线路（$msg）',
         tag: 'PLAYER',
       );
+      // ⑤ 把「为什么换」说出来。容器会随线路切换重建（父级 key 变了），
+      // 所以这句提示交给父级页面显示，不留在自己的 State 里。
+      widget.onNotice?.call('$msg，已自动换线路');
       fallback();
       return;
     }
     _failFast(msg);
+  }
+
+  /// 失败地址的解析结果作废（缓存里那条可能是源站已经换掉的旧地址）。
+  void _invalidateResolvedAddress() {
+    final uri = Uri.tryParse(normalizePlayableUrl(widget.url));
+    if (uri == null) return;
+    _startupResolver.invalidate(
+      uri,
+      buildPlayerHeaders(
+        userAgent: widget.userAgent,
+        referer: widget.referer,
+        extraHeaders: widget.httpHeaders,
+      ),
+    );
+  }
+
+  /// ③ 预取下一集：播放已经开始，这时多解析一条地址几乎不影响播放，
+  /// 但切下一集（含播完自动续播）时就能直接命中缓存 —— 不用再等一次解析。
+  void _prewarmNextEpisode(Map<String, String> headers) {
+    if (_prewarmedNext) return;
+    _prewarmedNext = true;
+    final raw = widget.nextEpisodeUrl?.trim();
+    if (raw == null || raw.isEmpty) return;
+    final uri = Uri.tryParse(normalizePlayableUrl(raw));
+    if (uri == null || !isAllowedRemoteMediaUri(uri)) return;
+    _startupResolver.prewarm(uri, headers: headers);
   }
 
   void _failFast(String msg) {
@@ -617,7 +692,9 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     final controller = _videoPlayerController;
     if (controller == null) return 'no data';
     final value = controller.value;
-    return 'pos=${value.position.inSeconds}s | dur=${value.duration.inSeconds}s | buf=${value.isBuffering}';
+    return 'pos=${value.position.inSeconds}s | dur=${value.duration.inSeconds}s | buf=${value.isBuffering}\n'
+        '起播：解析 ${_resolveMs}ms${_cameFromCache ? '(缓存命中)' : ''} / 总 ${_totalMs}ms'
+        ' | 换线 $_lineSwitches 次';
   }
 
   @override
@@ -695,11 +772,4 @@ class _StreamRejectedException implements Exception {
   const _StreamRejectedException();
   @override
   String toString() => '该线路服务器拒绝连接';
-}
-
-/// 云播页地址归一化之后仍然不是媒体流：重试也还是网页，属于无需再试的失败。
-class _UnresolvedPageUrlException implements Exception {
-  const _UnresolvedPageUrlException();
-  @override
-  String toString() => '该线路是网页线路';
 }
