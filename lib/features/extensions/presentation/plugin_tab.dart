@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,13 +11,11 @@ import 'package:box/features/extensions/market/data/plugin_market_api.dart';
 import 'package:box/features/extensions/market/data/plugin_market_local_sync.dart';
 import 'package:box/features/extensions/market/data/plugin_market_manifest_repository.dart';
 import 'package:box/features/extensions/market/presentation/plugin_submit_page.dart';
-import 'package:box/novel/novel_module.dart';
 import 'package:box/plugin_manager.dart';
 import 'package:box/plugin_market/models/plugin_market_security.dart';
 import 'package:box/plugin_market_page.dart';
 import 'package:box/utils/app_logger.dart';
 import 'package:box/utils/log_channels.dart';
-import 'package:box/video_module.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:box/features/policy/plugin_policy.dart';
@@ -39,8 +36,6 @@ class _PluginTabState extends State<PluginTab>
   final HomePluginHost _pluginHost = HomePluginHost.instance;
 
   // 资源计数
-  int _bookSourceCount = 0;
-  int _videoSourceCount = 0;
 
   // 撤销记录
   HomePlugin? _removedPlugin;
@@ -97,7 +92,6 @@ class _PluginTabState extends State<PluginTab>
   void initState() {
     super.initState();
     _pluginHost.bootstrap();
-    _loadSourceCounts();
     _loadPinned();
     _loadMarketRecommendations();
     // 进入扩展页同步下架状态 + 收集风险
@@ -106,18 +100,16 @@ class _PluginTabState extends State<PluginTab>
 
   Future<void> _syncInstalledStatuses({bool force = false}) async {
     try {
-      final result =
-          await PluginMarketLocalSync().syncInstalledStatuses(force: force);
+      final result = await PluginMarketLocalSync().syncInstalledStatuses(
+        force: force,
+      );
       if (!mounted || result.skipped) return;
       setState(() => _pluginRisks = result.risks);
       // P1-1：清除风险后必须告知用户，否则他无从知道插件已恢复上架、
       // 可以手动启用（此前 riskCleared 被完整丢弃，界面无任何反馈）。
       final cleared = result.riskCleared;
       if (cleared > 0) {
-        _showSnack(
-          context,
-          '有 $cleared 个插件已恢复上架，可手动启用',
-        );
+        _showSnack(context, '有 $cleared 个插件已恢复上架，可手动启用');
       }
     } catch (e, st) {
       // P1-6：以前是 `catch (_) {}` 静默。同步失败时风险列表保留旧值，
@@ -219,9 +211,9 @@ class _PluginTabState extends State<PluginTab>
     } else {
       message = enabled ? '已启用 $changedCount 个插件' : '已禁用 $changedCount 个插件';
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
     _exitSelectMode();
   }
 
@@ -410,27 +402,6 @@ class _PluginTabState extends State<PluginTab>
     _undoTimer?.cancel();
     _pluginSearchController.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadSourceCounts() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final raw =
-          prefs.getString('book_source_storage_key') ??
-          prefs.getString('plugin_config_key') ??
-          '[]';
-      final list = (jsonDecode(raw) as List?) ?? [];
-      final bookSources = list.where((e) {
-        if (e is! Map) return false;
-        final s = e as Map<String, dynamic>;
-        final group = '${s['bookSourceGroup'] ?? ''}';
-        return group.trim().isNotEmpty;
-      }).length;
-      if (mounted) setState(() => _bookSourceCount = bookSources);
-    } catch (_) {
-      _bookSourceCount = 0;
-    }
-    _videoSourceCount = 0;
   }
 
   int get _enabledPluginCount =>
@@ -857,50 +828,12 @@ class _PluginTabState extends State<PluginTab>
 
   // ── Navigation helpers ──
 
-  void _openBookSourceManager() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const BookSourceManagerPage()),
-    );
-  }
-
-  void _openVideoSourceCenter() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const VideoListPage()),
-    );
-  }
-
-  void _openDiagnostics() {
-    final emptySource = BookSourceModel(
-      rawJson: const {},
-      bookSourceName: '诊断模式',
-      bookSourceUrl: '',
-      bookSourceGroup: '',
-      searchUrl: '',
-      exploreUrl: '',
-      enabled: false,
-      weight: 0,
-      customOrder: 0,
-    );
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => BookSourceDiagnosticPage(source: emptySource),
-      ),
-    );
-  }
-
   // ── Build ──
 
   ({IconData icon, Color color, String label}) _riskStyle(PluginRiskKind k) {
     switch (k) {
       case PluginRiskKind.yanked:
-        return (
-          icon: Icons.block_rounded,
-          color: AppTokens.rose,
-          label: '已下架',
-        );
+        return (icon: Icons.block_rounded, color: AppTokens.rose, label: '已下架');
       case PluginRiskKind.outdated:
         return (
           icon: Icons.system_update_alt_rounded,
@@ -942,7 +875,8 @@ class _PluginTabState extends State<PluginTab>
 
   Widget _buildRiskCard(PluginRiskEntry risk) {
     final style = _riskStyle(risk.kind);
-    final version = risk.kind == PluginRiskKind.outdated &&
+    final version =
+        risk.kind == PluginRiskKind.outdated &&
             risk.localVersion.isNotEmpty &&
             risk.latestVersion.isNotEmpty
         ? 'v${risk.localVersion} → v${risk.latestVersion}'
@@ -1047,71 +981,28 @@ class _PluginTabState extends State<PluginTab>
         padding: const EdgeInsets.symmetric(horizontal: 12),
         backgroundColor: color,
       ),
-      child: Text(
-        risk.kind == PluginRiskKind.outdated ? '更新' : '重装',
-      ),
+      child: Text(risk.kind == PluginRiskKind.outdated ? '更新' : '重装'),
     );
   }
 
   Future<void> _handleRiskUninstall(PluginRiskEntry risk) async {
     final plugin = _findInstalled(risk.pluginId);
     if (plugin == null) {
-      setState(() =>
-          _pluginRisks = _pluginRisks.where((r) => r.pluginId != risk.pluginId).toList());
+      setState(
+        () => _pluginRisks = _pluginRisks
+            .where((r) => r.pluginId != risk.pluginId)
+            .toList(),
+      );
       return;
     }
     await _uninstallPlugin(plugin);
     if (mounted) {
-      setState(() => _pluginRisks =
-          _pluginRisks.where((r) => r.pluginId != risk.pluginId).toList());
+      setState(
+        () => _pluginRisks = _pluginRisks
+            .where((r) => r.pluginId != risk.pluginId)
+            .toList(),
+      );
     }
-  }
-
-  Widget _buildManagementGrid() {
-    // 方案 B：横向 3 入口，压缩高度，列表更早进入视口
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const AppSectionHeader(
-          title: '快捷入口',
-          subtitle: '书源 · 片源 · 诊断',
-          icon: Icons.rocket_launch_rounded,
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: ExtensionQuickChip(
-                title: '书源',
-                icon: Icons.menu_book_rounded,
-                color: AppTokens.amber,
-                count: _bookSourceCount,
-                onTap: _openBookSourceManager,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: ExtensionQuickChip(
-                title: '片源',
-                icon: Icons.live_tv_rounded,
-                color: AppTokens.primaryBlue,
-                count: _videoSourceCount,
-                onTap: _openVideoSourceCenter,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: ExtensionQuickChip(
-                title: '诊断',
-                icon: Icons.health_and_safety_outlined,
-                color: AppTokens.rose,
-                onTap: _openDiagnostics,
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
   }
 
   @override
@@ -1174,12 +1065,15 @@ class _PluginTabState extends State<PluginTab>
               AppPageScaffold.bottomInsetOf(context),
             ),
             children: [
-              // 方案 B：紧凑 Hero → 快捷入口 → 搜索/列表优先；推荐下沉
+              // 紧凑 Hero → 搜索/列表优先；市场推荐下沉。
+              // 2026-10-03：原来的「快捷入口」三连（书源/片源/诊断）已撤 —— 三条都是
+              // 重复门（书源管理在小说页、影视列表在首页与内容页各有入口），其中「诊断」
+              // 更是拿一条假书源（'诊断模式'、空 url）去开书源诊断页；附带两个死数字
+              // （片源计数写死 0；书源计数读的 key 从来不存在，真 key 是
+              // BookSourceManager.storageKey = 'novel_book_sources_v1'）。
               ExtensionHeroCard(
                 pluginCount: plugins.length,
                 enabledCount: _enabledPluginCount,
-                bookSourceCount: _bookSourceCount,
-                videoSourceCount: _videoSourceCount,
                 onOpenMarket: _openPluginMarket,
                 onSubmitPlugin: _openPluginSubmit,
                 onImportJson: _showImportJsonDialog,
@@ -1190,8 +1084,6 @@ class _PluginTabState extends State<PluginTab>
                 _buildRiskList(),
                 const SizedBox(height: 10),
               ],
-              _buildManagementGrid(),
-              const SizedBox(height: 12),
               // 操作栏：搜索 + 批量按钮（列表优先，市场推荐后置）
               Row(
                 children: [
@@ -1440,4 +1332,3 @@ Future<void> _showSnack(BuildContext context, String text) async {
 // ═══════════════════════════════════════════════════════════════════
 // _PluginStatusSection — 按启用/禁用状态分组的可折叠插件列表
 // ═══════════════════════════════════════════════════════════════════
-

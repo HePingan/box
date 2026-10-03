@@ -13,8 +13,6 @@ class ExtensionHeroCard extends StatelessWidget {
     super.key,
     required this.pluginCount,
     required this.enabledCount,
-    required this.bookSourceCount,
-    required this.videoSourceCount,
     required this.onOpenMarket,
     required this.onImportJson,
     required this.onExportJson,
@@ -23,8 +21,6 @@ class ExtensionHeroCard extends StatelessWidget {
 
   final int pluginCount;
   final int enabledCount;
-  final int bookSourceCount;
-  final int videoSourceCount;
   final VoidCallback onOpenMarket;
   final VoidCallback onImportJson;
   final VoidCallback onExportJson;
@@ -32,9 +28,6 @@ class ExtensionHeroCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final otherPlugins =
-        (pluginCount - bookSourceCount - videoSourceCount).clamp(0, 1 << 30);
-
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
       decoration: BoxDecoration(
@@ -103,7 +96,10 @@ class ExtensionHeroCard extends StatelessWidget {
                     onTap: onOpenMarket,
                     borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                     child: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -201,10 +197,7 @@ class ExtensionHeroCard extends StatelessWidget {
                         color: AppTokens.cyan,
                       ),
                       title: Text('导出 JSON'),
-                      subtitle: Text(
-                        '复制插件快照',
-                        style: TextStyle(fontSize: 11),
-                      ),
+                      subtitle: Text('复制插件快照', style: TextStyle(fontSize: 11)),
                       contentPadding: EdgeInsets.zero,
                       dense: true,
                     ),
@@ -213,167 +206,7 @@ class ExtensionHeroCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          // 单行指标 chips
-          Row(
-            children: [
-              Expanded(
-                child: _CompactMetricChip(
-                  value: '$bookSourceCount',
-                  label: '书源',
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: _CompactMetricChip(
-                  value: '$videoSourceCount',
-                  label: '片源',
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: _CompactMetricChip(
-                  value: '$otherPlugins',
-                  label: '其它',
-                ),
-              ),
-            ],
-          ),
         ],
-      ),
-    );
-  }
-}
-
-class _CompactMetricChip extends StatelessWidget {
-  const _CompactMetricChip({required this.value, required this.label});
-
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF6F8FD),
-        borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Flexible(
-            child: Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTokens.textPrimary,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w900,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: const TextStyle(
-              color: AppTokens.textSecondary,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// ExtensionQuickChip — 方案 B：横向紧凑快捷入口
-// ═══════════════════════════════════════════════════════════════════
-
-class ExtensionQuickChip extends StatelessWidget {
-  const ExtensionQuickChip({
-    super.key,
-    required this.title,
-    required this.icon,
-    required this.color,
-    required this.onTap,
-    this.count,
-  });
-
-  final String title;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-  final int? count;
-
-  @override
-  Widget build(BuildContext context) {
-    return PressScale(
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFFE7ECF5)),
-              boxShadow: AppTokens.shadowSm(color: color),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 30,
-                  height: 30,
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(9),
-                  ),
-                  child: Icon(icon, color: color, size: 16),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: AppTokens.textPrimary,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w800,
-                          height: 1.1,
-                        ),
-                      ),
-                      if (count != null && count! > 0) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          '$count',
-                          style: TextStyle(
-                            color: color,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800,
-                            fontFeatures: const [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -442,101 +275,101 @@ class ExtensionManagementTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(primary ? 22 : 20),
           onTap: onTap,
           child: Container(
-          constraints: const BoxConstraints(minHeight: 98),
-          padding: const EdgeInsets.all(14),
-          decoration: decoration,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 顶部：图标 + 计数 Badge
-              Row(
-                children: [
-                  // 图标容器
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: primary
-                          ? Colors.white.withValues(alpha: 0.20)
-                          : color.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(8),
-                      border: primary
-                          ? null
-                          : Border.all(color: color.withValues(alpha: 0.12)),
-                    ),
-                    child: Icon(
-                      icon,
-                      color: primary ? Colors.white : color,
-                      size: 22,
-                    ),
-                  ),
-                  const Spacer(),
-                  // 计数 Badge：0 不展示，避免空状态像「未读告警」
-                  if (count != null && count! > 0) ...[
+            constraints: const BoxConstraints(minHeight: 98),
+            padding: const EdgeInsets.all(14),
+            decoration: decoration,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 顶部：图标 + 计数 Badge
+                Row(
+                  children: [
+                    // 图标容器
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
+                      width: 44,
+                      height: 44,
                       decoration: BoxDecoration(
                         color: primary
                             ? Colors.white.withValues(alpha: 0.20)
                             : color.withValues(alpha: 0.10),
-                        borderRadius: BorderRadius.circular(
-                          AppTokens.radiusPill,
-                        ),
+                        borderRadius: BorderRadius.circular(8),
+                        border: primary
+                            ? null
+                            : Border.all(color: color.withValues(alpha: 0.12)),
                       ),
-                      child: Text(
-                        '$count',
-                        style: TextStyle(
-                          color: foreground,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w900,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
+                      child: Icon(
+                        icon,
+                        color: primary ? Colors.white : color,
+                        size: 22,
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    const Spacer(),
+                    // 计数 Badge：0 不展示，避免空状态像「未读告警」
+                    if (count != null && count! > 0) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: primary
+                              ? Colors.white.withValues(alpha: 0.20)
+                              : color.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(
+                            AppTokens.radiusPill,
+                          ),
+                        ),
+                        child: Text(
+                          '$count',
+                          style: TextStyle(
+                            color: foreground,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    // 右侧箭头
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 18,
+                      color: primary
+                          ? Colors.white.withValues(alpha: 0.50)
+                          : AppTokens.textTertiary,
+                    ),
                   ],
-                  // 右侧箭头
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    size: 18,
-                    color: primary
-                        ? Colors.white.withValues(alpha: 0.50)
-                        : AppTokens.textTertiary,
+                ),
+                const SizedBox(height: 8),
+                // 标题
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: foreground,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w800,
                   ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              // 标题
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: foreground,
-                  fontSize: 14.5,
-                  fontWeight: FontWeight.w800,
                 ),
-              ),
-              const SizedBox(height: 3),
-              // 副标题
-              Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: muted,
-                  fontSize: 11,
-                  height: 1.3,
-                  fontWeight: FontWeight.w500,
+                const SizedBox(height: 3),
+                // 副标题
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: muted,
+                    fontSize: 11,
+                    height: 1.3,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
