@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'models/video_source.dart';
 import 'config/video_proxy_config.dart';
 import 'controller/video_controller.dart';
+import 'services/source_capability.dart';
 import '../utils/app_logger.dart';
 
 /// 单个视频源的可见性记录
@@ -316,6 +317,54 @@ class VideoModule {
       'markSourceFailure autoHide=$autoHide key=$key name=${source.name} reason=$reason',
       tag: 'VISIBILITY',
     );
+  }
+
+  /// ① 只对「刚刚在聚合搜索里失败的源」补一次关键词搜索探测，
+  /// 用**响应正文**把两类失败分开：
+  /// - 接口层坏（`1002 禁关键词搜索` / 地址已返回网页 / 404）→ 自动隐藏，
+  ///   下次搜索不再赔上 fastFail 的 8 秒预算；
+  /// - 网络类抖动（超时 / 403 / 5xx）→ 只留失败计数，不抹杀 ——
+  ///   实测有源是 WAF 拦机房 IP，换条出口路径仍可能可用。
+  ///
+  /// 返回被本次隐藏的源，便于界面说一句「已跳过」。探测只做锦上添花：
+  /// 任何异常都吞掉并记日志，绝不冒到搜索流程上。
+  static Future<List<VideoSource>> autoHideStructurallyBrokenSources(
+    List<VideoSource> sources, {
+    SourceSearchCapabilityProbe probe = const SourceSearchCapabilityProbe(),
+  }) async {
+    final hidden = <VideoSource>[];
+    if (sources.isEmpty) return hidden;
+
+    try {
+      final results = await probe.probeAll(
+        sources.map((source) => source.url).toList(growable: false),
+      );
+      if (results.isEmpty) return hidden;
+
+      for (final result in results) {
+        if (!isStructurallyBroken(result.capability)) continue;
+        final match = sources.where((source) => source.url == result.baseUrl);
+        if (match.isEmpty) continue;
+        final source = match.first;
+        await setSourceAutoHidden(
+          source,
+          true,
+          reason: '接口层不可用：${describeCapability(result.capability)}',
+        );
+        hidden.add(source);
+        AppLogger.instance.log(
+          'autoHide source key=${sourceKeyOf(source)} name=${source.name} '
+          'capability=${result.capability.name}',
+          tag: 'VISIBILITY',
+        );
+      }
+    } catch (e) {
+      AppLogger.instance.log(
+        'autoHideStructurallyBrokenSources skipped: $e',
+        tag: 'VISIBILITY',
+      );
+    }
+    return hidden;
   }
 
   /// 依次尝试 catalogUrls，返回第一个可用 JSON 地址

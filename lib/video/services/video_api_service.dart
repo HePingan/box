@@ -111,6 +111,41 @@ class VideoApiService {
     return vodProxyConfig.withQuery(baseUrl, params);
   }
 
+  /// 源能力探测用的地址：与 [searchVideo] 走**完全同一条构造路径**
+  /// （同样的第三方转发解开、同样的代理包装、参数同样落进内层），
+  /// 否则探测结果不代表搜索时的真实行为。
+  static String buildSearchProbeUrl(String baseUrl, String keyword) {
+    final apiBase = _preferDirectVodApiUrl(_buildVodBaseUrl(baseUrl));
+    return _withQuery(apiBase, {'ac': 'videolist', 'wd': keyword.trim()});
+  }
+
+  /// 探一次「关键词搜索」并返回**原始响应**（状态码 + 正文）。
+  ///
+  /// 与 [searchVideo] 的区别：这里不解析 —— `1002 Current API forbids keyword
+  /// search` 这类「接口活着但拒绝」以及「返回 HTML 网页」都只有读到正文
+  /// 才分辨得出，而它们恰恰是聚合搜索里最该被摘掉的源。
+  /// 任何异常都翻译成 [SourceProbeResponse.error]，绝不向上抛。
+  static Future<SourceProbeResponse> probeSearchResponse(
+    String baseUrl, {
+    String keyword = '战狼',
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    final url = buildSearchProbeUrl(baseUrl, keyword);
+    try {
+      final response = await SharedHttpClient.instance
+          .get(Uri.parse(url), headers: _headersForUrl(url))
+          .timeout(timeout);
+      return SourceProbeResponse(
+        statusCode: response.statusCode,
+        body: utf8.decode(response.bodyBytes, allowMalformed: true),
+        contentType: response.headers['content-type'],
+      );
+    } catch (e) {
+      _log('[probeSearchResponse] failed baseUrl=$baseUrl error=$e');
+      return SourceProbeResponse(statusCode: null, body: '', error: '$e');
+    }
+  }
+
   /// 递归展开嵌套 url，用于推断真实目标站点
   static String _unwrapTargetUrl(String url, {int maxDepth = 3}) {
     return vodProxyConfig.unwrapTargetUrl(url, maxDepth: maxDepth);
@@ -1326,4 +1361,24 @@ class VideoApiService {
     _log('[fetchDetail] fallback null');
     return null;
   }
+}
+
+/// 一次「关键词搜索」探测拿到的原始响应。
+///
+/// 刻意保留正文：`1002 Current API forbids keyword search` 这种「接口活着但
+/// 拒绝关键词搜索」、以及「api 地址返回的是 HTML 网页」，都只有读到正文才
+/// 分辨得出 —— 而这两种源正是聚合搜索里最该被提前摘掉的。
+/// 连接层异常（DNS/TCP/超时）时 [statusCode] 为 null，原因记在 [error]。
+class SourceProbeResponse {
+  const SourceProbeResponse({
+    required this.statusCode,
+    required this.body,
+    this.contentType,
+    this.error,
+  });
+
+  final int? statusCode;
+  final String body;
+  final String? contentType;
+  final String? error;
 }

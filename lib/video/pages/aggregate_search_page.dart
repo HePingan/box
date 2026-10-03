@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -10,8 +12,10 @@ import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import '../controller/video_controller.dart';
 import '../models/aggregate_grouped_result.dart';
 import '../models/aggregate_result.dart';
+import '../models/video_source.dart';
 import '../services/search_history_repository.dart';
 import '../services/video_api_service.dart';
+import '../video_module.dart';
 import 'aggregate_search/aggregate_search_group_section.dart';
 import 'aggregate_search/aggregate_search_video_card.dart'
     show kAggregateCoverDecodeWidth;
@@ -43,6 +47,9 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
   int _failedSourceCount = 0;
   int _completedSourceCount = 0;
   int _totalSourceCount = 0;
+
+  /// ① 被可见性层跳过的源数（手动隐藏 + 接口层坏被自动隐藏）。
+  int _skippedSourceCount = 0;
 
   List<String> _recentKeywords = const [];
   List<String> _hotKeywords = const [];
@@ -117,19 +124,28 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
       _failedSourceCount = 0;
       _completedSourceCount = 0;
       _totalSourceCount = 0;
+      _skippedSourceCount = 0;
     });
 
     try {
-      final sources = context
+      // ① 用「可见性层」取源，而不是只看模型上的 isAvailable：
+      // 手动隐藏 + **自动隐藏**（接口层坏的源被摘掉后）都记在这一层，
+      // 以前它零调用 —— 于是坏源每次搜索都照样陪跑。
+      final allSources = context
           .read<VideoController>()
           .sources
           .where((source) => source.isAvailable)
           .toList(growable: false);
+      final sources = VideoModule.visibleSourcesOf(allSources);
+      final skippedByVisibility = allSources.length - sources.length;
       if (sources.isEmpty) {
         if (!mounted || generation != _searchGeneration) return;
         setState(() {
           _isLoading = false;
-          _errorMessage = '暂无可用视频源';
+          _skippedSourceCount = skippedByVisibility;
+          _errorMessage = skippedByVisibility > 0
+              ? '可用视频源都被自动隐藏了（可在源管理里恢复）'
+              : '暂无可用视频源';
         });
         return;
       }
@@ -137,6 +153,7 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
       if (!mounted || generation != _searchGeneration) return;
       setState(() {
         _totalSourceCount = sources.length;
+        _skippedSourceCount = skippedByVisibility;
       });
 
       const concurrency = 4;
@@ -144,6 +161,9 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
       var failed = 0;
       var completed = 0;
       final aggregated = <AggregateResult>[];
+      // ① 本轮真正失败的源（去重）：搜索结束后只对它们补一次能力探测，
+      // 用正文把「偶发抖动」和「接口层坏」分开，后者直接自动隐藏。
+      final failedSources = <VideoSource>{};
 
       Future<void> worker() async {
         while (true) {
@@ -167,11 +187,29 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
             sourceFailed = true;
           }
 
+          // ① 记账：让「源可见性」这一层真的动起来（此前全仓零调用）。
+          // 成功清零失败计数；失败只计数 —— 网络类抖动不该被一次失败判死，
+          // 「接口层坏」由搜索结束后的能力探测来定性。
+          if (sourceFailed) {
+            unawaited(
+              VideoModule.markSourceFailure(
+                source,
+                reason: '聚合搜索失败',
+                autoHide: false,
+              ),
+            );
+          } else {
+            unawaited(VideoModule.markSourceSuccess(source));
+          }
+
           // 计数必须先落账：`completed` 是本世代闭包的局部变量，与新世代无关。
           // 若在自增前就 return，本世代剩余 worker 永远凑不满 sources.length，
           // 该世代的收尾分支（含 _isLoading=false）就再也不会执行。
           completed++;
-          if (sourceFailed) failed++;
+          if (sourceFailed) {
+            failed++;
+            failedSources.add(source);
+          }
 
           // 每个源一回来就渲染，体感“秒出结果”，不再干等最慢的源。
           // 世代已过期只跳过 UI 写入，不影响上面的账。
@@ -203,6 +241,17 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
         ),
       );
       if (!mounted || generation != _searchGeneration) return;
+
+      // ① 只对**本轮失败的源**补一次能力探测（不阻塞界面）：
+      // 1002 禁关键词 / 地址已返回网页 / 404 这类接口层坏 → 自动隐藏，
+      // 下次搜索直接跳过；超时、403 这类网络类失败只计数，不抹杀。
+      if (failedSources.isNotEmpty) {
+        unawaited(
+          VideoModule.autoHideStructurallyBrokenSources(
+            failedSources.toList(growable: false),
+          ),
+        );
+      }
 
       // 命中结果才计入搜索历史/热词，避免记录无效关键词。
       if (aggregated.isNotEmpty) {
@@ -517,6 +566,14 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
               label: '$_failedSourceCount 个源不可用',
               icon: Icons.warning_amber_rounded,
               color: AppTokens.orange,
+            ),
+          // ① 被「源可见性」层直接跳过的源（手动隐藏 + 接口层坏被自动隐藏的）：
+          // 它们这次搜索一次请求都没发，和「发了但失败」是两件事，分开说。
+          if (_skippedSourceCount > 0)
+            AppStatusPill(
+              label: '已跳过 $_skippedSourceCount 个已知不可用源',
+              icon: Icons.filter_alt_off_rounded,
+              color: AppTokens.textSecondary,
             ),
           if (_searchController.text.trim().isNotEmpty)
             AppStatusPill(
