@@ -63,6 +63,10 @@ class LocalToolCard extends StatelessWidget {
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            // 卡片被外壳撑满而内容不够高时，把「标题 + 内容」这块整体居中 ——
+            // 否则内容全挤在卡片顶部，底下留一大片白，还是"半屏"的观感。
+            // 内容本来就有卡片高时（长工具）这里不产生任何位移。
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _header(),
               const SizedBox(height: 14),
@@ -2800,42 +2804,28 @@ class _CompassPanelBodyState extends State<CompassPanelBody> {
               child: Center(child: CircularProgressIndicator()),
             )
           else ...[
+            const SizedBox(height: 6),
             Center(
-              child: SizedBox(
-                width: 180,
-                height: 180,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    CustomPaint(
-                      size: const Size(180, 180),
-                      painter: _CompassFacePainter(),
-                    ),
-                    Transform.rotate(
-                      angle: -h * math.pi / 180,
-                      child: const Icon(
-                        Icons.navigation_rounded,
-                        size: 44,
-                        color: AppTokens.danger,
-                      ),
-                    ),
-                  ],
-                ),
+              child: _CompassDial(
+                heading: h,
+                // 盘面占满卡片可用宽度（外壳左右各 16、卡片左右各 14），
+                // 上限 300 —— 以前写死 180，一屏 360 的手机上盘面只占一半宽。
+                size: (MediaQuery.sizeOf(context).width - 76).clamp(200.0, 300.0),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 18),
             Center(
               child: Text(
                 '${h.toStringAsFixed(0)}°  ${sv.headingLabel(h)}',
                 style: const TextStyle(
-                  fontSize: 22,
+                  fontSize: 26,
                   fontWeight: FontWeight.w700,
                   fontFeatures: [FontFeature.tabularFigures()],
                   color: AppTokens.textPrimary,
                 ),
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             const Text(
               '手机里是磁力计不是真指南针，附近有磁铁、金属桌面或扬声器时会偏，'
               '转个「8」字校准后更准。',
@@ -2846,6 +2836,83 @@ class _CompassPanelBodyState extends State<CompassPanelBody> {
       ),
     );
   }
+}
+
+/// 罗盘盘面：**盘面转、顶部指标固定** —— 真指南针就是这么转的。
+/// 以前是指针转、盘面不动，看着像个电子罗盘图标，不像罗盘。
+class _CompassDial extends StatelessWidget {
+  const _CompassDial({required this.heading, required this.size});
+
+  final double heading;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Transform.rotate(
+            angle: -heading * math.pi / 180,
+            child: CustomPaint(
+              size: Size.square(size),
+              painter: _CompassFacePainter(),
+            ),
+          ),
+          // 顶部固定指标：手机正前方对着盘上哪一格。
+          Positioned(
+            top: 0,
+            child: CustomPaint(
+              size: const Size(18, 13),
+              painter: _CompassIndexPainter(),
+            ),
+          ),
+          // 中心读数：角度 + 八方位名。
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${heading.round()}°',
+                style: const TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                  color: AppTokens.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                sv.headingLabel(heading),
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppTokens.primaryBlue,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 顶部固定指标：向下的红色小三角。
+class _CompassIndexPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..moveTo(size.width / 2, size.height)
+      ..lineTo(0, 0)
+      ..lineTo(size.width, 0)
+      ..close();
+    canvas.drawPath(path, Paint()..color = AppTokens.danger);
+  }
+
+  @override
+  bool shouldRepaint(_CompassIndexPainter old) => false;
 }
 
 class _CompassFacePainter extends CustomPainter {
@@ -2859,11 +2926,21 @@ class _CompassFacePainter extends CustomPainter {
       ..color = AppTokens.divider;
     canvas.drawCircle(c, r, ring);
 
-    // 刻度：每 15° 一小格，每 45° 一长格。
+    // 内圈：让盘面看着像罗盘而不是一个圆。
+    canvas.drawCircle(
+      c,
+      r * 0.72,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = AppTokens.divider,
+    );
+
+    // 刻度：每 15° 一小格，每 45° 一长格；长度随盘面大小缩放。
     for (var deg = 0; deg < 360; deg += 15) {
       final rad = (deg - 90) * math.pi / 180;
       final isMajor = deg % 45 == 0;
-      final len = isMajor ? 12.0 : 6.0;
+      final len = isMajor ? r * 0.11 : r * 0.055;
       final p1 = c + Offset(math.cos(rad), math.sin(rad)) * (r - len);
       final p2 = c + Offset(math.cos(rad), math.sin(rad)) * r;
       canvas.drawLine(
@@ -2882,10 +2959,11 @@ class _CompassFacePainter extends CustomPainter {
       final tp = TextPainter(
         text: TextSpan(
           text: label,
-          style: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: AppTokens.textSecondary,
+          // 「北」标红：所有罗盘的惯例。
+          style: TextStyle(
+            fontSize: size.width * 0.075,
+            fontWeight: FontWeight.w700,
+            color: label == '北' ? AppTokens.danger : AppTokens.textSecondary,
           ),
         ),
         textDirection: TextDirection.ltr,
@@ -2951,6 +3029,9 @@ class _LevelPanelBodyState extends State<LevelPanelBody> {
   @override
   Widget build(BuildContext context) {
     final level = _got && sv.isLevel(pitch: _pitch, roll: _roll);
+    // 气泡直径跟着屏宽走（外壳左右 16、卡片左右 14），上限 300 ——
+    // 以前写死 200，360 宽的手机上下面空掉一大截。
+    final dial = (MediaQuery.sizeOf(context).width - 76).clamp(200.0, 300.0);
     return LocalToolCard(
       title: '水平仪',
       subtitle: '气泡居中就是水平，量程 ±15°',
@@ -2966,10 +3047,11 @@ class _LevelPanelBodyState extends State<LevelPanelBody> {
               child: Center(child: CircularProgressIndicator()),
             )
           else ...[
+            const SizedBox(height: 6),
             Center(
               child: SizedBox(
-                width: 200,
-                height: 200,
+                width: dial,
+                height: dial,
                 child: CustomPaint(
                   painter: _BubblePainter(
                     pitch: _pitch,
@@ -2979,32 +3061,108 @@ class _LevelPanelBodyState extends State<LevelPanelBody> {
                 ),
               ),
             ),
-            const SizedBox(height: 8),
-            Center(
-              child: Text(
-                '前后 ${_pitch.toStringAsFixed(1)}°   左右 ${_roll.toStringAsFixed(1)}°',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                  color: level ? AppTokens.success : AppTokens.textPrimary,
-                ),
+            const SizedBox(height: 16),
+            // 两个轴分开给数：合成一个气泡只能看"偏了多少"，说不出往哪偏。
+            Row(
+              children: [
+                Expanded(child: _TiltTile(label: '前后倾', value: _pitch, ok: level)),
+                const SizedBox(width: 10),
+                Expanded(child: _TiltTile(label: '左右倾', value: _roll, ok: level)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _LevelHint(level: level),
+            const SizedBox(height: 10),
+            const Text(
+              '气泡进中圈就算水平（±0.5°）。手机里的加速度计有零点误差，'
+              '要更准就把它平放在你已经确认水平的台面上，记住这时候的读数再减掉。',
+              style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 单个轴的读数块（前后 / 左右）。
+class _TiltTile extends StatelessWidget {
+  const _TiltTile({required this.label, required this.value, required this.ok});
+
+  final String label;
+  final double value;
+  final bool ok;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      decoration: BoxDecoration(
+        color: ok
+            ? AppTokens.success.withValues(alpha: 0.08)
+            : AppTokens.primaryBlue.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 11.5,
+              color: AppTokens.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '${value.toStringAsFixed(1)}°',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              fontFeatures: const [FontFeature.tabularFigures()],
+              color: ok ? AppTokens.success : AppTokens.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 水平与否的提示条。没水平时说清"怎么才算水平"，别只丢一句"未水平"。
+class _LevelHint extends StatelessWidget {
+  const _LevelHint({required this.level});
+
+  final bool level;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: level
+            ? AppTokens.success.withValues(alpha: 0.08)
+            : AppTokens.surfaceMuted,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            level ? Icons.check_circle_rounded : Icons.info_outline_rounded,
+            size: 17,
+            color: level ? AppTokens.success : AppTokens.textSecondary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              level ? '已水平：气泡落在中圈里' : '把手机平放，气泡进中圈就算水平',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: level ? FontWeight.w600 : FontWeight.w400,
+                color: level ? AppTokens.success : AppTokens.textSecondary,
               ),
             ),
-            if (level)
-              const Padding(
-                padding: EdgeInsets.only(top: 6),
-                child: Text(
-                  '✓ 已水平',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppTokens.success,
-                  ),
-                ),
-              ),
-          ],
+          ),
         ],
       ),
     );
@@ -3035,7 +3193,16 @@ class _BubblePainter extends CustomPainter {
         ..strokeWidth = 2
         ..color = AppTokens.divider,
     );
-    // 居中目标圈
+    // 外圈内再画一圈，气泡贴边时看得出"出界"。
+    canvas.drawCircle(
+      c,
+      r * 0.62,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = AppTokens.divider,
+    );
+    // 居中目标圈（气泡进这里算水平）
     canvas.drawCircle(
       c,
       r * 0.3,
@@ -3080,6 +3247,19 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
   double _db = 0;
   double _peak = 0;
   String _err = '';
+  // 平均要留样本。上限 600 条（200ms 一条 ≈ 2 分钟），长跑不吃内存。
+  final List<double> _samples = [];
+
+  /// 样本平均；一条有效样本都没有时返回 null（界面显示 `--`，
+  /// 不给 0 冒充读数）。
+  double? get _avg {
+    if (_samples.isEmpty) return null;
+    try {
+      return sv.averageDb(_samples);
+    } on sv.SensorToolError {
+      return null;
+    }
+  }
 
   Future<void> _start() async {
     try {
@@ -3100,6 +3280,9 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
       setState(() {
         _running = true;
         _err = '';
+        // 重新开始就重新记：峰值和平均都要归零，否则混着上次的读数。
+        _peak = 0;
+        _samples.clear();
       });
       _sub = _rec
           .onAmplitudeChanged(const Duration(milliseconds: 200))
@@ -3113,6 +3296,8 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
         setState(() {
           _db = db;
           if (db > _peak) _peak = db;
+          _samples.add(db);
+          if (_samples.length > 600) _samples.removeAt(0);
         });
       });
     } on Object catch (e) {
@@ -3140,6 +3325,7 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
 
   @override
   Widget build(BuildContext context) {
+    final db = _running ? _db : null;
     return LocalToolCard(
       title: '分贝仪',
       subtitle: '用麦克风估环境噪音，数值是估算不是校准声压级',
@@ -3147,44 +3333,67 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Text(
-                _running ? '${_db.toStringAsFixed(1)} dB' : '-- dB',
-                style: const TextStyle(
-                  fontSize: 40,
+          const SizedBox(height: 6),
+          // 读数：大号等宽数字 + 分档颜色。没在测就明说「--」，
+          // 峰值/平均一起留空 —— 不拿 0 或上次的读数冒充。
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                db == null ? '--' : db.toStringAsFixed(1),
+                style: TextStyle(
+                  fontSize: 64,
+                  height: 1.05,
                   fontWeight: FontWeight.w700,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                  color: AppTokens.textPrimary,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                  color: db == null ? AppTokens.textTertiary : _dbColor(db),
                 ),
               ),
+              const SizedBox(width: 4),
+              const Text(
+                'dB',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  color: AppTokens.textSecondary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            db == null ? '点下面「开始测量」，用麦克风估环境噪音' : sv.dbLabel(db),
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 13.5,
+              color: AppTokens.textSecondary,
             ),
           ),
-          if (_running) ...[
-            LinearProgressIndicator(
-              value: (_db.clamp(0, 120)) / 120,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              sv.dbLabel(_db),
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 14,
-                color: AppTokens.textSecondary,
+          const SizedBox(height: 16),
+          _DbScaleBar(db: db, peak: _running ? _peak : null),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _DbStatTile(
+                  label: '峰值',
+                  text: _running ? _peak.toStringAsFixed(1) : '--',
+                ),
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '峰值 ${_peak.toStringAsFixed(1)} dB',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 12,
-                color: AppTokens.textSecondary,
+              const SizedBox(width: 10),
+              Expanded(
+                child: _DbStatTile(
+                  label: '平均',
+                  text: _avg?.toStringAsFixed(1) ?? '--',
+                ),
               ),
-            ),
-          ],
-          const SizedBox(height: 10),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _DbReferenceTable(db: db),
+          const SizedBox(height: 14),
           Row(
             children: [
               Expanded(
@@ -3212,6 +3421,309 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
             '做前后对比（「关窗后安静了多少」），别当专业仪器用。',
             style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ───────────── 分贝仪的展示件（色带 / 数值块 / 参考表） ─────────────
+
+/// 分贝 → 颜色。分档口径与 `sv.dbLabel` 一致（30/50/70/85/100）。
+Color _dbColor(double db) {
+  if (db < 50) return AppTokens.success;
+  if (db < 70) return AppTokens.primaryBlue;
+  if (db < 85) return AppTokens.warning;
+  if (db < 100) return AppTokens.orange;
+  return AppTokens.danger;
+}
+
+/// 0~120 dB 色带：绿/蓝/橙/红四段 + 当前读数指针 + 峰值刻线。
+///
+/// 用一个细进度条表示分贝是说不清的（0~120 里 60 和 90 在条上只差四分之一），
+/// 所以画成带分区和刻度的色带，一眼能看出"落在哪一档"。
+class _DbScaleBar extends StatelessWidget {
+  const _DbScaleBar({required this.db, required this.peak});
+
+  final double? db;
+  final double? peak;
+
+  static const double _max = 120;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        double x(double v) => (v.clamp(0, _max) / _max) * w;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              height: 30,
+              child: Stack(
+                children: [
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 4,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(9),
+                      // flex 按分贝区间宽度给：0~50 / 50~70 / 70~85 / 85~120。
+                      child: const Row(
+                        children: [
+                          Expanded(
+                            flex: 50,
+                            child: SizedBox(
+                              height: 22,
+                              child: ColoredBox(color: AppTokens.success),
+                            ),
+                          ),
+                          Expanded(
+                            flex: 20,
+                            child: SizedBox(
+                              height: 22,
+                              child: ColoredBox(color: AppTokens.primaryBlue),
+                            ),
+                          ),
+                          Expanded(
+                            flex: 15,
+                            child: SizedBox(
+                              height: 22,
+                              child: ColoredBox(color: AppTokens.warning),
+                            ),
+                          ),
+                          Expanded(
+                            flex: 35,
+                            child: SizedBox(
+                              height: 22,
+                              child: ColoredBox(color: AppTokens.danger),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (peak != null)
+                    Positioned(
+                      left: (x(peak!) - 1).clamp(0.0, w - 2),
+                      top: 1,
+                      child: Container(
+                        width: 2,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: AppTokens.textPrimary.withValues(alpha: 0.35),
+                          borderRadius: BorderRadius.circular(1),
+                        ),
+                      ),
+                    ),
+                  if (db != null)
+                    Positioned(
+                      left: (x(db!) - 1.5).clamp(0.0, w - 3),
+                      top: 0,
+                      child: Container(
+                        width: 3,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(2),
+                          border: Border.all(
+                            color: AppTokens.textPrimary,
+                            width: 1,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            // 0/30/60/90/120 五等分，spaceBetween 正好是等值刻度。
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                for (final v in const [0, 30, 60, 90, 120])
+                  Text(
+                    '$v',
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                      color: AppTokens.textTertiary,
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// 一个数值块（峰值 / 平均）。没有读数时显示 `--`，不显示 0。
+class _DbStatTile extends StatelessWidget {
+  const _DbStatTile({required this.label, required this.text});
+
+  final String label;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      decoration: BoxDecoration(
+        color: AppTokens.primaryBlue.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 11.5,
+              color: AppTokens.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                text,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                  color: AppTokens.textPrimary,
+                ),
+              ),
+              if (text != '--')
+                const Text(
+                  ' dB',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: AppTokens.textSecondary,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 常见噪音参考表：把读数放进常识里（"60 就是正常交谈的音量"）。
+class _DbReferenceTable extends StatelessWidget {
+  const _DbReferenceTable({required this.db});
+
+  /// 当前读数；null = 没在测，不高亮任何一行。
+  final double? db;
+
+  static const List<({String name, double db})> _rows = [
+    (name: '树叶沙沙', db: 20),
+    (name: '冰箱嗡嗡', db: 40),
+    (name: '正常交谈', db: 60),
+    (name: '吸尘器', db: 75),
+    (name: '电钻', db: 100),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    // 高亮"环境已经比它吵"的最大那一行 —— 讲的是"你现在相当于站在哪儿"。
+    final hit =
+        db == null ? -1 : _rows.lastIndexWhere((r) => r.db <= db!.clamp(0, 120));
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 11, 12, 9),
+      decoration: BoxDecoration(
+        color: AppTokens.surfaceMuted,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                '常见噪音参考',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: AppTokens.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                hit < 0 ? '测了就能对上' : '已超过「${_rows[hit].name}」',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: hit < 0 ? AppTokens.textTertiary : AppTokens.warning,
+                  fontWeight: hit < 0 ? FontWeight.w400 : FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (var i = 0; i < _rows.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 7),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 64,
+                    child: Text(
+                      _rows[i].name,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight:
+                            i == hit ? FontWeight.w700 : FontWeight.w400,
+                        color: i == hit
+                            ? AppTokens.primaryBlue
+                            : AppTokens.textSecondary,
+                      ),
+                    ),
+                  ),
+                  // 进度槽用 Row + flex，不用 Stack + FractionallySizedBox：
+                  // 后者的底衬 `Container(height: 6, color:)` 没有宽度，在 Stack
+                  // 的 loose 约束下 ColoredBox 无子节点会取 constraints.smallest
+                  // = 0 宽 —— 槽整条看不见，只剩填充段浮在灰底上。
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: SizedBox(
+                        height: 6,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              flex: _rows[i].db.round(),
+                              child: ColoredBox(color: _dbColor(_rows[i].db)),
+                            ),
+                            Expanded(
+                              flex: 120 - _rows[i].db.round(),
+                              child: const ColoredBox(color: AppTokens.divider),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 52,
+                    child: Text(
+                      '${_rows[i].db.toInt()} dB',
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                        color: AppTokens.textSecondary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );

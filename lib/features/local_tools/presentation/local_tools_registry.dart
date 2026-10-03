@@ -284,11 +284,7 @@ class LocalToolPage extends StatelessWidget {
                   ],
                 ),
               ),
-              Expanded(
-                child: Center(
-                  child: Text('未找到本地工具「$localId」'),
-                ),
-              ),
+              Expanded(child: Center(child: Text('未找到本地工具「$localId」'))),
             ],
           ),
         ),
@@ -313,9 +309,21 @@ class LocalToolPage extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                child: def.builder(context),
+              // 内容不足一屏时把卡片**撑满**内容区：以前卡片按内容高度自适应、
+              // 顶部对齐，短工具（指南针/水平仪/秒表…）就成了「半张白卡浮在
+              // 上半屏」，28 个本地工具实测留白 28%~69%（中位约 50%）。
+              // 这里给内容一个 minHeight = 可视高度，卡片自己就会长到底；
+              // 内容真的超过一屏时 minHeight 不起作用，照旧滚动。
+              child: LayoutBuilder(
+                builder: (context, constraints) => SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight - 32,
+                    ),
+                    child: def.builder(context),
+                  ),
+                ),
               ),
             ),
           ],
