@@ -2,6 +2,7 @@ import 'package:box/features/comic/domain/comic_book.dart';
 import 'package:box/features/content/domain/warehouse_models.dart';
 import 'package:box/video/models/video_source.dart';
 import 'package:box/video/services/favorites_repository.dart';
+import 'package:box/video/services/source_match.dart';
 
 /// 把各模块的真实收藏数据转成收藏库统一的 [WarehouseItem]。
 ///
@@ -92,13 +93,18 @@ VideoSource? findVideoSourceForFavorite(
   List<VideoSource> sources,
   FavoriteItem item,
 ) {
+  // 与「历史续播」共用同一份匹配逻辑：目录 JSON 里没有 id 字段，源的 id 就是
+  // 它的接口地址，所以上游换过地址后只比 id/url 会误报成「片源已失效或被移除」。
+  // 归一化名字这一层能把「同一家源、地址变了」的记录救回来。
+  final matched = findVideoSourceForHistory(
+    sources,
+    sourceId: item.sourceId,
+    sourceName: item.sourceName,
+  );
+  if (matched != null) return matched;
+
   for (final source in sources) {
-    if (source.id == item.sourceId) return source;
-  }
-  for (final source in sources) {
-    if (source.url == item.sourceId || source.url == item.sourceUrl) {
-      return source;
-    }
+    if (source.url == item.sourceUrl) return source;
   }
   return null;
 }

@@ -184,6 +184,9 @@ class _HomePageState extends State<HomePage>
     // 内容页收藏库当年就是栽在这上面（见 VideoModule.ensureCatalogReady 的注释），
     // 这里同样先把目录备好再找源。
     final controller = context.read<VideoController>();
+    // 主动备目录这一步要走网络（探目录地址 + 拉源列表），冷启动弱网下要等几秒 ——
+    // 先给一句反馈，别让用户以为点了个死卡片。
+    if (controller.sources.isEmpty) _toast('正在准备片源…');
     await VideoModule.ensureCatalogReady(controller);
     if (!mounted) return;
 
