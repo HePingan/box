@@ -11,6 +11,7 @@ import '../controller/favorites_controller.dart';
 import '../controller/video_controller.dart';
 import '../services/favorites_repository.dart';
 import '../models/video_source.dart';
+import '../widgets/cross_source_resume_sheet.dart';
 import 'video_detail_page.dart';
 import 'video_downloads_page.dart';
 
@@ -132,7 +133,7 @@ class FavoritesPage extends StatelessWidget {
     final targetSource = _findSource(videoController.sources, item);
 
     if (targetSource == null) {
-      _showSnackBar(context, '该视频的片源已失效或被移除');
+      _showSourceGoneWithFallback(context, item);
       return;
     }
 
@@ -154,6 +155,15 @@ class FavoritesPage extends StatelessWidget {
   // 与内容页收藏库共用同一份匹配逻辑，避免两处各自演化。
   VideoSource? _findSource(List<VideoSource> sources, FavoriteItem item) =>
       findVideoSourceForFavorite(sources, item);
+
+  /// 原片源没了时的出路：一句提示 + 换源入口（实测同一部片常在 20+ 个源里都有）。
+  void _showSourceGoneWithFallback(BuildContext context, FavoriteItem item) {
+    showSourceGoneWithFallback(
+      context,
+      sources: context.read<VideoController>().sources,
+      request: CrossSourceResumeRequest(vodName: item.vodName),
+    );
+  }
 
   void _showSnackBar(BuildContext context, String message) {
     ScaffoldMessenger.of(

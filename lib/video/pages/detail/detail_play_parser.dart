@@ -1,5 +1,6 @@
 import '../../models/video_source.dart';
 import '../../models/vod_item.dart';
+import '../../services/source_match.dart';
 import '../../utils/play_url_policy.dart';
 import 'detail_models.dart';
 
@@ -50,6 +51,7 @@ class DetailPlayParser {
   static DetailPlaybackSelection pickDefaultSelection(
     List<DetailPlayLine> lines, {
     String? initialEpisodeUrl,
+    String? initialEpisodeName,
   }) {
     if (lines.isEmpty) {
       return const DetailPlaybackSelection.none();
@@ -71,6 +73,27 @@ class DetailPlayParser {
           }
         }
       }
+    }
+
+    // 跨源续播：地址对不上（换了片源，地址必然不同）时按剧集名认同一集。
+    final mediaLineFirst = lines.indexWhere(
+      (line) =>
+          line.episodes.isNotEmpty &&
+          _looksLikeMediaUrl(line.episodes.first.url),
+    );
+    final nameMatch = matchEpisodeByName(
+      lines,
+      initialEpisodeName ?? '',
+      preferLineIndex: mediaLineFirst >= 0 ? mediaLineFirst : null,
+    );
+    if (nameMatch != null) {
+      final ep = lines[nameMatch.lineIndex].episodes[nameMatch.episodeIndex];
+      return DetailPlaybackSelection(
+        lineIndex: nameMatch.lineIndex,
+        episodeIndex: nameMatch.episodeIndex,
+        url: ep.url,
+        name: ep.name,
+      );
     }
 
     // 默认线路优先选「给的是真媒体地址」的那条：实测 21 部影片里 10 部的第一条
@@ -97,6 +120,38 @@ class DetailPlayParser {
       url: firstEpisode.url,
       name: firstEpisode.name,
     );
+  }
+
+  /// 跨源续播用：按**剧集名**在剧集列表里认同一集。
+  ///
+  /// 换了片源后地址必然不同（`sameUrl` 不可能命中），只能靠名字。
+  /// 归一化后精确相等才认（`第03集` == `第3集`）；`preferLineIndex`（一般是
+  /// 真媒体线路）先看，避免认到云播网页那条线上。
+  static ({int lineIndex, int episodeIndex})? matchEpisodeByName(
+    List<DetailPlayLine> lines,
+    String episodeName, {
+    int? preferLineIndex,
+  }) {
+    final wanted = normalizeEpisodeName(episodeName);
+    if (wanted.isEmpty) return null;
+
+    final order = <int>[
+      if (preferLineIndex != null &&
+          preferLineIndex >= 0 &&
+          preferLineIndex < lines.length)
+        preferLineIndex,
+      for (var i = 0; i < lines.length; i++)
+        if (i != preferLineIndex) i,
+    ];
+    for (final li in order) {
+      final line = lines[li];
+      for (var ei = 0; ei < line.episodes.length; ei++) {
+        if (normalizeEpisodeName(line.episodes[ei].name) == wanted) {
+          return (lineIndex: li, episodeIndex: ei);
+        }
+      }
+    }
+    return null;
   }
 
   /// 这条线路给的是不是真媒体地址（.m3u8 / .mp4 / ...）。

@@ -51,3 +51,13 @@ String normalizeSourceName(String raw) {
 }
 
 final RegExp _nameKept = RegExp(r'[0-9a-zA-Z\u4e00-\u9fff\u3040-\u30ff]');
+
+/// 归一化剧集名，用于**跨源续播**：新源的剧集地址必然不同，只能比名字。
+///
+/// 除了丢掉装饰符（`【HD中字】` 这类括号、emoji），还要**吃掉数字的前导零** ——
+/// 同一集，不同采集站会写成 `第03集` / `第3集` / `03`，不比归一化就会漏掉。
+String normalizeEpisodeName(String raw) {
+  final base = normalizeSourceName(raw);
+  if (base.isEmpty) return '';
+  return base.replaceAllMapped(RegExp(r'0+(\d)'), (m) => m.group(1)!);
+}

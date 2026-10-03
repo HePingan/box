@@ -24,6 +24,10 @@ class VideoDetailPage extends StatelessWidget {
   final String? localPath;
   final bool isOfflinePlayback;
   final String? episodeName;
+
+  /// 跨源续播：原片源那集的剧集名（`HD中字` / `第03集`）。
+  /// 换了片源后地址必然不同，只能按剧集名把用户带回同一集。
+  final String? initialEpisodeName;
   final int localFileExpectedBytes;
 
   const VideoDetailPage({
@@ -35,6 +39,7 @@ class VideoDetailPage extends StatelessWidget {
     this.localPath,
     this.isOfflinePlayback = false,
     this.episodeName,
+    this.initialEpisodeName,
     this.localFileExpectedBytes = 0,
   });
 
@@ -49,6 +54,7 @@ class VideoDetailPage extends StatelessWidget {
         localPath: localPath,
         isOfflinePlayback: isOfflinePlayback,
         episodeName: episodeName,
+        initialEpisodeName: initialEpisodeName,
         localFileExpectedBytes: localFileExpectedBytes,
       ),
       child: const _VideoDetailView(),

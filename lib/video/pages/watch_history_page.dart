@@ -10,6 +10,7 @@ import '../controller/history_controller.dart';
 import '../controller/video_controller.dart';
 import '../models/history_item.dart';
 import '../services/source_match.dart';
+import '../widgets/cross_source_resume_sheet.dart';
 import 'video_detail_page.dart';
 
 /// 独立观看历史页：按日期分组、左滑删除单条、一键清空。
@@ -192,7 +193,7 @@ class WatchHistoryPage extends StatelessWidget {
     );
 
     if (targetSource == null) {
-      _showSnackBar(context, '该视频的片源已失效或被移除');
+      _showSourceGoneWithFallback(context, item);
       return;
     }
 
@@ -211,6 +212,19 @@ class WatchHistoryPage extends StatelessWidget {
           initialEpisodeUrl: item.episodeUrl,
           initialPosition: item.position,
         ),
+      ),
+    );
+  }
+
+  /// 原片源没了时的出路：一句提示 + 换源入口（实测同一部片常在 20+ 个源里都有）。
+  void _showSourceGoneWithFallback(BuildContext context, HistoryItem item) {
+    showSourceGoneWithFallback(
+      context,
+      sources: context.read<VideoController>().sources,
+      request: CrossSourceResumeRequest(
+        vodName: item.vodName,
+        episodeName: item.episodeName,
+        position: item.position,
       ),
     );
   }

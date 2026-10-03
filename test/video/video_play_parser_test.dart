@@ -188,4 +188,74 @@ void main() {
       },
     );
   });
+
+  group('matchEpisodeByName（跨源续播）', () {
+    List<DetailPlayLine> lines() => [
+      const DetailPlayLine(
+        name: '云播',
+        episodes: [
+          DetailPlayEpisode(name: '第3集', url: 'https://x.example.com/play/3'),
+        ],
+      ),
+      const DetailPlayLine(
+        name: 'm3u8',
+        episodes: [
+          DetailPlayEpisode(name: '第03集', url: 'https://x.example.com/3.m3u8'),
+          DetailPlayEpisode(name: '第04集', url: 'https://x.example.com/4.m3u8'),
+        ],
+      ),
+    ];
+
+    test('按剧集名认同一集，且优先落在真媒体线路上（第03集 == 第3集）', () {
+      final hit = DetailPlayParser.matchEpisodeByName(
+        lines(),
+        '第3集',
+        preferLineIndex: 1,
+      );
+      expect(hit, isNotNull);
+      expect(hit!.lineIndex, 1, reason: '首选线路是真媒体线路时不该认到云播网页那条');
+      expect(hit.episodeIndex, 0);
+    });
+
+    test('没有同名剧集就返回 null（交给默认选片逻辑）', () {
+      expect(DetailPlayParser.matchEpisodeByName(lines(), '第09集'), isNull);
+      expect(DetailPlayParser.matchEpisodeByName(lines(), '   '), isNull);
+    });
+
+    test('传了剧集名但地址命中时，地址优先（片源内续播行为不变）', () {
+      final selection = DetailPlayParser.pickDefaultSelection(
+        lines(),
+        initialEpisodeUrl: 'https://x.example.com/play/3',
+        initialEpisodeName: '第03集',
+      );
+      expect(selection.lineIndex, 0, reason: '地址命中优先，仍然是原来那一集');
+      expect(selection.name, '第3集');
+    });
+
+    test('路径撞上时 sameUrl 就会命中（它按路径比，不管主机）', () {
+      final selection = DetailPlayParser.pickDefaultSelection(
+        lines(),
+        initialEpisodeUrl: 'https://old-source.example.com/3.m3u8',
+        initialEpisodeName: '第04集',
+      );
+      expect(
+        selection.name,
+        '第03集',
+        reason: '路径一致（/3.m3u8）就算命中，哪怕主机不同 —— 这是 sameUrl 的既有口径',
+      );
+      expect(selection.lineIndex, 1);
+    });
+
+    test('地址对不上时按剧集名选（换源场景）', () {
+      // 注意：sameUrl 是**按路径**比的（不管主机）——路径撞上时会走地址命中，
+      // 所以这里故意换一条不同形态的路径，才是真正的「换源」场景。
+      final selection = DetailPlayParser.pickDefaultSelection(
+        lines(),
+        initialEpisodeUrl: 'https://old-source.example.com/oldpath/4/seg.m3u8',
+        initialEpisodeName: '第04集',
+      );
+      expect(selection.lineIndex, 1);
+      expect(selection.name, '第04集');
+    });
+  });
 }

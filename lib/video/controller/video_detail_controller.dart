@@ -26,6 +26,9 @@ class VideoDetailController extends ChangeNotifier {
   final String? localPath;
   final bool isOfflinePlayback;
   final String? episodeName; // 离线播放时传入剧集名称
+  /// 跨源续播用：原片源的剧集名（`HD中字` / `第03集`）。换了片源后地址必然不同，
+  /// 只认剧集名把用户带回同一集。
+  final String? initialEpisodeName;
   final int localFileExpectedBytes;
 
   VodItem? fullDetail;
@@ -43,6 +46,9 @@ class VideoDetailController extends ChangeNotifier {
       isOfflinePlayback ? localFileExpectedBytes : 0;
 
   bool _resumeApplied = false;
+
+  /// 本次选中是**按剧集名**认出来的那一集（跨源续播）；只有它才允许带进度。
+  String? _nameMatchedUrl;
   String? resumeMessage; // 用于通知 UI 弹出 Snackbar
 
   final DetailFetcher? _detailFetcher;
@@ -61,6 +67,7 @@ class VideoDetailController extends ChangeNotifier {
     this.localPath,
     this.isOfflinePlayback = false,
     this.episodeName,
+    this.initialEpisodeName,
     this.localFileExpectedBytes = 0,
     DetailFetcher? detailFetcher,
     PlayLineMemoryRepository? lineMemoryRepo,
@@ -175,9 +182,11 @@ class VideoDetailController extends ChangeNotifier {
       // 存储慢一步就会把详情页永远停在 loading（实测报警：pumpAndSettle 超时）。
       unawaited(LineReachabilityStore.ensureLoaded());
 
+      _nameMatchedUrl = null;
       final defaultSelection = _pickDefaultSelection(
         playLines,
         initialEpisodeUrl: initialEpisodeUrl,
+        initialEpisodeName: initialEpisodeName,
       );
       selectedLineIndex = defaultSelection.lineIndex;
       selectedEpisodeIndex = defaultSelection.episodeIndex;
@@ -186,13 +195,21 @@ class VideoDetailController extends ChangeNotifier {
       _resumeApplied = false;
 
       final initialUrl = initialEpisodeUrl?.trim();
-      if (initialPosition > 0 &&
-          initialUrl != null &&
-          initialUrl.isNotEmpty &&
-          currentEpisodeUrl != null &&
-          DetailPlayParser.sameUrl(currentEpisodeUrl!, initialUrl)) {
-        resumeMessage =
-            '已为你恢复到上次播放位置：${DetailPlayParser.formatPosition(initialPosition)}';
+      if (initialPosition > 0 && currentEpisodeUrl != null) {
+        final sameEpisode =
+            initialUrl != null &&
+            initialUrl.isNotEmpty &&
+            DetailPlayParser.sameUrl(currentEpisodeUrl!, initialUrl);
+        final nameMatched =
+            _nameMatchedUrl != null &&
+            DetailPlayParser.sameUrl(currentEpisodeUrl!, _nameMatchedUrl!);
+        if (sameEpisode) {
+          resumeMessage =
+              '已为你恢复到上次播放位置：${DetailPlayParser.formatPosition(initialPosition)}';
+        } else if (nameMatched) {
+          resumeMessage =
+              '已换到「${source.name}」的同名剧集，并回到上次位置：${DetailPlayParser.formatPosition(initialPosition)}';
+        }
       }
 
       isLoading = false;
@@ -214,6 +231,7 @@ class VideoDetailController extends ChangeNotifier {
   DetailPlaybackSelection _pickDefaultSelection(
     List<DetailPlayLine> lines, {
     String? initialEpisodeUrl,
+    String? initialEpisodeName,
   }) {
     if (lines.isEmpty) {
       return const DetailPlaybackSelection.none();
@@ -223,6 +241,7 @@ class VideoDetailController extends ChangeNotifier {
 
     int? matchedLineIndex;
     int? matchedEpisodeIndex;
+    var matchedByName = false;
 
     // 先尝试命中历史地址
     if (initial != null && initial.isNotEmpty) {
@@ -238,6 +257,37 @@ class VideoDetailController extends ChangeNotifier {
         }
         if (matchedLineIndex != null) break;
       }
+    }
+
+    // 地址没命中（换了片源，地址必然不同）→ 按剧集名认同一集。
+    // 只有这一步认出来的集才允许带进度（见 getEffectiveInitialPosition）。
+    if (matchedLineIndex == null) {
+      final nameMatch = DetailPlayParser.matchEpisodeByName(
+        lines,
+        initialEpisodeName ?? '',
+        preferLineIndex: _findPreferredLineIndex(lines),
+      );
+      if (nameMatch != null) {
+        matchedLineIndex = nameMatch.lineIndex;
+        matchedEpisodeIndex = nameMatch.episodeIndex;
+        matchedByName = true;
+        _nameMatchedUrl =
+            lines[nameMatch.lineIndex].episodes[nameMatch.episodeIndex].url;
+      }
+    }
+
+    // 跨源续播认到的集：直接用它。用户是从「继续使用」进来的，
+    // 集数对齐比线路形态更重要（形态问题由 ② 的线路标注兜着）。
+    if (matchedByName &&
+        matchedLineIndex != null &&
+        matchedEpisodeIndex != null) {
+      final ep = lines[matchedLineIndex].episodes[matchedEpisodeIndex];
+      return DetailPlaybackSelection(
+        lineIndex: matchedLineIndex,
+        episodeIndex: matchedEpisodeIndex,
+        url: ep.url,
+        name: ep.name,
+      );
     }
 
     // 再找 m3u8 线路
@@ -576,15 +626,24 @@ class VideoDetailController extends ChangeNotifier {
   // 计算传给播放器的真实初始位置
   int getEffectiveInitialPosition() {
     if (_resumeApplied) return 0; // 只要用户手动切过集，就不再使用历史定位
+    if (initialPosition <= 0 || currentEpisodeUrl == null) return 0;
 
+    // 同一片源：地址一致才带进度。
     final initialUrl = initialEpisodeUrl?.trim();
-    if (initialUrl == null || initialUrl.isEmpty || currentEpisodeUrl == null) {
-      return 0;
+    if (initialUrl != null &&
+        initialUrl.isNotEmpty &&
+        DetailPlayParser.sameUrl(currentEpisodeUrl!, initialUrl)) {
+      return initialPosition;
     }
 
-    return DetailPlayParser.sameUrl(currentEpisodeUrl!, initialUrl)
-        ? initialPosition
-        : 0;
+    // 跨源续播：地址必然不同，只认「按剧集名认出的那一集」。
+    final nameMatched = _nameMatchedUrl;
+    if (nameMatched != null &&
+        DetailPlayParser.sameUrl(currentEpisodeUrl!, nameMatched)) {
+      return initialPosition;
+    }
+
+    return 0;
   }
 
   // 消费提示信息

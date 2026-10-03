@@ -9,6 +9,7 @@ import 'package:box/novel/core/models.dart' show NovelBook;
 import 'package:box/novel/novel_module.dart';
 import 'package:box/plugin_manager.dart';
 import 'package:box/video/services/source_match.dart';
+import 'package:box/video/widgets/cross_source_resume_sheet.dart';
 import 'package:box/video_module.dart';
 import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/home/data/ai_hot_models.dart';
@@ -198,7 +199,16 @@ class _HomePageState extends State<HomePage>
       sourceName: history.sourceName,
     );
     if (target == null) {
-      _toast('该视频的片源已失效或被移除');
+      // 不再是死胡同：给一个「换源找」入口 —— 实测同一部片常在 20+ 个源里都有。
+      showSourceGoneWithFallback(
+        context,
+        sources: controller.sources,
+        request: CrossSourceResumeRequest(
+          vodName: history.vodName,
+          episodeName: history.episodeName,
+          position: history.position,
+        ),
+      );
       return;
     }
 

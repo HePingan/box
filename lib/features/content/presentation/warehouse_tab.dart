@@ -20,6 +20,7 @@ import 'package:box/features/content/domain/warehouse_cleanup.dart';
 import 'package:box/features/content/domain/warehouse_models.dart';
 import 'package:box/features/content/presentation/warehouse_search.dart';
 import 'package:box/features/music/presentation/music_placeholder_page.dart';
+import 'package:box/video/widgets/cross_source_resume_sheet.dart';
 import 'package:box/novel/novel_module.dart';
 import 'package:box/video_module.dart';
 
@@ -658,11 +659,16 @@ class WarehouseTabState extends State<WarehouseTab>
 
     final source = findVideoSourceForFavorite(videoController.sources, fav);
     if (source == null) {
-      // 目录已经加载过还是匹配不到，才是真的片源没了。
-      _showSnack(
-        videoController.sources.isEmpty
-            ? '片源目录加载失败，请检查网络后重试'
-            : '该视频的片源已失效或被移除',
+      if (videoController.sources.isEmpty) {
+        // 目录压根没加载出来：这不是「片源没了」，别把两件事混成一句。
+        _showSnack('片源目录加载失败，请检查网络后重试');
+        return true;
+      }
+      // 目录已经加载过还是匹配不到，才是真的片源没了 —— 给换源入口，别停在死胡同。
+      showSourceGoneWithFallback(
+        context,
+        sources: videoController.sources,
+        request: CrossSourceResumeRequest(vodName: fav.vodName),
       );
       return true;
     }
