@@ -235,7 +235,7 @@ class FavoritesPage extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppTokens.spaceLg),
             Row(
               children: [
                 Expanded(
@@ -288,7 +288,7 @@ class _FavoriteCard extends StatelessWidget {
         children: [
           Expanded(
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(AppTokens.radiusCard),
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -323,7 +323,9 @@ class _FavoriteCard extends StatelessWidget {
                         ),
                         decoration: BoxDecoration(
                           color: Colors.black.withValues(alpha: 0.62),
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(
+                            AppTokens.radiusXs,
+                          ),
                         ),
                         child: Text(
                           item.vodRemarks!.trim(),
@@ -413,7 +415,7 @@ class _EmptyFavorites extends StatelessWidget {
             size: 56,
             color: AppTokens.textSecondary.withValues(alpha: 0.5),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppTokens.spaceMd),
           const Text(
             '还没有追剧收藏',
             style: TextStyle(

@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../controller/video_controller.dart';
 import '../../models/video_source.dart';
 import '../../services/source_health_service.dart';
+import '../../video_module.dart';
 
 Future<void> showHomeSourcePickerSheet(
   BuildContext context,
@@ -42,9 +45,7 @@ Future<void> showHomeSourcePickerSheet(
                   ),
                 ],
               ),
-              child: SafeArea(
-                child: _SourcePickerBody(controller: controller),
-              ),
+              child: SafeArea(child: _SourcePickerBody(controller: controller)),
             );
           },
         ),
@@ -69,23 +70,82 @@ class _SourcePickerBodyState extends State<_SourcePickerBody> {
   static const SourceHealthService _healthService = SourceHealthService();
 
   /// Live-check overrides keyed by source id. Absent = show persisted state.
-  final Map<String, SourceCheckResult> _liveResults = <String, SourceCheckResult>{};
+  final Map<String, SourceCheckResult> _liveResults =
+      <String, SourceCheckResult>{};
   final Set<String> _checking = <String>{};
   bool _scanningAll = false;
 
   VideoController get controller => widget.controller;
+
+  /// ① 的可见性层（自动隐藏坏源）与这个面板原先读的模型字段是**两套真相**：
+  /// 面板改读同一处，才能显示「已自动隐藏 · 原因」并给出恢复入口。
+  SourceVisibilityRecord _visibilityOf(VideoSource source) =>
+      VideoModule.getVisibilityRecord(source);
+
+  bool _isHidden(VideoSource source) =>
+      _visibilityOf(source).isHidden || source.isHidden;
+
+  int _failCountOf(VideoSource source) {
+    final recorded = _visibilityOf(source).failCount;
+    return recorded > 0 ? recorded : source.failCount;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // 可见性层是异步读盘的：读完刷新一次标签，别让面板停留在旧状态。
+    unawaited(
+      VideoModule.ensureVisibilityLoaded().then((_) {
+        if (mounted) setState(() {});
+      }),
+    );
+  }
+
+  /// 恢复一个被隐藏的源：自动隐藏与手动隐藏都清掉，连续失败计数一并归零，
+  /// 否则恢复完 failCount 还在 3 以上，面板仍判它不可用。
+  Future<void> _restore(VideoSource source) async {
+    await VideoModule.setSourceAutoHidden(source, false, failCount: 0);
+    await VideoModule.setSourceManualHidden(source, false);
+    if (!mounted) return;
+    setState(() {});
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已恢复「${source.name}」，下次搜索会重新用它')));
+  }
+
+  /// 点一个不可用的源时给的说明：优先说清「为什么不可用」。
+  String _deadReason(VideoSource source) {
+    final record = _visibilityOf(source);
+    if (record.autoHidden) {
+      final why = record.lastReason?.trim();
+      return (why == null || why.isEmpty)
+          ? '已被自动隐藏，点右侧「恢复」可用'
+          : '已被自动隐藏（$why），点右侧「恢复」可用';
+    }
+    if (record.manualHidden || source.isHidden) {
+      return '已被隐藏，点右侧「恢复」可用';
+    }
+    return '源站已失效，暂不可用';
+  }
 
   /// Health from real signals: a fresh live probe wins, else persisted
   /// failCount / hidden state from the catalog.
   _SourceHealth _healthOf(VideoSource source) {
     if (_checking.contains(source.id)) return _SourceHealth.checking;
 
+    // 被隐藏的源：不管临时探测多好，它都不会进搜索 —— 标签必须说实话。
+    final record = _visibilityOf(source);
+    if (record.isHidden || source.isHidden) return _SourceHealth.down;
+
     final live = _liveResults[source.id];
     if (live != null) {
       return live.success ? _SourceHealth.healthy : _SourceHealth.down;
     }
 
-    if (source.isHidden) return _SourceHealth.down;
+    // 先读 ① 的可见性层（搜索真正在用的那套），再兜底模型字段。
+    if (record.failCount >= 3) return _SourceHealth.down;
+    if (record.failCount > 0) return _SourceHealth.warning;
+
     if (source.failCount >= 3) return _SourceHealth.down;
     if (source.failCount > 0) return _SourceHealth.warning;
     // No failures recorded yet — genuinely unknown until probed.
@@ -99,14 +159,20 @@ class _SourcePickerBodyState extends State<_SourcePickerBody> {
       case _SourceHealth.healthy:
         return '可用';
       case _SourceHealth.warning:
-        return '近期失败 ${source.failCount} 次';
+        return '近期失败 ${_failCountOf(source)} 次';
       case _SourceHealth.down:
-        final live = _liveResults[source.id];
-        if (live != null) return live.message;
+        final record = _visibilityOf(source);
+        if (record.isHidden) {
+          final verb = record.autoHidden ? '已自动隐藏' : '已手动隐藏';
+          final why = record.lastReason?.trim();
+          return (why == null || why.isEmpty) ? verb : '$verb · $why';
+        }
         if (source.isHidden) {
           return source.hiddenReason == 'auto' ? '已自动隐藏' : '已隐藏';
         }
-        return '连续失败 ${source.failCount} 次';
+        final live = _liveResults[source.id];
+        if (live != null) return live.message;
+        return '连续失败 ${_failCountOf(source)} 次';
       case _SourceHealth.unknown:
         return '未检测';
     }
@@ -192,13 +258,17 @@ class _SourcePickerBodyState extends State<_SourcePickerBody> {
   Widget build(BuildContext context) {
     // 稳定排序：先按健康度分档(死源沉底)，同档内保持目录原始顺序。
     final sources = List<VideoSource>.of(controller.sources);
+    final autoHiddenCount = sources
+        .where((s) => _visibilityOf(s).autoHidden)
+        .length;
     final originalIndex = <String, int>{
       for (var i = 0; i < controller.sources.length; i++)
         controller.sources[i].id: i,
     };
     sources.sort((a, b) {
-      final rankDiff = _healthSortRank(_healthOf(a))
-          .compareTo(_healthSortRank(_healthOf(b)));
+      final rankDiff = _healthSortRank(
+        _healthOf(a),
+      ).compareTo(_healthSortRank(_healthOf(b)));
       if (rankDiff != 0) return rankDiff;
       return (originalIndex[a.id] ?? 0).compareTo(originalIndex[b.id] ?? 0);
     });
@@ -233,7 +303,9 @@ class _SourcePickerBodyState extends State<_SourcePickerBody> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '当前可切换 ${sources.length} 个片源，选择后立即应用',
+                      autoHiddenCount > 0
+                          ? '共 ${sources.length} 个片源，$autoHiddenCount 个已自动隐藏（可恢复）'
+                          : '当前可切换 ${sources.length} 个片源，选择后立即应用',
                       style: const TextStyle(
                         color: Colors.black54,
                         fontSize: 12.5,
@@ -296,10 +368,12 @@ class _SourcePickerBodyState extends State<_SourcePickerBody> {
                   borderRadius: BorderRadius.circular(18),
                   onTap: () {
                     if (isDead) {
-                      final live = _liveResults[source.id];
-                      final reason = live?.message ?? '源站已失效';
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('「${source.name}」$reason，暂不可用')),
+                        SnackBar(
+                          content: Text(
+                            '「${source.name}」${_deadReason(source)}',
+                          ),
+                        ),
                       );
                       return;
                     }
@@ -346,67 +420,89 @@ class _SourcePickerBodyState extends State<_SourcePickerBody> {
                                       ),
                                     ),
                                   ),
-                                const SizedBox(width: 8),
-                                _HealthBadge(
-                                  color: healthColor,
-                                  label: _healthLabel(source, health),
-                                  checking: health == _SourceHealth.checking,
+                                  const SizedBox(width: 8),
+                                  _HealthBadge(
+                                    color: healthColor,
+                                    label: _healthLabel(source, health),
+                                    checking: health == _SourceHealth.checking,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                subtitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.black54,
+                                  fontSize: 12,
                                 ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              subtitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.black54,
-                                fontSize: 12,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        // 被隐藏（含 ① 自动隐藏）的源：给恢复入口，别让用户只能干看着。
+                        if (_isHidden(source))
+                          SizedBox(
+                            height: 30,
+                            child: TextButton.icon(
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              onPressed: () => _restore(source),
+                              icon: const Icon(Icons.restore_rounded, size: 15),
+                              label: const Text(
+                                '恢复',
+                                style: TextStyle(fontSize: 12),
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      if (selected)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.blue.withValues(alpha: 0.10),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: const Text(
-                            '使用中',
-                            style: TextStyle(
-                              color: Colors.blue,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
+                          )
+                        else if (selected)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
                             ),
-                          ),
-                        )
-                      else
-                        SizedBox(
-                          height: 30,
-                          child: TextButton(
-                            style: TextButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(horizontal: 8),
-                              visualDensity: VisualDensity.compact,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            decoration: BoxDecoration(
+                              color: Colors.blue.withValues(alpha: 0.10),
+                              borderRadius: BorderRadius.circular(999),
                             ),
-                            onPressed: health == _SourceHealth.checking
-                                ? null
-                                : () => _checkOne(source),
                             child: const Text(
-                              '检测',
-                              style: TextStyle(fontSize: 12),
+                              '使用中',
+                              style: TextStyle(
+                                color: Colors.blue,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          )
+                        else
+                          SizedBox(
+                            height: 30,
+                            child: TextButton(
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              onPressed: health == _SourceHealth.checking
+                                  ? null
+                                  : () => _checkOne(source),
+                              child: const Text(
+                                '检测',
+                                style: TextStyle(fontSize: 12),
+                              ),
                             ),
                           ),
-                        ),
-                    ],
-                  ),
+                      ],
+                    ),
                   ),
                 ),
               );

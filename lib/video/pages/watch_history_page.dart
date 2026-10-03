@@ -99,9 +99,7 @@ class WatchHistoryPage extends StatelessWidget {
               onPressed: () => _confirmClear(context, controller),
               icon: const Icon(Icons.delete_sweep_rounded, size: 18),
               label: const Text('清空'),
-              style: TextButton.styleFrom(
-                foregroundColor: AppTokens.rose,
-              ),
+              style: TextButton.styleFrom(foregroundColor: AppTokens.rose),
             ),
         ],
       ),
@@ -158,7 +156,7 @@ class WatchHistoryPage extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
         decoration: BoxDecoration(
           color: AppTokens.rose,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(AppTokens.radiusCard),
         ),
         child: const Row(
           mainAxisSize: MainAxisSize.min,
@@ -186,7 +184,10 @@ class WatchHistoryPage extends StatelessWidget {
 
   void _openHistoryItem(BuildContext context, HistoryItem item) {
     final videoController = context.read<VideoController>();
-    final targetSource = _findSourceById(videoController.sources, item.sourceId);
+    final targetSource = _findSourceById(
+      videoController.sources,
+      item.sourceId,
+    );
 
     if (targetSource == null) {
       _showSnackBar(context, '该视频的片源已失效或被移除');
@@ -268,7 +269,7 @@ class WatchHistoryPage extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppTokens.spaceLg),
             Row(
               children: [
                 Expanded(
@@ -326,9 +327,7 @@ class WatchHistoryPage extends StatelessWidget {
       bucket.add(item);
     }
 
-    return [
-      for (final label in order) _HistoryGroup(label, groups[label]!),
-    ];
+    return [for (final label in order) _HistoryGroup(label, groups[label]!)];
   }
 }
 
@@ -354,16 +353,16 @@ class _HistoryRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
       child: Material(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(AppTokens.radiusCard),
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(AppTokens.radiusCard),
           child: Padding(
             padding: const EdgeInsets.all(10),
             child: Row(
               children: [
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(AppTokens.radiusSm),
                   child: SizedBox(
                     width: 76,
                     height: 100,
@@ -405,7 +404,7 @@ class _HistoryRow extends StatelessWidget {
                           height: 1.25,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: AppTokens.spaceXs),
                       Text(
                         item.episodeName,
                         maxLines: 1,
@@ -440,7 +439,7 @@ class _HistoryRow extends StatelessWidget {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: AppTokens.spaceSm),
                       Row(
                         children: [
                           Expanded(
@@ -450,10 +449,9 @@ class _HistoryRow extends StatelessWidget {
                                 value: item.progressPercentage,
                                 minHeight: 4,
                                 backgroundColor: const Color(0xFFE7ECF5),
-                                valueColor:
-                                    const AlwaysStoppedAnimation<Color>(
-                                      AppTokens.primaryBlue,
-                                    ),
+                                valueColor: const AlwaysStoppedAnimation<Color>(
+                                  AppTokens.primaryBlue,
+                                ),
                               ),
                             ),
                           ),
@@ -511,7 +509,7 @@ class _EmptyHistory extends StatelessWidget {
             size: 56,
             color: AppTokens.textSecondary.withValues(alpha: 0.4),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppTokens.spaceMd),
           const Text(
             '暂无观看历史',
             style: TextStyle(

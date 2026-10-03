@@ -158,7 +158,7 @@ class VideoDownloadsPage extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppTokens.radiusSm),
         border: Border.all(color: const Color(0xFFE7ECF5)),
       ),
       child: Row(
