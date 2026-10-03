@@ -12,6 +12,7 @@ import '../widgets/video_play_container.dart';
 import 'detail/detail_info_card.dart';
 import 'detail/detail_models.dart';
 import '../../design_system/app_tokens.dart';
+import '../../design_system/widgets/app_section_title.dart';
 
 class VideoDetailPage extends StatelessWidget {
   final VideoSource source;
@@ -163,20 +164,21 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                       Padding(
                         padding: EdgeInsets.fromLTRB(
                           horizontal,
-                          10,
+                          AppTokens.spaceMd,
                           horizontal,
                           0,
                         ),
                         child: _buildPlayerShell(controller, detail),
                       ),
-                      const SizedBox(height: 10),
+                      // ③ 区块间距统一到 spaceMd(12)：原来是 10/10/12/36 各写各的。
+                      const SizedBox(height: AppTokens.spaceMd),
                       Padding(
                         padding: EdgeInsets.symmetric(horizontal: horizontal),
                         child: controller.playLines.isEmpty
                             ? _buildEmptyEpisodePanel()
                             : _buildPlaybackPanel(controller: controller),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: AppTokens.spaceMd),
                       Padding(
                         padding: EdgeInsets.symmetric(horizontal: horizontal),
                         child: DetailInfoCard(
@@ -184,7 +186,7 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                           source: controller.source,
                         ),
                       ),
-                      const SizedBox(height: 36),
+                      const SizedBox(height: AppTokens.space2xl),
                     ],
                   ),
                 ),
@@ -221,7 +223,9 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: const Color(0xFF080A1F),
-        borderRadius: BorderRadius.circular(22),
+        // ⑦ 圆角统一到 20（原先播放器 22 / 内层 18 / 卡片 20 三套）；
+        // 阴影只留给播放器 —— 它是这一屏的主体，卡片一律扁平描边。
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
             color: const Color(0xFF020617).withValues(alpha: 0.16),
@@ -231,7 +235,7 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         child:
             controller.currentEpisodeUrl != null ||
                 (controller.isOfflinePlayback &&
@@ -308,7 +312,8 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
         12,
         isSingleEpisode ? 8 : 12,
         12,
-        isSingleEpisode ? 9 : 12,
+        // ⑤ 卡底 9→8：截图里两行贴得紧、卡底反而空，把差值匀一点。
+        isSingleEpisode ? 8 : 12,
       ),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -369,16 +374,10 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      '选集',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: AppTokens.textPrimary,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
+                    // ② 与「影片资料」「剧情简介」共用同一个标题件
+                    // （原先这里是纯文字 14/w800，另两处是 15/w900 + 橙竖条，
+                    // 同一屏两种标题风格）。
+                    const AppSectionTitle('选集'),
                     // ① 单片时不再重复：下方那个橙色剧集胶囊本身就是「正在播放」，
                     // 标题下面再写一遍「正在播放 · HD中字」纯属重复。
                     if (!isSingleEpisode) ...[
@@ -401,25 +400,12 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 34,
-                height: 34,
-                child: IconButton(
-                  style: IconButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    foregroundColor: const Color(0xFF64748B),
-                  ),
-                  onPressed: controller.isLoading
-                      ? null
-                      : controller.loadDetail,
-                  icon: const Icon(Icons.refresh_rounded, size: 19),
-                ),
-              ),
+              // ① 原先这里还有一个刷新按钮，和顶部导航的刷新是同一个动作
+              // （都调 controller.loadDetail）—— 同一屏两个入口，删掉这个。
             ],
           ),
           if (controller.playLines.length > 1) ...[
-            SizedBox(height: isSingleEpisode ? 6 : 10),
+            const SizedBox(height: AppTokens.spaceMd),
             // ② 线路 / 剧集两行共用同一个左侧标签列（_LabeledRow），
             // 两行内容左边缘因此对齐 —— 原来是「线路」行有图标+文字、
             // 剧集行直接铺满，起点差约 54px，看着错位。
@@ -433,7 +419,7 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
               ),
             ),
           ],
-          SizedBox(height: isSingleEpisode ? 6 : 10),
+          const SizedBox(height: AppTokens.spaceMd),
           _LabeledRow(
             label: '剧集',
             topPadding: 6,
@@ -704,7 +690,7 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: const Color(0xFFEDF1F8)),
         boxShadow: AppTokens.shadowSm(),
       ),
@@ -773,12 +759,9 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
             Padding(
               padding: const EdgeInsets.only(left: 44),
               child: Text(
-                // ⑦ 集数不再写在这里：这里原先用「全部线路集数之和」，
-                // 一部单片会被写成「2 集」，而选中的那条线路里只有 1 集，
-                // 看着像丢了集。集数交给选集区（按当前线路算）去说。
-                controller.playLines.length > 1
-                    ? '${controller.source.name} · ${controller.playLines.length} 线路'
-                    : controller.source.name,
+                // ⑥ 线路数也不在这里写了：正下方选集卡里就列着两条线路，
+                // 这里再报一次「2 线路」还是同一件事说两遍；集数与线路数都交给选集卡。
+                controller.source.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(

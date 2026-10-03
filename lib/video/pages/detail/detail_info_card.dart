@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../../design_system/app_tokens.dart';
+import '../../../design_system/widgets/app_section_title.dart';
 import '../../models/video_source.dart';
 import '../../models/vod_item.dart';
-
-import '../../../design_system/app_tokens.dart';
 
 /// 影片资料卡：纯资料表 + 可折叠简介。
 ///
@@ -99,7 +99,9 @@ class _DetailInfoCardState extends State<DetailInfoCard> {
           Expanded(
             child: Text(
               value,
-              maxLines: 1,
+              // ④ 长值（主演、地区/语言）允许两行，别只留一个省略号 ——
+              // 主演原来只能看到前两个名字。
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: AppTokens.inkDark,
@@ -125,30 +127,7 @@ class _DetailInfoCardState extends State<DetailInfoCard> {
     return out;
   }
 
-  Widget _sectionTitle(String text) {
-    return Row(
-      children: [
-        Container(
-          width: 4,
-          height: 16,
-          decoration: BoxDecoration(
-            // 与选集/播放的金橙强调统一，去掉此前独立的黄色。
-            color: const Color(0xFFFB923C),
-            borderRadius: BorderRadius.circular(99),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Text(
-          text,
-          style: const TextStyle(
-            color: AppTokens.inkDark,
-            fontSize: 15,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-      ],
-    );
-  }
+  Widget _sectionTitle(String text) => AppSectionTitle(text);
 
   Widget _buildSynopsis(String synopsis) {
     return Column(

@@ -18,7 +18,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   String readLib(String path) => File('lib/$path').readAsStringSync();
 
-  final source = const VideoSource(
+  const source = VideoSource(
     id: 'quantum',
     name: '量子资源',
     url: 'https://example.com/api.php/provide/vod/',
@@ -81,6 +81,27 @@ void main() {
       expect(value.style?.fontWeight, isNot(FontWeight.w900));
       expect(value.style?.fontWeight, FontWeight.w600);
     });
+
+    testWidgets('④ 长值允许两行，「主演」不再只剩下前两个名字', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: DetailInfoCard(
+                detail: VodItem(
+                  vodId: 2,
+                  vodName: '欢迎来龙餐馆',
+                  vodActor: '沈腾,蒋奇明,奥马尔·谢里夫,李治廷,王传君,张子枫',
+                ),
+                source: source,
+              ),
+            ),
+          ),
+        ),
+      );
+      final actor = tester.widget<Text>(find.textContaining('沈腾'));
+      expect(actor.maxLines, 2);
+    });
   });
 
   group('② / ⑦ 详情页源码结构护栏', () {
@@ -127,6 +148,49 @@ void main() {
         RegExp(r'height: 34,').hasMatch(page),
         isTrue,
         reason: '线路 chip 行高应回到 34，别又变回那个空荡的 42',
+      );
+    });
+  });
+
+  group('第二轮（①②③④⑤⑥⑦）护栏', () {
+    test('① 同一屏只留一个刷新入口：选集卡那个已删', () {
+      final page = readLib('video/pages/video_detail_page.dart');
+      final refreshIcons = RegExp(r'Icons\.refresh_rounded').allMatches(page);
+      expect(
+        refreshIcons.length,
+        2,
+        reason: '剩下的两个应该只有：顶部导航的刷新、错误页的「重试」；'
+            '选集卡右上角那个和顶部是同一个动作，不该再出现',
+      );
+    });
+
+    test('② 三处卡片标题都走 AppSectionTitle', () {
+      expect(
+        readLib('video/pages/video_detail_page.dart')
+            .contains("AppSectionTitle('选集')"),
+        isTrue,
+        reason: '选集标题要和影片资料/剧情简介同一套样式',
+      );
+      expect(
+        readLib('video/pages/detail/detail_info_card.dart')
+            .contains('AppSectionTitle'),
+        isTrue,
+      );
+    });
+
+    test('③ 区块间距用 token，不再散落 10/12/36', () {
+      final page = readLib('video/pages/video_detail_page.dart');
+      expect(RegExp(r'SizedBox\(height: 36\)').hasMatch(page), isFalse);
+      expect(page.contains('AppTokens.spaceMd'), isTrue);
+      expect(page.contains('AppTokens.space2xl'), isTrue);
+    });
+
+    test('⑦ 播放器与卡片圆角统一 20', () {
+      final page = readLib('video/pages/video_detail_page.dart');
+      expect(
+        RegExp(r'BorderRadius\.circular\(22\)').hasMatch(page),
+        isFalse,
+        reason: '播放器外壳的 22 已并入 20',
       );
     });
   });
