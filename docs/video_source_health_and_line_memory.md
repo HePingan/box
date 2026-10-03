@@ -49,6 +49,39 @@
   「已跳过 N 个已知不可用源」（跳过 ≠ 失败，两者分开说）；
   成功/失败分别落账；**只对失败的源**补一次能力探测 → 接口层坏的自动隐藏并留下理由。
 
+## ①−b 选源面板与可见性层对齐（同一轮收尾）
+
+### 现状：**两套真相**
+
+- 选源面板（`lib/video/pages/home/home_source_sheet.dart`）原本读的是**模型字段**
+  `source.isHidden / source.failCount / source.hiddenReason`（目录 state 带下来的）；
+- ① 的自动隐藏写在 `VideoModule` 的 `SourceVisibilityRecord`（`manualHidden/autoHidden/
+  failCount/lastReason`）里。
+- 两边不通 → 被自动隐藏的源在面板上**看着和正常源一样、还能切过去**；
+  带 `setSourceManualHidden` 的唯一写开关在 admin 插件 tab 里，用户平时碰不到 →
+  **没有任何恢复入口**。
+
+> 教训：同一件事有两份状态时，改完一份要 `grep` 另一份的**读点**。
+> 判据不是"我写进去了"，而是"用户看得到的那一处读的是不是同一份"。
+
+### 实现
+
+- 面板改读可见性层（`VideoModule.getVisibilityRecord`），模型字段降级为兜底；
+  `initState` 里 `unawaited(ensureVisibilityLoaded().then(setState))` 刷一次标签。
+- 标签说实话：`已自动隐藏 · <理由>` / `已手动隐藏`；被隐藏的源**即使临时探测通过**
+  也仍标成不可用（它不会进搜索，标签不能骗人）。
+- **恢复入口**：被隐藏的行右侧把「检测」换成「恢复」→ 清自动隐藏 + 清手动隐藏 +
+  **`failCount` 归零**（不归零的话面板仍按"连续失败 3 次"判它不可用，恢复等于没恢复）。
+- 点击被隐藏的源不再静默切过去，提示写清原因（`已被自动隐藏（理由），点右侧「恢复」可用`）；
+  面板副标题在有条目被隐藏时改说 `共 N 个片源，M 个已自动隐藏（可恢复）`。
+
+### 三页机械归整（收藏/历史/下载）
+
+只做**等值替换**：`SizedBox(height: 4/8/12/16)` → `AppTokens.spaceXs/Sm/Md/Lg`、
+`circular(8/12/16)` → `AppTokens.radiusXs/radiusSm/radiusCard`（13 处）。
+不等值的（6/2/14）一律不动；页面标题的 `w900` 也不动 —— 那是设计选择，
+改字重属于观感改动，要截图才谈。
+
 ## ② 线路可用性前置标注
 
 ### 现状
