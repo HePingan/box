@@ -141,6 +141,8 @@ void main() {
       c.serviceOp('no-such-unit-xyz.service', 'restart'),
       throwsA(isA<OpsApiException>()),
     );
-  });
-
+    // 与上面那个 group 同一口径：没有 OPS_API_BASE / OPS_API_TOKEN 就跳过。
+    // 这条以前漏了 skip 守卫 —— 不带环境变量跑全量时它会拿空地址去 call，
+    // 报「这台机器还没填只读接口地址」而变红（与本文件其余 live 用例不一致）。
+  }, skip: missing ? '需要 OPS_API_BASE / OPS_API_TOKEN（live）' : null);
 }
