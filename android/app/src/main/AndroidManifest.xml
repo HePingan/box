@@ -16,6 +16,8 @@
     <!-- 视频下载：前台服务权限（Android 14+） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- ⑥B 后台播放/息屏播放：媒体保活服务的类型权限。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- 分贝仪要读麦克风振幅。运行时动态申请（record 插件的 hasPermission）。 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- 播放器右侧上下拖调音量（④）：改媒体流音量。普通权限，无需运行时申请。 -->
@@ -53,6 +55,7 @@
             android:launchMode="singleTop"
             android:taskAffinity=""
             android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -136,6 +139,13 @@
         <service
             android:name=".ComicKeepAliveService"
             android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
+        <!-- ⑥B 后台播放/息屏播放：媒体类的保活 + 常驻媒体通知。
+             必须声明 mediaPlayback 类型，且启动时机只能在前台（见服务注释）。 -->
+        <service
+            android:name=".PlaybackKeepAliveService"
+            android:foregroundServiceType="mediaPlayback"
             android:exported="false" />
 
         <!-- Don't delete the meta-data below.

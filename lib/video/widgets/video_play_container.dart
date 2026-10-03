@@ -11,9 +11,13 @@ import 'package:video_player/video_player.dart';
 
 import '../../utils/app_logger.dart';
 import '../controller/history_controller.dart';
+import '../services/playback_background_policy.dart';
 import '../services/player_startup_resolver.dart';
+import '../services/video_playback_settings.dart';
 import 'player/custom_video_controls.dart';
 import 'player/line_failover_policy.dart';
+import 'player/playback_notification_channel.dart';
+import 'player/player_pip_channel.dart';
 import 'player/player_history_tracker.dart';
 import 'player/player_overlays.dart';
 import 'player/player_request_headers.dart';
@@ -147,6 +151,19 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
   /// 起播链（云播页归一化 → 真流地址）：带缓存与预热，与详情页共用。
   final PlayerStartupResolver _startupResolver = PlayerStartupResolver.instance;
 
+  /// 画中画（⑥A）：小窗态要跳过 lifecycle 的「切后台就暂停」分支。
+  final PlayerPipChannel _pipChannel = PlayerPipChannel.instance;
+
+  // ── ⑥B 后台播放 / 息屏播放 ──
+  final PlaybackNotificationChannel _playbackNotification =
+      PlaybackNotificationChannel.instance;
+  final VideoPlaybackSettings _playbackSettings = VideoPlaybackSettings();
+  StreamSubscription<String>? _playbackCommandSub;
+  bool _backgroundPlaybackEnabled = true;
+  bool _keptPlayingInBackground = false;
+  bool? _lastNotificationPlaying;
+  bool _notificationSessionActive = false;
+
   // ── 起播计时（日志与调试浮层都看得到）──
   final Stopwatch _startupWatch = Stopwatch();
   int _resolveMs = 0;
@@ -198,7 +215,109 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // ⑥B：通知栏那几个按钮 / 音频焦点被抢，都从这里进来。
+    _playbackCommandSub = _playbackNotification.commands.listen(
+      _onPlaybackCommand,
+    );
+    unawaited(_loadPlaybackSettings());
     _initPlayer();
+  }
+
+  Future<void> _loadPlaybackSettings() async {
+    final enabled = await _playbackSettings.backgroundPlaybackEnabled();
+    if (!mounted) return;
+    setState(() => _backgroundPlaybackEnabled = enabled);
+    _maybeStartPlaybackNotification();
+  }
+
+  Future<void> _setBackgroundPlaybackEnabled(bool value) async {
+    setState(() => _backgroundPlaybackEnabled = value);
+    await _playbackSettings.setBackgroundPlaybackEnabled(value);
+    // 关掉的当下如果正挂着常驻通知，顺手收工 —— 不然开关关了通知还在。
+    if (!value && _notificationSessionActive) {
+      await _stopPlaybackNotification();
+    }
+  }
+
+  /// ⑥B：一开播就把前台服务挂起来。
+  ///
+  /// 时机很关键：Android 12+ 不允许 App 退到后台之后再启动前台服务，
+  /// 「等切后台再挂」的方案会直接抛 ForegroundServiceStartNotAllowedException，
+  /// 所以必须在还看得见画面的时候做完。
+  void _maybeStartPlaybackNotification() {
+    if (_notificationSessionActive) return;
+    final controller = _videoPlayerController;
+    if (controller == null || !controller.value.isPlaying) return;
+    if (!PlaybackBackgroundPolicy.shouldRunService(
+      enabled: _backgroundPlaybackEnabled,
+      isPlaying: true,
+      isPip: _pipChannel.isInPip.value,
+    )) {
+      return;
+    }
+    _notificationSessionActive = true;
+    _lastNotificationPlaying = true;
+    unawaited(
+      _playbackNotification.start(
+        title: _notificationTitle,
+        text: '正在后台播放',
+        playing: true,
+      ),
+    );
+  }
+
+  Future<void> _stopPlaybackNotification() async {
+    if (!_notificationSessionActive) return;
+    _notificationSessionActive = false;
+    _lastNotificationPlaying = null;
+    await _playbackNotification.stop();
+  }
+
+  /// 通知栏按钮与音频焦点事件。
+  void _onPlaybackCommand(String command) {
+    final controller = _videoPlayerController;
+    if (controller == null) return;
+    switch (command) {
+      case PlaybackNotificationChannel.commandToggle:
+        if (controller.value.isPlaying) {
+          unawaited(controller.pause());
+        } else {
+          unawaited(controller.play());
+        }
+        break;
+      case PlaybackNotificationChannel.commandPrevious:
+        widget.onPreviousEpisode?.call();
+        break;
+      case PlaybackNotificationChannel.commandNext:
+        widget.onNextEpisode?.call();
+        break;
+      case PlaybackNotificationChannel.commandAudioFocusLost:
+        // 来电 / 别的 App 开始放音：先让路，不擅自恢复（等用户回来）。
+        unawaited(controller.pause());
+        break;
+    }
+  }
+
+  String get _notificationTitle => widget.episodeName.trim().isEmpty
+      ? widget.title
+      : '${widget.title} · ${widget.episodeName}';
+
+  /// 后台保活期间通知要与实际状态一致（用户在通知栏按暂停，这里也要跟着更新）。
+  void _syncPlaybackNotification({bool? playing}) {
+    if (!_notificationSessionActive) return;
+    final controller = _videoPlayerController;
+    if (controller == null) return;
+    final now = playing ?? controller.value.isPlaying;
+    // 这个方法是跟着播放器 tick 走的，只在状态真的变了才刷通知。
+    if (_lastNotificationPlaying == now) return;
+    _lastNotificationPlaying = now;
+    unawaited(
+      _playbackNotification.update(
+        title: _notificationTitle,
+        text: now ? '正在后台播放' : '已暂停',
+        playing: now,
+      ),
+    );
   }
 
   @override
@@ -229,17 +348,42 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     final controller = _videoPlayerController;
     if (controller == null) return;
 
+    // 小窗里 Android 同样给我们 paused —— 那不是「切后台」，是缩成小窗继续看。
+    if (_pipChannel.isInPip.value) return;
+
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _wasPlayingBeforeBackground = controller.value.isPlaying;
-      if (_wasPlayingBeforeBackground) unawaited(controller.pause());
+      final isPip = _pipChannel.isInPip.value;
+      // ⑥B：后台播放开着就继续出声（小窗态不算后台）。
+      final keepPlaying = PlaybackBackgroundPolicy.shouldKeepPlaying(
+        enabled: _backgroundPlaybackEnabled,
+        isPlaying: _wasPlayingBeforeBackground,
+        isPip: isPip,
+      );
+      _keptPlayingInBackground = keepPlaying;
+      if (!keepPlaying && _wasPlayingBeforeBackground) {
+        unawaited(controller.pause());
+      }
       unawaited(_historyTracker?.saveNow(force: true));
       return;
     }
 
-    if (state == AppLifecycleState.resumed && _wasPlayingBeforeBackground) {
-      _wasPlayingBeforeBackground = false;
-      unawaited(controller.play());
+    if (state == AppLifecycleState.resumed) {
+      if (_keptPlayingInBackground) {
+        // 后台一直在播，不需要恢复；通知也**不要**撤 —— 前台服务一旦停了，
+        // 再切后台就没法重启（Android 12+ 不允许后台启动前台服务）。
+        _keptPlayingInBackground = false;
+        _wasPlayingBeforeBackground = false;
+        return;
+      }
+      if (PlaybackBackgroundPolicy.shouldResumeOnForeground(
+        keptPlaying: false,
+        wasPlayingBeforeBackground: _wasPlayingBeforeBackground,
+      )) {
+        _wasPlayingBeforeBackground = false;
+        unawaited(controller.play());
+      }
     }
   }
 
@@ -274,6 +418,10 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     }
 
     _historyTracker?.setPlaying(value.isPlaying);
+
+    // ⑥B：一开播就挂前台服务（必须趁前台）；播/停在通知里要跟着变。
+    if (value.isPlaying) _maybeStartPlaybackNotification();
+    _syncPlaybackNotification(playing: value.isPlaying);
 
     if (value.isBuffering != _isBuffering) {
       setState(() => _isBuffering = value.isBuffering);
@@ -544,6 +692,10 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
           onPrevious: widget.onPreviousEpisode,
           onNext: widget.onNextEpisode,
           onToggleFullScreen: _toggleFullScreenSafely,
+          backgroundPlaybackEnabled: _backgroundPlaybackEnabled,
+          onBackgroundPlaybackChanged: (value) {
+            unawaited(_setBackgroundPlaybackEnabled(value));
+          },
         ),
       );
       chewie.addListener(_onChewieStateChanged);
@@ -701,6 +853,9 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     ++_initToken;
+    // ⑥B：离开播放器不该把后台保活与通知留着。
+    unawaited(_playbackCommandSub?.cancel());
+    unawaited(_stopPlaybackNotification());
     // 同步抓快照后再 dispose：saveNow 是异步链，写入时 controller 可能已被
     // _disposePlayer 释放，读到脏数据。saveSnapshot 在此刻立即读出 pos/dur。
     unawaited(_historyTracker?.saveSnapshot());

@@ -43,6 +43,17 @@ class MainActivity : FlutterActivity() {
         scheduleAfterLayoutLog("multi_window:$isInMultiWindowMode")
     }
 
+    /**
+     * 画中画进出（⑥A）：告诉 Dart 侧「现在在小窗里」，那边据此收起控件。
+     */
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        PlayerPipChannel.onModeChanged(isInPictureInPictureMode)
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         logFlutterWindowState("configuration_changed")
@@ -178,6 +189,15 @@ class MainActivity : FlutterActivity() {
 
         // 播放器亮度 / 音量手势（④）：只改本窗口亮度与媒体音量，失败不抛。
         PlayerGestureChannel.attach(this, flutterEngine.dartExecutor.binaryMessenger)
+
+        // 画中画（⑥A）：进/出小窗 + 播放中自动进小窗。
+        PlayerPipChannel.attach(this, flutterEngine.dartExecutor.binaryMessenger)
+
+        // 后台播放（⑥B）：媒体通知 + 息屏保活；通知按钮从这里推回 Dart。
+        PlaybackNotificationChannel.attach(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
 
         // 小窗诊断通道：logcat 之外再给 Dart 侧 AppLogger 一份，
         // 让拿不到 adb 的用户能直接在「调试日志」页复制现场。

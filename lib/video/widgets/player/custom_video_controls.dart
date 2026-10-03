@@ -7,6 +7,7 @@ import 'package:video_player/video_player.dart';
 import '../../../design_system/app_tokens.dart';
 import 'player_gesture_channel.dart';
 import 'player_overlays.dart';
+import 'player_pip_channel.dart';
 
 /// Serializes seek commands while coalescing requests made in the same UI turn.
 ///
@@ -81,6 +82,12 @@ class CustomVideoControls extends StatefulWidget {
   final VoidCallback? onNext;
   final VoidCallback? onToggleFullScreen;
 
+  /// ⑥B 后台播放开关的当前值（真正的存储在容器/服务层，这里只负责显示与改）。
+  final bool backgroundPlaybackEnabled;
+
+  /// 用户在菜单里改了开关。
+  final ValueChanged<bool>? onBackgroundPlaybackChanged;
+
   const CustomVideoControls({
     super.key,
     required this.title,
@@ -88,6 +95,8 @@ class CustomVideoControls extends StatefulWidget {
     this.onPrevious,
     this.onNext,
     this.onToggleFullScreen,
+    this.backgroundPlaybackEnabled = true,
+    this.onBackgroundPlaybackChanged,
   });
 
   @override
@@ -120,6 +129,11 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
 
   // 亮度是**窗口级**的：不还原的话，退出播放器后整个 App 还留在暗（或亮）里。
   bool _brightnessTouched = false;
+
+  // ⑥A 画中画：只开在全屏态（PiP 缩的是整个 Activity，内嵌小窗没意义）。
+  final PlayerPipChannel _pipChannel = PlayerPipChannel.instance;
+  bool _pipSupported = false;
+  bool _pipAutoEnterOn = false;
 
   int _lastTapTime = 0;
   Timer? _singleTapTimer;
@@ -161,6 +175,10 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     );
     _bound = true;
 
+    // ⑥A 画中画：听原生推的进出小窗事件 + 问一次这台机器支不支持。
+    _pipChannel.isInPip.addListener(_onPipChanged);
+    unawaited(_initPipSupport());
+
     _videoController!.addListener(_onVideoTick);
     _lastKnownPlayingState = _videoController!.value.isPlaying;
 
@@ -182,10 +200,24 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     if (_brightnessTouched) {
       unawaited(_gestureChannel.setBrightness(-1));
     }
+    // ⑥A：离开播放器就关掉自动进小窗，否则下次在别处上滑会莫名缩窗。
+    _pipChannel.isInPip.removeListener(_onPipChanged);
+    if (_pipAutoEnterOn) {
+      _pipAutoEnterOn = false;
+      unawaited(_pipChannel.setAutoEnter(enabled: false));
+    }
     super.dispose();
   }
 
   bool get _isFullScreen => _chewieController?.isFullScreen ?? false;
+
+  /// ⑥A：问一次原生支不支持画中画（不支持就永远不显示那个按钮）。
+  Future<void> _initPipSupport() async {
+    final supported = await _pipChannel.isSupported();
+    if (!mounted || supported == _pipSupported) return;
+    setState(() => _pipSupported = supported);
+    await _syncPipAutoEnter();
+  }
 
   // 🚀 核心优化：监控播放器状态变化
   void _onVideoTick() {
@@ -210,6 +242,9 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
           }
         }
       });
+
+      // ⑥A：播放/暂停会改变「能不能自动进小窗」，顺手同步一次。
+      unawaited(_syncPipAutoEnter());
     }
 
     // A1: 播放中时间/进度实时刷新。底栏时间文本读的是 controller.value.position，
@@ -248,6 +283,9 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
       setState(() {});
       return;
     }
+
+    // ⑥A 小窗里：点击交给系统（展开 / 关闭菜单），画面里不要冒出播放器控件。
+    if (_pipChannel.isInPip.value) return;
 
     final now = DateTime.now().millisecondsSinceEpoch;
     final delta = now - _lastTapTime;
@@ -343,9 +381,49 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
   // A4: 顶栏左键。全屏态下退出全屏，非全屏态下返回上一页。
   void _handleTopLeading() {
     if (_isFullScreen) {
-      (widget.onToggleFullScreen ?? _chewieController!.toggleFullScreen)();
+      _toggleFullScreen();
     } else {
       Navigator.maybePop(context);
+    }
+  }
+
+  // ⑥A：全屏/退出全屏统一走这里，出来顺手同步「自动进小窗」的开关。
+  void _toggleFullScreen() {
+    (widget.onToggleFullScreen ?? () => _chewieController!.toggleFullScreen())();
+    // chewie 的全屏态是异步翻的，等一小会儿再按新状态同步。
+    Future<void>.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) unawaited(_syncPipAutoEnter());
+    });
+  }
+
+  /// ⑥A 自动进小窗：只在「全屏 + 正在播放」时开启 —— 否则在详情页里
+  /// 上滑回桌面会莫名其妙缩成小窗（用户只是在浏览）。
+  Future<void> _syncPipAutoEnter() async {
+    final shouldEnable =
+        _pipSupported &&
+        _isFullScreen &&
+        (_videoController?.value.isPlaying ?? false);
+    if (shouldEnable == _pipAutoEnterOn) return;
+    _pipAutoEnterOn = shouldEnable;
+    await _pipChannel.setAutoEnter(enabled: shouldEnable);
+  }
+
+  Future<void> _enterPipNow() async {
+    if (!_pipSupported) return;
+    await _pipChannel.enter();
+  }
+
+  /// 小窗里把控件收起来：小窗本来就没多大，再顶一栏按钮等于没画面。
+  void _onPipChanged() {
+    if (!mounted) return;
+    if (_pipChannel.isInPip.value) {
+      _hideTimer?.cancel();
+      setState(() {
+        _showControls = false;
+        _speedMenuOpen = false;
+      });
+    } else {
+      unawaited(_syncPipAutoEnter());
     }
   }
 
@@ -761,13 +839,19 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
                     compact: embedded || compact,
                   ),
                   if (!compact && !embedded) _buildSpeedButton(compact),
+                  // ⑥A 画中画：只在全屏态出现（PiP 缩的是整个 Activity，
+                  // 内嵌在详情页里缩小窗只会看到整页被压扁）。
+                  if (_isFullScreen && _pipSupported && !_pipChannel.isInPip.value)
+                    _glassButton(
+                      icon: Icons.picture_in_picture_alt_rounded,
+                      onTap: _enterPipNow,
+                      compact: embedded || compact,
+                    ),
                   _glassButton(
                     icon: _isFullScreen
                         ? Icons.fullscreen_exit_rounded
                         : Icons.fullscreen_rounded,
-                    onTap:
-                        widget.onToggleFullScreen ??
-                        () => _chewieController!.toggleFullScreen(),
+                    onTap: _toggleFullScreen,
                     compact: embedded || compact,
                   ),
                 ],
@@ -962,10 +1046,48 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
               children: [
                 for (final speed in kPlaybackSpeeds.reversed)
                   _buildSpeedItem(speed),
+                // ⑥B：后台播放开关放在同一个面板里（播放器唯一的设置入口）。
+                const Divider(height: 12, color: Colors.white24),
+                _buildBackgroundPlaybackItem(),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  // ⑥B：后台播放开关（息屏/切后台继续出声）。
+  Widget _buildBackgroundPlaybackItem() {
+    return Container(
+      width: 96,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      margin: const EdgeInsets.symmetric(vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            '后台播放',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 2),
+          SizedBox(
+            height: 32,
+            child: FittedBox(
+              fit: BoxFit.contain,
+              child: Switch(
+                value: widget.backgroundPlaybackEnabled,
+                activeThumbColor: const Color(0xFFFFE08A),
+                onChanged: widget.onBackgroundPlaybackChanged,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
