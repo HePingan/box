@@ -36,8 +36,13 @@ class _FakeSync extends ComicSyncService {
   }
 
   @override
-  Future<DateTime?> lastSyncAt() async =>
-      outcome.ok ? DateTime(2026, 10, 2, 15, 30) : null;
+  Future<DateTime?> lastSyncAt() async {
+    // 必须是「今天」的某个时刻：设置页对今天只显示时分，对其它日子会带上月-日，
+    // 写死日期会让这条用例只在当天成立（2026-10-03 复跑时才发现）。
+    if (!outcome.ok) return null;
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day, 15, 30);
+  }
 
   @override
   Future<String> lastMessage() async => outcome.message;
