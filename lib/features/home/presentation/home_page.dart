@@ -8,6 +8,7 @@ import 'package:box/globals.dart';
 import 'package:box/novel/core/models.dart' show NovelBook;
 import 'package:box/novel/novel_module.dart';
 import 'package:box/plugin_manager.dart';
+import 'package:box/video/services/source_match.dart';
 import 'package:box/video_module.dart';
 import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/home/data/ai_hot_models.dart';
@@ -86,8 +87,7 @@ class _HomePageState extends State<HomePage>
   late final HomeQuickActionPrefs _quickActionPrefs =
       widget.quickActionPrefs ?? HomeQuickActionPrefs();
 
-  late final AiHotService _aiHotService =
-      widget.aiHotService ?? AiHotService();
+  late final AiHotService _aiHotService = widget.aiHotService ?? AiHotService();
   AiHotFeed? _aiHotFeed;
   bool _isLoadingAiHot = true;
 
@@ -138,8 +138,7 @@ class _HomePageState extends State<HomePage>
         return _historyController.historyList;
       },
       loadBookshelf: () => NovelModule.bookshelf.getBookshelf(),
-      loadNovelProgress: (bookId) =>
-          NovelModule.repository.getProgress(bookId),
+      loadNovelProgress: (bookId) => NovelModule.repository.getProgress(bookId),
     );
   }
 
@@ -180,15 +179,21 @@ class _HomePageState extends State<HomePage>
       return;
     }
 
+    // 冷启动直接点首页「继续使用」时，影视目录还没人加载过（影视模块之外没人
+    // 初始化它）→ `sources` 是空的，于是**好片源也被报成**「片源已失效或被移除」。
+    // 内容页收藏库当年就是栽在这上面（见 VideoModule.ensureCatalogReady 的注释），
+    // 这里同样先把目录备好再找源。
+    final controller = context.read<VideoController>();
+    await VideoModule.ensureCatalogReady(controller);
+    if (!mounted) return;
+
     // 续播需要 VideoSource 对象，只有 id 不够；片源被用户删掉后无法续播。
-    final sources = context.read<VideoController>().sources;
-    VideoSource? target;
-    for (final source in sources) {
-      if (source.id == history.sourceId) {
-        target = source;
-        break;
-      }
-    }
+    // 匹配按 id → url → 归一化名字（目录里改过地址的老记录靠名字救回来）。
+    final target = findVideoSourceForHistory(
+      controller.sources,
+      sourceId: history.sourceId,
+      sourceName: history.sourceName,
+    );
     if (target == null) {
       _toast('该视频的片源已失效或被移除');
       return;
@@ -205,7 +210,7 @@ class _HomePageState extends State<HomePage>
       context,
       MaterialPageRoute<void>(
         builder: (_) => VideoDetailPage(
-          source: target!,
+          source: target,
           vodId: vodId,
           initialEpisodeUrl: history.episodeUrl,
           initialPosition: history.position,
@@ -401,9 +406,7 @@ class _HomePageState extends State<HomePage>
             // 底部留白给悬浮胶囊导航栏避让。数值由 AppPageScaffold
             // (shellInset: true) 统一下发，四个主页面共用同一算法。
             SliverToBoxAdapter(
-              child: SizedBox(
-                height: AppPageScaffold.bottomInsetOf(context),
-              ),
+              child: SizedBox(height: AppPageScaffold.bottomInsetOf(context)),
             ),
           ],
         ),
@@ -456,12 +459,7 @@ class _HomePageState extends State<HomePage>
   // ── 顶部问候栏（单行紧凑） ─────────────────
   Widget _buildGreetingBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        10,
-        8,
-        AppTokens.shellPageGutter,
-        6,
-      ),
+      padding: const EdgeInsets.fromLTRB(10, 8, AppTokens.shellPageGutter, 6),
       child: Row(
         children: [
           IconButton(
@@ -623,10 +621,7 @@ class _HomePageState extends State<HomePage>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildSectionHeader(
-                title: '已安装插件',
-                accent: AppTokens.violet,
-              ),
+              _buildSectionHeader(title: '已安装插件', accent: AppTokens.violet),
               SizedBox(
                 height: 92,
                 child: ListView.separated(
@@ -729,9 +724,7 @@ class _HomePageState extends State<HomePage>
     }
     Navigator.push(
       context,
-      MaterialPageRoute<void>(
-        builder: (_) => DailyNewsPage(initialUrl: url),
-      ),
+      MaterialPageRoute<void>(builder: (_) => DailyNewsPage(initialUrl: url)),
     );
   }
 

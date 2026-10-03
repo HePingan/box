@@ -8,7 +8,7 @@ import 'package:box/design_system/widgets/app_bottom_sheet.dart';
 import '../controller/history_controller.dart';
 import '../controller/video_controller.dart';
 import '../models/history_item.dart';
-import '../models/video_source.dart';
+import '../services/source_match.dart';
 import '../pages/video_detail_page.dart';
 import '../pages/watch_history_page.dart';
 
@@ -144,9 +144,11 @@ class HistoryQuickView extends StatelessWidget {
 
   void _openHistoryItem(BuildContext context, HistoryItem item) {
     final videoController = context.read<VideoController>();
-    final targetSource = _findSourceById(
+    // 只比 id 会误报：目录 JSON 没有 id，源的 id 就是接口地址，上游改过地址就匹配不上。
+    final targetSource = findVideoSourceForHistory(
       videoController.sources,
-      item.sourceId,
+      sourceId: item.sourceId,
+      sourceName: item.sourceName,
     );
 
     if (targetSource == null) {
@@ -171,13 +173,6 @@ class HistoryQuickView extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  VideoSource? _findSourceById(List<VideoSource> sources, String sourceId) {
-    for (final source in sources) {
-      if (source.id == sourceId) return source;
-    }
-    return null;
   }
 
   void _showSnackBar(BuildContext context, String message) {
