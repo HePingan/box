@@ -128,11 +128,6 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
   Widget _buildDetailView(VideoDetailController controller) {
     final detail = controller.fullDetail!;
 
-    final totalEpisodes = controller.playLines.fold<int>(
-      0,
-      (sum, line) => sum + line.episodes.length,
-    );
-
     return LayoutBuilder(
       builder: (context, constraints) {
         final contentWidth = constraints.maxWidth >= 1100
@@ -164,7 +159,6 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                       _buildCompactMediaHeader(
                         controller: controller,
                         title: title,
-                        totalEpisodes: totalEpisodes,
                       ),
                       Padding(
                         padding: EdgeInsets.fromLTRB(
@@ -385,21 +379,25 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 3),
-                    // A3：副标题降级——更小字号、更弱字重与颜色，
-                    // 只作轻提示，不与「选集」大标题抢层级。
-                    Text(
-                      controller.currentEpisodeName == null
-                          ? '待选集'
-                          : '正在播放 · ${controller.currentEpisodeName}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF94A3B8),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
+                    // ① 单片时不再重复：下方那个橙色剧集胶囊本身就是「正在播放」，
+                    // 标题下面再写一遍「正在播放 · HD中字」纯属重复。
+                    if (!isSingleEpisode) ...[
+                      const SizedBox(height: 3),
+                      // A3：副标题降级——更小字号、更弱字重与颜色，
+                      // 只作轻提示，不与「选集」大标题抢层级。
+                      Text(
+                        controller.currentEpisodeName == null
+                            ? '待选集'
+                            : '正在播放 · ${controller.currentEpisodeName}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF94A3B8),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -422,40 +420,28 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
           ),
           if (controller.playLines.length > 1) ...[
             SizedBox(height: isSingleEpisode ? 6 : 10),
-            // 线路标签与选择器合并为一行，给剧集网格多留首屏高度；
+            // ② 线路 / 剧集两行共用同一个左侧标签列（_LabeledRow），
+            // 两行内容左边缘因此对齐 —— 原来是「线路」行有图标+文字、
+            // 剧集行直接铺满，起点差约 54px，看着错位。
             // chip 仍可横向滚动，长线路名不会挤压或换行。
-            Row(
-              children: [
-                const Icon(
-                  Icons.hub_rounded,
-                  size: 16,
-                  color: Color(0xFF94A3B8),
-                ),
-                const SizedBox(width: 6),
-                const Text(
-                  '线路',
-                  style: TextStyle(
-                    color: Color(0xFF334155),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _buildLineChips(
-                    playLines: controller.playLines,
-                    selectedIndex: controller.selectedLineIndex,
-                    onSelected: controller.selectLine,
-                  ),
-                ),
-              ],
+            _LabeledRow(
+              label: '线路',
+              child: _buildLineChips(
+                playLines: controller.playLines,
+                selectedIndex: controller.selectedLineIndex,
+                onSelected: controller.selectLine,
+              ),
             ),
           ],
           SizedBox(height: isSingleEpisode ? 6 : 10),
-          _buildEpisodeSection(
-            episodes: episodes,
-            currentIndex: controller.selectedEpisodeIndex,
-            onEpisodeTap: controller.selectEpisode,
+          _LabeledRow(
+            label: '剧集',
+            topPadding: 6,
+            child: _buildEpisodeSection(
+              episodes: episodes,
+              currentIndex: controller.selectedEpisodeIndex,
+              onEpisodeTap: controller.selectEpisode,
+            ),
           ),
         ],
       ),
@@ -519,24 +505,21 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (!isSingleEpisode)
-          Row(
-            children: [
-              const Icon(
-                Icons.grid_view_rounded,
-                size: 16,
-                color: Color(0xFF94A3B8),
-              ),
-              const SizedBox(width: 6),
+        // ②「剧集」二字已由外层 _LabeledRow 统一给出，这里只留计数与排序/展开这类工具，
+        // 保证与上一行的线路 chip 同起点。
+        Row(
+          children: [
+            if (!isSingleEpisode)
               Text(
-                '剧集 · 共 $total 集',
+                '共 $total 集',
                 style: const TextStyle(
-                  color: Color(0xFF334155),
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF94A3B8),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              const Spacer(),
+            const Spacer(),
+            if (!isSingleEpisode)
               _EpisodeToolButton(
                 icon: _episodesReversed
                     ? Icons.south_rounded
@@ -545,8 +528,8 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                 onTap: () =>
                     setState(() => _episodesReversed = !_episodesReversed),
               ),
-            ],
-          ),
+          ],
+        ),
         if (hasSegments) ...[
           // B1：长剧集分段当前位置标签——当分段数 > 2 时显示。
           if (segmentCount > 2) ...[
@@ -600,10 +583,12 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
         // 每格等宽居中，避免集名长短导致的参差右边界。
         LayoutBuilder(
           builder: (context, constraints) {
+            // ② 网格现在缩在标签列右边（可用宽度少 38px），
+            // 格子目标宽度 72 → 62、列数下限 4 → 3，窄屏也还是整齐的等宽宫格。
             const spacing = 8.0;
-            final columns = ((constraints.maxWidth + spacing) / (72 + spacing))
+            final columns = ((constraints.maxWidth + spacing) / (62 + spacing))
                 .floor()
-                .clamp(4, 8);
+                .clamp(3, 8);
             final cellWidth =
                 (constraints.maxWidth - spacing * (columns - 1)) / columns;
             return Wrap(
@@ -646,7 +631,9 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
     required ValueChanged<int> onSelected,
   }) {
     return SizedBox(
-      height: 42,
+      // ③ 行高 42 → 34：只有两三条线路时，原来那行显得空荡，
+      // 现在与下方剧集胶囊的高度基本齐平，两行看着是一个整体。
+      height: 34,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
@@ -710,7 +697,6 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
   Widget _buildCompactMediaHeader({
     required VideoDetailController controller,
     required String title,
-    required int totalEpisodes,
   }) {
     // 清新版：白底轻卡，浅边框 + 弱阴影，与首页统一；去掉深色三段渐变与内部版本角标。
     return Container(
@@ -787,7 +773,12 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
             Padding(
               padding: const EdgeInsets.only(left: 44),
               child: Text(
-                '${controller.source.name} · $totalEpisodes 集 · ${controller.playLines.length} 线路',
+                // ⑦ 集数不再写在这里：这里原先用「全部线路集数之和」，
+                // 一部单片会被写成「2 集」，而选中的那条线路里只有 1 集，
+                // 看着像丢了集。集数交给选集区（按当前线路算）去说。
+                controller.playLines.length > 1
+                    ? '${controller.source.name} · ${controller.playLines.length} 线路'
+                    : controller.source.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
@@ -900,6 +891,51 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
   }
 }
 
+/// ② 统一的「左侧标签列 + 右侧内容」行。
+///
+/// 线路行与剧集行都用它，两行内容因此从同一个 x 起点开始 —— 此前线路行是
+/// [图标 + 「线路」 + chip]，剧集行直接铺满整宽，两行起点差约 54px，看着错位。
+/// 标签固定 38px 宽、比内容略小的字号，只做归类提示，不与 chip 抢层级。
+class _LabeledRow extends StatelessWidget {
+  const _LabeledRow({
+    required this.label,
+    required this.child,
+    this.topPadding = 9,
+  });
+
+  final String label;
+  final Widget child;
+
+  /// 让标签视觉上和右侧第一行内容（chip / 胶囊）对齐，而不是贴着行顶。
+  final double topPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 38,
+          child: Padding(
+            padding: EdgeInsets.only(top: topPadding),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF64748B),
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ),
+        Expanded(child: child),
+      ],
+    );
+  }
+}
+
 class _PlaybackChip extends StatelessWidget {
   const _PlaybackChip({
     required this.label,
@@ -918,7 +954,7 @@ class _PlaybackChip extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
           gradient: selected
               ? const LinearGradient(
@@ -1101,10 +1137,11 @@ class _HeroIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 清新版：浅色主题按钮，追剧高亮用玫红实心。
+    // 清新版：浅色主题按钮；追剧高亮改走金橙（原先的玫红与旁边两个灰按钮
+    // 不是一个体系，一粉一灰看着跳）。
     return Material(
       color: highlight
-          ? const Color(0xFFFB7185).withValues(alpha: 0.14)
+          ? const Color(0xFFFB923C).withValues(alpha: 0.16)
           : const Color(0xFFF1F5F9),
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
@@ -1116,7 +1153,7 @@ class _HeroIconButton extends StatelessWidget {
           child: Icon(
             icon,
             color: highlight
-                ? const Color(0xFFF43F5E)
+                ? const Color(0xFFEA580C)
                 : const Color(0xFF475569),
             size: 20,
           ),

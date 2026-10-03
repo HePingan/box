@@ -24,9 +24,8 @@ class _DetailInfoCardState extends State<DetailInfoCard> {
 
   // 统一设计 token，避免圆角/描边/间距各处跳变。
   static const double _cardRadius = 20;
-  static const double _innerRadius = 12;
   static const Color _border = Color(0xFFE7ECF5);
-  static const Color _fill = Color(0xFFF8FAFC);
+  static const Color _divider = Color(0xFFF1F5F9);
   static const Color _iconMuted = Color(0xFF94A3B8);
 
   String? _text(dynamic value) {
@@ -73,26 +72,30 @@ class _DetailInfoCardState extends State<DetailInfoCard> {
     return lines.join('\n');
   }
 
+  /// ④ 资料行：改成一张表里的一行（浅色图标 + 定宽标签 + 值），
+  /// 行与行之间用 1px 极浅分隔线，不再每行一个浅灰描边方框 ——
+  /// 原先 6 个方框叠起来像「方块阵」，值还一律 w900，看着又碎又重。
   Widget _infoRow(IconData icon, String label, String value) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
-      decoration: BoxDecoration(
-        color: _fill,
-        borderRadius: BorderRadius.circular(_innerRadius),
-        border: Border.all(color: _border),
-      ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 9),
       child: Row(
         children: [
-          Icon(icon, size: 16, color: _iconMuted),
+          Icon(icon, size: 15, color: _iconMuted),
           const SizedBox(width: 8),
-          Text(
-            '$label：',
-            style: const TextStyle(
-              color: Color(0xFF64748B),
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+          SizedBox(
+            width: 56,
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF64748B),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
+          const SizedBox(width: 6),
           Expanded(
             child: Text(
               value,
@@ -101,13 +104,25 @@ class _DetailInfoCardState extends State<DetailInfoCard> {
               style: const TextStyle(
                 color: AppTokens.inkDark,
                 fontSize: 12.5,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  /// 行间 1px 分隔线；首行之前不加，末行之后不加。
+  List<Widget> _withDividers(List<Widget> rows) {
+    final out = <Widget>[];
+    for (var i = 0; i < rows.length; i++) {
+      if (i > 0) {
+        out.add(const Divider(height: 1, thickness: 1, color: _divider));
+      }
+      out.add(rows[i]);
+    }
+    return out;
   }
 
   Widget _sectionTitle(String text) {
@@ -220,29 +235,22 @@ class _DetailInfoCardState extends State<DetailInfoCard> {
         children: [
           _sectionTitle('影片资料'),
           const SizedBox(height: 12),
-          _infoRow(Icons.source_rounded, '来源', widget.source.name),
-          const SizedBox(height: 8),
-          _infoRow(Icons.category_rounded, '分类', category),
-          const SizedBox(height: 8),
-          _infoRow(Icons.update_rounded, '更新', status),
-          const SizedBox(height: 8),
-          _infoRow(Icons.schedule_rounded, '时间', time),
-          if (area != null || lang != null) ...[
-            const SizedBox(height: 8),
-            _infoRow(
-              Icons.travel_explore_rounded,
-              '地区/语言',
-              [area, lang].whereType<String>().join(' · '),
-            ),
-          ],
-          if (director != null) ...[
-            const SizedBox(height: 8),
-            _infoRow(Icons.movie_creation_rounded, '导演', director),
-          ],
-          if (actor != null) ...[
-            const SizedBox(height: 8),
-            _infoRow(Icons.groups_rounded, '主演', actor),
-          ],
+          // ⑥ 不再单列一行「来源」：顶部标题卡已经写了资源名，
+          // 一屏里读三遍（标题、资料卡、线路 chip）没必要。
+          ..._withDividers(<Widget>[
+            _infoRow(Icons.category_rounded, '分类', category),
+            _infoRow(Icons.update_rounded, '更新', status),
+            _infoRow(Icons.schedule_rounded, '时间', time),
+            if (area != null || lang != null)
+              _infoRow(
+                Icons.travel_explore_rounded,
+                '地区/语言',
+                [area, lang].whereType<String>().join(' · '),
+              ),
+            if (director != null)
+              _infoRow(Icons.movie_creation_rounded, '导演', director),
+            if (actor != null) _infoRow(Icons.groups_rounded, '主演', actor),
+          ]),
           if (synopsis != null && synopsis.isNotEmpty) ...[
             const SizedBox(height: 14),
             _buildSynopsis(synopsis),
