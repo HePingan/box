@@ -1074,6 +1074,7 @@ class _PluginTabState extends State<PluginTab>
               ExtensionHeroCard(
                 pluginCount: plugins.length,
                 enabledCount: _enabledPluginCount,
+                builtInCount: plugins.where((p) => p.builtIn).length,
                 onOpenMarket: _openPluginMarket,
                 onSubmitPlugin: _openPluginSubmit,
                 onImportJson: _showImportJsonDialog,

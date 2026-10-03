@@ -6,6 +6,7 @@ import '../features/admin/presentation/admin_page.dart';
 import '../features/cloud_sync/presentation/announcement_page.dart';
 import '../novel/pages/source_manager/book_source_bootstrap.dart';
 import '../novel/pages/source_manager/book_source_manager_page.dart';
+import '../features/diagnostics/presentation/self_check_page.dart';
 import '../features/settings/presentation/data_settings_page.dart';
 import '../features/settings/presentation/settings_page.dart';
 import '../pages/debug_log_page.dart';
@@ -29,6 +30,10 @@ class AppRoutes {
   /// [account]，两个入口撞同一个页面。
   static const settings = '/settings';
   static const dataSettings = '/settings/data';
+
+  /// 应用自检。扩展页那个「诊断」入口（拿假书源去开书源诊断页）撤掉后，
+  /// "哪儿坏了"需要一个新的、如实的落点：片源健康 / 线路记忆 / 更新通道 / 网络诊断。
+  static const selfCheck = '/settings/self-check';
 
   /// 公告一级入口。原先只能从「抽屉 → 账号 → 个人中心」三层点进去，
   /// 线上出故障时等于没有触达手段。
@@ -60,6 +65,7 @@ class AppRoutes {
       accountAdmin: (_) => const AdminPage(),
       settings: (_) => const SettingsPage(),
       dataSettings: (_) => const DataSettingsPage(),
+      selfCheck: (_) => const SelfCheckPage(),
       announcements: (_) => const AnnouncementPage(),
       about: (_) => const AboutPage(),
       aboutIntroduction: (_) => AboutContentPage.introduction(),

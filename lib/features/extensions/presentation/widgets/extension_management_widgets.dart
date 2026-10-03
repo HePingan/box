@@ -13,6 +13,7 @@ class ExtensionHeroCard extends StatelessWidget {
     super.key,
     required this.pluginCount,
     required this.enabledCount,
+    required this.builtInCount,
     required this.onOpenMarket,
     required this.onImportJson,
     required this.onExportJson,
@@ -21,6 +22,10 @@ class ExtensionHeroCard extends StatelessWidget {
 
   final int pluginCount;
   final int enabledCount;
+
+  /// 内置插件数。第三方 = pluginCount - builtInCount —— 这两个都是**数得出来的**
+  /// 真数（`HomePlugin.builtIn`），不像之前那两个"书源/片源计数"从来接不上数据。
+  final int builtInCount;
   final VoidCallback onOpenMarket;
   final VoidCallback onImportJson;
   final VoidCallback onExportJson;
@@ -81,6 +86,17 @@ class ExtensionHeroCard extends StatelessWidget {
                       style: const TextStyle(
                         color: AppTokens.textSecondary,
                         fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '内置 $builtInCount · 第三方 '
+                      '${pluginCount - builtInCount}',
+                      style: const TextStyle(
+                        color: AppTokens.textSecondary,
+                        fontSize: 11,
                         fontWeight: FontWeight.w600,
                         fontFeatures: [FontFeature.tabularFigures()],
                       ),

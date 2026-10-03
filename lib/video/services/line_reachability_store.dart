@@ -67,6 +67,22 @@ class LineReachabilityStore {
     _loaded = true;
   }
 
+  /// 自检页用：当前全部线路记忆的只读快照（先 [ensureLoaded]）。
+  static Map<String, LineReachabilityRecord> get records =>
+      Map<String, LineReachabilityRecord>.unmodifiable(_cache);
+
+  /// 自检页用：清空线路记忆。
+  ///
+  /// 场景：线路当时取不到流是网络环境问题（现在网络好了，标记还在），
+  /// 用户想要一个"重新开始"的开关。清完 [_loaded] 保持 true，
+  /// 免得下一次 ensureLoaded 又把刚清掉的从盘上读回来。
+  static Future<void> clear() async {
+    _cache = {};
+    _loaded = true;
+    await _persist();
+    AppLogger.instance.log('lineReachability cleared by user', tag: 'LINE');
+  }
+
   static Future<void> _persist() async {
     try {
       final prefs = await SharedPreferences.getInstance();

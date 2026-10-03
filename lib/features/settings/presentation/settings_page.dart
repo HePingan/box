@@ -69,6 +69,20 @@ class SettingsPage extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          // 诊断：原先这里没有落点（扩展页那个假「诊断」入口 2026-10-03 已撤）。
+          SettingsSection(
+            title: '诊断',
+            children: [
+              SettingsTile(
+                icon: Icons.fact_check_outlined,
+                title: '应用自检',
+                subtitle: '片源健康、线路记忆、更新通道、网络诊断',
+                onTap: () =>
+                    Navigator.of(context).pushNamed(AppRoutes.selfCheck),
+              ),
+            ],
+          ),
         ],
       ),
     );
