@@ -1,12 +1,8 @@
 import 'dart:io';
 
 import 'package:box/video/controller/video_catalog_repository.dart';
-import 'package:box/video/controller/video_controller.dart';
 import 'package:box/video/models/video_category.dart';
-import 'package:box/video/models/video_source.dart';
-import 'package:box/video/models/vod_item.dart';
-import 'package:box/video/pages/aggregate_search_page.dart';
-import 'package:box/video/services/video_api_service.dart';
+import 'package:box/video_module.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
@@ -185,6 +181,45 @@ void main() {
       find.byType(CircularProgressIndicator),
       findsNothing,
       reason: '二次搜索完成后 spinner 必须停止（旧世代 worker 不得吞掉 completed 计数）',
+    );
+  }, timeout: const Timeout(Duration(seconds: 45)));
+
+  /// ① 坏源过滤的行为判据：被自动隐藏的源**一次请求都不该发**，
+  /// 而且界面上要说清楚「跳过了几个」—— 跳过（没发请求）与失败（发了没答）是两件事。
+  testWidgets('被自动隐藏的源不再发请求，界面显示已跳过数量', (tester) async {
+    VideoModule.resetForTest();
+    final requested = <String>[];
+    VideoApiService.searchOverrideForTesting = (baseUrl, keyword) async {
+      requested.add(baseUrl);
+      return <VodItem>[VodItem(vodId: 1, vodName: '$keyword-结果')];
+    };
+
+    final controller = await buildController(4);
+    final sources = controller.sources;
+    expect(sources.length, 4);
+
+    // 模拟「接口层坏被摘掉」：把第 0 个源自动隐藏（真实链路由
+    // VideoModule.autoHideStructurallyBrokenSources 判定后调用同一入口）。
+    await VideoModule.setSourceAutoHidden(
+      sources[0],
+      true,
+      reason: '接口层不可用：接口禁止关键词搜索',
+    );
+
+    await tester.pumpWidget(wrap(controller));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await submitSearch(tester, '斗罗');
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(requested, isNot(contains(sources[0].url)), reason: '被隐藏的源不该出现在请求里');
+    expect(requested.length, 3, reason: '其余 3 个源照常搜索');
+    expect(
+      find.textContaining('已跳过 1 个已知不可用源'),
+      findsOneWidget,
+      reason: '跳过数量要能被看见（跳过 ≠ 失败）',
     );
   }, timeout: const Timeout(Duration(seconds: 45)));
 }
