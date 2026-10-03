@@ -13,10 +13,11 @@ import 'package:box/plugin_market/models/plugin_market_security.dart';
 
 import 'widgets/plugin_market_widgets.dart';
 
-typedef MarketInstallHandler = Future<void> Function(
-  MarketPluginTemplate template, {
-  void Function(int receivedBytes, int totalBytes)? onProgress,
-});
+typedef MarketInstallHandler =
+    Future<void> Function(
+      MarketPluginTemplate template, {
+      void Function(int receivedBytes, int totalBytes)? onProgress,
+    });
 
 typedef MarketUninstallHandler = Future<void> Function(String pluginId);
 
@@ -31,6 +32,7 @@ class PluginMarketPage extends StatefulWidget {
     this.initialChannel = PluginMarketChannel.stable,
     this.securityConfig = const PluginMarketSecurityConfig(),
     this.initialInstalledVersions = const {},
+    this.initialQuery,
     PluginMarketManifestRepository? manifestRepository,
   }) : manifestRepository =
            manifestRepository ?? PluginMarketManifestRepository.instance;
@@ -52,6 +54,9 @@ class PluginMarketPage extends StatefulWidget {
 
   /// 本地已装版本（id → version）
   final Map<String, String> initialInstalledVersions;
+
+  /// 打开时预填的搜索词（扩展页搜不到插件时"去市场搜"用）。
+  final String? initialQuery;
 
   @override
   State<PluginMarketPage> createState() => _PluginMarketPageState();
@@ -91,7 +96,9 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
   void initState() {
     super.initState();
     _installedIds = {...widget.initialInstalledIds};
-    _searchController = TextEditingController();
+    final seedQuery = widget.initialQuery?.trim() ?? '';
+    _searchController = TextEditingController(text: seedQuery);
+    if (seedQuery.isNotEmpty) _keyword = seedQuery;
     _currentChannel = widget.initialChannel;
     _loadMarket(forceRefresh: false);
   }
@@ -210,8 +217,8 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       final areaOk = _areaFilter == 'all' || item.areaCode == _areaFilter;
       if (!areaOk) return false;
 
-      final tagOk = _tagFilter == 'all' ||
-          item.tags.any((t) => t.toLowerCase() == tag);
+      final tagOk =
+          _tagFilter == 'all' || item.tags.any((t) => t.toLowerCase() == tag);
       if (!tagOk) return false;
 
       if (keyword.isEmpty) return true;
@@ -364,7 +371,10 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
             if (permissionLabelsOf(item.permissions).isNotEmpty) ...[
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFFF1F5F9),
                   borderRadius: BorderRadius.circular(10),
@@ -419,11 +429,14 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
 
       // 下载阶段：显示进度条
       setState(() => _installProgress[item.id] = 0);
-      await widget.onInstall(item, onProgress: (received, total) {
-        if (!mounted) return;
-        final p = total > 0 ? received / total : 0.5;
-        setState(() => _installProgress[item.id] = p.clamp(0.05, 0.95));
-      });
+      await widget.onInstall(
+        item,
+        onProgress: (received, total) {
+          if (!mounted) return;
+          final p = total > 0 ? received / total : 0.5;
+          setState(() => _installProgress[item.id] = p.clamp(0.05, 0.95));
+        },
+      );
       if (!mounted) return;
       setState(() {
         _installProgress[item.id] = 1.0;
@@ -557,11 +570,11 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     final skippedText = skipped == 0
         ? ''
         : '，已跳过 $skipped 个：'
-          '${skippedNames.take(3).join('；')}${skippedNames.length > 3 ? ' 等' : ''}';
+              '${skippedNames.take(3).join('；')}${skippedNames.length > 3 ? ' 等' : ''}';
     final failedText = failedIds.isEmpty
         ? ''
         : '，失败 ${failedIds.length} 个：${failedReasons.take(3).join('；')}'
-            '${failedReasons.length > 3 ? ' 等' : ''}';
+              '${failedReasons.length > 3 ? ' 等' : ''}';
     _showSnack('批量安装完成：$success / ${target.length}$skippedText$failedText');
   }
 
@@ -619,7 +632,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     final failedText = failedIds.isEmpty
         ? ''
         : '，失败 ${failedIds.length} 个：${failedReasons.take(3).join('；')}'
-            '${failedReasons.length > 3 ? ' 等' : ''}';
+              '${failedReasons.length > 3 ? ' 等' : ''}';
     _showSnack('批量卸载完成：$success / ${target.length}$failedText');
   }
 
@@ -896,7 +909,8 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                 // 当前没有第三方代码在下游执行，没有可拦截的对象。
                 if (item.permissions.isNotEmpty)
                   MarketTagChip(
-                    text: '声明：${permissionLabelsOf(item.permissions).join('、')}',
+                    text:
+                        '声明：${permissionLabelsOf(item.permissions).join('、')}',
                   ),
               ],
             ),
@@ -1094,7 +1108,11 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       child: Row(
         children: [
-          const Icon(Icons.sort_rounded, size: 16, color: AppTokens.textSecondary),
+          const Icon(
+            Icons.sort_rounded,
+            size: 16,
+            color: AppTokens.textSecondary,
+          ),
           const SizedBox(width: 6),
           const Text(
             '排序',
@@ -1151,8 +1169,8 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                 onSelected: (_) => setState(
                   () => _tagFilter =
                       _tagFilter.toLowerCase() == e.key.toLowerCase()
-                          ? 'all'
-                          : e.key,
+                      ? 'all'
+                      : e.key,
                 ),
               ),
               const SizedBox(width: 6),

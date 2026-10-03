@@ -17,10 +17,11 @@ class PluginCard extends StatelessWidget {
     required this.onRunPlugin,
     required this.onToggleEnabled,
     required this.onUninstall,
-    this.editMode = false,
-    this.dragIndex,
     this.isPinned = false,
     this.onPinToggle,
+    this.onShowDetail,
+    this.onMoveUp,
+    this.onMoveDown,
     this.selectMode = false,
     this.isSelected = false,
     this.onSelectToggle,
@@ -31,10 +32,16 @@ class PluginCard extends StatelessWidget {
   onRunPlugin;
   final Future<void> Function(HomePlugin plugin, bool enabled) onToggleEnabled;
   final Future<void> Function(HomePlugin plugin) onUninstall;
-  final bool editMode;
-  final int? dragIndex;
   final bool isPinned;
   final void Function(String pluginId)? onPinToggle;
+
+  /// 插件详情（信息按钮）。为 null 时不显示入口。
+  final void Function(HomePlugin plugin)? onShowDetail;
+
+  /// 排序模式下的「上移 / 下移」。为 null 表示不可动（首位/末位）。
+  final VoidCallback? onMoveUp;
+  final VoidCallback? onMoveDown;
+
   final bool selectMode;
   final bool isSelected;
   final void Function(String pluginId)? onSelectToggle;
@@ -68,18 +75,6 @@ class PluginCard extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (editMode)
-                  ReorderableDragStartListener(
-                    index: dragIndex ?? 0,
-                    child: const Padding(
-                      padding: EdgeInsets.only(right: 6, top: 8),
-                      child: Icon(
-                        Icons.drag_handle_rounded,
-                        color: AppTokens.textTertiary,
-                        size: 20,
-                      ),
-                    ),
-                  ),
                 if (selectMode)
                   Padding(
                     padding: const EdgeInsets.only(right: 8, top: 6),
@@ -180,7 +175,7 @@ class PluginCard extends StatelessWidget {
               ],
             ),
             // 操作行下沉：窄屏不与题干争宽
-            if (!selectMode && !editMode) ...[
+            if (!selectMode) ...[
               const SizedBox(height: 8),
               Row(
                 children: [
@@ -195,6 +190,45 @@ class PluginCard extends StatelessWidget {
                     ),
                   ),
                   const Spacer(),
+                  if (onMoveUp != null || onMoveDown != null) ...[
+                    IconButton(
+                      tooltip: '上移',
+                      onPressed: onMoveUp,
+                      icon: const Icon(Icons.arrow_upward_rounded, size: 18),
+                      color: AppTokens.textSecondary,
+                      visualDensity: VisualDensity.compact,
+                      constraints: const BoxConstraints(
+                        minWidth: 34,
+                        minHeight: 34,
+                      ),
+                      padding: EdgeInsets.zero,
+                    ),
+                    IconButton(
+                      tooltip: '下移',
+                      onPressed: onMoveDown,
+                      icon: const Icon(Icons.arrow_downward_rounded, size: 18),
+                      color: AppTokens.textSecondary,
+                      visualDensity: VisualDensity.compact,
+                      constraints: const BoxConstraints(
+                        minWidth: 34,
+                        minHeight: 34,
+                      ),
+                      padding: EdgeInsets.zero,
+                    ),
+                  ],
+                  if (onShowDetail != null)
+                    IconButton(
+                      tooltip: '插件详情',
+                      onPressed: () => onShowDetail!(plugin),
+                      icon: const Icon(Icons.info_outline_rounded, size: 18),
+                      color: AppTokens.textTertiary,
+                      visualDensity: VisualDensity.compact,
+                      constraints: const BoxConstraints(
+                        minWidth: 34,
+                        minHeight: 34,
+                      ),
+                      padding: EdgeInsets.zero,
+                    ),
                   if (onPinToggle != null)
                     IconButton(
                       tooltip: isPinned ? '取消固定' : '固定到顶部',

@@ -79,6 +79,17 @@ class _PluginTabState extends State<PluginTab>
 
   // ── 批量选择 ──
   bool _selectMode = false;
+
+  /// 排序模式：卡片右侧出现上移/下移（轻量版顺序调整）。
+  ///
+  /// 为什么不做拖拽：拖拽那一套（`ReorderableDragStartListener` + 宿主
+  /// `reorderPlugin`）是"同一 area 内按索引重排"，而这页按启用状态分组、跨 area
+  /// 混排，索引口径对不上 —— 所以它一直没接上。上移/下移按**可见顺序**落 sort，
+  /// 语义直接，也不动列表结构。
+  bool _sortMode = false;
+
+  /// 批量更新进行中：按钮置灰，避免重复触发。
+  bool _bulkUpdating = false;
   final Set<String> _selectedPluginIds = {};
 
   // ── 市场推荐 ──
@@ -427,7 +438,7 @@ class _PluginTabState extends State<PluginTab>
 
   // ── Navigation ──
 
-  Future<void> _openPluginMarket() async {
+  Future<void> _openPluginMarket({String? query}) async {
     final custom = _pluginHost.allPlugins.where((plugin) => !plugin.builtIn);
     final installedIds = custom.map((e) => e.id).toSet();
     final installedVersions = <String, String>{
@@ -441,6 +452,7 @@ class _PluginTabState extends State<PluginTab>
         context,
         MaterialPageRoute(
           builder: (_) => PluginMarketPage(
+            initialQuery: query,
             initialInstalledIds: installedIds,
             initialInstalledVersions: installedVersions,
             remoteConfigUrl: _marketRemoteUrl.trim().isEmpty
@@ -861,10 +873,33 @@ class _PluginTabState extends State<PluginTab>
           title: '需要处理',
           subtitle: '已下架 / 待更新 / 校验失败的已装插件',
           icon: Icons.warning_amber_rounded,
-          trailing: IconButton(
-            tooltip: '重新检查',
-            icon: const Icon(Icons.refresh_rounded, size: 20),
-            onPressed: () => _syncInstalledStatuses(force: true),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 待更新多于一个时，逐条点「更新」太费事：给一个串行批量口。
+              if (_pluginRisks.any((r) => r.kind == PluginRiskKind.outdated))
+                TextButton.icon(
+                  onPressed: _bulkUpdating
+                      ? null
+                      : () => unawaited(_updateAllRisks()),
+                  icon: _bulkUpdating
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.system_update_alt_rounded, size: 18),
+                  label: Text(
+                    _bulkUpdating ? '更新中…' : '全部更新',
+                    style: const TextStyle(fontSize: 12.5),
+                  ),
+                ),
+              IconButton(
+                tooltip: '重新检查',
+                icon: const Icon(Icons.refresh_rounded, size: 20),
+                onPressed: () => _syncInstalledStatuses(force: true),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 10),
@@ -983,6 +1018,111 @@ class _PluginTabState extends State<PluginTab>
       ),
       child: Text(risk.kind == PluginRiskKind.outdated ? '更新' : '重装'),
     );
+  }
+
+  /// 插件详情面板：ID / 分类 / 来源（内置 or 自定义）/ 自定义插件的 payload 原文。
+  ///
+  /// 这个面板（`PluginDetailSheet`）早就写好了，但全仓一直没人调用 —— 点卡片是
+  /// 直接运行插件，用户没有任何地方能看到"这插件是谁、从哪来的"。
+  void _showPluginDetail(HomePlugin plugin) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppTokens.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => PluginDetailSheet(plugin: plugin),
+    );
+  }
+
+  /// 排序模式：把某个插件在**可见顺序**里挪一格。
+  ///
+  /// 落 sort 走宿主的 `applySortOrder`（按可见顺序整段重编号），而不是宿主那个
+  /// `reorderPlugin` —— 后者是"同 area 内按索引"，与这页的跨 area 混排对不上。
+  Future<void> _movePlugin(
+    HomePlugin plugin,
+    int delta,
+    List<HomePlugin> order,
+  ) async {
+    final from = order.indexWhere((p) => p.id == plugin.id);
+    final to = from + delta;
+    if (from < 0 || to < 0 || to >= order.length) return;
+    final next = List<HomePlugin>.from(order);
+    next.insert(to, next.removeAt(from));
+    await _pluginHost.applySortOrder(next.map((p) => p.id).toList());
+  }
+
+  /// 一键更新所有「待更新」插件。
+  ///
+  /// 清单走**与市场页同一个仓库 + 同一套验签配置**（不是另开一条取包通道，
+  /// 否则等于绕过验签）；逐条串行安装覆盖旧版 —— 安装要写盘、可能弹权限，
+  /// 串行失败面最小。结果逐类如实回报：成功几个、几个不在市场、几个失败。
+  Future<void> _updateAllRisks() async {
+    if (_bulkUpdating) return;
+    final targets = _pluginRisks
+        .where((r) => r.kind == PluginRiskKind.outdated)
+        .toList();
+    if (targets.isEmpty) {
+      await _showSnack(context, '没有待更新的插件');
+      return;
+    }
+
+    setState(() => _bulkUpdating = true);
+    var ok = 0;
+    final failed = <String>[];
+    final missing = <String>[];
+    try {
+      final manifest = await PluginMarketManifestRepository.instance
+          .loadManifest(
+            fallbackTemplates: const [],
+            channel: PluginMarketChannel.values.firstWhere(
+              (c) => c.name == _marketChannelEnv,
+              orElse: () => PluginMarketChannel.stable,
+            ),
+            security: PluginMarketSecurityConfig(
+              mode: PluginMarketSignMode.values.firstWhere(
+                (m) => m.name == _marketSignModeEnv,
+                orElse: () => PluginMarketSignMode.sha256,
+              ),
+              secret: _marketSignSecret,
+              allowUnsigned: _marketAllowUnsigned,
+            ),
+            remoteConfigUrl: _marketRemoteUrl.isNotEmpty
+                ? _marketRemoteUrl
+                : null,
+          );
+      final byId = {for (final t in manifest.templates) t.id: t};
+      for (final risk in targets) {
+        final template = byId[risk.pluginId];
+        if (template == null) {
+          missing.add(risk.title);
+          continue;
+        }
+        try {
+          await PluginMarketLocalSync().installFromTemplate(template);
+          ok++;
+        } catch (_) {
+          failed.add(risk.title);
+        }
+      }
+    } catch (_) {
+      // 清单本身拿不到（离线 / 验签不过）：如实说，别把"没更新"说成"已更新"。
+      failed.add('市场清单');
+    }
+
+    if (mounted) setState(() => _bulkUpdating = false);
+    await _syncInstalledStatuses(force: true);
+    if (!mounted) return;
+
+    final parts = <String>['已更新 $ok 个'];
+    if (missing.isNotEmpty) {
+      parts.add('${missing.length} 个市场里没有（需手动处理）');
+    }
+    if (failed.isNotEmpty) {
+      parts.add('${failed.length} 个失败：${failed.join('、')}');
+    }
+    await _showSnack(context, parts.join(' · '));
   }
 
   Future<void> _handleRiskUninstall(PluginRiskEntry risk) async {
@@ -1148,6 +1288,38 @@ class _PluginTabState extends State<PluginTab>
                       ),
                     ),
                   ),
+                  const SizedBox(width: 4),
+                  // 排序模式切换
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    decoration: BoxDecoration(
+                      color: _sortMode
+                          ? AppTokens.primaryBlue.withValues(alpha: 0.12)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: IconButton(
+                      tooltip: _sortMode ? '退出排序' : '调整顺序',
+                      onPressed: () {
+                        setState(() => _sortMode = !_sortMode);
+                        if (_sortMode && _selectMode) {
+                          setState(() {
+                            _selectMode = false;
+                            _selectedPluginIds.clear();
+                          });
+                        }
+                      },
+                      icon: Icon(
+                        _sortMode
+                            ? Icons.swap_vert_circle_rounded
+                            : Icons.swap_vert_rounded,
+                        size: 22,
+                        color: _sortMode
+                            ? AppTokens.primaryBlue
+                            : AppTokens.textSecondary,
+                      ),
+                    ),
+                  ),
                   const SizedBox(width: 8),
                   // 批量模式切换
                   AnimatedContainer(
@@ -1264,15 +1436,32 @@ class _PluginTabState extends State<PluginTab>
                   ),
                 ),
               if (!hasResult)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 40),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 32),
                   child: Center(
-                    child: Text(
-                      '没有匹配的插件',
-                      style: TextStyle(
-                        color: AppTokens.textSecondary,
-                        fontSize: 14,
-                      ),
+                    child: Column(
+                      children: [
+                        const Text(
+                          '没有匹配的插件',
+                          style: TextStyle(
+                            color: AppTokens.textSecondary,
+                            fontSize: 14,
+                          ),
+                        ),
+                        // 本地搜不到不等于没有：给一条去市场用同一个词找的路。
+                        if (_pluginQuery.trim().isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          FilledButton.tonalIcon(
+                            onPressed: () =>
+                                _openPluginMarket(query: _pluginQuery.trim()),
+                            icon: const Icon(
+                              Icons.storefront_rounded,
+                              size: 18,
+                            ),
+                            label: Text('去市场搜「${_pluginQuery.trim()}」'),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 )
@@ -1291,6 +1480,12 @@ class _PluginTabState extends State<PluginTab>
                   selectMode: _selectMode,
                   selectedPluginIds: _selectedPluginIds,
                   onSelectToggle: _toggleSelectPlugin,
+                  onShowDetail: _showPluginDetail,
+                  // 搜索词生效时不给排序：那会儿"相邻"只是筛选结果的相邻。
+                  onMovePlugin: _sortMode && _pluginQuery.trim().isEmpty
+                      ? (plugin, delta) =>
+                            unawaited(_movePlugin(plugin, delta, enabledList))
+                      : null,
                 ),
                 if (filteredDisabled.isNotEmpty) ...[
                   const SizedBox(height: 4),
@@ -1308,6 +1503,8 @@ class _PluginTabState extends State<PluginTab>
                     selectMode: _selectMode,
                     selectedPluginIds: _selectedPluginIds,
                     onSelectToggle: _toggleSelectPlugin,
+                    onShowDetail: _showPluginDetail,
+                    onMovePlugin: null,
                   ),
                 ],
               ],

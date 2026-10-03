@@ -103,8 +103,10 @@ HomePluginArea homePluginAreaFromCode(String code) {
   for (final area in HomePluginArea.values) {
     if (area.name == text) return area;
   }
-  debugPrint('[plugin] 未知的 area code "$code"，已回落到 '
-      '${kHomePluginAreaFallback.name}');
+  debugPrint(
+    '[plugin] 未知的 area code "$code"，已回落到 '
+    '${kHomePluginAreaFallback.name}',
+  );
   return kHomePluginAreaFallback;
 }
 
@@ -171,7 +173,6 @@ HomePluginActionType homePluginActionTypeFromCode(String code) {
 /// 动作 code → 中文标签（单一事实源入口）。
 String homePluginActionLabel(String code) =>
     homePluginActionTypeFromCode(code).label;
-
 
 class HomePluginActionContext {
   final String pluginId;
@@ -300,9 +301,7 @@ class HomePluginActionRegistry {
   /// 键必须是 `HomePluginActionType.x.name`，**不得裸字符串** ——
   /// plugin_area_action_single_source_test.dart 会锁这一条。
   static void registerDefaults() {
-    register(
-      HomePluginActionType.toast.name,
-      (context, actionContext) async {
+    register(HomePluginActionType.toast.name, (context, actionContext) async {
       if (context == null) return;
       await _showSnack(
         context,
@@ -310,78 +309,77 @@ class HomePluginActionRegistry {
             ? '点击了 ${actionContext.title}'
             : actionContext.payload.trim(),
       );
-    },
-    );
-    register(
-      HomePluginActionType.navigate.name,
-      (context, actionContext) async {
+    });
+    register(HomePluginActionType.navigate.name, (
+      context,
+      actionContext,
+    ) async {
       if (context == null) return;
       HomePluginRouteRegistry.registerDefaults();
       final routeCode = _payloadRouteCode(actionContext);
       final builder = HomePluginRouteRegistry.lookup(routeCode);
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));
-    },
-    );
-    register(
-      HomePluginActionType.openDailyNews.name,
-      (context, actionContext) async {
+    });
+    register(HomePluginActionType.openDailyNews.name, (
+      context,
+      actionContext,
+    ) async {
       if (context == null) return;
       HomePluginRouteRegistry.registerDefaults();
       final builder = HomePluginRouteRegistry.lookup('openDailyNews');
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));
-    },
-    );
-    register(
-      HomePluginActionType.openNovelList.name,
-      (context, actionContext) async {
+    });
+    register(HomePluginActionType.openNovelList.name, (
+      context,
+      actionContext,
+    ) async {
       if (context == null) return;
       HomePluginRouteRegistry.registerDefaults();
       final builder = HomePluginRouteRegistry.lookup('openNovelList');
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));
-    },
-    );
-    register(
-      HomePluginActionType.openVideoList.name,
-      (context, actionContext) async {
+    });
+    register(HomePluginActionType.openVideoList.name, (
+      context,
+      actionContext,
+    ) async {
       if (context == null) return;
       HomePluginRouteRegistry.registerDefaults();
       final builder = HomePluginRouteRegistry.lookup('openVideoList');
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));
-    },
-    );
+    });
     register(
       HomePluginActionType.openImageGenerator.name,
       (context, actionContext) async {
-          if (context == null) return;
-          HomePluginRouteRegistry.registerDefaults();
-          final builder = HomePluginRouteRegistry.lookup('openImageGenerator');
-          if (builder == null) return;
-          await Navigator.push(context, MaterialPageRoute(builder: builder));
-        },
-    // GitHub 加速下载是个底部面板而不是整页，所以走 show 而不是 Navigator.push。
-    // payload 若带链接就直接预填并自动转换，方便从别处「用加速下载打开」。
-    // P2-2：具体页面/面板的依赖已拆到 builtin_plugin_pages.dart。,
+        if (context == null) return;
+        HomePluginRouteRegistry.registerDefaults();
+        final builder = HomePluginRouteRegistry.lookup('openImageGenerator');
+        if (builder == null) return;
+        await Navigator.push(context, MaterialPageRoute(builder: builder));
+      },
+      // GitHub 加速下载是个底部面板而不是整页，所以走 show 而不是 Navigator.push。
+      // payload 若带链接就直接预填并自动转换，方便从别处「用加速下载打开」。
+      // P2-2：具体页面/面板的依赖已拆到 builtin_plugin_pages.dart。,
     );
-    register(
-      HomePluginActionType.openGithubAccel.name,
-      (context, actionContext) async {
+    register(HomePluginActionType.openGithubAccel.name, (
+      context,
+      actionContext,
+    ) async {
       await showGithubAccelAction(context, _payloadUrl(actionContext));
-    },
-    );
-    register(
-      HomePluginActionType.openRemoteStorage.name,
-      (context, actionContext) async {
+    });
+    register(HomePluginActionType.openRemoteStorage.name, (
+      context,
+      actionContext,
+    ) async {
       if (context == null) return;
       HomePluginRouteRegistry.registerDefaults();
       final builder = HomePluginRouteRegistry.lookup('openRemoteStorage');
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));
-    },
-    );
+    });
   }
 
   static bool contains(String actionCode) {
@@ -420,8 +418,10 @@ HomePluginActionType _actionFromName(String name) {
     }
   }
   // P2-5：未知值不再静默回退，打日志留痕（回退值保持 toast 不变）。
-  debugPrint('[plugin] 未知 action code "$name"，已回落到 '
-      '${HomePluginActionType.toast.name}');
+  debugPrint(
+    '[plugin] 未知 action code "$name"，已回落到 '
+    '${HomePluginActionType.toast.name}',
+  );
   return HomePluginActionType.toast;
 }
 
@@ -442,6 +442,7 @@ class HomeCustomPluginConfig {
   final bool enabled;
   final int sort;
   final int createdAt;
+
   /// market | local | ''
   final String origin;
   final String marketVersion;
@@ -451,8 +452,10 @@ class HomeCustomPluginConfig {
   /// 只作展示与后续审计。
   final String packageTrust;
   final String author;
+
   /// published | yanked | local_cache | ''
   final String marketStatus;
+
   /// 插件声明的权限（原样保留 code，展示时用 permissionLabelsOf 翻译）。
   /// 只作披露与审计，不做运行时拦截。
   final List<String> declaredPermissions;
@@ -492,8 +495,8 @@ class HomeCustomPluginConfig {
     final payload = template.payloadData.isEmpty
         ? template.payload
         : jsonEncode(template.payloadData);
-    final origin = template.tags.contains('用户投稿') ||
-            template.author.trim().isNotEmpty
+    final origin =
+        template.tags.contains('用户投稿') || template.author.trim().isNotEmpty
         ? 'user_market'
         : 'market';
     return HomeCustomPluginConfig(
@@ -657,7 +660,10 @@ class HomeCustomPluginConfig {
         DateTime.now().millisecondsSinceEpoch,
       ),
       origin: _asString(json['origin']),
-      marketVersion: _asString(json['marketVersion'], _asString(json['version'])),
+      marketVersion: _asString(
+        json['marketVersion'],
+        _asString(json['version']),
+      ),
       packageSha256: _asString(json['packageSha256']),
       packageTrust: _asString(json['packageTrust']),
       author: _asString(json['author']),
@@ -1065,7 +1071,8 @@ class HomePluginHost {
   /// 而那里 setMethodCallHandler 要求 binding 已初始化。调用方必须用
   /// `testWidgets`（自带 binding），普通 `test()` 会断言失败。
   @visibleForTesting
-  List<HomePlugin> builtInPluginsForTesting() => _sorted(_buildDefaultPlugins());
+  List<HomePlugin> builtInPluginsForTesting() =>
+      _sorted(_buildDefaultPlugins());
 
   /// 直接把插件列表灌进 notifier，并标记为已 bootstrap。
   ///
@@ -1211,8 +1218,7 @@ class HomePluginHost {
     // 下架插件禁止重新启用
     if (enabled) {
       final cfg = current.customConfig;
-      if (cfg != null &&
-          (cfg.marketRisk || cfg.marketStatus == 'yanked')) {
+      if (cfg != null && (cfg.marketRisk || cfg.marketStatus == 'yanked')) {
         return;
       }
     }
@@ -1233,6 +1239,28 @@ class HomePluginHost {
       enabled ? PluginEvents.enabled : PluginEvents.disabled,
       updated.id,
     );
+  }
+
+  /// 按给定顺序给这些插件的 `sort` 重新编号（100/200/300…），其余插件不动。
+  ///
+  /// 为什么不用 [reorderPlugin]：那是"**同一 area 内**按索引重排"，而插件页的列表是
+  /// 按**启用状态**分组、跨 area 混排的 —— 索引口径对不上（`PluginCard` 里那个
+  /// ReorderableDragStartListener 也因此从来没接上过）。上移/下移只关心"看得见的
+  /// 相邻两项换个位置"，所以这里直接按**可见顺序**落 sort，顺带把相等的 sort
+  /// （内置默认都是同一个值，交换会等于没动）拉成确定值。
+  Future<void> applySortOrder(List<String> orderedIds) async {
+    await bootstrap();
+    const int base = 100;
+    const int step = 100;
+    final list = List<HomePlugin>.from(_notifier.value);
+    for (int i = 0; i < orderedIds.length; i++) {
+      final idx = list.indexWhere((p) => p.id == orderedIds[i]);
+      if (idx >= 0) {
+        list[idx] = list[idx].copyWith(sort: base + i * step);
+      }
+    }
+    _notifier.value = _sorted(list);
+    await _persist();
   }
 
   Future<void> reorderPlugin(
@@ -1352,9 +1380,7 @@ class HomePluginHost {
       final currentHasData =
           current.enabledMap.isNotEmpty || current.customPlugins.isNotEmpty;
       if (emptiesIncoming && currentHasData) {
-        throw const FormatException(
-          '快照为空，导入会清空现有配置；如确需重置请显式允许清空',
-        );
+        throw const FormatException('快照为空，导入会清空现有配置；如确需重置请显式允许清空');
       }
     }
 
@@ -1501,7 +1527,8 @@ class HomePluginHost {
             .where((p) => p.id == config.id)
             .map((p) => p.customConfig)
             .firstOrNull;
-        final risk = latest?.marketRisk == true ||
+        final risk =
+            latest?.marketRisk == true ||
             latest?.marketStatus == 'yanked' ||
             config.marketRisk ||
             config.marketStatus == 'yanked';
@@ -1509,17 +1536,17 @@ class HomePluginHost {
           final note = (latest?.marketRiskNote.isNotEmpty == true)
               ? latest!.marketRiskNote
               : (config.marketRiskNote.isNotEmpty
-                  ? config.marketRiskNote
-                  : '该插件已被管理员下架，无法使用');
-          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-            SnackBar(content: Text(note)),
-          );
+                    ? config.marketRiskNote
+                    : '该插件已被管理员下架，无法使用');
+          ScaffoldMessenger.maybeOf(
+            context,
+          )?.showSnackBar(SnackBar(content: Text(note)));
           return;
         }
         if (!(latest?.enabled ?? config.enabled)) {
-          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-            const SnackBar(content: Text('插件已禁用')),
-          );
+          ScaffoldMessenger.maybeOf(
+            context,
+          )?.showSnackBar(const SnackBar(content: Text('插件已禁用')));
           return;
         }
         final ran = await HomePluginActionRegistry.run(

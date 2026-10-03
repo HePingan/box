@@ -15,6 +15,8 @@ class _PluginStatusSection extends StatefulWidget {
     this.selectMode = false,
     this.selectedPluginIds = const {},
     this.onSelectToggle,
+    this.onShowDetail,
+    this.onMovePlugin,
   });
 
   final String title;
@@ -31,6 +33,13 @@ class _PluginStatusSection extends StatefulWidget {
   final bool selectMode;
   final Set<String> selectedPluginIds;
   final void Function(String pluginId)? onSelectToggle;
+
+  /// 打开插件详情面板。
+  final void Function(HomePlugin plugin)? onShowDetail;
+
+  /// 排序模式下移动一格（-1 上移 / +1 下移）。为 null 表示当前不在排序模式，
+  /// 或搜索词生效中（那时"相邻"只是筛选结果的相邻，排起来的语义不成立）。
+  final void Function(HomePlugin plugin, int delta)? onMovePlugin;
 
   @override
   State<_PluginStatusSection> createState() => _PluginStatusSectionState();
@@ -110,6 +119,15 @@ class _PluginStatusSectionState extends State<_PluginStatusSection> {
                   onRunPlugin: widget.onRunPlugin,
                   onToggleEnabled: widget.onToggleEnabled,
                   onUninstall: widget.onUninstall,
+                  onShowDetail: widget.onShowDetail,
+                  onMoveUp: widget.onMovePlugin == null || i == 0
+                      ? null
+                      : () => widget.onMovePlugin!(plugin, -1),
+                  onMoveDown:
+                      widget.onMovePlugin == null ||
+                          i == widget.plugins.length - 1
+                      ? null
+                      : () => widget.onMovePlugin!(plugin, 1),
                 ),
               );
             }),
