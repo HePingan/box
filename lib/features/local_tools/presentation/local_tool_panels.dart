@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:flutter/services.dart';
@@ -3247,6 +3249,13 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
   double _db = 0;
   double _peak = 0;
   String _err = '';
+  /// 录音落到的临时文件路径。
+  ///
+  /// 分贝仪只要振幅，但 record 7.x 的 `start()` **必须给一个真实路径**
+  /// （签名就是 `{required String path}`）。以前传的是空串 `path: ''`，
+  /// 安卓侧一路走到 `MediaRecorder.setOutputFile("")` —— 真机上点「开始测量」
+  /// 直接闪退（原生崩溃，Dart 侧 catch 不住）。所以录到临时文件，停的时候删掉。
+  String? _tmpPath;
   // 平均要留样本。上限 600 条（200ms 一条 ≈ 2 分钟），长跑不吃内存。
   final List<double> _samples = [];
 
@@ -3270,13 +3279,19 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
         setState(() => _err = '没拿到麦克风权限。到系统设置里给「盒子」开一下录音权限。');
         return;
       }
-      // 分贝仪只需要振幅，但还是得真起一个录音会话，否则拿不到 amplitude。
+      // 真起一个录音会话才拿得到 amplitude；但路径必须是**真实文件路径**
+      // （空串 = 原生崩溃，见 _tmpPath 注释）。录到临时目录，停时删除。
+      final dir = await getTemporaryDirectory();
+      // 同上：await 之后组件可能已经不在树上。
+      if (!mounted) return;
+      final tmpPath = '${dir.path}/box_db_meter.m4a';
       await _rec.start(
         const RecordConfig(encoder: AudioEncoder.aacLc),
-        path: '',
+        path: tmpPath,
       );
       // 同上：start() 也是异步的，回来时可能已经不在树上了。
       if (!mounted) return;
+      _tmpPath = tmpPath;
       setState(() {
         _running = true;
         _err = '';
@@ -3301,7 +3316,14 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
         });
       });
     } on Object catch (e) {
-      setState(() => _err = '启动失败：$e');
+      // 起不来就把状态复位（否则「开始测量」一直是灰的），并清掉可能建了的临时文件。
+      _removeTempFile();
+      if (mounted) {
+        setState(() {
+          _running = false;
+          _err = '启动失败：$e';
+        });
+      }
     }
   }
 
@@ -3313,13 +3335,29 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
     } on Object {
       // 停不下来也不影响 UI 复位。
     }
+    _removeTempFile();
     if (mounted) setState(() => _running = false);
+  }
+
+  /// 删掉录音临时文件 —— 分贝仪不该在手机上留任何录音。
+  /// 用同步 API：调用点在 `_stop()` 与 `dispose()`，都不方便 await。
+  void _removeTempFile() {
+    final p = _tmpPath;
+    _tmpPath = null;
+    if (p == null) return;
+    try {
+      final f = File(p);
+      if (f.existsSync()) f.deleteSync();
+    } on Object {
+      // 删不掉不影响测量：文件名固定，下次启动会覆盖。
+    }
   }
 
   @override
   void dispose() {
     _sub?.cancel();
     _rec.dispose();
+    _removeTempFile();
     super.dispose();
   }
 

@@ -2,6 +2,8 @@
 //   ① 内容不足一屏时卡片要**撑满**内容区（不再"半张白卡浮在上半屏"）；
 //   ② 卡片里的内容要**垂直居中**，而不是全挤在顶部；
 //   ③ 三个重做过的工具：没数据时说实话（`--` / 加载态），别拿 0 冒充。
+import 'dart:io';
+
 import 'package:box/features/local_tools/presentation/local_tool_panels.dart';
 import 'package:box/features/local_tools/presentation/local_tools_registry.dart';
 import 'package:flutter/material.dart';
@@ -124,6 +126,40 @@ void main() {
       final rect = tester.getRect(slot);
       expect(rect.height, 6);
       expect(rect.width, greaterThan(60), reason: '进度槽宽度塌了：${rect.width}');
+    });
+
+    test('分贝仪给 record 的是真实临时路径（空串会让安卓侧原生崩溃）', () {
+      // 场景：真机上点「开始测量」直接闪退。record 7.x 的 `start()` 签名是
+      // `{required String path}`；传空串会一路走到
+      // `MediaRecorder.setOutputFile("")` —— 原生崩溃，Dart 侧 catch 不住。
+      // 这条护栏钉住：不许再出现空路径，且必须走临时目录 + 停时删掉。
+      final src = File(
+        'lib/features/local_tools/presentation/local_tool_panels.dart',
+      ).readAsStringSync();
+      final start = src.indexOf('class _DecibelPanelBodyState');
+      expect(start, greaterThan(0), reason: '找不到分贝仪的实现');
+      // 先把 // 与 /// 的注释行去掉再查 —— 注释里讲这件事是正常的，
+      // 但源码护栏会被自己的注释骗到（本仓踩过好几次）。
+      final body = src
+          .substring(start)
+          .split('\n')
+          .where((l) => !l.trimLeft().startsWith('//'))
+          .join('\n');
+      expect(
+        body.contains("path: ''"),
+        isFalse,
+        reason: '又给 record 传空路径了 —— 真机上会闪退',
+      );
+      expect(
+        body.contains('getTemporaryDirectory()'),
+        isTrue,
+        reason: '要录到临时目录里的真实文件',
+      );
+      expect(
+        body.contains('_removeTempFile()'),
+        isTrue,
+        reason: '停止/退出时要删掉录音临时文件',
+      );
     });
 
     testWidgets('分贝仪按钮：开始可点、停止在没开始时不可点', (tester) async {

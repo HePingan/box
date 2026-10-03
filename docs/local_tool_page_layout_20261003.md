@@ -62,6 +62,27 @@
   随机数 246.5 / 258.5（差值恒等于卡片底部 12px 内边距）。
 - 分贝仪内容 373 → **690px**（卡片 732，几乎占满）。
 
+## 顺带修掉的真机闪退（分贝仪）
+
+真机反馈「点开始测量直接闪退」。定性：**与本次观感改动无关**（`_start()` 一行没改），
+是分贝仪从做出来就带的老 bug —— 以前没人点过那个按钮。
+
+证据链（三层，全部代码级可查）：
+
+1. `record ^7.1.1`：`Future<void> start(RecordConfig config, {required String path})`，
+   README 写明 "path: The output path file. Required on all IO platforms."
+2. 本仓传的是 **空串** `path: ''`（原注释写着「只需要振幅，但还是得真起一个录音会话」—— 意图对、参数错）。
+3. `record_android 2.2.0` `MediaCaptureEngine.start()` → `r.setOutputFile(config.path)`：
+   空路径交给 `MediaRecorder` → 原生崩溃，**Dart 侧 `catch` 不住** → 闪退（不是错误提示）。
+
+修法：录到临时目录 `box_db_meter.m4a`（`getTemporaryDirectory()`），停止/退出时同步删除
+（分贝仪不该在手机上留任何录音）；启动失败时复位状态并清掉临时文件。
+护栏：`local_tool_page_layout_test.dart` 里一条源码结构断言 —— 不许再出现空路径、必须走临时目录、
+必须有删除调用（**该护栏第一次就差点被自己的注释骗到**：注释里写了 `path: ''` 三个字，
+所以匹配前先去掉 `//` / `///` 行）。
+
+备选方案（若真机仍闪退）：改用 `startStream`（完全不落盘，`AudioEncoder.pcm16bits`）。
+
 ## 没做（留档）
 
 - 其余 24 个工具只吃到外壳红利（卡片撑满 + 居中），**内容本身没动** —— 文字/转换类工具的
