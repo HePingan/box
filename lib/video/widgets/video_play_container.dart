@@ -99,6 +99,10 @@ class VideoPlayContainer extends StatefulWidget {
   /// 需要在播放器上说一句话（例如「已自动换线路」）时用。
   final void Function(String message)? onNotice;
 
+  /// ② 真正起播成功时回调一次（不是「没报错」，是 isInitialized 且有数据）。
+  /// 上层用它清掉这条线路的「取不到流」标记 —— 线路恢复了就不用等 TTL 过期。
+  final VoidCallback? onPlaybackStarted;
+
   /// 本地文件路径（离线播放时使用）。当此值非空时，优先使用本地文件播放。
   final String? localPath;
 
@@ -124,6 +128,7 @@ class VideoPlayContainer extends StatefulWidget {
     this.showDebugInfo = false,
     this.nextEpisodeUrl,
     this.onNotice,
+    this.onPlaybackStarted,
     this.localPath,
     this.localFileExpectedBytes = 0,
   });
@@ -186,6 +191,9 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
   String? _errorMessage;
   bool _wasPlayingBeforeBackground = false;
   bool _hasSavedCompletion = false;
+
+  /// ② 起播成功只上报一次（后续 state 变化不再重复回调上层）。
+  bool _reportedPlaybackStarted = false;
   int _initToken = 0;
   FullscreenToggleGate? _fullscreenToggleGate;
 
@@ -402,6 +410,11 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
     // 只有真正起播成功才清零失败计数——「这次没报错」不算成功。
     if (value.isInitialized && !value.isCompleted) {
       _lineFailover.recordPlaybackStarted();
+      // ② 同一次判定里把「这条线路可用」告诉上层（清掉失败标记）。
+      if (!_reportedPlaybackStarted) {
+        _reportedPlaybackStarted = true;
+        widget.onPlaybackStarted?.call();
+      }
     }
 
     if (value.isCompleted && !_hasSavedCompletion) {
@@ -775,10 +788,7 @@ class _VideoPlayContainerState extends State<VideoPlayContainer>
       _lineSwitches++;
       // 这条地址的解析结果作废：换回来时不该再从缓存里拿到同一个坏地址。
       _invalidateResolvedAddress();
-      AppLogger.instance.log(
-        '线路连续失败，自动换线路（$msg）',
-        tag: 'PLAYER',
-      );
+      AppLogger.instance.log('线路连续失败，自动换线路（$msg）', tag: 'PLAYER');
       // ⑤ 把「为什么换」说出来。容器会随线路切换重建（父级 key 变了），
       // 所以这句提示交给父级页面显示，不留在自己的 State 里。
       widget.onNotice?.call('$msg，已自动换线路');

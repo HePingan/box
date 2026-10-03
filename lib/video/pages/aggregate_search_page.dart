@@ -332,8 +332,7 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
       ),
       physics: const AlwaysScrollableScrollPhysics(),
       itemCount: groups.length + 1,
-      separatorBuilder: (_, index) =>
-          SizedBox(height: index == 0 ? 8 : 12),
+      separatorBuilder: (_, index) => SizedBox(height: index == 0 ? 8 : 12),
       itemBuilder: (context, index) {
         if (index == 0) return _buildSortFilterBar(groups.length);
         final group = groups[index - 1];

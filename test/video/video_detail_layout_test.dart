@@ -159,21 +159,24 @@ void main() {
       expect(
         refreshIcons.length,
         2,
-        reason: '剩下的两个应该只有：顶部导航的刷新、错误页的「重试」；'
+        reason:
+            '剩下的两个应该只有：顶部导航的刷新、错误页的「重试」；'
             '选集卡右上角那个和顶部是同一个动作，不该再出现',
       );
     });
 
     test('② 三处卡片标题都走 AppSectionTitle', () {
       expect(
-        readLib('video/pages/video_detail_page.dart')
-            .contains("AppSectionTitle('选集')"),
+        readLib(
+          'video/pages/video_detail_page.dart',
+        ).contains("AppSectionTitle('选集')"),
         isTrue,
         reason: '选集标题要和影片资料/剧情简介同一套样式',
       );
       expect(
-        readLib('video/pages/detail/detail_info_card.dart')
-            .contains('AppSectionTitle'),
+        readLib(
+          'video/pages/detail/detail_info_card.dart',
+        ).contains('AppSectionTitle'),
         isTrue,
       );
     });
@@ -191,6 +194,63 @@ void main() {
         RegExp(r'BorderRadius\.circular\(22\)').hasMatch(page),
         isFalse,
         reason: '播放器外壳的 22 已并入 20',
+      );
+    });
+  });
+
+  /// ② 线路「最近取不到流」要在**点进去之前**看出来，且默认不落在它上面。
+  /// 行为判据在 `test/video/line_reachability_test.dart`；这里只钉界面接线，
+  /// 免得哪天重构把标注或默认跳过的落点弄丢（这两处都在私有 State 里）。
+  group('② 线路可用性前置标注', () {
+    test('线路 chip 带「取不到流」标记，且标注仍可点（不是禁用）', () {
+      final page = readLib('video/pages/video_detail_page.dart');
+      expect(page.contains('unreachable: isUnreachable(index)'), isTrue);
+      expect(page.contains('Icons.wifi_off_rounded'), isTrue);
+      // chip 仍然把 onTap 传下去 —— 标记是前置告知，不拦用户手动选。
+      expect(page.contains('onTap: () => onSelected(index)'), isTrue);
+      expect(
+        readLib(
+          'video/pages/video_detail_page.dart',
+        ).contains('child: InkWell('),
+        isTrue,
+        reason: '_PlaybackChip 用 InkWell 承载点击，标注不改变可点性',
+      );
+    });
+
+    test('详情页把「最近取不到流」判据接进 chip 行', () {
+      final page = readLib('video/pages/video_detail_page.dart');
+      expect(
+        page.contains('isUnreachable: controller.isLineRecentlyUnreachable'),
+        isTrue,
+      );
+    });
+
+    test('默认选线跳过被标记的线路，但全被标记时忽略标记', () {
+      final controller = readLib(
+        'video/controller/video_detail_controller.dart',
+      );
+      expect(controller.contains('_isLineUnreachable(lines[index])'), isTrue);
+      expect(
+        controller.contains(
+          'final candidates = fresh.isEmpty ? playable : fresh;',
+        ),
+        isTrue,
+        reason: '全被标记时要退回原判据，别把用户锁死',
+      );
+    });
+
+    test('线路记忆不阻塞详情加载（不得在 loadDetail 里 await 存储）', () {
+      final controller = readLib(
+        'video/controller/video_detail_controller.dart',
+      );
+      expect(
+        controller.contains('await LineReachabilityStore.ensureLoaded()'),
+        isFalse,
+        reason: '存储慢一步会把详情页永远停在 loading（实测 pumpAndSettle 超时）',
+      );
+      expect(
+        controller.contains('unawaited(LineReachabilityStore.ensureLoaded())'),
+        isTrue,
       );
     });
   });

@@ -341,8 +341,25 @@ class VideoModule {
       );
       if (results.isEmpty) return hidden;
 
-      for (final result in results) {
-        if (!isStructurallyBroken(result.capability)) continue;
+      final broken = results
+          .where((result) => isStructurallyBroken(result.capability))
+          .toList(growable: false);
+      if (broken.isEmpty) return hidden;
+
+      // 安全闸：**全都判为「接口层坏」= 大概率是我们自己的出口/代理出了问题**
+      // （实测代理挂掉时会统一回一个 HTML 错误页，正文形态与「源站变网页」一致）。
+      // 这种时候一个都不隐藏 —— 否则一次代理抖动就把整个源列表抹掉。
+      // 条目太少（<3）也不足以说明问题，同样不动。
+      if (broken.length == results.length && results.length >= 3) {
+        AppLogger.instance.log(
+          'autoHide skipped: ${results.length} 个源全部判为接口层坏，'
+          '更像出口/代理问题，本次不隐藏',
+          tag: 'VISIBILITY',
+        );
+        return hidden;
+      }
+
+      for (final result in broken) {
         final match = sources.where((source) => source.url == result.baseUrl);
         if (match.isEmpty) continue;
         final source = match.first;

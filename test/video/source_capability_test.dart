@@ -39,7 +39,10 @@ void main() {
         classifySearchResponse(statusCode: 200, body: body),
         SourceSearchCapability.keywordForbidden,
       );
-      expect(isStructurallyBroken(SourceSearchCapability.keywordForbidden), isTrue);
+      expect(
+        isStructurallyBroken(SourceSearchCapability.keywordForbidden),
+        isTrue,
+      );
     });
 
     test('卧龙/旺旺实测样本：api 地址回的是 HTML → notAnApi', () {
@@ -150,15 +153,20 @@ void main() {
         },
       );
 
-      final results = await probe.probeAll(['https://ok.tv/api', 'https://bad.tv/api', 'https://html.tv/api']);
+      final results = await probe.probeAll([
+        'https://ok.tv/api',
+        'https://bad.tv/api',
+        'https://html.tv/api',
+      ]);
 
       expect(probed.length, 3);
       expect(results.length, 3);
-      final byUrl = {
-        for (final r in results) r.baseUrl: r.capability,
-      };
+      final byUrl = {for (final r in results) r.baseUrl: r.capability};
       expect(byUrl['https://ok.tv/api'], SourceSearchCapability.searchable);
-      expect(byUrl['https://bad.tv/api'], SourceSearchCapability.keywordForbidden);
+      expect(
+        byUrl['https://bad.tv/api'],
+        SourceSearchCapability.keywordForbidden,
+      );
       expect(byUrl['https://html.tv/api'], SourceSearchCapability.notAnApi);
     });
 

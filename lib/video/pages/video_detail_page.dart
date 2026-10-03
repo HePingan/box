@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -284,6 +286,9 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                 nextEpisodeUrl: controller.nextEpisodeRawUrl,
                 // ⑤ 起播可见化：换线路 / 起播过慢时把原因说一句。
                 onNotice: _noticeVia(context),
+                // ② 起播成功 → 清掉这条线路的「上次没取到流」标记。
+                onPlaybackStarted: () =>
+                    unawaited(controller.markCurrentLineStarted()),
               )
             : const AspectRatio(
                 aspectRatio: 16 / 9,
@@ -416,6 +421,7 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                 playLines: controller.playLines,
                 selectedIndex: controller.selectedLineIndex,
                 onSelected: controller.selectLine,
+                isUnreachable: controller.isLineRecentlyUnreachable,
               ),
             ),
           ],
@@ -615,6 +621,7 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
     required List<DetailPlayLine> playLines,
     required int selectedIndex,
     required ValueChanged<int> onSelected,
+    required bool Function(int index) isUnreachable,
   }) {
     return SizedBox(
       // ③ 行高 42 → 34：只有两三条线路时，原来那行显得空荡，
@@ -632,6 +639,9 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
               child: _PlaybackChip(
                 label: line.name,
                 selected: selected,
+                // ② 前置标注：这条线最近取不到流（默认也不会选它），
+                // 免得用户点进去先卡一次、再被自动换线。
+                unreachable: isUnreachable(index),
                 onTap: () => onSelected(index),
               ),
             );
@@ -924,11 +934,16 @@ class _PlaybackChip extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onTap,
+    this.unreachable = false,
   });
 
   final String label;
   final bool selected;
   final VoidCallback onTap;
+
+  /// ② 这条线最近取不到流（按源 + 线路名聚合的本地记忆，6 小时有效）。
+  /// 仍然可点：标记只是「前置告知 + 默认不选」，不是禁用。
+  final bool unreachable;
 
   @override
   Widget build(BuildContext context) {
@@ -949,19 +964,43 @@ class _PlaybackChip extends StatelessWidget {
           color: selected ? null : const Color(0xFFF8FAFC),
           borderRadius: BorderRadius.circular(AppTokens.radiusPill),
           border: Border.all(
-            color: selected ? Colors.transparent : const Color(0xFFE7ECF5),
+            color: selected
+                ? Colors.transparent
+                : (unreachable
+                      ? const Color(0xFFFDE7C8) // 淡橙：与「上次没取到流」呼应
+                      : const Color(0xFFE7ECF5)),
           ),
         ),
-        child: Text(
-          label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: selected ? AppTokens.inkDark : const Color(0xFF475569),
-            fontSize: 13,
-            fontWeight: FontWeight.w900,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                // 标了「上次没取到流」的线路名字弱化一档（仍可读、仍可点）。
+                color: selected
+                    ? AppTokens.inkDark
+                    : (unreachable
+                          ? const Color(0xFF94A3B8)
+                          : const Color(0xFF475569)),
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            if (unreachable) ...[
+              const SizedBox(width: 5),
+              Icon(
+                Icons.wifi_off_rounded,
+                size: 13,
+                color: selected
+                    ? AppTokens.inkDark.withValues(alpha: 0.75)
+                    : const Color(0xFFFB923C),
+              ),
+            ],
+          ],
         ),
       ),
     );

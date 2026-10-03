@@ -9,6 +9,7 @@ import '../pages/detail/detail_play_parser.dart';
 import '../services/video_api_service.dart';
 import '../services/play_line_memory_repository.dart';
 import '../services/favorites_repository.dart';
+import '../services/line_reachability_store.dart';
 import '../services/player_startup_resolver.dart';
 import '../widgets/player/player_request_headers.dart';
 import '../widgets/player/player_stream_resolver.dart';
@@ -168,6 +169,12 @@ class VideoDetailController extends ChangeNotifier {
         return;
       }
 
+      // ② 线路记忆只影响「默认选哪条线」，**绝不阻塞详情加载**：
+      // 存储读不出来（首次冷启动/平台通道异常）就当没有标记，走原判据。
+      // 预热放在启动时（main.dart）——若在 loadDetail 里 await，
+      // 存储慢一步就会把详情页永远停在 loading（实测报警：pumpAndSettle 超时）。
+      unawaited(LineReachabilityStore.ensureLoaded());
+
       final defaultSelection = _pickDefaultSelection(
         playLines,
         initialEpisodeUrl: initialEpisodeUrl,
@@ -321,16 +328,59 @@ class VideoDetailController extends ChangeNotifier {
   int _findPreferredLineIndex(List<DetailPlayLine> lines) {
     if (lines.isEmpty) return 0;
 
-    for (var i = 0; i < lines.length; i++) {
-      if (_isM3u8Line(lines[i])) {
-        return i;
-      }
-    }
+    final playable = <int>[
+      for (var i = 0; i < lines.length; i++)
+        if (lines[i].episodes.isNotEmpty) i,
+    ];
 
-    final firstPlayableIndex = lines.indexWhere(
-      (line) => line.episodes.isNotEmpty,
+    // ② 默认选线**跳过**「最近取不到流」的线路（chip 上也会标注出来）。
+    // 但如果所有可播线路都被标过，就忽略标记 —— 那更像网络环境/代理的问题，
+    // 不是线路本身的问题，此时按原判据选即可。
+    final fresh = playable
+        .where((index) => !_isLineUnreachable(lines[index]))
+        .toList(growable: false);
+    final candidates = fresh.isEmpty ? playable : fresh;
+
+    for (final index in candidates) {
+      if (_isM3u8Line(lines[index])) return index;
+    }
+    if (candidates.isNotEmpty) return candidates.first;
+    return 0;
+  }
+
+  /// ② 这条线是否「最近取不到流」（按源 + 线路名聚合的本地记忆）。
+  bool _isLineUnreachable(DetailPlayLine line) {
+    return LineReachabilityStore.isRecentlyUnreachable(
+      sourceKey: _reachabilitySourceKey,
+      lineName: line.name,
     );
-    return firstPlayableIndex >= 0 ? firstPlayableIndex : 0;
+  }
+
+  /// 供界面用：第 index 条线路最近是否取不到流。
+  bool isLineRecentlyUnreachable(int index) {
+    if (index < 0 || index >= playLines.length) return false;
+    return _isLineUnreachable(playLines[index]);
+  }
+
+  /// 供界面用：这条线路最近的失败原因（没有就返回 null）。
+  String? lineUnreachableReason(int index) {
+    if (index < 0 || index >= playLines.length) return null;
+    return LineReachabilityStore.failureReasonOf(
+      sourceKey: _reachabilitySourceKey,
+      lineName: playLines[index].name,
+    );
+  }
+
+  String get _reachabilitySourceKey =>
+      source.id.trim().isNotEmpty ? source.id.trim() : source.url.trim();
+
+  /// ② 起播成功：清掉当前线路的失败标记 —— 线路恢复不该等 TTL 到期。
+  Future<void> markCurrentLineStarted() async {
+    if (selectedLineIndex < 0 || selectedLineIndex >= playLines.length) return;
+    await LineReachabilityStore.markSuccess(
+      sourceKey: _reachabilitySourceKey,
+      lineName: playLines[selectedLineIndex].name,
+    );
   }
 
   /// 根据记忆复原线路：优先按线路名匹配，名字对不上再退回记忆的索引。
@@ -378,13 +428,19 @@ class VideoDetailController extends ChangeNotifier {
   /// 优先严格复用当前索引；若线路集数较短，则返回其最后一个有效集，避免
   /// 自动恢复落在不可播放索引上。没有其它可播放线路时返回 null。
   int? findFallbackLineIndex({int? excludingLineIndex}) {
-    for (var index = 0; index < playLines.length; index++) {
-      if (index == excludingLineIndex || playLines[index].episodes.isEmpty) {
-        continue;
-      }
-      return index;
+    final candidates = <int>[
+      for (var index = 0; index < playLines.length; index++)
+        if (index != excludingLineIndex && playLines[index].episodes.isNotEmpty)
+          index,
+    ];
+    if (candidates.isEmpty) return null;
+
+    // ② 换线时优先换到**没被标记过**的线路；全被标过就按原顺序换
+    // （都被标过说明更像网络环境问题，换谁都一样，别再挑）。
+    for (final index in candidates) {
+      if (!_isLineUnreachable(playLines[index])) return index;
     }
-    return null;
+    return candidates.first;
   }
 
   /// 切换到指定线路，并尽可能保留当前集序号，用于失败恢复。
@@ -392,6 +448,21 @@ class VideoDetailController extends ChangeNotifier {
     if (index < 0 || index >= playLines.length) return;
     final line = playLines[index];
     if (line.episodes.isEmpty) return;
+
+    // ② 记下「刚才那条线取不到流」：下次进这部片时 chip 会标注、默认也不选它。
+    // 放在换线动作里记，是因为调用点只有失败恢复这一种语义。
+    if (selectedLineIndex >= 0 && selectedLineIndex < playLines.length) {
+      final failedLine = playLines[selectedLineIndex];
+      if (failedLine.name.trim() != line.name.trim()) {
+        unawaited(
+          LineReachabilityStore.markFailure(
+            sourceKey: _reachabilitySourceKey,
+            lineName: failedLine.name,
+            reason: '上次这条线路取不到流',
+          ),
+        );
+      }
+    }
 
     final targetEpisodeIndex = selectedEpisodeIndex
         .clamp(0, line.episodes.length - 1)

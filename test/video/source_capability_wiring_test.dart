@@ -1,6 +1,5 @@
 import 'package:box/video_module.dart';
 import 'package:box/video/services/source_capability.dart';
-import 'package:box/video/services/video_api_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -53,10 +52,12 @@ void main() {
       },
     );
 
-    final hidden = await VideoModule.autoHideStructurallyBrokenSources(
-      [bad, html, gone, blocked],
-      probe: probe,
-    );
+    final hidden = await VideoModule.autoHideStructurallyBrokenSources([
+      bad,
+      html,
+      gone,
+      blocked,
+    ], probe: probe);
 
     expect(hidden.map((s) => s.id).toSet(), {'豆瓣', '卧龙', '艾旦'});
 
@@ -67,20 +68,43 @@ void main() {
     // 判定理由要留在记录里，便于源管理页解释「为什么它不见了」。
     final record = VideoModule.getVisibilityRecord(bad);
     expect(record, isNotNull);
-    expect(record!.autoHidden, isTrue);
+    expect(record.autoHidden, isTrue);
     expect(record.lastReason, contains('接口层不可用'));
+  });
+
+  test('全部源都判「接口层坏」时不隐藏任何源（更像出口/代理问题）', () async {
+    final sources = [
+      _source(id: 'A', url: 'https://a.example.test/api'),
+      _source(id: 'B', url: 'https://b.example.test/api'),
+      _source(id: 'C', url: 'https://c.example.test/api'),
+    ];
+    // 代理挂掉时典型表现：每个源都返回同一个 HTML 错误页。
+    final probe = SourceSearchCapabilityProbe(
+      probeOverride: (baseUrl, keyword) async => const SourceProbeResponse(
+        statusCode: 200,
+        body: '<html><title>502 Bad Gateway</title></html>',
+      ),
+    );
+
+    final hidden = await VideoModule.autoHideStructurallyBrokenSources(
+      sources,
+      probe: probe,
+    );
+
+    expect(hidden, isEmpty, reason: '一次出口抖动不该把整个源列表抹掉');
+    expect(VideoModule.visibleSourcesOf(sources).length, 3);
   });
 
   test('探测整体失败时不动任何源（探测不该反噬搜索）', () async {
     final source = _source(id: '正常源', url: 'https://ok.example.test/api');
     final probe = SourceSearchCapabilityProbe(
-      probeOverride: (baseUrl, keyword) async => throw StateError('network down'),
+      probeOverride: (baseUrl, keyword) async =>
+          throw StateError('network down'),
     );
 
-    final hidden = await VideoModule.autoHideStructurallyBrokenSources(
-      [source],
-      probe: probe,
-    );
+    final hidden = await VideoModule.autoHideStructurallyBrokenSources([
+      source,
+    ], probe: probe);
 
     expect(hidden, isEmpty);
     expect(VideoModule.visibleSourcesOf([source]).map((s) => s.id), ['正常源']);
@@ -97,7 +121,7 @@ void main() {
     await VideoModule.markSourceSuccess(source);
 
     final record = VideoModule.getVisibilityRecord(source);
-    expect(record!.failCount, 0);
+    expect(record.failCount, 0);
     expect(record.autoHidden, isFalse);
     expect(VideoModule.visibleSourcesOf([source]).length, 1);
   });

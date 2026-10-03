@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:flutter/services.dart';
@@ -9,6 +11,7 @@ import 'features/about/domain/legal_consent_store.dart';
 import 'features/about/presentation/legal_consent_gate.dart';
 import 'features/account/data/account_store.dart';
 import 'features/policy/plugin_policy.dart';
+import 'video/services/line_reachability_store.dart';
 
 void main() {
   // Step 0: 尽早加载登录态，这样 AppDrawer 打开时无需等待
@@ -21,6 +24,10 @@ void main() {
   PluginPolicyStore.instance.ensureLoaded().then((_) {
     PluginPolicyStore.instance.refresh();
   });
+
+  // ② 预热「线路最近取不到流」的本地记忆：详情页默认选线要用它，
+  // 但详情页自己**不能 await** 它（存储慢一步就会卡在 loading）。
+  unawaited(LineReachabilityStore.ensureLoaded());
 
   // 注册全局错误处理：调试模式上报到控制台，不再静默吞掉 AssertionError。
   FlutterError.onError = (details) {
