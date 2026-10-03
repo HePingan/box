@@ -8,8 +8,10 @@
 
 import 'package:flutter/material.dart';
 
+import 'package:box/features/api_hub/presentation/api_hub_page.dart';
+import 'package:box/features/local_tools/presentation/local_tools_registry.dart';
+
 import 'package:box/features/extensions/core/home_plugin_core.dart';
-import 'package:box/features/extensions/plugins/plugin_toolbox.dart';
 import 'package:box/features/extensions/plugins/monitor/monitor_page.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_page.dart';
 import 'package:box/features/image_generator/presentation/image_generator_page.dart';
@@ -56,7 +58,12 @@ List<HomePlugin> buildDefaultPlugins() {
       builtIn: true,
       sort: 15,
       onTap: (context) async {
-        await PluginToolbox.showJsonFormatter(context);
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const LocalToolPage(localId: 'json'),
+          ),
+        );
       },
     ),
     HomePlugin(
@@ -69,7 +76,12 @@ List<HomePlugin> buildDefaultPlugins() {
       builtIn: true,
       sort: 20,
       onTap: (context) async {
-        await PluginToolbox.showBase64Tool(context);
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const LocalToolPage(localId: 'base64'),
+          ),
+        );
       },
     ),
     HomePlugin(
@@ -82,7 +94,12 @@ List<HomePlugin> buildDefaultPlugins() {
       builtIn: true,
       sort: 25,
       onTap: (context) async {
-        await PluginToolbox.showPasswordGenerator(context);
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const LocalToolPage(localId: 'password_gen'),
+          ),
+        );
       },
     ),
     HomePlugin(
@@ -95,7 +112,12 @@ List<HomePlugin> buildDefaultPlugins() {
       builtIn: true,
       sort: 30,
       onTap: (context) async {
-        await PluginToolbox.showTimestampConverter(context);
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const LocalToolPage(localId: 'timestamp'),
+          ),
+        );
       },
     ),
     HomePlugin(
@@ -108,7 +130,12 @@ List<HomePlugin> buildDefaultPlugins() {
       builtIn: true,
       sort: 35,
       onTap: (context) async {
-        await PluginToolbox.showUrlCodec(context);
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const LocalToolPage(localId: 'urlcodec'),
+          ),
+        );
       },
     ),
     HomePlugin(
@@ -121,7 +148,12 @@ List<HomePlugin> buildDefaultPlugins() {
       builtIn: true,
       sort: 40,
       onTap: (context) async {
-        await PluginToolbox.showQrCodeGenerator(context);
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const ApiHubPage(initialTool: 'qr'),
+          ),
+        );
       },
     ),
     HomePlugin(
@@ -140,9 +172,9 @@ List<HomePlugin> buildDefaultPlugins() {
           highRisk: false,
         );
         if (denial != null && context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(denial)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(denial)));
           return;
         }
         if (!context.mounted) return;
@@ -168,9 +200,9 @@ List<HomePlugin> buildDefaultPlugins() {
           highRisk: false,
         );
         if (denial != null && context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(denial)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(denial)));
           return;
         }
         if (!context.mounted) return;
@@ -195,9 +227,9 @@ List<HomePlugin> buildDefaultPlugins() {
           highRisk: false,
         );
         if (denial != null && context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(denial)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(denial)));
           // 仍打开配置页，但开关会被禁用
         }
         if (!context.mounted) return;
@@ -251,9 +283,7 @@ List<HomePlugin> buildDefaultPlugins() {
       onTap: (context) async {
         await Navigator.push(
           context,
-          MaterialPageRoute(
-            builder: (_) => const NovelListPageWithProvider(),
-          ),
+          MaterialPageRoute(builder: (_) => const NovelListPageWithProvider()),
         );
       },
     ),

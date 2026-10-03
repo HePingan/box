@@ -26,7 +26,13 @@ class _CustomSiteSectionState extends State<CustomSiteSection> {
   late final CustomSiteStore _store = widget.store ?? CustomSiteStore();
   List<CustomSite> _sites = const <CustomSite>[];
   bool _loading = true;
-  bool _expanded = true;
+
+  /// 默认收成一行。
+  ///
+  /// 改前默认展开：有 5 条收藏时，这一块在首屏就占掉 5 行 —— 而工具页的
+  /// 主角是上面那 66 个工具。收起后仍是一行标题（带「N 个网站」计数），
+  /// 展开态、添加、导入导出、删除全部照旧，只是不再默认铺开。
+  bool _expanded = false;
 
   @override
   void initState() {
@@ -269,7 +275,9 @@ class _CustomSiteSectionState extends State<CustomSiteSection> {
                 ),
               ),
             ),
-            if (_expanded && !_loading) ...[
+            // 空库时无论折叠与否都给引导：新用户看到一行标题 + 一个「＋」，
+            // 不点开根本不知道这功能能存网址。
+            if (!_loading && (_expanded || _sites.isEmpty)) ...[
               if (_sites.isEmpty)
                 const Padding(
                   padding: EdgeInsets.fromLTRB(12, 0, 12, 12),

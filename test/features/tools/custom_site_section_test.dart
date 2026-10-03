@@ -26,6 +26,13 @@ void main() {
 
   tearDown(CustomSiteStore.resetHooksForTest);
 
+  /// 「我的收藏」默认收成一行（工具页的主角是上面那些工具），
+  /// 要看列表先点标题展开 —— 真机上用户也是这一下。
+  Future<void> expandSection(WidgetTester tester) async {
+    await tester.tap(find.text('我的收藏'));
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('空库时给出引导文案，不是空白区块', (tester) async {
     await tester.pumpWidget(_host());
     await tester.pumpAndSettle();
@@ -51,6 +58,7 @@ void main() {
     );
     await tester.tap(find.widgetWithText(FilledButton, '保存'));
     await tester.pumpAndSettle();
+    await expandSection(tester);
 
     expect(find.text('在线PS'), findsOneWidget);
     // 规范化后的地址要显示出来，用户才看得出自己存了什么。
@@ -83,6 +91,7 @@ void main() {
 
     await tester.pumpWidget(_host());
     await tester.pumpAndSettle();
+    await expandSection(tester);
     expect(find.text('示例站'), findsOneWidget);
 
     await tester.tap(find.byTooltip('删除'));
@@ -99,6 +108,21 @@ void main() {
     await tester.tap(find.widgetWithText(TextButton, '删除'));
     await tester.pumpAndSettle();
     expect(find.text('示例站'), findsNothing);
+  });
+
+  testWidgets('默认收成一行：不点开就不铺开列表', (tester) async {
+    await CustomSiteStore().add(title: '示例站', url: 'example.com');
+
+    await tester.pumpWidget(_host());
+    await tester.pumpAndSettle();
+
+    // 标题行（含计数）在，条目不在 —— 工具页首屏要留给工具本身。
+    expect(find.text('我的收藏'), findsOneWidget);
+    expect(find.text('1 个网站'), findsOneWidget);
+    expect(find.text('示例站'), findsNothing);
+
+    await expandSection(tester);
+    expect(find.text('示例站'), findsOneWidget);
   });
 
   testWidgets('计数随条目数更新', (tester) async {

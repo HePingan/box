@@ -195,7 +195,7 @@ void main() {
     test('派发代码里不再有硬编码站点地址与无条件 fallback', () {
       final src = _stripLineComments(
         File(
-          'lib/features/tools/presentation/widgets/tool_widgets.dart',
+          'lib/features/tools/presentation/widgets/available_tool_grid.dart',
         ).readAsStringSync(),
       );
 
@@ -231,9 +231,9 @@ void main() {
   });
 
   group('行尾统一', () {
-    test('tool_widgets.dart 与邻居一致使用 LF', () {
+    test('available_tool_grid.dart 与邻居一致使用 LF', () {
       final raw = File(
-        'lib/features/tools/presentation/widgets/tool_widgets.dart',
+        'lib/features/tools/presentation/widgets/available_tool_grid.dart',
       ).readAsStringSync();
       expect(
         raw.contains('\r\n'),

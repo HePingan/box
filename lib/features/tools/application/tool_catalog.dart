@@ -134,7 +134,7 @@ const Map<String, ToolTarget> kToolTargets = {
   // 某聚合站 oick 全系 → 返回「缺少 apikey」，非免密钥；
   // 境外 IP 归属站 ip-api → 国内直连 3/3 失败；60s 的成语/日报两个子路径 → 404。
 
-    // —— 拉源码（服务端第一手文本，不做渲染）——
+  // —— 拉源码（服务端第一手文本，不做渲染）——
   '网页源码获取': SourceFetchToolTarget(),
 
   // —— 内置 WebView ——
@@ -239,27 +239,18 @@ List<ToolEntry> allToolEntries() {
 List<ToolEntry> availableToolEntries() =>
     allToolEntries().where((e) => e.available).toList();
 
-/// 未接线条目，仍按原分类分组；空分类会被丢掉。
+/// 目录里**没接线**的条目名（按目录顺序）。
 ///
-/// 折叠区用这份：可用能力已经平铺在上面了，这里只留「计划中」的占位条目，
-/// 避免同一个工具在两个区各出现一次。
-List<ToolCategory> plannedToolCategories() {
-  final planned = <ToolCategory>[];
-  for (final category in createDefaultToolCategories()) {
-    final rest = category.tools.where((t) => !isToolAvailable(t)).toList();
-    if (rest.isEmpty) continue;
-    planned.add(
-      ToolCategory(
-        title: category.title,
-        subtitle: category.subtitle,
-        icon: category.icon,
-        iconBgColor: category.iconBgColor,
-        tools: rest,
-      ),
-    );
-  }
-  return planned;
-}
+/// 之前这里有个 `plannedToolCategories()`，把这份名单渲染成工具页上默认折叠的
+/// 「计划中」区，56 条点进去只弹一句「还没做，先别点了」。2026-10-03 撤掉：
+/// 那是把内部的待办公开成给用户的承诺（而且里面有做不了的条目），
+/// 每个条目都是一次失望点击，还把 66 个真能用的工具往下挤了一屏。
+///
+/// 名单本身**保留在目录里**（[createDefaultToolCategories]）：它给已接线条目提供
+/// 分类归属，也是后续接线的落点。只是不再往界面上渲染。
+/// 「想要什么工具」这条路改走设置页的一句反馈入口，不再靠一张假卡片。
+List<String> unwiredToolNames() =>
+    allToolEntries().where((e) => !e.available).map((e) => e.name).toList();
 
 List<ToolCategory> createDefaultToolCategories() {
   return [
@@ -448,7 +439,16 @@ List<ToolCategory> createDefaultToolCategories() {
       subtitle: '更多好玩的应用',
       icon: Icons.grid_view,
       iconBgColor: Colors.blueGrey,
-      tools: ['摩斯密码', '二维码生成', '条形码扫描', 'LED字幕', '随机数生成', '手持弹幕', '全屏时钟', '必应壁纸'],
+      tools: [
+        '摩斯密码',
+        '二维码生成',
+        '条形码扫描',
+        'LED字幕',
+        '随机数生成',
+        '手持弹幕',
+        '全屏时钟',
+        '必应壁纸',
+      ],
     ),
     ToolCategory(
       title: '趣味游戏',
