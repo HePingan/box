@@ -3276,7 +3276,10 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
       // await 之后组件可能已经被 dispose（用户切走页面），必须先查 mounted。
       if (!mounted) return;
       if (!ok) {
-        setState(() => _err = '没拿到麦克风权限。到系统设置里给「盒子」开一下录音权限。');
+        setState(
+          () => _err = '没拿到麦克风权限。到系统设置 → 应用 → 找到本应用'
+              '（列表里显示的名字是 box）→ 权限，允许使用麦克风。',
+        );
         return;
       }
       // 真起一个录音会话才拿得到 amplitude；但路径必须是**真实文件路径**

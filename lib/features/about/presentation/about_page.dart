@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../../app/app_routes.dart';
+import '../../../config/app_config.dart';
 import '../../../design_system/app_tokens.dart';
 import '../../../design_system/settings_list.dart';
 import '../data/about_content.dart';
+import '../data/legal_documents.dart';
 
 /// 关于页。
 ///
@@ -32,6 +35,11 @@ class _AboutPageState extends State<AboutPage> {
   String? _version;
   bool _versionFailed = false;
 
+  /// 真实包名（`top.hpa888.box`）。「更新来源与校验」里要显示它 ——
+  /// 用户核对安装包时，包名比版本号更能说明「装的是不是这个应用」。
+  /// 取不到就显示 `—`，不猜。
+  String? _packageName;
+
   @override
   void initState() {
     super.initState();
@@ -46,7 +54,10 @@ class _AboutPageState extends State<AboutPage> {
     try {
       final info = await PackageInfo.fromPlatform();
       if (!mounted) return;
-      setState(() => _version = '${info.version}+${info.buildNumber}');
+      setState(() {
+        _version = '${info.version}+${info.buildNumber}';
+        _packageName = info.packageName;
+      });
     } catch (_) {
       // 不静默：显示"获取失败"，否则报障时分不清"没显示"和"没读到"。
       if (!mounted) return;
@@ -97,6 +108,12 @@ class _AboutPageState extends State<AboutPage> {
                 onTap: () =>
                     Navigator.of(context).pushNamed(AppRoutes.updateHistory),
               ),
+              SettingsTile(
+                icon: Icons.verified_user_outlined,
+                title: '更新来源与校验',
+                subtitle: '更新从哪来、安装包怎么验',
+                onTap: () => _showUpdateSource(context),
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -107,8 +124,9 @@ class _AboutPageState extends State<AboutPage> {
                 icon: Icons.apps_rounded,
                 title: '软件介绍',
                 subtitle: '这个应用能做什么',
-                onTap: () => Navigator.of(context)
-                    .pushNamed(AppRoutes.aboutIntroduction),
+                onTap: () => Navigator.of(
+                  context,
+                ).pushNamed(AppRoutes.aboutIntroduction),
               ),
               SettingsTile(
                 icon: Icons.menu_book_rounded,
@@ -128,7 +146,38 @@ class _AboutPageState extends State<AboutPage> {
                 icon: Icons.bug_report_outlined,
                 title: '调试日志',
                 subtitle: '出问题时复制日志发给开发者',
-                onTap: () => Navigator.of(context).pushNamed(AppRoutes.debugLog),
+                onTap: () =>
+                    Navigator.of(context).pushNamed(AppRoutes.debugLog),
+              ),
+              SettingsTile(
+                icon: Icons.workspace_premium_outlined,
+                title: '开源许可与致谢',
+                subtitle: AboutContent.licenseNote,
+                onTap: () => _showLicenses(context),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SettingsSection(
+            title: '反馈与联系',
+            children: [
+              SettingsTile(
+                icon: Icons.feedback_outlined,
+                title: '问题反馈',
+                subtitle: '在 GitHub Issues 上报问题、提建议（点击复制地址）',
+                onTap: () => _copy(context, AboutContent.issuesUrl, '反馈地址已复制'),
+              ),
+              SettingsTile(
+                icon: Icons.code_rounded,
+                title: '项目源码',
+                subtitle: 'GitHub 仓库（点击复制地址）',
+                onTap: () => _copy(context, AboutContent.repoUrl, '仓库地址已复制'),
+              ),
+              SettingsTile(
+                icon: Icons.mail_outline_rounded,
+                title: '联系邮箱',
+                subtitle: '$kLegalContact（点击复制）',
+                onTap: () => _copy(context, kLegalContact, '邮箱已复制'),
               ),
             ],
           ),
@@ -140,19 +189,36 @@ class _AboutPageState extends State<AboutPage> {
                 icon: Icons.description_outlined,
                 title: '用户协议',
                 subtitle: '你已同意的使用条款',
-                onTap: () => Navigator.of(context)
-                    .pushNamed(AppRoutes.legalUserAgreement),
+                onTap: () => Navigator.of(
+                  context,
+                ).pushNamed(AppRoutes.legalUserAgreement),
               ),
               SettingsTile(
                 icon: Icons.privacy_tip_outlined,
                 title: '隐私政策',
                 subtitle: '应用如何处理你的数据',
-                onTap: () => Navigator.of(context)
-                    .pushNamed(AppRoutes.legalPrivacyPolicy),
+                onTap: () => Navigator.of(
+                  context,
+                ).pushNamed(AppRoutes.legalPrivacyPolicy),
               ),
             ],
           ),
           const SizedBox(height: 20),
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
+                AboutContent.localDataNote,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.6,
+                  color: AppTokens.textTertiary,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
           const Center(
             child: Text(
               AboutContent.disclaimerShort,
@@ -165,6 +231,109 @@ class _AboutPageState extends State<AboutPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 复制并**明确反馈**：静默复制等于没做，用户不知道成不成。
+  void _copy(BuildContext context, String text, String message) {
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+    );
+  }
+
+  /// 更新来源与校验。
+  ///
+  /// 每一项都**从 [AppConfig] 现取**，不手抄常量 —— 通道、域名、算法改了，
+  /// 这张表跟着改；手抄的说明迟早会变成一处没人维护的过期承诺。
+  Future<void> _showUpdateSource(BuildContext context) async {
+    final algorithm = AppConfig.updateSignatureAlgorithm
+        .replaceAll('_', '-')
+        .toUpperCase();
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('更新来源与校验'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _sourceRow('更新通道', AppConfig.appChannel),
+              _sourceRow('检查地址', AppConfig.updateCheckUrl),
+              _sourceRow('下载域名', AppConfig.updateDownloadAllowedHosts),
+              _sourceRow('清单校验', '$algorithm 签名 + SHA-256 完整性'),
+              _sourceRow('安装包名', _packageName ?? '—'),
+              _sourceRow('当前版本', _versionText),
+              const SizedBox(height: 12),
+              const Text(
+                '应用只从上面的域名下载更新；清单签名或 SHA-256 校验不通过时'
+                '不会安装 —— 宁可不更新，也不装来源不明的安装包。',
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.6,
+                  color: AppTokens.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sourceRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 68,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12.5,
+                color: AppTokens.textSecondary,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 12.5,
+                height: 1.5,
+                color: AppTokens.textPrimary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 开源许可与致谢：用 Flutter 自带的 [showLicensePage]，它自动汇总 Flutter
+  /// 与全部依赖（含间接依赖）的许可 —— 手工维护一张清单必然会过期。
+  void _showLicenses(BuildContext context) {
+    showLicensePage(
+      context: context,
+      applicationName: AboutContent.appName,
+      applicationVersion: _version,
+      applicationIcon: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Icon(
+          Icons.all_inbox_rounded,
+          size: 40,
+          color: AppTokens.blueGradient.colors.first,
+        ),
       ),
     );
   }
@@ -200,10 +369,7 @@ class _AboutPageState extends State<AboutPage> {
           const SizedBox(height: 4),
           const Text(
             AboutContent.tagline,
-            style: TextStyle(
-              fontSize: 12,
-              color: AppTokens.textSecondary,
-            ),
+            style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
           ),
         ],
       ),

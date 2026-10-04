@@ -46,7 +46,9 @@ class AboutContent {
   const AboutContent._();
 
   static const String appName = 'Geek工具箱 Pro';
-  static const String tagline = '智能工具集，为极客而生。';
+  /// 头部一句话。刻意是实话而不是口号 —— 本文件顶部的写作纪律写明
+  /// 「不写宣传语」，「为极客而生」那种话与同一页页脚的实话风格也不搭。
+  static const String tagline = '影视、小说、题库与本地工具，都在同一个应用里。';
   static const String repoUrl = 'https://github.com/HePingan/box';
   static const String issuesUrl = 'https://github.com/HePingan/box/issues';
 
@@ -55,6 +57,19 @@ class AboutContent {
   static const String disclaimerShort =
       '本应用为个人开发的工具集，不内置任何内容资源。\n'
       '内容源由用户自行添加，其合法性由来源方与使用者负责。';
+
+  /// 关于页页脚的「数据在哪」一句话。
+  ///
+  /// 必须与隐私政策第三条一致：政策里写明「本地数据默认不上传」，但**同时**
+  /// 有例外（云同步、OCR 需要账号的功能，用户主动开启才上传）。所以这里不能
+  /// 图省事写成「绝不上传」—— 那会与政策自相矛盾。
+  static const String localDataNote =
+      '本地数据默认只存在这台设备上；云同步、OCR 等需要账号的功能，'
+      '只有你主动开启时才会上传。';
+
+  /// 「开源许可与致谢」入口的副标题（说明界面素材的实际来源）。
+  static const String licenseNote =
+      '界面使用系统默认中文字体，图标为 Flutter 内置的 Material Icons';
 
   // ─── 软件介绍 ───
 

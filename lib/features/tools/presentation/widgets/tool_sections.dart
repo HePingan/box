@@ -424,7 +424,7 @@ class ToolRequestRow extends StatelessWidget {
                   ),
                   SizedBox(height: 2),
                   Text(
-                    '在「关于 → 反馈」里说 —— 这里只列已经能用的',
+                    '在「关于 → 反馈与联系」里说 —— 这里只列已经能用的',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,

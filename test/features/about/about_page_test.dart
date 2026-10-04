@@ -1,3 +1,4 @@
+import 'package:box/config/app_config.dart';
 import 'package:box/features/about/data/about_content.dart';
 import 'package:box/features/about/presentation/about_page.dart';
 import 'package:flutter/material.dart';
@@ -18,14 +19,14 @@ void main() {
   /// 下半部分（法律条款、页脚）不滚动就 findsNothing —— 那是懒加载而不是缺失。
   /// 把视口调高，让整页一次性构建出来。
   Future<void> pumpTall(WidgetTester tester, Widget app) async {
-    tester.view.physicalSize = const Size(1200, 3600);
+    tester.view.physicalSize = const Size(1200, 4600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(app);
     await tester.pumpAndSettle();
   }
 
-  testWidgets('需求要求的七个入口都在', (tester) async {
+  testWidgets('入口都在（原七项 + 本轮新增五项）', (tester) async {
     await pumpTall(tester, host());
 
     for (final label in [
@@ -37,6 +38,11 @@ void main() {
       '推荐教程',
       '用户协议',
       '隐私政策',
+      '更新来源与校验',
+      '开源许可与致谢',
+      '问题反馈',
+      '项目源码',
+      '联系邮箱',
     ]) {
       expect(
         find.text(label),
@@ -93,5 +99,60 @@ void main() {
         reason: '页脚出现兜不住的措辞：$banned',
       );
     }
+  });
+
+  testWidgets('「更新来源与校验」弹窗里的数字来自真源，不是手抄', (tester) async {
+    await pumpTall(tester, host());
+    await tester.tap(find.text('更新来源与校验'));
+    await tester.pumpAndSettle();
+
+    // 弹窗里必须能看到现取的检查地址与下载域名（同一配置源）
+    expect(find.text(AppConfig.updateCheckUrl), findsOneWidget);
+    expect(find.text(AppConfig.updateDownloadAllowedHosts), findsOneWidget);
+    // 签名算法显示成人能读的写法
+    expect(find.textContaining('HMAC-SHA256 签名'), findsOneWidget);
+    // 测试环境读不到 PackageInfo → 包名行显示 `—`，不猜也不空白
+    expect(find.text('—'), findsOneWidget);
+    expect(find.text('知道了'), findsOneWidget);
+  });
+
+  testWidgets('「问题反馈」点击复制地址并给明确反馈', (tester) async {
+    final copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+
+    await pumpTall(tester, host());
+    await tester.tap(find.text('问题反馈'));
+    await tester.pumpAndSettle();
+
+    expect(copied, [AboutContent.issuesUrl]);
+    expect(find.text('反馈地址已复制'), findsOneWidget);
+  });
+
+  testWidgets('「开源许可与致谢」能进到真正的许可页', (tester) async {
+    await pumpTall(tester, host());
+    await tester.tap(find.text('开源许可与致谢'));
+    await tester.pumpAndSettle();
+
+    // showLicensePage 的页面（Flutter 自带），标题带应用名
+    expect(find.byType(LicensePage), findsOneWidget);
+    expect(find.textContaining(AboutContent.appName), findsWidgets);
+  });
+
+  testWidgets('页脚写明数据在哪（且与隐私政策例外口径一致）', (tester) async {
+    await pumpTall(tester, host());
+    expect(find.text(AboutContent.localDataNote), findsOneWidget);
+    expect(find.textContaining('只存在这台设备上'), findsOneWidget);
   });
 }

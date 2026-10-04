@@ -1,6 +1,8 @@
 import 'dart:io';
 
+import 'package:box/config/app_config.dart';
 import 'package:box/features/about/data/about_content.dart';
+import 'package:box/features/about/data/legal_documents.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// 关于页文案必须与真实代码一致。
@@ -157,6 +159,118 @@ void main() {
         readLib('app_drawer.dart').contains('github.com/HePingan/box/issues'),
         isTrue,
       );
+    });
+  });
+
+  group('反馈与联系 / 更新来源 / 数据说明（本轮新增）', () {
+    test('关于页的「反馈与联系」三条入口名真实存在，且复用同一处真相', () {
+      final page = readLib('features/about/presentation/about_page.dart');
+      for (final label in ['问题反馈', '项目源码', '联系邮箱']) {
+        expect(
+          page.contains("title: '$label'"),
+          isTrue,
+          reason: '关于页缺少「$label」入口',
+        );
+      }
+      expect(
+        page.contains('kLegalContact'),
+        isTrue,
+        reason: '联系邮箱要复用 legal_documents.dart 里的 kLegalContact，不要另写一个',
+      );
+      expect(kLegalContact.contains('@'), isTrue);
+      // 抽屉里的反馈地址与关于页用的是同一个常量
+      expect(readLib('app_drawer.dart').contains(AboutContent.issuesUrl), isTrue);
+    });
+
+    test('工具页那句「关于 → 反馈与联系」指的地方真的存在', () {
+      final sections =
+          readLib('features/tools/presentation/widgets/tool_sections.dart');
+      expect(
+        sections.contains('关于 → 反馈与联系'),
+        isTrue,
+        reason: '工具页文案该指向真实入口名',
+      );
+      expect(
+        readLib('features/about/presentation/about_page.dart')
+            .contains("title: '反馈与联系'"),
+        isTrue,
+        reason: '文案把用户指到「关于 → 反馈与联系」，关于页就必须真有这一组'
+            '（上一版就是因为关于页没有这条，文案成了空头支票）',
+      );
+    });
+
+    test('更新来源表的数字现取 AppConfig，不手抄', () {
+      final page = readLib('features/about/presentation/about_page.dart');
+      for (final source in [
+        'AppConfig.updateCheckUrl',
+        'AppConfig.updateDownloadAllowedHosts',
+        'AppConfig.updateSignatureAlgorithm',
+        'AppConfig.appChannel',
+      ]) {
+        expect(
+          page.contains(source),
+          isTrue,
+          reason: '更新来源表要现取 $source，改了配置它跟着变',
+        );
+      }
+      // 检查地址与允许下载的域名必须同源，否则这张表自相矛盾
+      final checkHost = Uri.parse(AppConfig.updateCheckUrl).host;
+      expect(checkHost, 'box.hpa888.top');
+      expect(
+        AppConfig.updateDownloadAllowedHosts.split(','),
+        contains(checkHost),
+        reason: '清单说允许下载的域名里必须包含检查地址所在的域名',
+      );
+      // 验签失败不放行：文案里那句「校验不通过不会安装」必须与配置一致
+      expect(
+        AppConfig.allowProceedOnCheckFailure,
+        isFalse,
+        reason: '文案承诺了「校验不通过不会安装」，配置就不能是放行',
+      );
+    });
+
+    test('权限文案里的应用显示名与 AndroidManifest 的 android:label 一致', () {
+      final manifest =
+          File('android/app/src/main/AndroidManifest.xml').readAsStringSync();
+      final label = RegExp(r'android:label="([^"]+)"')
+          .firstMatch(manifest)!
+          .group(1)!;
+      final panels =
+          readLib('features/local_tools/presentation/local_tool_panels.dart');
+      expect(
+        panels.contains('显示的名字是 $label'),
+        isTrue,
+        reason: '系统设置里显示的名字就是 AndroidManifest 的 android:label'
+            '（当前 "$label"）；文案必须跟着它，否则用户按名字找不到本应用',
+      );
+    });
+
+    test('头部与页脚不写口号', () {
+      for (final banned in ['为极客而生', '最好用', '永久免费', '万能']) {
+        expect(
+          AboutContent.tagline.contains(banned),
+          isFalse,
+          reason: '关于页头部不是广告位',
+        );
+        expect(AboutContent.disclaimerShort.contains(banned), isFalse);
+        expect(AboutContent.localDataNote.contains(banned), isFalse);
+      }
+    });
+
+    test('数据说明带上隐私政策里的例外，不写成「绝不上传」', () {
+      final privacy =
+          File('lib/features/about/data/legal_documents.dart').readAsStringSync();
+      expect(
+        privacy.contains('云同步'),
+        isTrue,
+        reason: '隐私政策里确实有「用户主动开启才上传」的例外',
+      );
+      expect(
+        AboutContent.localDataNote.contains('云同步'),
+        isTrue,
+        reason: '页脚那句必须带上例外，否则与隐私政策自相矛盾',
+      );
+      expect(AboutContent.localDataNote.contains('绝不上传'), isFalse);
     });
   });
 }
