@@ -1,9 +1,12 @@
 import 'package:box/config/app_config.dart';
 import 'package:box/features/about/data/about_content.dart';
+import 'package:box/features/about/data/permission_notes.dart';
 import 'package:box/features/about/presentation/about_page.dart';
+import 'package:box/features/about/presentation/app_permissions_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// 关于页结构回归。
 ///
@@ -14,6 +17,9 @@ void main() {
   Widget host({String? version}) => MaterialApp(
         home: AboutPage(versionOverride: version ?? '9.9.9+999'),
       );
+
+  // 每个用例都从「没有上次检查记录」开始：关于页会读它来拼副标题。
+  setUp(() => SharedPreferences.setMockInitialValues({}));
 
   /// 关于页比测试默认视口（800x600）高，ListView 只构建可见区域，
   /// 下半部分（法律条款、页脚）不滚动就 findsNothing —— 那是懒加载而不是缺失。
@@ -43,6 +49,8 @@ void main() {
       '问题反馈',
       '项目源码',
       '联系邮箱',
+      '权限说明',
+      '应用自检',
     ]) {
       expect(
         find.text(label),
@@ -154,5 +162,90 @@ void main() {
     await pumpTall(tester, host());
     expect(find.text(AboutContent.localDataNote), findsOneWidget);
     expect(find.textContaining('只存在这台设备上'), findsOneWidget);
+  });
+
+  testWidgets('副标题摊开上次检查的时间与结论（有记录时）', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'update_last_check_v1':
+          '{"at":"${DateTime.now().subtract(const Duration(minutes: 3)).toIso8601String()}",'
+          '"status":"upToDate"}',
+    });
+    await pumpTall(tester, host());
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('上次检查'), findsOneWidget);
+    expect(find.textContaining('3 分钟前'), findsOneWidget);
+    expect(find.textContaining('已是最新版本'), findsOneWidget);
+  });
+
+  testWidgets('没有检查记录时显示原来的说明句，不写占位', (tester) async {
+    await pumpTall(tester, host());
+    expect(find.text('从官方更新服务器获取最新版本'), findsOneWidget);
+    expect(find.textContaining('上次检查'), findsNothing);
+  });
+
+  testWidgets('调试日志挪进了「反馈与联系」（它是报障工具，不是说明书）', (tester) async {
+    await pumpTall(tester, host());
+
+    double y(String text) => tester.getTopLeft(find.text(text)).dy;
+
+    expect(y('帮助与说明') < y('调试日志'), isTrue);
+    expect(
+      y('反馈与联系') < y('调试日志'),
+      isTrue,
+      reason: '调试日志应该在「反馈与联系」组里',
+    );
+    expect(
+      y('调试日志') < y('法律条款'),
+      isTrue,
+      reason: '但仍在法律条款之前',
+    );
+    // 报障三件套在同一组里：反馈入口、日志、自检
+    expect(y('问题反馈') < y('调试日志'), isTrue);
+    expect(y('调试日志') < y('应用自检'), isTrue);
+  });
+
+  testWidgets('页脚的「数据在哪」可点，弹出明细并能跳隐私政策', (tester) async {
+    await pumpTall(tester, host());
+    await tester.tap(find.text('点击看：数据都在哪 · 怎么清'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('你的数据都在哪'), findsOneWidget);
+    expect(find.text('书架 · 阅读进度 · 书源'), findsOneWidget);
+    expect(find.textContaining('不参与系统的备份与换机迁移'), findsOneWidget);
+    expect(find.text('看《隐私政策》'), findsOneWidget);
+
+    // 只断言弹窗能关；不点「看《隐私政策》」——那是跨路由跳转，本测试的宿主
+    // 没挂应用的路由表（挂上去等于在关于页的用例里测路由表）。
+    await tester.tap(find.text('知道了'));
+    await tester.pumpAndSettle();
+    expect(find.text('你的数据都在哪'), findsNothing, reason: '弹窗应关闭');
+  });
+
+  testWidgets('权限说明页：13 条都在，每条四行齐、含系统原文名', (tester) async {
+    tester.view.physicalSize = const Size(1200, 5200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(const MaterialApp(home: AppPermissionsPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('13 项权限与系统能力'), findsOneWidget);
+    for (final note in kPermissionNotes) {
+      expect(
+        find.text(note.title),
+        findsOneWidget,
+        reason: '权限说明页缺少「${note.title}」',
+      );
+      // 系统里显示的是清单名，必须一起列出来，用户才对得上号
+      expect(find.text(note.manifestName), findsOneWidget);
+    }
+    for (final label in ['用来做什么', '什么时候用到', '不给会怎样', '怎么关掉']) {
+      expect(
+        find.text(label),
+        findsNWidgets(kPermissionNotes.length),
+        reason: '「$label」应当每条都有',
+      );
+    }
+    expect(find.textContaining('卸载应用即全部收回'), findsOneWidget);
   });
 }

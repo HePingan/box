@@ -13,6 +13,7 @@ import '../pages/debug_log_page.dart';
 import '../features/about/data/legal_documents.dart';
 import '../features/about/presentation/about_content_page.dart';
 import '../features/about/presentation/about_page.dart';
+import '../features/about/presentation/app_permissions_page.dart';
 import '../features/about/presentation/legal_document_page.dart';
 import '../features/about/presentation/update_check_page.dart';
 import '../features/about/presentation/update_history_page.dart';
@@ -47,6 +48,7 @@ class AppRoutes {
   static const aboutIntroduction = '/about/introduction';
   static const aboutGuide = '/about/guide';
   static const aboutTutorial = '/about/tutorial';
+  static const aboutPermissions = '/about/permissions';
   static const updateCheck = '/about/update-check';
   static const updateHistory = '/about/update-history';
 
@@ -71,6 +73,7 @@ class AppRoutes {
       aboutIntroduction: (_) => AboutContentPage.introduction(),
       aboutGuide: (_) => AboutContentPage.usageDocs(),
       aboutTutorial: (_) => const AboutTutorialPage(),
+      aboutPermissions: (_) => const AppPermissionsPage(),
       updateCheck: (_) => const UpdateCheckPage(),
       updateHistory: (_) => const UpdateHistoryPage(),
       legalUserAgreement: (_) => const LegalDocumentPage(

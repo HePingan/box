@@ -59,27 +59,49 @@ class UpdateCheckOutcome {
       status != UpdateCheckStatus.updateAvailable &&
       status != UpdateCheckStatus.upToDate;
 
-  String describe() {
-    final d = detail?.trim() ?? '';
-    final suffix = d.isEmpty ? '' : '（$d）';
+  String describe() => describeUpdateCheckStatus(
+        status,
+        latestVersionCode: manifest?.latestVersionCode,
+        latestVersionName: manifest?.latestVersionName,
+        detail: detail,
+      );
+}
 
-    switch (status) {
-      case UpdateCheckStatus.updateAvailable:
-        final m = manifest;
-        final name = m == null
-            ? ''
-            : '${m.latestVersionName} (${m.latestVersionCode})';
-        return '发现新版本 $name';
-      case UpdateCheckStatus.upToDate:
-        return '已是最新版本';
-      case UpdateCheckStatus.networkError:
-        return '网络请求失败，请稍后重试$suffix';
-      case UpdateCheckStatus.signatureRejected:
-        return '更新清单签名校验未通过$suffix';
-      case UpdateCheckStatus.badResponse:
-        return '服务端返回格式异常$suffix';
-      case UpdateCheckStatus.notConfigured:
-        return '未配置更新检查地址$suffix';
-    }
+/// 把一次更新检查的结论说成人话。
+///
+/// 抽成顶层函数是因为**关于页的「上次检查」**要显示同一件事，而那时 outcome
+/// 对象早已不存在（只剩落盘的 status / detail）。两处各写一套 switch，措辞迟早
+/// 不一致 —— 用户会在两个位置看到对同一次检查的不同描述。
+///
+/// 只吃版本号的**两个字段**而不是整个 manifest：落盘记录里不会存完整清单，
+/// 硬塞一个「字段残缺的 manifest」会让调用方以为拿到的是真清单。
+String describeUpdateCheckStatus(
+  UpdateCheckStatus status, {
+  int? latestVersionCode,
+  String? latestVersionName,
+  String? detail,
+}) {
+  final d = detail?.trim() ?? '';
+  final suffix = d.isEmpty ? '' : '（$d）';
+
+  switch (status) {
+    case UpdateCheckStatus.updateAvailable:
+      final parts = <String>[
+        if (latestVersionName != null && latestVersionName.isNotEmpty)
+          latestVersionName,
+        if (latestVersionCode != null) '($latestVersionCode)',
+      ];
+      final label = parts.join(' ');
+      return label.isEmpty ? '发现新版本' : '发现新版本 $label';
+    case UpdateCheckStatus.upToDate:
+      return '已是最新版本';
+    case UpdateCheckStatus.networkError:
+      return '网络请求失败，请稍后重试$suffix';
+    case UpdateCheckStatus.signatureRejected:
+      return '更新清单签名校验未通过$suffix';
+    case UpdateCheckStatus.badResponse:
+      return '服务端返回格式异常$suffix';
+    case UpdateCheckStatus.notConfigured:
+      return '未配置更新检查地址$suffix';
   }
 }

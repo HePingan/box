@@ -23,9 +23,12 @@ void main() {
       AppRoutes.aboutIntroduction,
       AppRoutes.aboutGuide,
       AppRoutes.aboutTutorial,
+      AppRoutes.aboutPermissions,
       AppRoutes.legalUserAgreement,
       AppRoutes.legalPrivacyPolicy,
       AppRoutes.debugLog,
+      // 「应用自检」从关于页也能进（原来只藏在 设置 → 诊断）
+      AppRoutes.selfCheck,
     ];
 
     for (final name in used) {
@@ -50,6 +53,7 @@ void main() {
       AppRoutes.aboutIntroduction,
       AppRoutes.aboutGuide,
       AppRoutes.aboutTutorial,
+      AppRoutes.aboutPermissions,
       AppRoutes.legalUserAgreement,
       AppRoutes.legalPrivacyPolicy,
     ];
@@ -67,6 +71,7 @@ void main() {
       AppRoutes.aboutIntroduction,
       AppRoutes.aboutGuide,
       AppRoutes.aboutTutorial,
+      AppRoutes.aboutPermissions,
       AppRoutes.legalUserAgreement,
       AppRoutes.legalPrivacyPolicy,
     ]) {

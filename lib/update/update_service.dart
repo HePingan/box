@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'update_models.dart';
 import 'update_response_parser.dart';
+import 'update_last_check_store.dart';
 import 'update_security.dart';
 import 'update_check_outcome.dart';
 
@@ -34,6 +35,38 @@ class UpdateService {
     ),
   );
 
+  /// 检查更新，并**记下这次的结果**（关于页的「上次检查」靠它）。
+  ///
+  /// 记录点挂在**唯一入口**上，而不是各个调用点：手动检查、启动检查、
+  /// bootstrap 三条路都会走到这里。挂在调用点就会漏一处，表现是「关于页说
+  /// 还没检查过，抽屉却刚提示过新版本」。
+  Future<UpdateCheckOutcome> checkUpdateDiagnostic({
+    required String checkUrl,
+    required String appId,
+    required String platform,
+    required String channel,
+    required int versionCode,
+    required String packageName,
+    String? deviceId,
+    String? userId,
+    UpdateManifestSecurityConfig security =
+        const UpdateManifestSecurityConfig(),
+  }) async {
+    final outcome = await _checkUpdateDiagnostic(
+      checkUrl: checkUrl,
+      appId: appId,
+      platform: platform,
+      channel: channel,
+      versionCode: versionCode,
+      packageName: packageName,
+      deviceId: deviceId,
+      userId: userId,
+      security: security,
+    );
+    await UpdateLastCheckStore.record(outcome);
+    return outcome;
+  }
+
   /// 检查更新。启动流程与「手动检查更新」都走这里。
   ///
   /// 曾经还有一个静默版 `checkUpdate`（吞异常 + 网络失败回落缓存），在两个入口
@@ -45,7 +78,7 @@ class UpdateService {
   /// [loadCachedManifest] 并明确告知用户数据来自缓存，而不是藏在这里。
   ///
   /// 出问题时调用方需要看到真实原因，而不是一句「暂无更新」。
-  Future<UpdateCheckOutcome> checkUpdateDiagnostic({
+  Future<UpdateCheckOutcome> _checkUpdateDiagnostic({
     required String checkUrl,
     required String appId,
     required String platform,
