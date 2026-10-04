@@ -81,9 +81,22 @@ void main() {
   String normalize(String raw) {
     var text = raw.trim();
     text = text.replaceFirst(RegExp(r'^[^「]*[:：]'), '');
-    final cut = RegExp(r'[（(」』)，,、。；;：: ]').firstMatch(text);
-    if (cut != null) text = text.substring(0, cut.start);
-    return text.replaceAll('「', '').replaceAll('」', '').trim();
+    // 不靠"列出所有要砍的标点"（曾经少列一个全角右括号就漏检一整条），
+    // 改成**只收合法名字字符**：汉字、字母、数字、下划线、连字符与空格（「API 能力中心」里有空格），
+    // 遇到别的字符就停 —— 括号注释、引号、逗号、书名号一次全砍掉。
+    final buf = StringBuffer();
+    for (final rune in text.runes) {
+      final isNameChar = (rune >= 0x4E00 && rune <= 0x9FFF) ||
+          (rune >= 0x30 && rune <= 0x39) ||
+          (rune >= 0x41 && rune <= 0x5A) ||
+          (rune >= 0x61 && rune <= 0x7A) ||
+          rune == 0x5F ||
+          rune == 0x2D ||
+          rune == 0x20;
+      if (!isNameChar) break;
+      buf.writeCharCode(rune);
+    }
+    return buf.toString().trim();
   }
 
   /// 文案全文（用户真会读到的那些）。

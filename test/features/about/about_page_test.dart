@@ -1,6 +1,7 @@
 import 'package:box/config/app_config.dart';
 import 'package:box/features/about/data/about_content.dart';
 import 'package:box/features/about/data/permission_notes.dart';
+import 'package:box/features/about/presentation/about_content_page.dart';
 import 'package:box/features/about/presentation/about_page.dart';
 import 'package:box/features/about/presentation/app_permissions_page.dart';
 import 'package:flutter/material.dart';
@@ -297,5 +298,39 @@ void main() {
 
     expect(find.text('有新版本'), findsNothing);
     expect(find.textContaining('已是最新版本'), findsOneWidget);
+  });
+
+  testWidgets('使用文档页：新增的模块小节真的渲染到屏幕上', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(home: AboutContentPage.usageDocs()),
+    );
+    await tester.pumpAndSettle();
+    for (final title in ['漫画', '本地工具', 'API 能力中心', 'AI 生图', '画中画与后台播放', '离线可用']) {
+      // 页面是 ListView：靠下的小节默认没构建，要先滚到它出现。
+      await tester.scrollUntilVisible(find.text(title), 240, maxScrolls: 60);
+      expect(find.text(title), findsWidgets, reason: '使用文档页没渲染出「$title」小节');
+    }
+  });
+
+  testWidgets('软件介绍页：数据与隐私/不做什么/适用与限制 三节都在', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(home: AboutContentPage.introduction()),
+    );
+    await tester.pumpAndSettle();
+    for (final title in ['主要功能', '数据与隐私', '不做什么', '适用与限制']) {
+      await tester.scrollUntilVisible(find.text(title), 240, maxScrolls: 60);
+      expect(find.text(title), findsWidgets, reason: '软件介绍页缺「$title」');
+    }
+  });
+
+  testWidgets('推荐教程页：新增教程条目渲染出来，且不出现假链接', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: AboutTutorialPage()),
+    );
+    await tester.pumpAndSettle();
+    for (final title in ['第一次用影视', '把剧集下载下来离线看', '漫画怎么离线看', '手机空间不够怎么清']) {
+      await tester.scrollUntilVisible(find.text(title), 240, maxScrolls: 60);
+      expect(find.text(title), findsWidgets, reason: '推荐教程页缺「$title」');
+    }
   });
 }
