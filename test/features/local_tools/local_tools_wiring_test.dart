@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:box/design_system/widgets/app_back_button.dart';
 import 'package:box/features/local_tools/presentation/local_tools_registry.dart';
 import 'package:box/features/tools/application/tool_catalog.dart';
 
@@ -114,8 +115,9 @@ void main() {
       await tester.pump();
 
       expect(find.textContaining('未找到本地工具'), findsOneWidget);
-      // 要有返回出口，不能把用户困住。
-      expect(find.text('返回'), findsOneWidget);
+      // 要有返回出口，不能把用户困住。出口就是返回按钮本身 ——
+      // 「返回」两个字已去掉（箭头即返回，不必再写字，同 App 里其它页面）。
+      expect(find.byType(AppBackButton), findsOneWidget);
     });
   });
 }

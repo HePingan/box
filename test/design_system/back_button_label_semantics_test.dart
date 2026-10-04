@@ -191,6 +191,63 @@ void main() {
       expect(r.height, greaterThanOrEqualTo(36), reason: '太小不好点');
     });
   });
+
+  group('Hero 卡片的 leading 也不该重复标题', () {
+    // 本轮收的：聚合搜索 / 源内搜索 / 书源管理 / API 能力中心 四张卡片，
+    // leading 传的 label 与卡片自己的 `title:` 一字不差 —— 左边「‹ 聚合搜索」、
+    // 右边「聚合搜索」，同屏两处同名。Hero 的 leading 独占一行、不与 title 争
+    // 横向空间（所以不重叠），但重复本身没必要。
+    test('Hero 的 leading 不传 label', () {
+      final offenders = <String>[];
+
+      for (final f in Directory('lib')
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.dart'))) {
+        final src = f.readAsStringSync();
+        if (!src.contains('AppBackButton')) continue;
+
+        for (final hit in _backButtonHits(src)) {
+          if (!hit.args.contains('label:')) continue;
+          final before = src.substring(0, hit.start);
+          final hero = RegExp(r'App(?:Light)?HeroCard\(').allMatches(before).toList();
+          if (hero.isEmpty) continue;
+          // 粗判：这个返回按钮属于刚才那个 Hero 调用（参数区间内）
+          if (hit.start - hero.last.end > 600) continue;
+          offenders.add('${f.path}:${before.split('\n').length}');
+        }
+      }
+
+      expect(
+        offenders,
+        isEmpty,
+        reason: 'Hero 卡片的标题就在 leading 右边，label 再写一遍是同屏两处同名：\n'
+            '${offenders.join('\n')}\n'
+            '（真需要写「返回到哪里」才传 label；当前页名交给 title。）',
+      );
+    });
+  });
+}
+
+/// 抓出所有 `AppBackButton[Light](...)` 的完整参数串（不限 leading:）。
+List<_Hit> _backButtonHits(String src) {
+  final hits = <_Hit>[];
+  final re = RegExp(r'AppBackButton(?:Light)?\(');
+  for (final m in re.allMatches(src)) {
+    var depth = 1;
+    var i = m.end;
+    while (i < src.length && depth > 0) {
+      final c = src[i];
+      if (c == '(') {
+        depth++;
+      } else if (c == ')') {
+        depth--;
+      }
+      i++;
+    }
+    hits.add(_Hit(m.start, src.substring(m.end, i - 1)));
+  }
+  return hits;
 }
 
 String _read(String path) {

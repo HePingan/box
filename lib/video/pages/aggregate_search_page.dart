@@ -515,10 +515,9 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
       subtitle: '多源并发查找 · 按来源分组 · 直达播放详情',
       badge: '全网',
       accentGradient: AppTokens.neonVioletGradient,
-      leading: AppBackButton(
-        onPressed: () => Navigator.maybePop(context),
-        label: '聚合搜索',
-      ),
+      // 不传 label：卡片标题就在右侧写着「聚合搜索」，再写一遍是重复；
+      // label 的语义是"返回到哪里"，不是当前页名。
+      leading: AppBackButton(onPressed: () => Navigator.maybePop(context)),
       actions: const [
         AppStatusPill(
           label: '多源',

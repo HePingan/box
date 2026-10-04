@@ -875,10 +875,8 @@ class _ApiHubPageState extends State<ApiHubPage> {
       subtitle: '国内网络实测可用 · 短链 / 二维码 / 头像 / 随机封面 / API 清单',
       badge: '$wired TOOLS',
       accentGradient: AppTokens.blueGradient,
-      leading: AppBackButton(
-        onPressed: () => Navigator.maybePop(context),
-        label: 'API 能力中心',
-      ),
+      // 同上：卡片标题已写「API 能力中心」。
+      leading: AppBackButton(onPressed: () => Navigator.maybePop(context)),
       actions: const [
         AppStatusPill(
           label: '免密钥优先',

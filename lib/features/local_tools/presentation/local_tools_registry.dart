@@ -277,10 +277,8 @@ class LocalToolPage extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
                 child: Row(
                   children: [
-                    AppBackButton(
-                      onPressed: () => Navigator.maybePop(context),
-                      label: '返回',
-                    ),
+                    // 箭头本身就是「返回」，不必再写两个字。
+                    AppBackButton(onPressed: () => Navigator.maybePop(context)),
                   ],
                 ),
               ),
@@ -301,10 +299,9 @@ class LocalToolPage extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
               child: Row(
                 children: [
-                  AppBackButton(
-                    onPressed: () => Navigator.maybePop(context),
-                    label: def.title,
-                  ),
+                  // 不传 label：工具名就在下面卡片头部（带图标和说明），
+                  // 这里再写一遍是同屏两处同名。
+                  AppBackButton(onPressed: () => Navigator.maybePop(context)),
                 ],
               ),
             ),

@@ -36,9 +36,9 @@ class BookSourceManagerHero extends StatelessWidget {
           : '导入、预检查并启用小说规则源',
       badge: '小说',
       accentGradient: AppTokens.violetGradient,
+      // 不传 label：卡片标题就在旁边（「书源管理」），重复一次是同屏两处同名。
       leading: AppBackButton(
         onPressed: onBack ?? () => Navigator.maybePop(context),
-        label: '书源管理',
       ),
       actions: [
         AppStatusPill(

@@ -253,10 +253,8 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
       subtitle: '${widget.currentSource.name} · 轻量结果卡片 · 直达播放详情',
       badge: '视频',
       accentGradient: AppTokens.blueGradient,
-      leading: AppBackButton(
-        onPressed: () => Navigator.maybePop(context),
-        label: '源内搜索',
-      ),
+      // 同上：卡片标题已经在右侧，label 别重复当前页名。
+      leading: AppBackButton(onPressed: () => Navigator.maybePop(context)),
       actions: const [
         AppStatusPill(
           label: '当前源',
