@@ -177,7 +177,7 @@ void _honestCounts() {
     });
 
     test('文本/链接分享（287 D3）：归到 text，既不姓图也不姓视频', () {
-      final text = SharedInboxFile(
+      const text = SharedInboxFile(
         name: '分享文本-https-example.com-x.txt',
         path: '/cache/inbox/1_分享文本-https-example.com-x.txt',
         sizeBytes: 42,

@@ -308,12 +308,12 @@ class _VideoSearchLoading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          CircularProgressIndicator(strokeWidth: 2.5),
-          SizedBox(height: 14),
+          const CircularProgressIndicator(strokeWidth: 2.5),
+          const SizedBox(height: 14),
           Text(
             '正在搜索当前视频源...',
             style: TextStyle(

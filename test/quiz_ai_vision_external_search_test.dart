@@ -141,7 +141,7 @@ void main() {
         '401/403 列入可重试名单（渠道鉴权瞬态抽风，与 503 同源），400 仍直接失败', () {
       // 与 quiz_engine._searchVisionApi 里的 retryable 名单保持同步。
       // 若将来改名单，本测试应红灯提醒同步。
-      final retryable = const {500, 502, 503, 504, 429, 401, 403};
+      const retryable = {500, 502, 503, 504, 429, 401, 403};
       expect(retryable.contains(401), isTrue,
           reason: '401 Invalid token 是 newapi 渠道 CPU 过载/鉴权抽风的瞬态错，须重试');
       expect(retryable.contains(403), isTrue);

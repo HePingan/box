@@ -83,7 +83,7 @@ class SectionHeader extends StatelessWidget {
                     children: [
                       Text(
                         title,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: AppTokens.textPrimary,
                           fontWeight: FontWeight.w900,
                           fontSize: 15,
@@ -98,7 +98,7 @@ class SectionHeader extends StatelessWidget {
                   const SizedBox(height: 1),
                   Text(
                     subtitle,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: AppTokens.textSecondary,
                       fontSize: 12,
                     ),
@@ -112,7 +112,7 @@ class SectionHeader extends StatelessWidget {
             AnimatedRotation(
               turns: expanded ? 0 : -0.25,
               duration: const Duration(milliseconds: 200),
-              child: const Icon(
+              child: Icon(
                 Icons.expand_more_rounded,
                 size: 20,
                 color: AppTokens.textSecondary,
@@ -296,13 +296,13 @@ class SmartImageLoader extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(
+          Icon(
             Icons.broken_image_outlined,
             size: 36,
             color: AppTokens.textSecondary,
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             '图片加载失败，可能是跨域限制',
             style: TextStyle(color: AppTokens.textSecondary, fontSize: 13),
           ),
@@ -405,13 +405,13 @@ class WebImageWithFallbackState extends State<WebImageWithFallback> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(
+          Icon(
             Icons.broken_image_outlined,
             size: 36,
             color: AppTokens.textSecondary,
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             '图片加载失败，可能是跨域限制',
             style: TextStyle(color: AppTokens.textSecondary, fontSize: 13),
           ),
@@ -541,13 +541,13 @@ class NetworkImageWithFallbackState extends State<NetworkImageWithFallback> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(
+          Icon(
             Icons.broken_image_outlined,
             size: 36,
             color: AppTokens.textSecondary,
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             '图片加载失败，可能是跨域限制',
             style: TextStyle(color: AppTokens.textSecondary, fontSize: 13),
           ),
@@ -599,7 +599,7 @@ class SectionTitle extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   color: AppTokens.textPrimary,
                   fontWeight: FontWeight.w900,
                   fontSize: 16,
@@ -608,7 +608,7 @@ class SectionTitle extends StatelessWidget {
               const SizedBox(height: 2),
               Text(
                 subtitle,
-                style: const TextStyle(color: AppTokens.textSecondary),
+                style: TextStyle(color: AppTokens.textSecondary),
               ),
             ],
           ),
@@ -958,7 +958,7 @@ class ImageGeneratorReferenceCard extends StatelessWidget {
                       ? '未添加有效 URL，生成时自动切为"不发送"。'
                       : '生成时会附加 JSON 字段：${payloadField.wireName} = ${validUrls.length > 1 ? "[${validUrls.length} 张图片 URL]" : "当前图片 URL"}。'
                 : '当前仅保存和预览参考图，不会发送给接口。',
-            style: const TextStyle(
+            style: TextStyle(
               color: AppTokens.textSecondary,
               fontSize: 12,
             ),
@@ -1051,7 +1051,7 @@ class CompactThumbnailImageState extends State<CompactThumbnailImage> {
         color: const Color(0xFFEFF3F9),
         borderRadius: BorderRadius.circular(6),
       ),
-      child: const Icon(
+      child: Icon(
         Icons.image_outlined,
         size: 24,
         color: AppTokens.textSecondary,
@@ -1080,7 +1080,7 @@ class CodeBlock extends StatelessWidget {
       children: [
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             color: AppTokens.textSecondary,
             fontSize: 11,
             fontWeight: FontWeight.w800,

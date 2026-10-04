@@ -99,7 +99,7 @@ class LocalToolCard extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
                   color: AppTokens.textPrimary,
@@ -107,7 +107,7 @@ class LocalToolCard extends StatelessWidget {
               ),
               Text(
                 subtitle,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11.5,
                   color: AppTokens.textSecondary,
                 ),
@@ -821,7 +821,7 @@ class _DateCalcPanelBodyState extends State<DateCalcPanelBody> {
           const SizedBox(height: 8),
           Text(
             '${_a.year} 年是${m.isLeapYear(_a.year) ? '' : '不'}闰年',
-            style: const TextStyle(fontSize: 12, color: AppTokens.textSecondary),
+            style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
           ),
           if (_result.isNotEmpty) ...[
             const SizedBox(height: 10),
@@ -1832,7 +1832,7 @@ class _StatChip extends StatelessWidget {
       ),
       child: Text(
         '$label $value',
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.w600,
           color: AppTokens.textSecondary,
@@ -1867,7 +1867,7 @@ class _KaomojiPanelBodyState extends State<KaomojiPanelBody> {
               padding: const EdgeInsets.symmetric(vertical: 6),
               child: Text(
                 current,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 30,
                   fontWeight: FontWeight.w600,
                   color: AppTokens.textPrimary,
@@ -2000,10 +2000,10 @@ class _StopwatchPanelBodyState extends State<StopwatchPanelBody> {
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
                 dv.formatStopwatch(_sw.elapsed),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 38,
                   fontWeight: FontWeight.w700,
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  fontFeatures: const [FontFeature.tabularFigures()],
                   color: AppTokens.textPrimary,
                 ),
               ),
@@ -2043,7 +2043,7 @@ class _StopwatchPanelBodyState extends State<StopwatchPanelBody> {
                   children: [
                     Text(
                       l.label,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
                         color: AppTokens.textSecondary,
                       ),
@@ -2051,10 +2051,10 @@ class _StopwatchPanelBodyState extends State<StopwatchPanelBody> {
                     Text(
                       '+${dv.formatStopwatch(l.delta)}'
                       '   ${dv.formatStopwatch(l.total)}',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
-                        fontFeatures: [FontFeature.tabularFigures()],
+                        fontFeatures: const [FontFeature.tabularFigures()],
                         color: AppTokens.textPrimary,
                       ),
                     ),
@@ -2066,7 +2066,7 @@ class _StopwatchPanelBodyState extends State<StopwatchPanelBody> {
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
                   '只显示最近 20 次，共 ${laps.length} 次',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     color: AppTokens.textSecondary,
                   ),
@@ -2165,10 +2165,10 @@ class _CountdownPanelBodyState extends State<CountdownPanelBody> {
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Text(
                   dv.formatCountdown(_left),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 38,
                     fontWeight: FontWeight.w700,
-                    fontFeatures: [FontFeature.tabularFigures()],
+                    fontFeatures: const [FontFeature.tabularFigures()],
                     color: AppTokens.textPrimary,
                   ),
                 ),
@@ -2276,10 +2276,10 @@ class _ClockPanelBodyState extends State<ClockPanelBody> {
             children: [
               Text(
                 dv.formatClock(_now),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 46,
                   fontWeight: FontWeight.w700,
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  fontFeatures: const [FontFeature.tabularFigures()],
                   color: AppTokens.textPrimary,
                 ),
               ),
@@ -2287,7 +2287,7 @@ class _ClockPanelBodyState extends State<ClockPanelBody> {
                 const SizedBox(height: 6),
                 Text(
                   dv.formatClockDate(_now),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     color: AppTokens.textSecondary,
                   ),
@@ -2566,7 +2566,7 @@ class _RulerPanelBodyState extends State<RulerPanelBody> {
                         : '估算值：本机没报真实 dpi，用 '
                             '${resolved.dpi.toStringAsFixed(0)} dpi 近似'
                             '（可能偏几毫米）',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       color: AppTokens.textSecondary,
                     ),
@@ -2588,7 +2588,7 @@ class _RulerPanelBodyState extends State<RulerPanelBody> {
                     '这一段宽度 ${resolved.isReal ? '=' : '≈'} '
                     '${mm.toStringAsFixed(1)} mm'
                     '（${dv.mmToCm(mm).toStringAsFixed(2)} cm）',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
                       color: AppTokens.textSecondary,
                     ),
@@ -2658,7 +2658,7 @@ class _RulerPainter extends CustomPainter {
         final tp = TextPainter(
           text: TextSpan(
             text: '${mm ~/ 10}',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11,
               color: AppTokens.textSecondary,
             ),
@@ -2819,16 +2819,16 @@ class _CompassPanelBodyState extends State<CompassPanelBody> {
             Center(
               child: Text(
                 '${h.toStringAsFixed(0)}°  ${sv.headingLabel(h)}',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 26,
                   fontWeight: FontWeight.w700,
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  fontFeatures: const [FontFeature.tabularFigures()],
                   color: AppTokens.textPrimary,
                 ),
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               '手机里是磁力计不是真指南针，附近有磁铁、金属桌面或扬声器时会偏，'
               '转个「8」字校准后更准。',
               style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
@@ -2877,10 +2877,10 @@ class _CompassDial extends StatelessWidget {
             children: [
               Text(
                 '${heading.round()}°',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 32,
                   fontWeight: FontWeight.w700,
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  fontFeatures: const [FontFeature.tabularFigures()],
                   color: AppTokens.textPrimary,
                 ),
               ),
@@ -3075,7 +3075,7 @@ class _LevelPanelBodyState extends State<LevelPanelBody> {
             const SizedBox(height: 12),
             _LevelHint(level: level),
             const SizedBox(height: 10),
-            const Text(
+            Text(
               '气泡进中圈就算水平（±0.5°）。手机里的加速度计有零点误差，'
               '要更准就把它平放在你已经确认水平的台面上，记住这时候的读数再减掉。',
               style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
@@ -3110,7 +3110,7 @@ class _TiltTile extends StatelessWidget {
         children: [
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11.5,
               color: AppTokens.textSecondary,
             ),
@@ -3393,7 +3393,7 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
                 ),
               ),
               const SizedBox(width: 4),
-              const Text(
+              Text(
                 'dB',
                 style: TextStyle(
                   fontSize: 17,
@@ -3407,7 +3407,7 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
           Text(
             db == null ? '点下面「开始测量」，用麦克风估环境噪音' : sv.dbLabel(db),
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13.5,
               color: AppTokens.textSecondary,
             ),
@@ -3457,7 +3457,7 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
             LocalToolResult(text: _err, error: true),
           ],
           const SizedBox(height: 8),
-          const Text(
+          Text(
             '手机麦克风没有绝对声压标定，不同机型可能差 10dB 以上；这个数适合'
             '做前后对比（「关窗后安静了多少」），别当专业仪器用。',
             style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
@@ -3586,9 +3586,9 @@ class _DbScaleBar extends StatelessWidget {
                 for (final v in const [0, 30, 60, 90, 120])
                   Text(
                     '$v',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 10.5,
-                      fontFeatures: [FontFeature.tabularFigures()],
+                      fontFeatures: const [FontFeature.tabularFigures()],
                       color: AppTokens.textTertiary,
                     ),
                   ),
@@ -3621,7 +3621,7 @@ class _DbStatTile extends StatelessWidget {
         children: [
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11.5,
               color: AppTokens.textSecondary,
             ),
@@ -3633,15 +3633,15 @@ class _DbStatTile extends StatelessWidget {
             children: [
               Text(
                 text,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  fontFeatures: const [FontFeature.tabularFigures()],
                   color: AppTokens.textPrimary,
                 ),
               ),
               if (text != '--')
-                const Text(
+                Text(
                   ' dB',
                   style: TextStyle(
                     fontSize: 11.5,
@@ -3687,7 +3687,7 @@ class _DbReferenceTable extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Text(
+              Text(
                 '常见噪音参考',
                 style: TextStyle(
                   fontSize: 12.5,
@@ -3743,7 +3743,7 @@ class _DbReferenceTable extends StatelessWidget {
                             ),
                             Expanded(
                               flex: 120 - _rows[i].db.round(),
-                              child: const ColoredBox(color: AppTokens.divider),
+                              child: ColoredBox(color: AppTokens.divider),
                             ),
                           ],
                         ),
@@ -3755,9 +3755,9 @@ class _DbReferenceTable extends StatelessWidget {
                     child: Text(
                       '${_rows[i].db.toInt()} dB',
                       textAlign: TextAlign.right,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11.5,
-                        fontFeatures: [FontFeature.tabularFigures()],
+                        fontFeatures: const [FontFeature.tabularFigures()],
                         color: AppTokens.textSecondary,
                       ),
                     ),

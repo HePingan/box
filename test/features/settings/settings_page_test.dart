@@ -26,13 +26,15 @@ void main() {
       expect(find.text('数据设置'), findsOneWidget);
     });
 
-    testWidgets('深色模式与主题配色显示为暂不可用，并说明原因', (tester) async {
+    testWidgets('深色模式已可用并回显当前档位；主题配色仍标暂不可用并说明原因', (tester) async {
       await tester.pumpWidget(host(pushed: []));
 
       expect(find.text('深色模式'), findsOneWidget);
       expect(find.text('主题配色'), findsOneWidget);
-      // 不能只标灰就完事，必须写清为什么不能点。
-      expect(find.textContaining('暂不可用'), findsNWidgets(2));
+      // 深色模式已经能切了（档位见 test/design_system/dark_theme_test.dart），
+      // 所以这里只剩主题配色一个「暂不可用」，而且必须写清为什么不能点。
+      expect(find.textContaining('暂不可用'), findsOneWidget);
+      expect(find.text('跟随系统'), findsWidgets, reason: '默认档位要回显出来');
     });
 
     testWidgets('点击停用项不触发任何跳转', (tester) async {
@@ -41,10 +43,13 @@ void main() {
 
       await tester.tap(find.text('深色模式'));
       await tester.pumpAndSettle();
+      // 深色模式会弹档位选择层（不是跳页），先关掉再点下一个。
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('主题配色'));
       await tester.pumpAndSettle();
 
-      expect(pushed, isEmpty, reason: '停用项必须真的点不动');
+      expect(pushed, isEmpty, reason: '这一组里没有会跳页的项');
     });
   });
 

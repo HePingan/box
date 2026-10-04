@@ -76,7 +76,7 @@ class ContinueRail extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        const Text(
+        Text(
           '继续使用',
           style: TextStyle(
             fontSize: 15,
@@ -93,7 +93,7 @@ class ContinueRail extends StatelessWidget {
               minimumSize: const Size(0, 32),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: const Text(
+            child: Text(
               '查看全部',
               style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
             ),
@@ -117,7 +117,7 @@ class ContinueRail extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             '还没有观看或阅读记录',
             style: TextStyle(
               fontSize: 13,
@@ -126,7 +126,7 @@ class ContinueRail extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 2),
-          const Text(
+          Text(
             '看过的剧集、读过的书会出现在这里，可一键回到上次位置',
             style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
           ),
@@ -210,7 +210,7 @@ class _ContinueCard extends StatelessWidget {
       color: AppTokens.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppTokens.radiusCard),
-        side: const BorderSide(color: AppTokens.divider),
+        side: BorderSide(color: AppTokens.divider),
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppTokens.radiusCard),
@@ -234,7 +234,7 @@ class _ContinueCard extends StatelessWidget {
                       item.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
                         color: AppTokens.textPrimary,
@@ -245,7 +245,7 @@ class _ContinueCard extends StatelessWidget {
                       item.subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11.5,
                         color: AppTokens.textSecondary,
                       ),

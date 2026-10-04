@@ -84,7 +84,8 @@ class _DrawerContentState extends State<_DrawerContent> {
     return Container(
       height: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.98),
+        // 抽屉是整块面板：深色下必须是深面板，白面板会把整页照白。
+        color: AppTokens.surface.withValues(alpha: 0.98),
         boxShadow: [
           BoxShadow(
             color: AppTokens.ink.withValues(alpha: 0.08),
@@ -291,7 +292,7 @@ class _DrawerContentState extends State<_DrawerContent> {
                 children: [
                   Text(
                     user?.username ?? '未登录',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
                       color: AppTokens.textPrimary,
@@ -300,7 +301,7 @@ class _DrawerContentState extends State<_DrawerContent> {
                   const SizedBox(height: 2),
                   Text(
                     user != null ? '已登录 · ${user.role}' : '同步收藏与配置',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       color: AppTokens.textSecondary,
                     ),
@@ -341,7 +342,7 @@ class _DrawerContentState extends State<_DrawerContent> {
                 );
               },
             ),
-            const Icon(
+            Icon(
               Icons.chevron_right_rounded,
               size: 20,
               color: AppTokens.textTertiary,
@@ -432,7 +433,7 @@ class _DrawerContentState extends State<_DrawerContent> {
               icon: Icons.feedback_outlined,
               title: '反馈',
               subtitle: '问题报告与功能建议',
-              trailing: const Icon(
+              trailing: Icon(
                 Icons.open_in_new_rounded,
                 size: 16,
                 color: AppTokens.textSecondary,
@@ -480,7 +481,7 @@ class _DrawerContentState extends State<_DrawerContent> {
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 2),
       child: Text(
         text,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.w700,
           color: AppTokens.textSecondary, // ≥4.5:1
@@ -525,7 +526,7 @@ class _DrawerContentState extends State<_DrawerContent> {
                   children: [
                     Text(
                       title,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
                         color: AppTokens.textPrimary,
@@ -537,7 +538,7 @@ class _DrawerContentState extends State<_DrawerContent> {
                         subtitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
                           color: AppTokens.textSecondary,
                         ),
@@ -548,7 +549,7 @@ class _DrawerContentState extends State<_DrawerContent> {
               ),
               ?trailing,
               if (trailing == null)
-                const Icon(
+                Icon(
                   Icons.chevron_right_rounded,
                   size: 20,
                   color: AppTokens.textSecondary,
@@ -566,7 +567,7 @@ class _DrawerContentState extends State<_DrawerContent> {
       widgets.add(children[i]);
       if (i != children.length - 1) {
         widgets.add(
-          const Divider(
+          Divider(
             height: 1,
             indent: 52,
             endIndent: 14,
@@ -583,7 +584,7 @@ class _DrawerContentState extends State<_DrawerContent> {
   Widget _buildFooter(BuildContext context) {
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 10, 18, 22),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         border: Border(top: BorderSide(color: AppTokens.divider)),
       ),
       child: Row(
@@ -607,7 +608,7 @@ class _DrawerContentState extends State<_DrawerContent> {
             ),
           ),
           const SizedBox(width: 6),
-          const Text(
+          Text(
             '极客匣',
             style: TextStyle(
               fontSize: 11,

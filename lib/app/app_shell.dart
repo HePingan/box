@@ -245,7 +245,7 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
                   Expanded(
                     child: Text(
                       message,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textPrimary,
                         height: 1.45,
                       ),
@@ -363,9 +363,10 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
           margin: const EdgeInsets.fromLTRB(16, 0, 16, 6),
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.96),
+            // 悬浮胶囊的底色要跟着深浅走，否则深色下是一块刺眼的白条。
+            color: AppTokens.surface.withValues(alpha: 0.96),
             borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            border: Border.all(color: AppTokens.cardBorder),
             boxShadow: [
               BoxShadow(
                 color: const Color(0xFF0F172A).withValues(alpha: 0.10),
@@ -428,9 +429,9 @@ class _AppNavigationRail extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(10, 10, 0, 10),
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.96),
+        color: AppTokens.surface.withValues(alpha: 0.96),
         borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTokens.cardBorder),
         boxShadow: [
           BoxShadow(
             color: const Color(0xFF0F172A).withValues(alpha: 0.06),

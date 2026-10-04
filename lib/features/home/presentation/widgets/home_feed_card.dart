@@ -107,7 +107,7 @@ class _HomeFeedCardState extends State<HomeFeedCard> {
             ),
           ),
           const SizedBox(width: 8),
-          const Text(
+          Text(
             '资讯',
             style: TextStyle(
               fontSize: 15,
@@ -134,7 +134,7 @@ class _HomeFeedCardState extends State<HomeFeedCard> {
                   color: AppTokens.surfaceMuted,
                   borderRadius: BorderRadius.circular(AppTokens.radiusChip),
                 ),
-                child: const Text(
+                child: Text(
                   '缓存',
                   style: TextStyle(
                     fontSize: 10,

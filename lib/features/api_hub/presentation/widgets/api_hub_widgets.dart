@@ -31,7 +31,7 @@ class ApiHubDirectoryDetailBlock extends StatelessWidget {
         children: [
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               color: AppTokens.textPrimary,
               fontSize: 13,
               fontWeight: FontWeight.w900,
@@ -65,7 +65,7 @@ class ApiHubMetric extends StatelessWidget {
         textAlign: TextAlign.center,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
+        style: TextStyle(
           color: AppTokens.textPrimary,
           fontSize: 11,
           fontWeight: FontWeight.w900,
@@ -173,7 +173,7 @@ class ApiHubToolCard extends StatelessWidget {
                 tool.title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   color: AppTokens.textPrimary,
                   fontWeight: FontWeight.w900,
                 ),
@@ -183,7 +183,7 @@ class ApiHubToolCard extends StatelessWidget {
                 tool.provider,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   color: AppTokens.textSecondary,
                   fontSize: 11,
                   fontWeight: FontWeight.w700,

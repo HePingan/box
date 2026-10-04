@@ -104,7 +104,7 @@ void main() {
 
     test('文件通道：失败给中文原因，不是裸异常', () async {
       final r = await probeOpsFiles(
-        _Files(fail: RemoteStorageException(RemoteStorageError.unauthorized, '口令不对')),
+        _Files(fail: const RemoteStorageException(RemoteStorageError.unauthorized, '口令不对')),
       );
       expect(r.ok, isFalse);
       expect(r.detail.contains('口令'), isTrue, reason: '结论要能定位：${r.detail}');
@@ -115,7 +115,7 @@ void main() {
       // 401 文案来自远端存储插件（"坚果云请使用网页端生成的「应用密码」"），
       // 对自建运维通道是纯噪音，会把用户往错方向带。
       final r = await probeOpsFiles(
-        _Files(fail: RemoteStorageException(RemoteStorageError.unauthorized, '口令不对')),
+        _Files(fail: const RemoteStorageException(RemoteStorageError.unauthorized, '口令不对')),
       );
       expect(r.detail, contains('每台机器不同'), reason: r.detail);
       expect(r.detail, contains('属于同一台'), reason: r.detail);
@@ -158,7 +158,7 @@ void main() {
     test('四项独立：第一项失败不影响后三项执行', () async {
       final order = <String>[];
       final results = await runOpsProbes(
-        files: _Files(fail: RemoteStorageException(RemoteStorageError.network, '连不上')),
+        files: _Files(fail: const RemoteStorageException(RemoteStorageError.network, '连不上')),
         hosts: _Hosts(
           snapshot: const HostSnapshot(hosts: [HostEntry(id: 'x', name: 'X')]),
         ),
@@ -232,7 +232,7 @@ void main() {
           passwords: {'hpa888': 'pw-hpa', 'tencent175': 'pw-175'},
         ),
         filesService: _Files(
-          fail: RemoteStorageException(RemoteStorageError.unauthorized, '口令不对'),
+          fail: const RemoteStorageException(RemoteStorageError.unauthorized, '口令不对'),
         ),
         terminalProbe: (url, user, password) async => const OpsProbeResult(
           label: '终端（ttyd）',
@@ -279,7 +279,7 @@ void main() {
           passwords: {'hpa888': 'pw-hpa', 'tencent175': 'pw-175'},
         ),
         filesService: _Files(
-          fail: RemoteStorageException(RemoteStorageError.unauthorized, '口令不对'),
+          fail: const RemoteStorageException(RemoteStorageError.unauthorized, '口令不对'),
         ),
         terminalProbe: (url, user, password) async => const OpsProbeResult(
           label: '终端（ttyd）',

@@ -348,7 +348,7 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
               const SizedBox(height: 4),
               Text(
                 '图像指纹：${_questionImage!.perceptualHash}；答题助手将用图片消歧。',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
                   color: AppTokens.textTertiary,
                 ),
@@ -358,13 +358,13 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
             const SizedBox(height: 12),
 
             // 选项 — 紧凑行：输入框 + 单选按钮 + 标签
-            const Row(
+            Row(
               children: [
-                Text(
+                const Text(
                   '选项',
                   style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
                 ),
-                Spacer(),
+                const Spacer(),
                 Text(
                   '点击 ● 标记正确答案',
                   style: TextStyle(fontSize: 11, color: AppTokens.textTertiary),

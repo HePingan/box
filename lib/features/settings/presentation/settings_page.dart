@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../app/app_routes.dart';
+import '../../../design_system/app_theme_controller.dart';
 import '../../../design_system/app_tokens.dart';
 import '../../../design_system/settings_list.dart';
 
@@ -12,15 +15,67 @@ import '../../../design_system/settings_list.dart';
 ///
 /// 分组按用户拍板的方向：通用设置 / 数据设置。
 ///
-/// 关于深色模式——**这里故意没有开关**。`AppTokens` 的颜色全是
-/// `static const` 亮色字面量（surface=0xFFFFFFFF、textPrimary=0xFF101828），
-/// 被 70 个文件引用 1100 次，另有 204 处直接写 `Colors.white`，且
-/// `AppTheme` 只有 `light()`。加一个 ThemeMode 开关只会切换 Material 组件
-/// 默认色，页面上那 1300 处硬编码纹丝不动，结果是白底卡片配深色文字混排，
-/// 比不做更糟。真要做得先把 AppTokens 改成随主题解析的动态取值，那是独立
-/// 工程。放一个不生效的开关等于骗用户，所以这里只如实说明状态。
+/// 关于深色模式：**开关在这里**，档位交给 `AppThemeController`（跟随系统 /
+/// 一直亮 / 一直暗）。它成立的前提是 `AppTokens` 的**表面与文字色**已经从
+/// `static const` 改成随亮度解析的 getter（品牌色与状态色仍是常量）——
+/// 否则开关只会切换 Material 组件的默认色，页面上那一千多处引用纹丝不动，
+/// 结果是白底卡片配深色文字混排，比不做更糟。代价是这些色值不再是编译期
+/// 常量，原先写在 `const` 构造里的调用要去掉 `const`。
+///
+/// 「主题配色」（换主色）仍未开放：那要先把配色做成可切换的语义色板，
+/// 与深浅是两件独立的事。它继续如实标着「暂不可用」。
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
+
+  /// 三档选择：跟随系统 / 一直亮 / 一直暗。
+  ///
+  /// 用 ListTile + 勾选而不是 RadioListTile：新版 Flutter 的 Radio 分组 API
+  /// 正在改（groupValue/onChanged 已被标记），这里不押注某个版本。
+  Future<void> _pickThemeMode(BuildContext context) async {
+    final controller = AppThemeController.instance;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppTokens.surface,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 6),
+              child: Text(
+                '深色模式',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: AppTokens.textPrimary,
+                ),
+              ),
+            ),
+            for (final option in AppThemePreference.values)
+              ListTile(
+                title: Text(
+                  option.label,
+                  style: TextStyle(fontSize: 14, color: AppTokens.textPrimary),
+                ),
+                trailing: option == controller.preference
+                    ? const Icon(
+                        Icons.check_rounded,
+                        color: AppTokens.primaryBlue,
+                        size: 20,
+                      )
+                    : null,
+                onTap: () {
+                  unawaited(controller.setPreference(option));
+                  Navigator.of(sheetContext).pop();
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,17 +90,24 @@ class SettingsPage extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
-          const SettingsSection(
+          SettingsSection(
             title: '通用设置',
             children: [
-              SettingsTile(
-                icon: Icons.dark_mode_outlined,
-                title: '深色模式',
-                subtitle: '暂不可用：全局配色仍是固定亮色，开了会导致文字与背景撞色',
-                enabled: false,
-                onTap: null,
+              ListenableBuilder(
+                listenable: AppThemeController.instance,
+                builder: (context, _) {
+                  final preference = AppThemeController.instance.preference;
+                  return SettingsTile(
+                    icon: Icons.dark_mode_outlined,
+                    title: '深色模式',
+                    subtitle: '跟随系统时按手机的深色设置自动切换',
+                    trailingText: preference.label,
+                    trailingTextColor: AppTokens.primaryBlue,
+                    onTap: () => _pickThemeMode(context),
+                  );
+                },
               ),
-              SettingsTile(
+              const SettingsTile(
                 icon: Icons.palette_outlined,
                 title: '主题配色',
                 subtitle: '暂不可用：等配色改为可切换后开放',

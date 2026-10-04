@@ -73,7 +73,7 @@ class ApiHubCurrencyPanel extends StatelessWidget {
             converted == null
                 ? '暂无换算结果'
                 : '${amountController.text} $from ≈ ${converted!.toStringAsFixed(2)} $to',
-            style: const TextStyle(
+            style: TextStyle(
               color: AppTokens.textPrimary,
               fontSize: 20,
               fontWeight: FontWeight.w900,
@@ -177,7 +177,7 @@ class _ApiHubBookTile extends StatelessWidget {
         book.title,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
+        style: TextStyle(
           color: AppTokens.textPrimary,
           fontWeight: FontWeight.w800,
         ),
@@ -1072,7 +1072,7 @@ class _ApiHubUrlResultBlock extends StatelessWidget {
         children: [
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               color: AppTokens.textSecondary,
               fontWeight: FontWeight.w800,
             ),
@@ -1092,7 +1092,7 @@ class _ApiHubUrlResultBlock extends StatelessWidget {
               secondaryText,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: AppTokens.textSecondary),
+              style: TextStyle(color: AppTokens.textSecondary),
             ),
           ],
         ],

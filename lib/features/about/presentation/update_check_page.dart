@@ -117,14 +117,14 @@ class _UpdateCheckPageState extends State<UpdateCheckPage> {
               const SizedBox(height: 16),
               Text(
                 '当前版本 $_versionText',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
                   color: AppTokens.textPrimary,
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 '本应用不通过应用商店分发，更新由内置更新服务提供。\n'
                 '安装包下载后会做完整性校验，校验不通过不会安装。',
                 textAlign: TextAlign.center,

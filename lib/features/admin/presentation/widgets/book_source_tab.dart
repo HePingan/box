@@ -820,7 +820,7 @@ class _BookSourceTabState extends State<_BookSourceTab> {
                                         ),
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(12),
-                                    borderSide: const BorderSide(
+                                    borderSide: BorderSide(
                                       color: AppTokens.divider,
                                     ),
                                   ),

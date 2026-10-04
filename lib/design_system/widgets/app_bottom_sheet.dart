@@ -47,7 +47,7 @@ class AppBottomSheetFrame extends StatelessWidget {
                   title!,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textPrimary,
                     fontSize: 20,
                     fontWeight: FontWeight.w900,
@@ -59,7 +59,7 @@ class AppBottomSheetFrame extends StatelessWidget {
                     subtitle!,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: AppTokens.textSecondary,
                       fontSize: 12,
                       fontWeight: FontWeight.w600,

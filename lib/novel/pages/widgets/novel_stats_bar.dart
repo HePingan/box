@@ -131,7 +131,7 @@ class _StatItem extends StatelessWidget {
         const SizedBox(width: 2),
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 10,
             color: AppTokens.textTertiary,
           ),

@@ -93,7 +93,7 @@ void main() {
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w900,
                     color: AppTokens.textPrimary,

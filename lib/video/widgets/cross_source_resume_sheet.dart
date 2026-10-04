@@ -150,7 +150,7 @@ class _CrossSourceResumeSheetState extends State<_CrossSourceResumeSheet> {
           Expanded(
             child: Text(
               '正在 $_candidateCount 个可用片源里找这部片…',
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppTokens.textSecondary,
                 fontSize: 13.5,
               ),
@@ -167,7 +167,7 @@ class _CrossSourceResumeSheetState extends State<_CrossSourceResumeSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
+          Text(
             '当前没有可用的片源（片源目录还没加载，或都被隐藏了）。'
             '先去影视页刷新一下片源，再回来试。',
             style: TextStyle(
@@ -195,7 +195,7 @@ class _CrossSourceResumeSheetState extends State<_CrossSourceResumeSheet> {
       children: [
         Text(
           '已在 ${report.searched} 个可用片源里找过，都没有《${widget.request.vodName}》。$failedNote',
-          style: const TextStyle(
+          style: TextStyle(
             color: AppTokens.textSecondary,
             fontSize: 13.5,
             height: 1.5,

@@ -123,7 +123,7 @@ class MarketEmptyState extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             loading ? '正在加载插件市场...' : '没有匹配插件',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 17,
               fontWeight: FontWeight.w900,
               color: AppTokens.textPrimary,
@@ -135,7 +135,7 @@ class MarketEmptyState extends StatelessWidget {
                 ? '正在合并平台审核清单与内置模板…'
                 : '换个关键词，或重置筛选。也可去扩展中心「投稿插件」提交配置型插件。',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: AppTokens.textSecondary, fontSize: 12),
+            style: TextStyle(color: AppTokens.textSecondary, fontSize: 12),
           ),
           if (!loading) ...[
             const SizedBox(height: 14),

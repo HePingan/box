@@ -31,7 +31,7 @@ class AppPermissionsPage extends StatelessWidget {
           // 权限之外最常被问的一件事：有没有第三方 SDK 在偷偷回传数据。
           const _IntroCard(title: '第三方 SDK', text: kThirdPartySdkNote),
           const SizedBox(height: 4),
-          const Text(
+          Text(
             kPermissionOutro,
             style: TextStyle(
               fontSize: 11,
@@ -69,7 +69,7 @@ class _IntroCard extends StatelessWidget {
           if (title != null) ...[
             Text(
               title!,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
                 color: AppTokens.textPrimary,
@@ -79,7 +79,7 @@ class _IntroCard extends StatelessWidget {
           ],
           Text(
             text,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               height: 1.7,
               color: AppTokens.textSecondary,
@@ -111,7 +111,7 @@ class _PermissionCard extends StatelessWidget {
         children: [
           Text(
             note.title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w700,
               color: AppTokens.textPrimary,
@@ -122,7 +122,7 @@ class _PermissionCard extends StatelessWidget {
           // 不写的话「权限说明」里的名字和系统界面对不上号。
           Text(
             note.manifestName,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 10.5,
               height: 1.4,
               color: AppTokens.textTertiary,
@@ -157,7 +157,7 @@ class _Row extends StatelessWidget {
             width: 76,
             child: Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12.5,
                 height: 1.6,
                 color: AppTokens.textTertiary,
@@ -167,7 +167,7 @@ class _Row extends StatelessWidget {
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12.5,
                 height: 1.6,
                 color: AppTokens.textPrimary,

@@ -33,7 +33,7 @@ class HomeNewsLine extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 11),
       decoration: BoxDecoration(
         border: showDivider
-            ? const Border(bottom: BorderSide(color: AppTokens.divider))
+            ? Border(bottom: BorderSide(color: AppTokens.divider))
             : null,
       ),
       child: Row(
@@ -66,7 +66,7 @@ class HomeNewsLine extends StatelessWidget {
           ),
           if (!isPlaceholder) ...[
             const SizedBox(width: 6),
-            const Icon(
+            Icon(
               Icons.chevron_right_rounded,
               size: 16,
               color: AppTokens.textTertiary,

@@ -480,7 +480,7 @@ class _ErrorBanner extends StatelessWidget {
           Expanded(
             child: Text(
               message,
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppTokens.textPrimary,
                 height: 1.45,
               ),

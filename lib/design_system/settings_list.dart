@@ -29,7 +29,7 @@ class SettingsSection extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
           child: Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w700,
               color: AppTokens.textSecondary,
@@ -112,7 +112,7 @@ class SettingsTile extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       subtitle!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         color: AppTokens.textSecondary,
                       ),
@@ -130,7 +130,7 @@ class SettingsTile extends StatelessWidget {
                 ),
               )
             else if (enabled && onTap != null)
-              const Icon(
+              Icon(
                 Icons.chevron_right_rounded,
                 size: 20,
                 color: AppTokens.textTertiary,

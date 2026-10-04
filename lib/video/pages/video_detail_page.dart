@@ -727,7 +727,7 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: AppTokens.textPrimary,
                       fontSize: 17,
                       height: 1.15,
@@ -780,7 +780,7 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                 controller.source.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   color: AppTokens.textSecondary,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,

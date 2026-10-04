@@ -74,7 +74,7 @@ class _QuotaEditSheetState extends State<QuotaEditSheet> {
           children: [
             Text(
               '调整 ${widget.user.username} 额度',
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppTokens.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w900,
@@ -488,7 +488,7 @@ class _SheetFrame extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   color: AppTokens.textPrimary,
                   fontSize: 18,
                   fontWeight: FontWeight.w900,

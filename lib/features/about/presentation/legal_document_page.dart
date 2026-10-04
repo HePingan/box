@@ -102,7 +102,7 @@ class LegalClauseView extends StatelessWidget {
         children: [
           Text(
             clause.heading,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w700,
               color: AppTokens.textPrimary,
@@ -114,7 +114,7 @@ class LegalClauseView extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
                 line,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   height: 1.7,
                   color: AppTokens.textSecondary,

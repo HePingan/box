@@ -135,7 +135,7 @@ class AvailableToolCard extends StatelessWidget {
               maxLines: 2,
               textAlign: TextAlign.center,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11.5,
                 height: 1.15,
                 fontWeight: FontWeight.w800,

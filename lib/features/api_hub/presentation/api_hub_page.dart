@@ -815,7 +815,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
               PublicApiRegistry.byId(_activeTool).title,
               textAlign: TextAlign.right,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppTokens.textPrimary,
                 fontSize: 15,
                 fontWeight: FontWeight.w900,
@@ -1217,7 +1217,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
                 children: [
                   Text(
                     info.ip,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: AppTokens.textPrimary,
                       fontSize: 24,
                       fontWeight: FontWeight.w900,
@@ -1380,7 +1380,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
           else ...[
             Text(
               '${result.word}${result.phonetic.isEmpty ? '' : ' · ${result.phonetic}'}',
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppTokens.textPrimary,
                 fontSize: 20,
                 fontWeight: FontWeight.w900,
@@ -2840,7 +2840,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
                 title: '用途说明',
                 child: Text(
                   entry.description,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textPrimary,
                     height: 1.45,
                     fontWeight: FontWeight.w700,
@@ -2868,7 +2868,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
                       : entry.isRecommended
                       ? '适合作为下一批轻量工具接入，建议先验证具体接口文档和返回结构。'
                       : '暂时保留为目录展示，后续按具体使用场景再接入。',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textSecondary,
                     height: 1.45,
                     fontWeight: FontWeight.w700,

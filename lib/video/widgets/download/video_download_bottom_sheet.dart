@@ -211,7 +211,7 @@ class _VideoDownloadBottomSheetState extends State<VideoDownloadBottomSheet>
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
-                const Text(
+                Text(
                   '选择要下载的集数',
                   style: TextStyle(
                     fontSize: 17,
@@ -247,7 +247,7 @@ class _VideoDownloadBottomSheetState extends State<VideoDownloadBottomSheet>
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : line == null
-                ? const Center(
+                ? Center(
                     child: Text(
                       '暂无可下载的集数',
                       style: TextStyle(color: AppTokens.textSecondary),

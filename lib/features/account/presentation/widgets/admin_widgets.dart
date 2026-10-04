@@ -49,7 +49,7 @@ class AdminProviderCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       '上游 Provider',
                       style: TextStyle(
                         color: AppTokens.textPrimary,
@@ -64,7 +64,7 @@ class AdminProviderCard extends StatelessWidget {
                           : '未读取配置',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textSecondary,
                         fontSize: 12,
                       ),
@@ -101,7 +101,7 @@ class AdminProviderCard extends StatelessWidget {
               item!.allowedModels.join(', '),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: AppTokens.textSecondary),
+              style: TextStyle(color: AppTokens.textSecondary),
             ),
           ],
           if (testResult != null) ...[
@@ -187,7 +187,7 @@ class _ProviderTestBanner extends StatelessWidget {
               children: [
                 Text(
                   result.ok ? 'Provider 连接正常' : 'Provider 连接异常',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textPrimary,
                     fontWeight: FontWeight.w800,
                   ),
@@ -197,7 +197,7 @@ class _ProviderTestBanner extends StatelessWidget {
                   subtitle,
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textSecondary,
                     height: 1.35,
                   ),
@@ -252,7 +252,7 @@ class AdminUsageSummaryCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       '用量概览',
                       style: TextStyle(
                         color: AppTokens.textPrimary,
@@ -265,7 +265,7 @@ class AdminUsageSummaryCard extends StatelessWidget {
                       today == null
                           ? '读取今日和最近 7 天统计'
                           : '今日 ${_formatDate(today.date)}',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textSecondary,
                         fontSize: 12,
                       ),
@@ -284,7 +284,7 @@ class AdminUsageSummaryCard extends StatelessWidget {
               ),
             )
           else if (item == null || !hasUsage)
-            const Text(
+            Text(
               '暂无用量统计。真实上游生图请求会出现在这里。',
               style: TextStyle(color: AppTokens.textSecondary, height: 1.4),
             )
@@ -326,7 +326,7 @@ class AdminUsageSummaryCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               '最近 7 天',
               style: TextStyle(
                 color: AppTokens.textPrimary,
@@ -343,7 +343,7 @@ class AdminUsageSummaryCard extends StatelessWidget {
                       width: 54,
                       child: Text(
                         _formatShortDate(day.date),
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: AppTokens.textSecondary,
                           fontSize: 12,
                         ),
@@ -365,7 +365,7 @@ class AdminUsageSummaryCard extends StatelessWidget {
                     const SizedBox(width: 8),
                     Text(
                       '${day.requests} 次 · ${day.cost} 点',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textSecondary,
                         fontSize: 12,
                       ),
@@ -376,7 +376,7 @@ class AdminUsageSummaryCard extends StatelessWidget {
             ),
             if (item.topUsersToday.isNotEmpty) ...[
               const SizedBox(height: 12),
-              const Text(
+              Text(
                 '今日 Top 用户',
                 style: TextStyle(
                   color: AppTokens.textPrimary,
@@ -394,12 +394,12 @@ class AdminUsageSummaryCard extends StatelessWidget {
                           user.username,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: AppTokens.textPrimary),
+                          style: TextStyle(color: AppTokens.textPrimary),
                         ),
                       ),
                       Text(
                         '${user.requests} 次 · ${user.cost} 点',
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: AppTokens.textSecondary,
                           fontSize: 12,
                         ),
@@ -466,7 +466,7 @@ class AdminUsageCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       '最近使用记录',
                       style: TextStyle(
                         color: AppTokens.textPrimary,
@@ -479,7 +479,7 @@ class AdminUsageCard extends StatelessWidget {
                       records.isEmpty
                           ? '最近 200 条平台生图请求'
                           : '最近 ${records.length} 条',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textSecondary,
                         fontSize: 12,
                       ),
@@ -612,7 +612,7 @@ class _UsageEmptyState extends StatelessWidget {
         color: AppTokens.background,
         borderRadius: BorderRadius.circular(AppTokens.radiusMd),
       ),
-      child: const Text(
+      child: Text(
         '暂无使用记录。成功或失败的真实上游生图请求会显示在这里。',
         style: TextStyle(color: AppTokens.textSecondary, height: 1.4),
       ),
@@ -657,7 +657,7 @@ class _UsageRecordTile extends StatelessWidget {
                   '${record.username} · ${record.model.isEmpty ? '未知模型' : record.model}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textPrimary,
                     fontWeight: FontWeight.w800,
                   ),
@@ -665,7 +665,7 @@ class _UsageRecordTile extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   '${record.cost} 点 · ${record.success ? '成功' : '失败'} · $statusText',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textSecondary,
                     fontSize: 12,
                   ),
@@ -673,7 +673,7 @@ class _UsageRecordTile extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   _formatUsageTime(record.createdAt),
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textTertiary,
                     fontSize: 12,
                   ),
@@ -684,7 +684,7 @@ class _UsageRecordTile extends StatelessWidget {
                     record.errorPreview,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: AppTokens.textSecondary,
                       fontSize: 12,
                       height: 1.35,
@@ -767,7 +767,7 @@ class AdminUserQuotaCard extends StatelessWidget {
                       user.username,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textPrimary,
                         fontSize: 18,
                         fontWeight: FontWeight.w900,
@@ -778,7 +778,7 @@ class AdminUserQuotaCard extends StatelessWidget {
                       '${user.isAdmin ? '管理员' : '普通用户'} · ${user.status} · ${user.id}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textSecondary,
                         fontSize: 12,
                       ),
@@ -883,7 +883,7 @@ class AdminEmptyCard extends StatelessWidget {
           Text(
             message,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               color: AppTokens.textSecondary,
               height: 1.45,
             ),
@@ -916,7 +916,7 @@ class AdminErrorBanner extends StatelessWidget {
           Expanded(
             child: Text(
               message,
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppTokens.textPrimary,
                 height: 1.45,
               ),

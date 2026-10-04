@@ -289,7 +289,7 @@ class BookSourceCard extends StatelessWidget {
                     if (source.bookSourceGroup.isNotEmpty)
                       Text(
                         '分组：${source.bookSourceGroup}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 10.5,
                           color: AppTokens.textTertiary,
                         ),
@@ -301,7 +301,7 @@ class BookSourceCard extends StatelessWidget {
                           '搜索：${source.searchUrl}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 10.5,
                             color: AppTokens.textTertiary,
                           ),
@@ -369,7 +369,7 @@ class BookSourceCard extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
                   '分组：${source.bookSourceGroup}',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textSecondary,
                     fontSize: 12.5,
                   ),

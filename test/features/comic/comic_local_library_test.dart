@@ -85,7 +85,7 @@ void main() {
   // 这条用例钉住"存储与适配"这一半，免得以后有人往这半边找原因。
   test('在线书进书架：读得回来，且内容页适配器认得出它是"在线"', () async {
     await library.add(
-      ComicBook(
+      const ComicBook(
         id: 'https://yemancomic.com/comic/zhongguojingqi',
         title: '中国惊奇先生',
         coverPath: 'https://tuer.justpic01pt.com:666/picbed/cover.jpg',

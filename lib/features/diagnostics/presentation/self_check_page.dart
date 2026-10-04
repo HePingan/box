@@ -162,7 +162,7 @@ class _SelfCheckPageState extends State<SelfCheckPage> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
         children: [
-          const Text(
+          Text(
             '这里只报实测到的状态；除了你自己点的按钮，不改任何东西。',
             style: TextStyle(
               color: AppTokens.textSecondary,
@@ -300,7 +300,7 @@ class _SelfCheckPageState extends State<SelfCheckPage> {
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textPrimary,
                     fontSize: 14.5,
                     fontWeight: FontWeight.w900,
@@ -312,7 +312,7 @@ class _SelfCheckPageState extends State<SelfCheckPage> {
           const SizedBox(height: 2),
           Text(
             note,
-            style: const TextStyle(
+            style: TextStyle(
               color: AppTokens.textSecondary,
               fontSize: 11.5,
             ),
@@ -328,7 +328,7 @@ class _SelfCheckPageState extends State<SelfCheckPage> {
                     width: 88,
                     child: Text(
                       row.label,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textSecondary,
                         fontSize: 12.5,
                       ),
@@ -337,7 +337,7 @@ class _SelfCheckPageState extends State<SelfCheckPage> {
                   Expanded(
                     child: Text(
                       row.value,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textPrimary,
                         fontSize: 12.5,
                         fontWeight: FontWeight.w700,

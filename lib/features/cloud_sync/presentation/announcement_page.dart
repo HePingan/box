@@ -65,7 +65,7 @@ class _AnnouncementPageState extends State<AnnouncementPage> {
                   Center(
                     child: Text(
                       center.lastError == null ? '暂无公告' : '公告加载失败，下拉重试',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textSecondary,
                         fontSize: 13,
                       ),
@@ -149,7 +149,7 @@ class _AnnouncementCard extends StatelessWidget {
               ),
               if (entry.pinned) ...[
                 const SizedBox(width: 6),
-                const Icon(
+                Icon(
                   Icons.push_pin_rounded,
                   size: 13,
                   color: AppTokens.textSecondary,

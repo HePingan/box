@@ -47,7 +47,7 @@ class ContentHubTopCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   '内容中心',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -64,7 +64,7 @@ class ContentHubTopCard extends StatelessWidget {
                   '$entryCount 入口 · $sectionCount 分区 · $totalItems 收藏 · $syncLabel',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textSecondary,
                     fontSize: 11.5,
                     fontWeight: FontWeight.w600,
@@ -400,7 +400,7 @@ class ContentOverviewCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -413,7 +413,7 @@ class ContentOverviewCard extends StatelessWidget {
                         height: 1.15,
                       ),
                     ),
-                    SizedBox(height: 2),
+                    const SizedBox(height: 2),
                     Text(
                       '继续上次 / 快速导入',
                       style: TextStyle(
@@ -494,7 +494,7 @@ class _RecentCollectionTile extends StatelessWidget {
                   color: AppTokens.violet.withValues(alpha: 0.55),
                 ),
                 const SizedBox(width: 6),
-                const Text(
+                Text(
                   '还没有收藏',
                   style: TextStyle(
                     fontSize: 12,
@@ -564,7 +564,7 @@ class _RecentCollectionTile extends StatelessWidget {
                     i.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w800,
                       color: AppTokens.textPrimary,
@@ -1224,7 +1224,7 @@ class ContentHeaderMetricPill extends StatelessWidget {
                 value,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   color: AppTokens.textPrimary,
                   fontSize: 18,
                   height: 1,
@@ -1237,7 +1237,7 @@ class ContentHeaderMetricPill extends StatelessWidget {
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   color: AppTokens.textSecondary,
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
@@ -1271,7 +1271,7 @@ class WarehouseSectionHeader extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   color: AppTokens.textPrimary,
                   fontSize: 20,
                   fontWeight: FontWeight.w900,
@@ -1280,7 +1280,7 @@ class WarehouseSectionHeader extends StatelessWidget {
               const SizedBox(height: 3),
               Text(
                 subtitle,
-                style: const TextStyle(
+                style: TextStyle(
                   color: AppTokens.textSecondary,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,

@@ -271,8 +271,8 @@ void main() {
           mimeType: 'image/jpeg',
         ),
       ],
-      batch: ShareInboxBatch(
-        files: const [
+      batch: const ShareInboxBatch(
+        files: [
           SharedInboxFile(
             path: '/data/cache/shared_inbox/1_a.jpg',
             name: 'a.jpg',
@@ -281,7 +281,7 @@ void main() {
           ),
         ],
         total: 25,
-        skipped: const [
+        skipped: [
           SkippedShare(name: 'big.mov', reason: 'tooLarge'),
           SkippedShare(name: '', reason: 'unreadable'),
         ],
@@ -298,7 +298,7 @@ void main() {
   });
 
   testWidgets('分享文本/链接（287 D3）：列得出、看得懂，不冒充图片', (tester) async {
-    final file = SharedInboxFile(
+    const file = SharedInboxFile(
       name: '分享文本-https-example.com-x.txt',
       path: '/cache/inbox/1_分享文本-https-example.com-x.txt',
       sizeBytes: 42,

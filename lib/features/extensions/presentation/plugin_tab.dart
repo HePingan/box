@@ -327,7 +327,7 @@ class _PluginTabState extends State<PluginTab>
                               tpl.title,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontWeight: FontWeight.w800,
                                 fontSize: 13,
                                 color: AppTokens.textPrimary,
@@ -338,7 +338,7 @@ class _PluginTabState extends State<PluginTab>
                               tpl.subtitle,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 11,
                                 color: AppTokens.textSecondary,
                               ),
@@ -946,7 +946,7 @@ class _PluginTabState extends State<PluginTab>
                     Flexible(
                       child: Text(
                         risk.title,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w800,
                           color: AppTokens.textPrimary,
@@ -979,7 +979,7 @@ class _PluginTabState extends State<PluginTab>
                 const SizedBox(height: 2),
                 Text(
                   version.isEmpty ? risk.note : '${risk.note} · $version',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     color: AppTokens.textSecondary,
                     height: 1.3,
@@ -1237,7 +1237,7 @@ class _PluginTabState extends State<PluginTab>
                         style: const TextStyle(fontSize: 13),
                         decoration: InputDecoration(
                           hintText: '搜索插件…',
-                          hintStyle: const TextStyle(
+                          hintStyle: TextStyle(
                             color: AppTokens.textSecondary,
                             fontSize: 12.5,
                           ),
@@ -1248,7 +1248,7 @@ class _PluginTabState extends State<PluginTab>
                           ),
                           suffixIcon: _pluginQuery.isNotEmpty
                               ? IconButton(
-                                  icon: const Icon(
+                                  icon: Icon(
                                     Icons.clear_rounded,
                                     size: 18,
                                     color: AppTokens.textSecondary,
@@ -1441,7 +1441,7 @@ class _PluginTabState extends State<PluginTab>
                   child: Center(
                     child: Column(
                       children: [
-                        const Text(
+                        Text(
                           '没有匹配的插件',
                           style: TextStyle(
                             color: AppTokens.textSecondary,

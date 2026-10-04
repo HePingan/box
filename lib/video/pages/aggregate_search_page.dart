@@ -368,7 +368,7 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
         const SizedBox(width: 8),
         Text(
           '$visibleCount 部',
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w700,
             color: AppTokens.textSecondary,
@@ -611,7 +611,7 @@ class _AggregateSearchLoading extends StatelessWidget {
           const SizedBox(height: 14),
           Text(
             progressText,
-            style: const TextStyle(
+            style: TextStyle(
               color: AppTokens.textSecondary,
               fontWeight: FontWeight.w700,
             ),

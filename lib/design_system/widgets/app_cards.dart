@@ -185,7 +185,7 @@ class AppSectionHeader extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   color: AppTokens.textPrimary,
                   fontSize: 18,
                   fontWeight: FontWeight.w900,
@@ -197,7 +197,7 @@ class AppSectionHeader extends StatelessWidget {
                   subtitle!,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textSecondary,
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
@@ -333,7 +333,8 @@ class AppEmptyState extends StatelessWidget {
             width: 46,
             height: 46,
             decoration: BoxDecoration(
-              color: Colors.white,
+              // 这块底衬在白卡上是"白色芯片"，在深色卡上会变成亮块。
+              color: AppTokens.surface,
               borderRadius: BorderRadius.circular(AppTokens.radiusMd),
             ),
             child: Icon(icon, color: AppTokens.textTertiary),
@@ -341,7 +342,7 @@ class AppEmptyState extends StatelessWidget {
           const SizedBox(height: 10),
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               color: AppTokens.textPrimary,
               fontWeight: FontWeight.w800,
             ),
@@ -350,7 +351,7 @@ class AppEmptyState extends StatelessWidget {
           Text(
             message,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               color: AppTokens.textSecondary,
               fontSize: 12,
             ),
@@ -488,7 +489,7 @@ class AppLightHeroCard extends StatelessWidget {
                   const SizedBox(height: 9),
                   Text(
                     eyebrow,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: AppTokens.textSecondary,
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
@@ -499,7 +500,7 @@ class AppLightHeroCard extends StatelessWidget {
                   const SizedBox(height: 8),
                 Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textPrimary,
                     fontSize: 25,
                     height: 1.03,
@@ -510,12 +511,12 @@ class AppLightHeroCard extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textSecondary,
                     fontSize: 12,
                     height: 1.2,
                     fontWeight: FontWeight.w600,
-                    fontFeatures: [FontFeature.tabularFigures()],
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
                 if (metrics.isNotEmpty) ...[
@@ -621,7 +622,7 @@ class AppCompactActionCard extends StatelessWidget {
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               color: AppTokens.textPrimary,
               fontSize: 12.5,
               fontWeight: FontWeight.w900,
@@ -633,7 +634,7 @@ class AppCompactActionCard extends StatelessWidget {
             subtitle,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               color: AppTokens.textSecondary,
               fontSize: 9.5,
               fontWeight: FontWeight.w700,

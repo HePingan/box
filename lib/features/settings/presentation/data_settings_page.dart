@@ -221,7 +221,7 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
                   subtitle: '收藏、历史、下载、书架书源与阅读进度、本地题库',
                   onTap: () => _backupLocalData(context),
                 ),
-                const Divider(height: 1, color: AppTokens.divider),
+                Divider(height: 1, color: AppTokens.divider),
                 _DataTile(
                   icon: Icons.settings_backup_restore_outlined,
                   title: '恢复本地数据',
@@ -259,7 +259,7 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
                     await _loadOfflineUsage();
                   },
                 ),
-                const Divider(height: 1, color: AppTokens.divider),
+                Divider(height: 1, color: AppTokens.divider),
                 _DataTile(
                   icon: Icons.sync_outlined,
                   title: '跨设备同步',
@@ -267,7 +267,7 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
                   busy: _syncing,
                   onTap: _syncing ? null : () => unawaited(_syncNow()),
                 ),
-                const Divider(height: 1, color: AppTokens.divider),
+                Divider(height: 1, color: AppTokens.divider),
                 // 外面那层 Container 有底色：SwitchListTile 必须有自己的 Material，
                 // 否则 Flutter 会断言"背景与墨水效果可能看不见"（测试里直接判失败）。
                 Material(
@@ -464,7 +464,7 @@ class _DataTile extends StatelessWidget {
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                       color: AppTokens.textPrimary,
@@ -473,7 +473,7 @@ class _DataTile extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       color: AppTokens.textSecondary,
                     ),
@@ -488,7 +488,7 @@ class _DataTile extends StatelessWidget {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             else
-              const Icon(
+              Icon(
                 Icons.chevron_right_rounded,
                 size: 20,
                 color: AppTokens.textTertiary,

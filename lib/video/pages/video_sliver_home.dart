@@ -303,7 +303,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text(
+                Text(
                   '光影剧场',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -319,7 +319,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
                   subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textSecondary,
                     fontSize: 11.5,
                     height: 1.15,
@@ -425,7 +425,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
                     source == null ? '按分类浏览' : '按分类浏览 · ${source.name}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w800,
                       color: AppTokens.textPrimary,

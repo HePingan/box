@@ -176,7 +176,7 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
               if (source == null)
                 const Text('书源配置解析失败（内置 JSON 不完整）——这是 App 自身的问题，不是站点的问题。')
               else ...[
-                const Text(
+                Text(
                   '要自检哪个源（App 默认用的那个排第一）：',
                   style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
                 ),
@@ -197,7 +197,7 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
                 const SizedBox(height: 10),
                 Text(
                   source.baseUrl,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     color: AppTokens.textSecondary,
                   ),
@@ -206,14 +206,14 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
                   const SizedBox(height: 4),
                   Text(
                     note,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       color: AppTokens.textSecondary,
                     ),
                   ),
                 ],
                 const SizedBox(height: 10),
-                const Text(
+                Text(
                   '这一步用这台手机上的真 WebView 跑四件事：搜索 → 打开一本书 → 打开第一章取图 '
                   '→ 真下一张图。站点有人机验证（纯请求会被 403），所以只能在手机上问出真相。\n'
                   '结论只代表**这台手机 + 当前网络**；换网络或站点改版都会变。',
@@ -282,11 +282,11 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
       const SizedBox(height: 6),
       Text(
         '总耗时 ${(r.totalMs / 1000).toStringAsFixed(1)} 秒',
-        style: const TextStyle(fontSize: 12, color: AppTokens.textSecondary),
+        style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
       ),
       if (r.firstImageUrl != null) ...[
         const SizedBox(height: 14),
-        const Text(
+        Text(
           '取到的第一张图（第 4 步已经把它下到本地了，这里显示的就是缓存里那一份）：',
           style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
         ),
@@ -302,7 +302,7 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
         ),
       ],
       const SizedBox(height: 14),
-      const Text(
+      Text(
         '已知差异（不藏着）：书源里的「繁转简」本 App 未实现，繁体章节会显示为繁体。',
         style: TextStyle(fontSize: 11, color: AppTokens.textTertiary),
       ),
@@ -340,7 +340,7 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
               const Spacer(),
               Text(
                 '${step.elapsedMs} ms',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
                   color: AppTokens.textSecondary,
                 ),
@@ -354,7 +354,7 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
               padding: const EdgeInsets.only(top: 4),
               child: SelectableText(
                 '页面标题：${step.pageTitle}',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
                   color: AppTokens.textSecondary,
                 ),
@@ -365,7 +365,7 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
               padding: const EdgeInsets.only(top: 2),
               child: SelectableText(
                 '最终地址：${step.finalUrl}',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
                   color: AppTokens.textSecondary,
                 ),
@@ -376,7 +376,7 @@ class _ComicSourceCheckPageState extends State<ComicSourceCheckPage> {
               padding: const EdgeInsets.only(top: 2),
               child: SelectableText(
                 '样例：$sample',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
                   color: AppTokens.textSecondary,
                 ),

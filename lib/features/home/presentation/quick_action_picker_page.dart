@@ -139,7 +139,7 @@ class _QuickActionPickerPageState extends State<QuickActionPickerPage> {
       // 注意：Material 不允许同时传 shape 和 borderRadius（会断言失败），
       // shape 里的 RoundedRectangleBorder 已经带圆角了。
       shape: RoundedRectangleBorder(
-        side: const BorderSide(color: AppTokens.divider),
+        side: BorderSide(color: AppTokens.divider),
         borderRadius: BorderRadius.circular(AppTokens.radiusCard),
       ),
       child: ReorderableListView.builder(
@@ -168,7 +168,7 @@ class _QuickActionPickerPageState extends State<QuickActionPickerPage> {
               leading: _iconBadge(plugin),
               title: Text(
                 plugin.title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
                   color: AppTokens.textPrimary,
@@ -180,7 +180,7 @@ class _QuickActionPickerPageState extends State<QuickActionPickerPage> {
                       plugin.subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         color: AppTokens.textTertiary,
                       ),
@@ -188,7 +188,7 @@ class _QuickActionPickerPageState extends State<QuickActionPickerPage> {
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
-                  const Icon(
+                  Icon(
                     Icons.drag_handle_rounded,
                     color: AppTokens.textTertiary,
                     size: 20,
@@ -221,14 +221,14 @@ class _QuickActionPickerPageState extends State<QuickActionPickerPage> {
         color: AppTokens.surface,
         // 同上：shape 与 borderRadius 互斥，只留 shape。
         shape: RoundedRectangleBorder(
-          side: const BorderSide(color: AppTokens.divider),
+          side: BorderSide(color: AppTokens.divider),
           borderRadius: BorderRadius.circular(AppTokens.radiusSm),
         ),
         child: ListTile(
           leading: _iconBadge(plugin),
           title: Text(
             plugin.title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w700,
               color: AppTokens.textPrimary,
@@ -240,7 +240,7 @@ class _QuickActionPickerPageState extends State<QuickActionPickerPage> {
                   plugin.subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     color: AppTokens.textTertiary,
                   ),
@@ -279,7 +279,7 @@ class _QuickActionPickerPageState extends State<QuickActionPickerPage> {
         children: <Widget>[
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w900,
               color: AppTokens.textPrimary,
@@ -289,7 +289,7 @@ class _QuickActionPickerPageState extends State<QuickActionPickerPage> {
             const SizedBox(height: 2),
             Text(
               subtitle,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11.5,
                 color: AppTokens.textTertiary,
               ),
@@ -310,7 +310,7 @@ class _QuickActionPickerPageState extends State<QuickActionPickerPage> {
       ),
       child: Text(
         text,
-        style: const TextStyle(fontSize: 13, color: AppTokens.textTertiary),
+        style: TextStyle(fontSize: 13, color: AppTokens.textTertiary),
       ),
     );
   }

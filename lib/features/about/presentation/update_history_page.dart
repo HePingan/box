@@ -120,13 +120,13 @@ class _UpdateHistoryPageState extends State<UpdateHistoryPage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
+            Icon(
               Icons.inbox_outlined,
               size: 40,
               color: AppTokens.textTertiary,
             ),
             const SizedBox(height: 12),
-            const Text(
+            Text(
               '服务端暂无历史更新记录',
               style: TextStyle(fontSize: 14, color: AppTokens.textSecondary),
             ),
@@ -146,7 +146,7 @@ class _UpdateHistoryPageState extends State<UpdateHistoryPage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
+            Icon(
               Icons.cloud_off_rounded,
               size: 40,
               color: AppTokens.textTertiary,
@@ -155,7 +155,7 @@ class _UpdateHistoryPageState extends State<UpdateHistoryPage> {
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 height: 1.6,
                 color: AppTokens.textSecondary,
@@ -213,7 +213,7 @@ class _HistoryCard extends StatelessWidget {
               if (entry.publishedDateLabel != null)
                 Text(
                   entry.publishedDateLabel!,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
                     color: AppTokens.textTertiary,
                   ),
@@ -223,7 +223,7 @@ class _HistoryCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             entry.displayTitle,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w700,
               color: AppTokens.textPrimary,
@@ -238,7 +238,7 @@ class _HistoryCard extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
                   line,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     height: 1.7,
                     color: AppTokens.textSecondary,

@@ -32,13 +32,13 @@ class AiHotEmptyState extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
       child: Row(
         children: <Widget>[
-          const Icon(
+          Icon(
             Icons.cloud_off_rounded,
             size: 16,
             color: AppTokens.textTertiary,
           ),
           const SizedBox(width: 8),
-          const Expanded(
+          Expanded(
             child: Text(
               '暂时拿不到 AI 热点',
               style: TextStyle(fontSize: 13, color: AppTokens.textTertiary),
@@ -78,12 +78,12 @@ class AiHotAttributionFooter extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         border: Border(top: BorderSide(color: AppTokens.divider)),
       ),
       child: Row(
         children: <Widget>[
-          const Icon(
+          Icon(
             Icons.bolt_rounded,
             size: 12,
             color: AppTokens.textTertiary,
@@ -94,7 +94,7 @@ class AiHotAttributionFooter extends StatelessWidget {
               '内容来源 $label',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
                 color: AppTokens.textTertiary,
               ),
@@ -138,7 +138,7 @@ class AiHotRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
         decoration: BoxDecoration(
           border: showDivider
-              ? const Border(bottom: BorderSide(color: AppTokens.divider))
+              ? Border(bottom: BorderSide(color: AppTokens.divider))
               : null,
         ),
         child: Column(
@@ -148,7 +148,7 @@ class AiHotRow extends StatelessWidget {
               item.title,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13.5,
                 height: 1.35,
                 fontWeight: FontWeight.w600,
@@ -162,7 +162,7 @@ class AiHotRow extends StatelessWidget {
                 summary,
                 maxLines: summaryMaxLines,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
                   height: 1.4,
                   color: AppTokens.textSecondary,
@@ -200,7 +200,7 @@ class AiHotRow extends StatelessWidget {
                       item.source!,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11,
                         color: AppTokens.textTertiary,
                       ),
@@ -211,7 +211,7 @@ class AiHotRow extends StatelessWidget {
                 if (item.relativeTime != null)
                   Text(
                     item.relativeTime!,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
                       color: AppTokens.textTertiary,
                     ),

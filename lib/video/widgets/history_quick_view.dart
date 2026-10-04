@@ -51,7 +51,7 @@ class HistoryQuickView extends StatelessWidget {
                     child: Center(
                       child: Text(
                         emptyText,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: AppTokens.textSecondary,
                           fontSize: 12,
                         ),
@@ -102,7 +102,7 @@ class HistoryQuickView extends StatelessWidget {
         const SizedBox(width: 6),
         Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 14.5,
             fontWeight: FontWeight.w800,
             color: AppTokens.textPrimary,
@@ -231,7 +231,7 @@ class HistoryQuickView extends StatelessWidget {
                   Expanded(
                     child: Text(
                       message,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textPrimary,
                         height: 1.45,
                       ),
@@ -391,7 +391,7 @@ class _HistoryCard extends StatelessWidget {
               item.vodName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontWeight: FontWeight.w700,
                 fontSize: 12.5,
                 color: AppTokens.textPrimary,
@@ -416,7 +416,7 @@ class _HistoryCard extends StatelessWidget {
                     item.episodeName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 10.5,
                       color: AppTokens.textSecondary,
                       height: 1.1,

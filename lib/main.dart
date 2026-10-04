@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'design_system/app_theme.dart';
+import 'design_system/app_theme_controller.dart';
+
 import 'package:flutter/services.dart';
 
 import 'app/app.dart';
@@ -56,7 +59,10 @@ class _AppBootstrapperState extends State<_AppBootstrapper> {
   void initState() {
     super.initState();
     AppBootstrap.initialize()
-        .then((result) {
+        .then((result) async {
+          // 深浅档位要在首帧前就位：协议闸门比 BoxApp 更早出现，
+          // 而 BoxApp 里的 load() 那时还轮不到。
+          await AppThemeController.instance.load();
           if (mounted) {
             final consent = LegalConsentStore(result.prefs);
             setState(() {
@@ -93,6 +99,11 @@ class _AppBootstrapperState extends State<_AppBootstrapper> {
       final consent = _consent!;
       return MaterialApp(
         debugShowCheckedModeBanner: false,
+        // 首次启动也会看到这一页，所以深浅也要跟着走：控制器在
+        // `_bootstrap()` 里已经 load 过一次（那时 BoxApp 还没构建）。
+        theme: AppTheme.light(),
+        darkTheme: AppTheme.dark(),
+        themeMode: AppThemeController.instance.themeMode,
         home: LegalConsentGate(
           isReconsent: consent.isReconsent,
           onAccept: () async {

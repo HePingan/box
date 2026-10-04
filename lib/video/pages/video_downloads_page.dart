@@ -22,7 +22,7 @@ class VideoDownloadsPage extends StatelessWidget {
           color: AppTokens.textPrimary,
           onPressed: () => Navigator.of(context).maybePop(),
         ),
-        title: const Text(
+        title: Text(
           '下载管理',
           style: TextStyle(
             fontSize: 18,
@@ -169,7 +169,7 @@ class VideoDownloadsPage extends StatelessWidget {
               children: [
                 Text(
                   task.episodeName,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
                     color: AppTokens.textPrimary,
@@ -200,7 +200,7 @@ class VideoDownloadsPage extends StatelessWidget {
                         task.status == VideoDownloadStatus.paused
                             ? task.sizeLabel
                             : '${task.sizeLabel} · ${task.speedLabel}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
                           color: AppTokens.textSecondary,
                         ),
@@ -212,7 +212,7 @@ class VideoDownloadsPage extends StatelessWidget {
                     padding: const EdgeInsets.only(top: 2),
                     child: Text(
                       task.remainingTimeLabel,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11,
                         color: AppTokens.textSecondary,
                       ),

@@ -26,7 +26,7 @@ class _FakePlatformApi extends PluginMarketApi {
 class _UnreachableApi extends PluginMarketApi {
   @override
   Future<PluginMarketRemoteManifest> fetchMarket({String channel = 'stable'}) async {
-    throw PluginMarketApiException('平台不可达（测试）');
+    throw const PluginMarketApiException('平台不可达（测试）');
   }
 }
 

@@ -70,7 +70,7 @@ class ExtensionHeroCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       '扩展中心',
                       style: TextStyle(
                         color: AppTokens.textPrimary,
@@ -83,22 +83,22 @@ class ExtensionHeroCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       '已启用 $enabledCount / 共 $pluginCount',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textSecondary,
                         fontSize: 11.5,
                         fontWeight: FontWeight.w600,
-                        fontFeatures: [FontFeature.tabularFigures()],
+                        fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       '内置 $builtInCount · 第三方 '
                       '${pluginCount - builtInCount}',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textSecondary,
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
-                        fontFeatures: [FontFeature.tabularFigures()],
+                        fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
                   ],
@@ -152,7 +152,7 @@ class ExtensionHeroCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                     border: Border.all(color: const Color(0xFFE7ECF5)),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.more_horiz_rounded,
                     color: AppTokens.textSecondary,
                     size: 16,
@@ -483,7 +483,7 @@ class PluginDetailSheet extends StatelessWidget {
                             plugin.title,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 17,
                               fontWeight: FontWeight.w900,
                               color: AppTokens.textPrimary,
@@ -495,7 +495,7 @@ class PluginDetailSheet extends StatelessWidget {
                             plugin.subtitle,
                             maxLines: 3,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12.5,
                               color: AppTokens.textSecondary,
                               height: 1.35,
@@ -564,7 +564,7 @@ class PluginDetailSheet extends StatelessWidget {
           width: 64,
           child: Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12.5,
               color: AppTokens.textSecondary,
               fontWeight: FontWeight.w700,
@@ -574,7 +574,7 @@ class PluginDetailSheet extends StatelessWidget {
         Expanded(
           child: SelectableText(
             value,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w600,
               color: AppTokens.textPrimary,

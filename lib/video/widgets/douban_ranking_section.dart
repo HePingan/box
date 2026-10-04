@@ -127,7 +127,7 @@ class _RankingEntry extends StatelessWidget {
               item.title,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
                 color: AppTokens.textPrimary,
@@ -142,7 +142,7 @@ class _RankingEntry extends StatelessWidget {
                   item.subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 10,
                     color: AppTokens.textSecondary,
                   ),
@@ -156,7 +156,7 @@ class _RankingEntry extends StatelessWidget {
                   item.episodesInfo!,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 10,
                     color: AppTokens.textSecondary,
                   ),
@@ -267,7 +267,7 @@ class _DoubanRankingSectionState extends State<DoubanRankingSection>
                 const Icon(Icons.auto_awesome_rounded,
                     size: 16, color: AppTokens.primaryBlue),
                 const SizedBox(width: 6),
-                const Text(
+                Text(
                   '豆瓣热榜',
                   style: TextStyle(
                     fontSize: 14.5,
@@ -338,7 +338,7 @@ class _DoubanRankingSectionState extends State<DoubanRankingSection>
               child: Center(
                 child: Text(
                   _error!,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textSecondary,
                     fontSize: 12,
                   ),
@@ -385,7 +385,7 @@ class _DoubanRankingSectionState extends State<DoubanRankingSection>
 
   Widget _buildListView(List<DoubanRankingItem> items) {
     if (items.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
           '暂无数据',
           style: TextStyle(color: AppTokens.textSecondary, fontSize: 12),

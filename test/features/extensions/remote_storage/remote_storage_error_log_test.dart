@@ -62,7 +62,7 @@ void main() {
     });
 
     test('传输层原始错误（非 dio 路径）也落盘——防御性加固', () {
-      mapTransportError(SocketException('connection refused'));
+      mapTransportError(const SocketException('connection refused'));
       expect(storageEntries(), hasLength(1));
     });
   });

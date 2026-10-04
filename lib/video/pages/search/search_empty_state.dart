@@ -44,7 +44,7 @@ class SearchEmptyState extends StatelessWidget {
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppTokens.textSecondary,
                 fontSize: 14,
                 height: 1.45,

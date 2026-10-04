@@ -49,7 +49,7 @@ class AboutContentPage extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               footer!,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
                 height: 1.6,
                 color: AppTokens.textTertiary,
@@ -82,7 +82,7 @@ class _SectionCard extends StatelessWidget {
         children: [
           Text(
             section.title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w700,
               color: AppTokens.textPrimary,
@@ -95,7 +95,7 @@ class _SectionCard extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
                 t,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   height: 1.7,
                   color: AppTokens.textSecondary,
@@ -109,8 +109,8 @@ class _SectionCard extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Padding(
-                    padding: EdgeInsets.only(top: 6, right: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6, right: 8),
                     child: SizedBox(
                       width: 4,
                       height: 4,
@@ -125,7 +125,7 @@ class _SectionCard extends StatelessWidget {
                   Expanded(
                     child: Text(
                       p,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
                         height: 1.6,
                         color: AppTokens.textSecondary,
@@ -232,7 +232,7 @@ class _TutorialCard extends StatelessWidget {
                   Expanded(
                     child: Text(
                       entry.title,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
                         color: AppTokens.textPrimary,
@@ -240,7 +240,7 @@ class _TutorialCard extends StatelessWidget {
                     ),
                   ),
                   if (onTap != null)
-                    const Icon(
+                    Icon(
                       Icons.copy_rounded,
                       size: 16,
                       color: AppTokens.textTertiary,
@@ -250,7 +250,7 @@ class _TutorialCard extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 entry.description,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   height: 1.6,
                   color: AppTokens.textSecondary,

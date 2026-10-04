@@ -39,27 +39,27 @@ void main() {
 
     // 背景
     canvas.drawRect(
-      Rect.fromLTWH(0, 0, width, 720),
+      const Rect.fromLTWH(0, 0, width, 720),
       Paint()..color = const Color(0xFFE5E7EB),
     );
 
     // ── 新版（第二轮优化后）──
     _label(canvas, '新：状态胶囊在左(绿/灰/琥珀) + 留白 + ⋯ + [✨ AI] + 👁 + ✕（去掉冗余字样、间距分层）', 16);
-    _newTitleBar(canvas, Offset(12, 36), width - 24, barH);
-    _answerPreview(canvas, Offset(12, 36 + barH), width - 24,
+    _newTitleBar(canvas, const Offset(12, 36), width - 24, barH);
+    _answerPreview(canvas, const Offset(12, 36 + barH), width - 24,
         '答案：取得学习驾驶证明', pill: '90%', pillColor: const Color(0xFF12B76A));
 
     // ── 未命中态 ──
     _label(canvas, '新：未命中态的引导（用户诉求）', 268);
-    _newTitleBar(canvas, Offset(12, 288), width - 24, barH,
+    _newTitleBar(canvas, const Offset(12, 288), width - 24, barH,
         pill: '未命中', pillColor: const Color(0xFF98A2B3));
-    _answerPreview(canvas, Offset(12, 288 + barH), width - 24,
+    _answerPreview(canvas, const Offset(12, 288 + barH), width - 24,
         '未搜到答案。点右上角 ✨ 星星按钮，用 AI 联网搜题。',
         pill: '未命中', pillColor: const Color(0xFF98A2B3), miss: true);
 
     // ── 检索中态 ──
     _label(canvas, '新：读屏中（琥珀胶囊 + 进度条）', 468);
-    _newTitleBar(canvas, Offset(12, 488), width - 24, barH,
+    _newTitleBar(canvas, const Offset(12, 488), width - 24, barH,
         pill: '读屏中', pillColor: const Color(0xFFF59E0B));
 
     // ── 真机窄窗复现（用户 18:44 截图的那台：iQOO 1440px/密度3.5 → 窗仅 137dp）──
@@ -67,10 +67,10 @@ void main() {
     // 193~224dp → 溢出。旧逻辑下右侧按钮被裁掉（用户截图里 AI + 更多 消失）。
     _label(canvas, '真因复现：窄窗 137dp（iQOO 1440px@3.5）— 旧 vs 新', 550);
     _label(canvas, '旧：193dp 挤进 137dp → 「更多」越界消失、AI 被胶囊压住 ↓', 572);
-    _newTitleBar(canvas, Offset(12, 588), 137, barH,
+    _newTitleBar(canvas, const Offset(12, 588), 137, barH,
         pill: '未命中', pillColor: const Color(0xFF98A2B3), adaptive: false);
     _label(canvas, '新：自适应让位 — 胶囊/更多先收，AI 保位零重叠可见 ↓', 636);
-    _newTitleBar(canvas, Offset(12, 654), 137, barH,
+    _newTitleBar(canvas, const Offset(12, 654), 137, barH,
         pill: '未命中', pillColor: const Color(0xFF98A2B3), adaptive: true);
 
     final img = await recorder.endRecording().toImage(

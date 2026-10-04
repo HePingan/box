@@ -231,7 +231,7 @@ class _CustomSiteSectionState extends State<CustomSiteSection> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
+                          Text(
                             '我的收藏',
                             style: TextStyle(
                               color: AppTokens.textPrimary,
@@ -245,7 +245,7 @@ class _CustomSiteSectionState extends State<CustomSiteSection> {
                                 : (_sites.isEmpty
                                       ? '添加你常用的网站，可导出分享'
                                       : '${_sites.length} 个网站'),
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: AppTokens.textSecondary,
                               fontSize: 11.5,
                               fontWeight: FontWeight.w600,
@@ -279,8 +279,8 @@ class _CustomSiteSectionState extends State<CustomSiteSection> {
             // 不点开根本不知道这功能能存网址。
             if (!_loading && (_expanded || _sites.isEmpty)) ...[
               if (_sites.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(12, 0, 12, 12),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                   child: Text(
                     '点右上角 ＋ 添加第一个网站。收藏会随「本地备份」一起导出，也能复制成一段文本发给朋友。',
                     style: TextStyle(

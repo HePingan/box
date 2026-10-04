@@ -196,7 +196,7 @@ class AppPageScaffold extends StatelessWidget {
   const AppPageScaffold({
     super.key,
     required this.child,
-    this.backgroundColor = AppTokens.background,
+    this.backgroundColor,
     this.useGradient = true,
     this.safeTop = true,
     this.safeBottom = false,
@@ -206,7 +206,13 @@ class AppPageScaffold extends StatelessWidget {
   });
 
   final Widget child;
-  final Color backgroundColor;
+  /// 底色。为空时用 [AppTokens.background]。
+  ///
+  /// 不能写成默认参数值 `= AppTokens.background`：那个值是随深浅解析的
+  /// getter，不是编译期常量，而默认参数必须是常量。
+  final Color? backgroundColor;
+
+  Color get resolvedBackground => backgroundColor ?? AppTokens.background;
   final bool useGradient;
   final bool safeTop;
   final bool safeBottom;
@@ -261,12 +267,12 @@ class AppPageScaffold extends StatelessWidget {
     }
     body = DecoratedBox(
       decoration: BoxDecoration(
-        color: backgroundColor,
+        color: resolvedBackground,
         gradient: useGradient ? AppTokens.pageGradient : null,
       ),
       child: SafeArea(top: safeTop, bottom: safeBottom, child: body),
     );
 
-    return Scaffold(backgroundColor: backgroundColor, body: body);
+    return Scaffold(backgroundColor: resolvedBackground, body: body);
   }
 }

@@ -174,7 +174,7 @@ class _SourceFetchPageState extends State<SourceFetchPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const Text(
+          Text(
             '看服务端返回的原始文本（源码）。动态页面的内容由 JS 生成，'
             '这里看到的多是空壳 —— 要看渲染后的页面请用「用内置浏览器打开」。',
             style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),

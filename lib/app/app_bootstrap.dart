@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../design_system/app_tokens.dart';
 import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -40,7 +42,7 @@ class AppBootstrap {
     await _initLogger();
     await _attachWindowDiagnostics();
     _installErrorHandlers();
-    _configureSystemUi();
+    applySystemUi();
     _configureImageCache();
 
     final prefs = await SharedPreferences.getInstance();
@@ -123,13 +125,22 @@ class AppBootstrap {
     imageCache.maximumSizeBytes = 256 * 1024 * 1024;
   }
 
-  static void _configureSystemUi() {
+  /// 应用系统状态栏/导航栏样式。
+  ///
+  /// 图标亮度**必须跟着深色外壳走**：写死 `Brightness.dark`（深色图标）在浅色底上
+  /// 才对，深色底上会让时间、电量、导航键全部看不见。原先这里是一个 `const`
+  /// 样式，深色模式接进来时立刻会成为真机上的第一眼 bug。
+  ///
+  /// 深浅切换时由 `_BoxAppState` 再调一次，不只是启动时调。
+  static void applySystemUi() {
+    final dark = AppTokens.isDark;
     SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(
+      SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.dark,
-        systemNavigationBarColor: Colors.white,
-        systemNavigationBarIconBrightness: Brightness.dark,
+        statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+        systemNavigationBarColor: dark ? AppTokens.surface : Colors.white,
+        systemNavigationBarIconBrightness:
+            dark ? Brightness.light : Brightness.dark,
       ),
     );
   }

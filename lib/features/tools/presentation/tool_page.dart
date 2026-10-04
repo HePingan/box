@@ -267,7 +267,7 @@ class _ToolPageState extends State<ToolPage>
                   ),
                   child: Text(
                     _offlineOnly ? '没有匹配的工具。这些工具要联网，关掉「离线可用」再看看。' : '没有匹配的工具。',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12.5,
                       height: 1.45,
                       color: AppTokens.textSecondary,
@@ -382,7 +382,7 @@ class _ToolPageState extends State<ToolPage>
                 ),
               ),
               const SizedBox(width: 10),
-              const Expanded(
+              Expanded(
                 child: Text(
                   '工具台',
                   style: TextStyle(
@@ -399,7 +399,7 @@ class _ToolPageState extends State<ToolPage>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.right,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textSecondary,
                     fontSize: 11.5,
                     fontWeight: FontWeight.w700,
@@ -418,7 +418,7 @@ class _ToolPageState extends State<ToolPage>
               style: const TextStyle(fontSize: 13),
               decoration: InputDecoration(
                 hintText: '搜索：天气、JSON、二维码',
-                hintStyle: const TextStyle(
+                hintStyle: TextStyle(
                   color: AppTokens.textSecondary,
                   fontSize: 12,
                 ),
@@ -429,7 +429,7 @@ class _ToolPageState extends State<ToolPage>
                 ),
                 suffixIcon: _searchController.text.isNotEmpty
                     ? IconButton(
-                        icon: const Icon(
+                        icon: Icon(
                           Icons.clear_rounded,
                           size: 18,
                           color: AppTokens.textSecondary,

@@ -64,7 +64,7 @@ class _PluginStatusSectionState extends State<_PluginStatusSection> {
                 const SizedBox(width: 8),
                 Text(
                   widget.title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textPrimary,
                     fontSize: 16,
                     fontWeight: FontWeight.w900,
@@ -93,7 +93,7 @@ class _PluginStatusSectionState extends State<_PluginStatusSection> {
                 AnimatedRotation(
                   turns: _expanded ? 0 : -0.25,
                   duration: const Duration(milliseconds: 200),
-                  child: const Icon(
+                  child: Icon(
                     Icons.expand_more_rounded,
                     color: AppTokens.textSecondary,
                     size: 22,

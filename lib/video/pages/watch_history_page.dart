@@ -75,7 +75,7 @@ class WatchHistoryPage extends StatelessWidget {
             color: AppTokens.textPrimary,
           ),
           const SizedBox(width: 2),
-          const Text(
+          Text(
             '观看历史',
             style: TextStyle(
               fontSize: 20,
@@ -87,7 +87,7 @@ class WatchHistoryPage extends StatelessWidget {
             const SizedBox(width: 8),
             Text(
               '$count',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
                 color: AppTokens.textSecondary,
@@ -123,7 +123,7 @@ class WatchHistoryPage extends StatelessWidget {
           const SizedBox(width: 8),
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w800,
               color: AppTokens.textPrimary,
@@ -132,7 +132,7 @@ class WatchHistoryPage extends StatelessWidget {
           const SizedBox(width: 6),
           Text(
             '$count',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
               color: AppTokens.textSecondary,
@@ -257,15 +257,15 @@ class WatchHistoryPage extends StatelessWidget {
                   color: AppTokens.rose.withValues(alpha: 0.18),
                 ),
               ),
-              child: const Row(
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.warning_amber_rounded,
                     color: AppTokens.rose,
                     size: 20,
                   ),
-                  SizedBox(width: 10),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       '确定要清空所有播放历史吗？',
@@ -406,7 +406,7 @@ class _HistoryRow extends StatelessWidget {
                         item.vodName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w800,
                           color: AppTokens.textPrimary,
@@ -418,7 +418,7 @@ class _HistoryRow extends StatelessWidget {
                         item.episodeName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12.5,
                           color: AppTokens.textSecondary,
                           fontWeight: FontWeight.w600,
@@ -439,7 +439,7 @@ class _HistoryRow extends StatelessWidget {
                               item.sourceName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 11.5,
                                 color: AppTokens.textSecondary,
                                 height: 1.2,
@@ -467,7 +467,7 @@ class _HistoryRow extends StatelessWidget {
                           const SizedBox(width: 8),
                           Text(
                             '$progress%',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
                               color: AppTokens.textSecondary,
@@ -495,7 +495,7 @@ class _RowImagePlaceholder extends StatelessWidget {
     return Container(
       color: const Color(0xFFEEF1F6),
       alignment: Alignment.center,
-      child: const Icon(
+      child: Icon(
         Icons.movie_outlined,
         size: 28,
         color: AppTokens.textSecondary,
@@ -519,7 +519,7 @@ class _EmptyHistory extends StatelessWidget {
             color: AppTokens.textSecondary.withValues(alpha: 0.4),
           ),
           const SizedBox(height: AppTokens.spaceMd),
-          const Text(
+          Text(
             '暂无观看历史',
             style: TextStyle(
               fontSize: 15,

@@ -121,7 +121,7 @@ class SearchHistoryView extends StatelessWidget {
         const SizedBox(width: 6),
         Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 15,
             fontWeight: FontWeight.w800,
             color: AppTokens.textPrimary,
@@ -167,7 +167,7 @@ class _KeywordChip extends StatelessWidget {
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
                   color: AppTokens.textPrimary,

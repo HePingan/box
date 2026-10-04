@@ -132,7 +132,7 @@ class PluginCard extends StatelessWidget {
                           plugin.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: AppTokens.textPrimary,
                             fontSize: 14.5,
                             fontWeight: FontWeight.w900,
@@ -144,7 +144,7 @@ class PluginCard extends StatelessWidget {
                           plugin.subtitle,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: AppTokens.textSecondary,
                             fontSize: 12,
                             height: 1.3,

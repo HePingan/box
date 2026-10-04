@@ -115,7 +115,7 @@ class _LegalConsentGateState extends State<LegalConsentGate> {
                     Text(
                       title,
                       key: const ValueKey('legal_gate_title'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.w700,
                         color: AppTokens.textPrimary,
@@ -124,7 +124,7 @@ class _LegalConsentGateState extends State<LegalConsentGate> {
                     const SizedBox(height: 8),
                     Text(
                       lead,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
                         height: 1.6,
                         color: AppTokens.textSecondary,
@@ -157,9 +157,9 @@ class _LegalConsentGateState extends State<LegalConsentGate> {
                         (c) => LegalClauseView(clause: c),
                       ),
                       const SizedBox(height: 8),
-                      const Text(
+                      Text(
                         '（以上为全文结束）',
-                        key: ValueKey('legal_gate_end_marker'),
+                        key: const ValueKey('legal_gate_end_marker'),
                         style: TextStyle(
                           fontSize: 12,
                           color: AppTokens.textTertiary,
@@ -181,7 +181,7 @@ class _LegalConsentGateState extends State<LegalConsentGate> {
         padding: const EdgeInsets.only(bottom: 12),
         child: Text(
           text,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 17,
             fontWeight: FontWeight.w700,
             color: AppTokens.textPrimary,
@@ -204,11 +204,11 @@ class _LegalConsentGateState extends State<LegalConsentGate> {
               ),
             ),
           if (!_reachedEnd)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 8),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
               child: Text(
                 '请滑动阅读至全文末尾',
-                key: ValueKey('legal_gate_scroll_hint'),
+                key: const ValueKey('legal_gate_scroll_hint'),
                 style: TextStyle(fontSize: 12, color: AppTokens.textTertiary),
               ),
             ),
@@ -225,7 +225,7 @@ class _LegalConsentGateState extends State<LegalConsentGate> {
           TextButton(
             key: const ValueKey('legal_gate_decline'),
             onPressed: _submitting ? null : widget.onDecline,
-            child: const Text(
+            child: Text(
               '不同意并退出',
               style: TextStyle(color: AppTokens.textTertiary),
             ),

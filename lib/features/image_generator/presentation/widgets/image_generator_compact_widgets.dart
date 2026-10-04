@@ -182,7 +182,7 @@ class ReferenceSectionState extends State<ReferenceSection> {
                   children: [
                     Row(
                       children: [
-                        const Text(
+                        Text(
                           '参考图',
                           style: TextStyle(
                             color: AppTokens.textPrimary,
@@ -219,7 +219,7 @@ class ReferenceSectionState extends State<ReferenceSection> {
                       nonEmptyCount > 0
                           ? '已添加 $nonEmptyCount 张参考图（点击${_expanded ? "收起" : "展开"}）'
                           : '支持 URL / 上传图片',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textSecondary,
                         fontSize: 12,
                       ),
@@ -381,7 +381,7 @@ class GeneratedImageTileCompact extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               '修订: ${item.revisedPrompt}',
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppTokens.textSecondary,
                 fontSize: 11,
               ),
@@ -470,7 +470,7 @@ class _ActionChip extends StatelessWidget {
               const SizedBox(width: 4),
               Text(
                 label,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
                   color: AppTokens.textSecondary,
@@ -509,7 +509,7 @@ class HistorySectionCompact extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Icon(
+            Icon(
               Icons.history_rounded,
               size: 16,
               color: AppTokens.textSecondary,
@@ -792,7 +792,7 @@ class _HistoryBadge extends StatelessWidget {
           ],
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.w600,
               color: AppTokens.textSecondary,
@@ -877,7 +877,7 @@ class ImageGeneratorDiagnosticsCardCompact extends StatelessWidget {
       leadingColor: color,
       children: item == null
           ? [
-              const Text(
+              Text(
                 '暂无请求记录。诊断卡记录最近一次真实生成结果。',
                 style: TextStyle(color: AppTokens.textSecondary, fontSize: 11),
               ),
@@ -1031,7 +1031,7 @@ class ImageGeneratorPlatformQuotaCardCompact extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Icon(
+            Icon(
               Icons.account_balance_wallet_rounded,
               size: 16,
               color: AppTokens.textSecondary,

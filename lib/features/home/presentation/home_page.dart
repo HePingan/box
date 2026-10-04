@@ -455,7 +455,7 @@ class _HomePageState extends State<HomePage>
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.w900,
                 color: AppTokens.textPrimary,
@@ -480,7 +480,7 @@ class _HomePageState extends State<HomePage>
             visualDensity: VisualDensity.compact,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-            icon: const Icon(
+            icon: Icon(
               Icons.menu_rounded,
               color: AppTokens.textSecondary,
               size: 22,
@@ -493,7 +493,7 @@ class _HomePageState extends State<HomePage>
               _todayDateStr,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppTokens.textPrimary,
                 fontSize: 15.5,
                 fontWeight: FontWeight.w900,
@@ -557,8 +557,8 @@ class _HomePageState extends State<HomePage>
               GestureDetector(
                 onTap: _openQuickActionPicker,
                 behavior: HitTestBehavior.opaque,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                   child: Row(
                     children: [
                       Icon(
@@ -566,7 +566,7 @@ class _HomePageState extends State<HomePage>
                         size: 13,
                         color: AppTokens.textSecondary,
                       ),
-                      SizedBox(width: 3),
+                      const SizedBox(width: 3),
                       Text(
                         '管理',
                         style: TextStyle(
@@ -690,14 +690,14 @@ class _HomePageState extends State<HomePage>
           borderRadius: BorderRadius.circular(AppTokens.radiusCard),
           border: Border.all(color: AppTokens.divider),
         ),
-        child: const Row(
+        child: Row(
           children: [
-            Icon(
+            const Icon(
               Icons.add_circle_outline_rounded,
               size: 18,
               color: AppTokens.primaryBlue,
             ),
-            SizedBox(width: 8),
+            const SizedBox(width: 8),
             Expanded(
               child: Text(
                 '还没有快捷入口，点这里从插件里挑几个',
@@ -842,7 +842,7 @@ class HomeQuickActionCard extends StatelessWidget {
                       action.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textPrimary,
                         fontSize: 14,
                         fontWeight: FontWeight.w900,
@@ -854,7 +854,7 @@ class HomeQuickActionCard extends StatelessWidget {
                       action.subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textTertiary,
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
@@ -912,7 +912,7 @@ class _PluginCard extends StatelessWidget {
               plugin.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppTokens.textPrimary,
                 fontSize: 13,
                 fontWeight: FontWeight.w900,
@@ -924,7 +924,7 @@ class _PluginCard extends StatelessWidget {
               plugin.subtitle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppTokens.textTertiary,
                 fontSize: 10.5,
                 fontWeight: FontWeight.w600,

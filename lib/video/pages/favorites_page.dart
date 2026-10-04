@@ -86,7 +86,7 @@ class FavoritesPage extends StatelessWidget {
             color: AppTokens.textPrimary,
           ),
           const SizedBox(width: 2),
-          const Text(
+          Text(
             '我的追剧',
             style: TextStyle(
               fontSize: 20,
@@ -98,7 +98,7 @@ class FavoritesPage extends StatelessWidget {
             const SizedBox(width: 8),
             Text(
               '$count',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
                 color: AppTokens.textSecondary,
@@ -236,7 +236,7 @@ class FavoritesPage extends StatelessWidget {
                   Expanded(
                     child: Text(
                       message,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textPrimary,
                         height: 1.45,
                       ),
@@ -358,7 +358,7 @@ class _FavoriteCard extends StatelessWidget {
             item.vodName,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               fontWeight: FontWeight.w800,
               fontSize: 13,
               color: AppTokens.textPrimary,
@@ -379,7 +379,7 @@ class _FavoriteCard extends StatelessWidget {
                   item.sourceName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
                     color: AppTokens.textSecondary,
                     height: 1.2,
@@ -402,7 +402,7 @@ class _FavImagePlaceholder extends StatelessWidget {
     return Container(
       color: const Color(0xFFEEF1F6),
       alignment: Alignment.center,
-      child: const Icon(
+      child: Icon(
         Icons.movie_outlined,
         size: 30,
         color: AppTokens.textSecondary,
@@ -426,7 +426,7 @@ class _EmptyFavorites extends StatelessWidget {
             color: AppTokens.textSecondary.withValues(alpha: 0.5),
           ),
           const SizedBox(height: AppTokens.spaceMd),
-          const Text(
+          Text(
             '还没有追剧收藏',
             style: TextStyle(
               fontSize: 15,
@@ -435,7 +435,7 @@ class _EmptyFavorites extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 6),
-          const Text(
+          Text(
             '在详情页点右上角 ♥ 即可加入追剧',
             style: TextStyle(fontSize: 12.5, color: AppTokens.textSecondary),
           ),

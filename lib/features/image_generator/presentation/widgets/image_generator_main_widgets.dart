@@ -25,7 +25,7 @@ class ImageGeneratorHeader extends StatelessWidget {
           icon: const Icon(Icons.arrow_back_rounded),
         ),
         const SizedBox(width: 10),
-        const Expanded(
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -37,7 +37,7 @@ class ImageGeneratorHeader extends StatelessWidget {
                   fontWeight: FontWeight.w900,
                 ),
               ),
-              SizedBox(height: 3),
+              const SizedBox(height: 3),
               Text(
                 'OpenAI 兼容 Images API · 文生图增强版',
                 style: TextStyle(color: AppTokens.textSecondary),
@@ -202,7 +202,7 @@ class ImageGeneratorConfigCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               '平台额度模式会请求 /api/image/quota、/api/image/models、/api/image/generate；管理员 Key 必须只保存在后端。',
               style: TextStyle(color: AppTokens.textSecondary, fontSize: 12),
             ),
@@ -272,7 +272,7 @@ class ImageGeneratorConfigCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               showingAllModels ? '全部模型（点击填入）' : '推荐生图模型（点击填入）',
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppTokens.textSecondary,
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
@@ -383,11 +383,11 @@ class ImageGeneratorPlatformQuotaCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               item!.message,
-              style: const TextStyle(color: AppTokens.textSecondary),
+              style: TextStyle(color: AppTokens.textSecondary),
             ),
           ],
           const SizedBox(height: 10),
-          const Text(
+          Text(
             '安全说明：前端不会内置管理员 Key；真实扣费、限流、用户鉴权必须由平台后端完成。',
             style: TextStyle(color: AppTokens.textSecondary, fontSize: 12),
           ),
@@ -542,7 +542,7 @@ class _PromptPresetCard extends StatelessWidget {
                     preset.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: AppTokens.textPrimary,
                       fontWeight: FontWeight.w900,
                     ),
@@ -555,7 +555,7 @@ class _PromptPresetCard extends StatelessWidget {
               preset.description,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppTokens.textSecondary,
                 fontSize: 12,
               ),
@@ -678,7 +678,7 @@ class ImageGeneratorRequestPreviewCard extends StatelessWidget {
             size: 19,
           ),
         ),
-        title: const Text(
+        title: Text(
           '请求预览 / 预检',
           style: TextStyle(
             fontWeight: FontWeight.w900,
@@ -739,7 +739,7 @@ class _CodePreview extends StatelessWidget {
       children: [
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             color: AppTokens.textSecondary,
             fontSize: 12,
             fontWeight: FontWeight.w800,
@@ -796,7 +796,7 @@ class _PreflightRow extends StatelessWidget {
           Expanded(
             child: Text(
               item.message,
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppTokens.textPrimary,
                 fontWeight: FontWeight.w700,
               ),
@@ -854,7 +854,7 @@ class ImageGeneratorDiagnosticsCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: const Color(0xFFE7ECF5)),
               ),
-              child: const Text(
+              child: Text(
                 '暂无真实请求记录。请求预览不会消耗额度，诊断卡只记录本页最近一次真实生成结果。',
                 style: TextStyle(color: AppTokens.textSecondary),
               ),
@@ -872,7 +872,7 @@ class ImageGeneratorDiagnosticsCard extends StatelessWidget {
                 ),
                 Text(
                   item.timeLabel,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textSecondary,
                     fontWeight: FontWeight.w700,
                   ),
@@ -1012,7 +1012,7 @@ class ImageGeneratorResultCard extends StatelessWidget {
                   color: AppTokens.warning.withValues(alpha: 0.3),
                 ),
               ),
-              child: const Text(
+              child: Text(
                 '⏳ 图片生成通常需要 1-5 分钟，请耐心等待。超时时间已调整为 5 分钟。',
                 style: TextStyle(color: AppTokens.textPrimary, fontSize: 12),
               ),
@@ -1136,12 +1136,12 @@ class _GeneratedImageTile extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               '修订提示词：${item.revisedPrompt}',
-              style: const TextStyle(color: AppTokens.textSecondary),
+              style: TextStyle(color: AppTokens.textSecondary),
             ),
           ],
           const SizedBox(height: 8),
           if (item.isDataUrl)
-            const Text(
+            Text(
               '提示：data URL 内容较长，复制 Markdown/HTML 可能不适合粘贴到聊天窗口。',
               style: TextStyle(color: AppTokens.textSecondary, fontSize: 12),
             ),
@@ -1315,7 +1315,7 @@ class _HistoryTile extends StatelessWidget {
                   item.prompt,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textPrimary,
                     fontWeight: FontWeight.w800,
                   ),
@@ -1323,7 +1323,7 @@ class _HistoryTile extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   '${_formatTime(item.createdAt)} · ${item.model} · ${item.size} · ${item.images.length} 张',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textSecondary,
                     fontSize: 12,
                   ),

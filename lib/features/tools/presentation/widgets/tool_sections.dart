@@ -60,7 +60,7 @@ class ToolCategorySection extends StatelessWidget {
                   const SizedBox(width: 7),
                   Text(
                     title,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13.5,
                       fontWeight: FontWeight.w900,
                       color: AppTokens.textPrimary,
@@ -69,7 +69,7 @@ class ToolCategorySection extends StatelessWidget {
                   const SizedBox(width: 6),
                   Text(
                     '${entries.length} 个',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w700,
                       color: AppTokens.textSecondary,
@@ -331,7 +331,7 @@ class RecentToolsRow extends StatelessWidget {
               const SizedBox(width: 5),
               Text(
                 usingDefaults ? '试试这些' : '常用',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w900,
                   color: AppTokens.textPrimary,
@@ -340,7 +340,7 @@ class RecentToolsRow extends StatelessWidget {
               const SizedBox(width: 6),
               Text(
                 usingDefaults ? '用过的工具会记在这里' : '按使用次数排',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
                   color: AppTokens.textSecondary,
@@ -402,14 +402,14 @@ class ToolRequestRow extends StatelessWidget {
           borderRadius: BorderRadius.all(Radius.circular(16)),
           border: Border.fromBorderSide(BorderSide(color: Color(0xFFE7ECF5))),
         ),
-        child: const Row(
+        child: Row(
           children: [
-            Icon(
+            const Icon(
               Icons.tips_and_updates_outlined,
               size: 18,
               color: Color(0xFF6B7FA2),
             ),
-            SizedBox(width: 9),
+            const SizedBox(width: 9),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -422,7 +422,7 @@ class ToolRequestRow extends StatelessWidget {
                       color: AppTokens.textPrimary,
                     ),
                   ),
-                  SizedBox(height: 2),
+                  const SizedBox(height: 2),
                   Text(
                     '在「关于 → 反馈与联系」里说 —— 这里只列已经能用的',
                     style: TextStyle(
@@ -434,7 +434,7 @@ class ToolRequestRow extends StatelessWidget {
                 ],
               ),
             ),
-            Icon(
+            const Icon(
               Icons.chevron_right_rounded,
               size: 20,
               color: Color(0xFF6B7FA2),

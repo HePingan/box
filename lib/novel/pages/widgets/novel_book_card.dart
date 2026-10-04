@@ -113,7 +113,7 @@ class NovelBookCard extends StatelessWidget {
                       book.title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
                         color: AppTokens.textPrimary,
@@ -126,7 +126,7 @@ class NovelBookCard extends StatelessWidget {
                         meta,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11.5,
                           color: AppTokens.textSecondary,
                         ),
@@ -137,7 +137,7 @@ class NovelBookCard extends StatelessWidget {
                         book.intro,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12.5,
                           color: AppTokens.textSecondary,
                           height: 1.5,

@@ -19,18 +19,73 @@ class AppTokens {
   static const Color ink = Color(0xFF0F172A);
   static const Color inkDark = Color(0xFF111827);
 
-  // Surfaces and text.
-  static const Color background = Color(0xFFF4F7FB);
-  static const Color pageGradientTop = Color(0xFFF0F5FF);
-  static const Color pageGradientMid = Color(0xFFF8FAFD);
-  static const Color pageGradientBottom = Color(0xFFF6F8FC);
-  static const Color surface = Color(0xFFFFFFFF);
-  static const Color surfaceMuted = Color(0xFFF1F5F9);
-  static const Color surfaceTint = Color(0xFFEFF6FF);
-  static const Color textPrimary = Color(0xFF101828);
-  static const Color textSecondary = Color(0xFF667085);
-  static const Color textTertiary = Color(0xFF98A2B3);
-  static const Color divider = Color(0xFFE6EAF2);
+  // ─── 表面与文字：随深浅切换 ───
+  //
+  // 深色外壳走「同一个名字、值随亮度变」这条路（而不是 ThemeExtension +
+  // `AppTokens.of(context)`）：tokens 被引用 1421 次 / 93 个文件，逐个改成带
+  // context 的取法等于重写整个设计系统的调用面；这里只把**表面与文字**改成
+  // getter，引用点一行都不用动。
+  //
+  // 代价是它们不再是编译期常量：原先写在 `const` 构造里的调用要去掉 `const`。
+  // 品牌色与状态色（primaryBlue / success / danger…）深浅两套通用，仍是 `static const`。
+  static bool _dark = false;
+
+  /// 当前是否深色外壳。由 `AppThemeController` 在构建前设置。
+  static bool get isDark => _dark;
+
+  /// 切换深浅。调用方负责在切换后重建（`AppThemeController` 会 notifyListeners）。
+  static void setDark(bool value) {
+    _dark = value;
+  }
+
+  static const Color _backgroundLight = Color(0xFFF4F7FB);
+  static const Color _backgroundDark = Color(0xFF0E1116);
+  static Color get background => _dark ? _backgroundDark : _backgroundLight;
+
+  static const Color _pageGradientTopLight = Color(0xFFF0F5FF);
+  static const Color _pageGradientTopDark = Color(0xFF151A22);
+  static Color get pageGradientTop =>
+      _dark ? _pageGradientTopDark : _pageGradientTopLight;
+
+  static const Color _pageGradientMidLight = Color(0xFFF8FAFD);
+  static const Color _pageGradientMidDark = Color(0xFF11151B);
+  static Color get pageGradientMid =>
+      _dark ? _pageGradientMidDark : _pageGradientMidLight;
+
+  static const Color _pageGradientBottomLight = Color(0xFFF6F8FC);
+  static const Color _pageGradientBottomDark = Color(0xFF0E1116);
+  static Color get pageGradientBottom =>
+      _dark ? _pageGradientBottomDark : _pageGradientBottomLight;
+
+  static const Color _surfaceLight = Color(0xFFFFFFFF);
+  static const Color _surfaceDark = Color(0xFF171B22);
+  static Color get surface => _dark ? _surfaceDark : _surfaceLight;
+
+  static const Color _surfaceMutedLight = Color(0xFFF1F5F9);
+  static const Color _surfaceMutedDark = Color(0xFF1F242D);
+  static Color get surfaceMuted => _dark ? _surfaceMutedDark : _surfaceMutedLight;
+
+  static const Color _surfaceTintLight = Color(0xFFEFF6FF);
+  static const Color _surfaceTintDark = Color(0xFF1B2436);
+  static Color get surfaceTint => _dark ? _surfaceTintDark : _surfaceTintLight;
+
+  static const Color _textPrimaryLight = Color(0xFF101828);
+  static const Color _textPrimaryDark = Color(0xFFE9ECF3);
+  static Color get textPrimary => _dark ? _textPrimaryDark : _textPrimaryLight;
+
+  static const Color _textSecondaryLight = Color(0xFF667085);
+  static const Color _textSecondaryDark = Color(0xFFA6AEBD);
+  static Color get textSecondary =>
+      _dark ? _textSecondaryDark : _textSecondaryLight;
+
+  static const Color _textTertiaryLight = Color(0xFF98A2B3);
+  static const Color _textTertiaryDark = Color(0xFF7C8595);
+  static Color get textTertiary =>
+      _dark ? _textTertiaryDark : _textTertiaryLight;
+
+  static const Color _dividerLight = Color(0xFFE6EAF2);
+  static const Color _dividerDark = Color(0xFF272D38);
+  static Color get divider => _dark ? _dividerDark : _dividerLight;
   static const Color success = Color(0xFF12B76A);
   static const Color warning = Color(0xFFF79009);
   static const Color danger = Color(0xFFF04438);
@@ -66,7 +121,9 @@ class AppTokens {
   static const double pageBottomPadding = 96;
 
   /// 卡片统一描边色。此前四个主页面混用 0xFFE7ECF5 / 0xFFE9EEF7 两个值。
-  static const Color cardBorder = Color(0xFFE7ECF5);
+  static const Color _cardBorderLight = Color(0xFFE7ECF5);
+  static const Color _cardBorderDark = Color(0xFF272D38);
+  static Color get cardBorder => _dark ? _cardBorderDark : _cardBorderLight;
 
   /// 四个主页面（首页/工具/内容/扩展）共用的水平边距。
   static const double shellPageGutter = 14;
@@ -103,11 +160,12 @@ class AppTokens {
     end: Alignment.bottomRight,
   );
 
-  static const LinearGradient pageGradient = LinearGradient(
+  /// 页面底色渐变。三个色值随深浅切换，所以这里只能是 getter。
+  static LinearGradient get pageGradient => LinearGradient(
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
     colors: [pageGradientTop, pageGradientMid, pageGradientBottom],
-    stops: [0, 0.36, 1],
+    stops: const [0, 0.36, 1],
   );
 
   static const LinearGradient auroraGradient = LinearGradient(

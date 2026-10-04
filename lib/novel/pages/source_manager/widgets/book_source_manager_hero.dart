@@ -270,7 +270,7 @@ class BookSourceEmptySources extends StatelessWidget {
               const SizedBox(height: 14),
               Text(
                 keyword.trim().isEmpty ? '还没有书源' : '没有找到匹配的书源',
-                style: const TextStyle(
+                style: TextStyle(
                   color: AppTokens.textPrimary,
                   fontSize: 16,
                   fontWeight: FontWeight.w900,
@@ -281,7 +281,7 @@ class BookSourceEmptySources extends StatelessWidget {
                 keyword.trim().isEmpty
                     ? '点击"导入书源"粘贴 JSON，系统会先做可用性预检查。'
                     : '换个关键词，或清空搜索试试。',
-                style: const TextStyle(
+                style: TextStyle(
                   color: AppTokens.textSecondary,
                   fontSize: 13,
                 ),

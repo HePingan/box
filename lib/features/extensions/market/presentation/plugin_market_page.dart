@@ -864,7 +864,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                     children: [
                       Text(
                         item.title,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14.5,
                           fontWeight: FontWeight.w900,
                           color: AppTokens.textPrimary,
@@ -876,7 +876,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                       const SizedBox(height: 3),
                       Text(
                         item.subtitle,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
                           color: AppTokens.textSecondary,
                           height: 1.3,
@@ -923,7 +923,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                       '作者：${item.author}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11.5,
                         color: AppTokens.textTertiary,
                         fontWeight: FontWeight.w600,
@@ -1025,7 +1025,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       '插件市场',
                       style: TextStyle(
                         color: AppTokens.textPrimary,
@@ -1040,7 +1040,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                       '$_currentChannel · 已装 $installedCount / 共 $totalCount · 筛选 $visibleCount',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textSecondary,
                         fontSize: 11.5,
                         fontWeight: FontWeight.w600,
@@ -1108,13 +1108,13 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       child: Row(
         children: [
-          const Icon(
+          Icon(
             Icons.sort_rounded,
             size: 16,
             color: AppTokens.textSecondary,
           ),
           const SizedBox(width: 6),
-          const Text(
+          Text(
             '排序',
             style: TextStyle(fontSize: 12.5, color: AppTokens.textSecondary),
           ),

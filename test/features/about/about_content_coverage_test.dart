@@ -143,21 +143,26 @@ void main() {
     }
   });
 
-  test('适用与限制里说的「深色模式与主题配色目前未开放」要属实', () {
+  test('适用与限制里说的「主题配色目前未开放」要属实，深色模式反过来要真能用', () {
     final settings = File(
       'lib/features/settings/presentation/settings_page.dart',
     ).readAsStringSync();
-    // 这两项在设置页里必须仍标着「暂不可用」，否则文案要改成已开放。
+    // 主题配色仍未开放 → 必须还标着「暂不可用」。
     expect(
-      RegExp('深色模式[\\s\\S]{0,200}暂不可用').hasMatch(settings),
-      isTrue,
-      reason: '深色模式在设置页不再标注「暂不可用」了，软件介绍里的'
-          '「深色模式与主题配色目前未开放」需要同步改',
-    );
-    expect(
-      RegExp('主题配色[\\s\\S]{0,200}暂不可用').hasMatch(settings),
+      RegExp(r'主题配色[\s\S]{0,200}暂不可用').hasMatch(settings),
       isTrue,
       reason: '主题配色在设置页不再标注「暂不可用」了，文案需要同步改',
+    );
+    // 深色模式已经能用 → 不许再标「暂不可用」（标了就与软件介绍自相矛盾）。
+    expect(
+      RegExp(r'深色模式[\s\S]{0,120}暂不可用').hasMatch(settings),
+      isFalse,
+      reason: '深色模式已实现，设置页不该再说它暂不可用',
+    );
+    expect(
+      introText.contains('主题配色目前未开放'),
+      isTrue,
+      reason: '软件介绍的「适用与限制」要写明主题配色仍未开放',
     );
   });
 

@@ -245,8 +245,8 @@ class _AboutPageState extends State<AboutPage> {
             ],
           ),
           const SizedBox(height: 8),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
             child: Text(
               '以上条款生效日期：$kLegalEffectiveDate',
               style: TextStyle(
@@ -261,8 +261,8 @@ class _AboutPageState extends State<AboutPage> {
             child: InkWell(
               borderRadius: BorderRadius.circular(AppTokens.radiusSm),
               onTap: () => _showDataLocations(context),
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 child: Column(
                   children: [
                     Text(
@@ -274,8 +274,8 @@ class _AboutPageState extends State<AboutPage> {
                         color: AppTokens.textTertiary,
                       ),
                     ),
-                    SizedBox(height: 4),
-                    Text(
+                    const SizedBox(height: 4),
+                    const Text(
                       '点击看：数据都在哪 · 怎么清',
                       textAlign: TextAlign.center,
                       style: TextStyle(
@@ -290,7 +290,7 @@ class _AboutPageState extends State<AboutPage> {
             ),
           ),
           const SizedBox(height: 10),
-          const Center(
+          Center(
             child: Text(
               AboutContent.disclaimerShort,
               textAlign: TextAlign.center,
@@ -338,7 +338,7 @@ class _AboutPageState extends State<AboutPage> {
               _sourceRow('安装包名', _packageName ?? '—'),
               _sourceRow('当前版本', _versionText),
               const SizedBox(height: 12),
-              const Text(
+              Text(
                 '应用只从上面的域名下载更新；清单签名或 SHA-256 校验不通过时'
                 '不会安装 —— 宁可不更新，也不装来源不明的安装包。',
                 style: TextStyle(
@@ -370,7 +370,7 @@ class _AboutPageState extends State<AboutPage> {
             width: 68,
             child: Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12.5,
                 color: AppTokens.textSecondary,
               ),
@@ -379,7 +379,7 @@ class _AboutPageState extends State<AboutPage> {
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12.5,
                 height: 1.5,
                 color: AppTokens.textPrimary,
@@ -420,47 +420,47 @@ class _AboutPageState extends State<AboutPage> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('你的数据都在哪'),
-        content: const SingleChildScrollView(
+        content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              _DataRow(
+              const _DataRow(
                 category: '收藏 · 播放历史 · 播放进度',
                 where: '只在这台手机上',
                 how: '在各列表里删除；「清理缓存」不会动它们',
               ),
-              _DataRow(
+              const _DataRow(
                 category: '书架 · 阅读进度 · 书源',
                 where: '只在这台手机上',
                 how: '书架里长按删除；书源在「书源管理」里删',
               ),
-              _DataRow(
+              const _DataRow(
                 category: '题库 · 错题',
                 where: '只在这台手机上',
                 how: '题库页里删除',
               ),
-              _DataRow(
+              const _DataRow(
                 category: '下载内容 · 图片缓存',
                 where: '只在这台手机上',
                 how: '设置 → 数据设置 → 清理缓存（只清图片与阅读器临时缓存）',
               ),
-              _DataRow(
+              const _DataRow(
                 category: '调试日志',
                 where: '只在这台手机上',
                 how: '调试日志页里清空',
               ),
-              _DataRow(
+              const _DataRow(
                 category: '备份文件',
                 where: '你导出时选的目录',
                 how: '在文件管理器里自己删',
               ),
-              _DataRow(
+              const _DataRow(
                 category: '账号与云同步（登录后才会有）',
                 where: '服务端',
                 how: '设置里停止同步；彻底删除请邮件联系',
               ),
-              SizedBox(height: 4),
+              const SizedBox(height: 4),
               Text(
                 '应用不参与系统的备份与换机迁移（清单里 allowBackup=false），'
                 '所以上面这些数据不会随系统备份被带走 —— 换机请用「备份与恢复」导出。'
@@ -511,7 +511,7 @@ class _AboutPageState extends State<AboutPage> {
             ),
           ),
           const SizedBox(height: 12),
-          const Text(
+          Text(
             AboutContent.appName,
             style: TextStyle(
               fontSize: 18,
@@ -520,7 +520,7 @@ class _AboutPageState extends State<AboutPage> {
             ),
           ),
           const SizedBox(height: 4),
-          const Text(
+          Text(
             AboutContent.tagline,
             style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
           ),
@@ -540,7 +540,7 @@ class _AboutPageState extends State<AboutPage> {
                 children: [
                   Text(
                     _versionText,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                       color: AppTokens.textSecondary,
@@ -549,7 +549,7 @@ class _AboutPageState extends State<AboutPage> {
                   // 取不到版本号时不显示复制图标，免得点了没事发生
                   if (_version != null) ...[
                     const SizedBox(width: 4),
-                    const Icon(
+                    Icon(
                       Icons.copy_rounded,
                       size: 13,
                       color: AppTokens.textTertiary,
@@ -586,7 +586,7 @@ class _DataRow extends StatelessWidget {
         children: [
           Text(
             category,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w600,
               color: AppTokens.textPrimary,
@@ -595,7 +595,7 @@ class _DataRow extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             '在哪：$where',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11.5,
               height: 1.5,
               color: AppTokens.textSecondary,
@@ -603,7 +603,7 @@ class _DataRow extends StatelessWidget {
           ),
           Text(
             '怎么清：$how',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11.5,
               height: 1.5,
               color: AppTokens.textSecondary,

@@ -1091,7 +1091,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage>
                           const SizedBox(height: 8),
                           Text(
                             _showAllModels ? '全部模型（点击填入）' : '推荐生图模型',
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: AppTokens.textSecondary,
                               fontSize: 11,
                             ),
@@ -1234,7 +1234,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage>
                             ],
                           ),
                           const SizedBox(height: 6),
-                          const Text(
+                          Text(
                             '平台额度模式不会在前端使用管理员 API Key',
                             style: TextStyle(
                               color: AppTokens.textSecondary,
@@ -1468,7 +1468,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage>
                                   color: AppTokens.warning.withValues(alpha: 0.3),
                                 ),
                               ),
-                              child: const Text(
+                              child: Text(
                                 '⏳ 生成中，通常 1-5 分钟',
                                 style: TextStyle(
                                   color: AppTokens.textPrimary,

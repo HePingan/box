@@ -49,7 +49,7 @@ class AccountStatusCard extends StatelessWidget {
                   children: [
                     Text(
                       user.username,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textPrimary,
                         fontSize: 18,
                         fontWeight: FontWeight.w900,
@@ -60,7 +60,7 @@ class AccountStatusCard extends StatelessWidget {
                       session.serverUrl,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTokens.textSecondary,
                         fontSize: 12,
                       ),
@@ -162,7 +162,7 @@ class AccountLoginCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             '登录 Box 平台账号',
             style: TextStyle(
               color: AppTokens.textPrimary,
@@ -180,7 +180,7 @@ class AccountLoginCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 6),
-          const Text(
+          Text(
             '默认连接 HTTPS 官方服务器。注册、管理后台和图片代理预览已启用；没有账号可直接注册。',
             style: TextStyle(color: AppTokens.textSecondary, height: 1.45),
           ),
@@ -283,7 +283,7 @@ class AccountRegisterSheet extends StatelessWidget {
                 color: AppTokens.primaryBlue,
               ),
               const SizedBox(width: 8),
-              const Expanded(
+              Expanded(
                 child: Text(
                   '注册 Box 账号',
                   style: TextStyle(
@@ -304,7 +304,7 @@ class AccountRegisterSheet extends StatelessWidget {
             '服务器：$serverUrl',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: AppTokens.textSecondary),
+            style: TextStyle(color: AppTokens.textSecondary),
           ),
           const SizedBox(height: 14),
           TextField(
@@ -338,7 +338,7 @@ class AccountRegisterSheet extends StatelessWidget {
             onSubmitted: (_) => loading ? null : onRegister(),
           ),
           const SizedBox(height: 14),
-          const Text(
+          Text(
             '注册成功后会自动登录，并获得 5 点平台图片额度。管理员可在后台调整额度或禁用账号。',
             style: TextStyle(color: AppTokens.textSecondary, height: 1.45),
           ),
@@ -392,7 +392,7 @@ class AccountUsageCard extends StatelessWidget {
                 color: AppTokens.primaryBlue,
               ),
               const SizedBox(width: 8),
-              const Expanded(
+              Expanded(
                 child: Text(
                   '我的最近生图记录',
                   style: TextStyle(
@@ -404,7 +404,7 @@ class AccountUsageCard extends StatelessWidget {
               ),
               Text(
                 records.isEmpty ? '最近 20 条' : '${records.length} 条',
-                style: const TextStyle(
+                style: TextStyle(
                   color: AppTokens.textSecondary,
                   fontSize: 12,
                 ),
@@ -423,7 +423,7 @@ class AccountUsageCard extends StatelessWidget {
               ),
             )
           else if (records.isEmpty)
-            const Text(
+            Text(
               '暂无使用记录。使用平台额度生图后会显示成功或失败记录。',
               style: TextStyle(color: AppTokens.textSecondary, height: 1.4),
             )
@@ -479,7 +479,7 @@ class _AccountUsageTile extends StatelessWidget {
                   record.model.isEmpty ? '未知模型' : record.model,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textPrimary,
                     fontWeight: FontWeight.w800,
                   ),
@@ -487,7 +487,7 @@ class _AccountUsageTile extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   '${record.cost} 点 · ${record.success ? '成功' : '失败'} · $statusText',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textSecondary,
                     fontSize: 12,
                   ),
@@ -495,7 +495,7 @@ class _AccountUsageTile extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   _formatTime(record.createdAt),
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTokens.textTertiary,
                     fontSize: 12,
                   ),
@@ -506,7 +506,7 @@ class _AccountUsageTile extends StatelessWidget {
                     record.errorPreview,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: AppTokens.textSecondary,
                       fontSize: 12,
                       height: 1.35,
@@ -530,11 +530,11 @@ class AccountNoticeCard extends StatelessWidget {
     return _AccountCard(
       color: AppTokens.info.withValues(alpha: 0.08),
       borderColor: AppTokens.info.withValues(alpha: 0.20),
-      child: const Row(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.verified_user_outlined, color: AppTokens.info),
-          SizedBox(width: 10),
+          const Icon(Icons.verified_user_outlined, color: AppTokens.info),
+          const SizedBox(width: 10),
           Expanded(
             child: Text(
               '账号中心只保存服务器地址、登录 token 和用户公开信息，不保存密码。管理员 API Key 只应保存在后端环境变量中。',
@@ -623,7 +623,7 @@ class AccountQuotaCard extends StatelessWidget {
             children: [
               const Icon(Icons.bolt_rounded, color: AppTokens.primaryBlue),
               const SizedBox(width: 8),
-              const Expanded(
+              Expanded(
                 child: Text(
                   '我的额度',
                   style: TextStyle(
@@ -687,7 +687,7 @@ class AccountQuotaCard extends StatelessWidget {
                   const SizedBox(height: 10),
                   Text(
                     data.message,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: AppTokens.textSecondary,
                       fontSize: 12,
                       height: 1.45,
@@ -729,7 +729,7 @@ class _QuotaMetric extends StatelessWidget {
         const SizedBox(height: 2),
         Text(
           label,
-          style: const TextStyle(color: AppTokens.textSecondary, fontSize: 12),
+          style: TextStyle(color: AppTokens.textSecondary, fontSize: 12),
         ),
       ],
     );
@@ -761,7 +761,7 @@ class _QuotaMessage extends StatelessWidget {
         Expanded(
           child: Text(
             message,
-            style: const TextStyle(
+            style: TextStyle(
               color: AppTokens.textSecondary,
               fontSize: 12,
               height: 1.45,
@@ -791,7 +791,7 @@ class _InfoChip extends StatelessWidget {
       ),
       child: Text(
         '$label：$value',
-        style: const TextStyle(color: AppTokens.textSecondary, fontSize: 12),
+        style: TextStyle(color: AppTokens.textSecondary, fontSize: 12),
       ),
     );
   }

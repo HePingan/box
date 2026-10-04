@@ -510,7 +510,7 @@ class _ImageProviderTabState extends State<_ImageProviderTab> {
       children: [
         Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 17,
             fontWeight: FontWeight.w900,
             color: AppTokens.textPrimary,

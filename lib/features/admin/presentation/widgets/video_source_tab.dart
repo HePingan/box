@@ -500,7 +500,7 @@ class _VideoSourceTabState extends State<VideoSourceTab> {
             width: 72,
             child: Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12,
                 color: AppTokens.textSecondary,
               ),

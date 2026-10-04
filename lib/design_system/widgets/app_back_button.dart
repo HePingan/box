@@ -31,7 +31,7 @@ class AppBackButton extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
+            Icon(
               Icons.keyboard_arrow_left_rounded,
               size: 24,
               color: AppTokens.textPrimary,
@@ -40,7 +40,7 @@ class AppBackButton extends StatelessWidget {
               const SizedBox(width: 4),
               Text(
                 label!,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
                   color: AppTokens.textPrimary,

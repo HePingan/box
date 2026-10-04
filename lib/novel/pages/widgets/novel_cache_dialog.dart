@@ -141,7 +141,7 @@ class _NovelCacheDialogState extends State<NovelCacheDialog> {
         children: [
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               color: AppTokens.textSecondary,
               fontSize: 14,
             ),
