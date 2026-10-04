@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:box/config/app_config.dart';
+import 'package:box/features/about/data/about_content.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// B7：「关于」只保留一处实现。
@@ -7,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// 合并前有两份且内容不一致：
 ///  - app_drawer.dart：自定义 AlertDialog，带「检查更新」按钮
 ///  - personal_center_page.dart：Material 简版 showAboutDialog，应用名写的是
-///    「Geek工具箱 Pro」，与抽屉那份不一致
+///    另一套旧名，与抽屉那份不一致
 ///
 /// 两份同时存在，用户从不同入口看到不同的应用名和不同的功能，改一处漏一处。
 /// 这个测试用源码断言守住「只有一处」，不是行为测试 —— 重复实现是结构问题，
@@ -29,7 +31,7 @@ void main() {
       reason: '关于应统一由 AboutPage 提供',
     );
     expect(
-      source.contains('Geek工具箱 Pro'),
+      source.contains('极客匣'),
       isFalse,
       reason: '硬编码的应用名与另一份不一致，移除关于入口时应一并删掉',
     );
@@ -74,5 +76,61 @@ void main() {
       isEmpty,
       reason: '这些文件又自建了关于弹窗，会和 AboutPage 内容不一致：$offenders',
     );
+  });
+
+  group('应用名只有一个来源：极客匣（2026-10 统一）', () {
+    test('关于页的应用名就是「极客匣」', () {
+      expect(AboutContent.appName, '极客匣');
+    });
+
+    test('桌面图标/系统设置里显示的名字与关于页一致', () {
+      final manifest =
+          File('android/app/src/main/AndroidManifest.xml').readAsStringSync();
+      final label = RegExp(r'android:label="([^"]+)"')
+          .firstMatch(manifest)!
+          .group(1)!;
+      expect(
+        label,
+        AboutContent.appName,
+        reason: 'android:label 就是系统里显示的名字，与关于页不一致时用户会看到两个名字',
+      );
+    });
+
+    test('lib/ 里不再出现旧名（改一处漏一处最难查）', () {
+      final offenders = <String>[];
+      for (final entity in Directory('lib').listSync(recursive: true)) {
+        if (entity is! File || !entity.path.endsWith('.dart')) continue;
+        final source = entity.readAsStringSync();
+        for (final legacy in ['Geek工具箱']) {
+          if (source.contains(legacy)) offenders.add('${entity.path} · $legacy');
+        }
+      }
+      expect(
+        offenders,
+        isEmpty,
+        reason: '这些文件还留着旧应用名，用户会在界面上看到两个名字：$offenders',
+      );
+    });
+
+    test('抽屉顶部那份名字与关于页同源', () {
+      final drawer = File('lib/app_drawer.dart').readAsStringSync();
+      expect(
+        drawer.contains("'${AboutContent.appName}'"),
+        isTrue,
+        reason: '抽屉顶部是写死的字符串，必须与 AboutContent.appName 逐字相同',
+      );
+    });
+
+    test('改显示名不许顺手动内部 id 与包名（会把更新链路打挂）', () {
+      expect(
+        AppConfig.appId,
+        'box',
+        reason: 'appId 是更新接口的 app_id 参数（服务端契约），不是显示名',
+      );
+      final gradle =
+          File('android/app/build.gradle.kts').readAsStringSync();
+      expect(gradle, contains('applicationId = "top.hpa888.box"'));
+      expect(gradle, contains('namespace = "top.hpa888.box"'));
+    });
   });
 }

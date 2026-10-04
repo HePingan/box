@@ -17,7 +17,7 @@ class BoxApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Geek工具箱',
+      title: '极客匣',
       debugShowCheckedModeBanner: false,
       navigatorObservers: [appRouteObserver],
       routes: AppRoutes.buildRoutes(bootstrap.novelBootstrap),

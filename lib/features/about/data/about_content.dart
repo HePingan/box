@@ -45,7 +45,7 @@ class TutorialEntry {
 class AboutContent {
   const AboutContent._();
 
-  static const String appName = 'Geek工具箱 Pro';
+  static const String appName = '极客匣';
   /// 头部一句话。刻意是实话而不是口号 —— 本文件顶部的写作纪律写明
   /// 「不写宣传语」，「为极客而生」那种话与同一页页脚的实话风格也不搭。
   static const String tagline = '影视、小说、题库与本地工具，都在同一个应用里。';

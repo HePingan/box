@@ -3278,7 +3278,7 @@ class _DecibelPanelBodyState extends State<DecibelPanelBody> {
       if (!ok) {
         setState(
           () => _err = '没拿到麦克风权限。到系统设置 → 应用 → 找到本应用'
-              '（列表里显示的名字是 box）→ 权限，允许使用麦克风。',
+              '（列表里显示的名字是 极客匣）→ 权限，允许使用麦克风。',
         );
         return;
       }

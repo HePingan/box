@@ -1,6 +1,6 @@
 {
-    "name": "box",
-    "short_name": "box",
+    "name": "极客匣",
+    "short_name": "极客匣",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

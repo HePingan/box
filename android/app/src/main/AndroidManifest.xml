@@ -30,7 +30,7 @@
          若将来真要做「到点自动续传」，请改用 WorkManager，而不是恢复本权限。 -->
 
     <application
-        android:label="box"
+        android:label="极客匣"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:networkSecurityConfig="@xml/network_security_config"

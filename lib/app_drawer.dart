@@ -608,7 +608,7 @@ class _DrawerContentState extends State<_DrawerContent> {
           ),
           const SizedBox(width: 6),
           const Text(
-            'Geek工具箱 Pro',
+            '极客匣',
             style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
