@@ -28,6 +28,8 @@ class AppPermissionsPage extends StatelessWidget {
         children: [
           _IntroCard(text: permissionIntro()),
           ...kPermissionNotes.map((note) => _PermissionCard(note: note)),
+          // 权限之外最常被问的一件事：有没有第三方 SDK 在偷偷回传数据。
+          const _IntroCard(title: '第三方 SDK', text: kThirdPartySdkNote),
           const SizedBox(height: 4),
           const Text(
             kPermissionOutro,
@@ -44,9 +46,12 @@ class AppPermissionsPage extends StatelessWidget {
 }
 
 class _IntroCard extends StatelessWidget {
-  const _IntroCard({required this.text});
+  const _IntroCard({required this.text, this.title});
 
   final String text;
+
+  /// 可选小标题（「第三方 SDK」那块用；顶部那块直接用段落）。
+  final String? title;
 
   @override
   Widget build(BuildContext context) {
@@ -58,13 +63,29 @@ class _IntroCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppTokens.radiusSm),
         border: Border.all(color: AppTokens.divider),
       ),
-      child: Text(
-        text,
-        style: const TextStyle(
-          fontSize: 13,
-          height: 1.7,
-          color: AppTokens.textSecondary,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (title != null) ...[
+            Text(
+              title!,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: AppTokens.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+          Text(
+            text,
+            style: const TextStyle(
+              fontSize: 13,
+              height: 1.7,
+              color: AppTokens.textSecondary,
+            ),
+          ),
+        ],
       ),
     );
   }

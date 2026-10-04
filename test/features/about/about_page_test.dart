@@ -36,7 +36,6 @@ void main() {
     await pumpTall(tester, host());
 
     for (final label in [
-      '当前版本',
       '检查更新',
       '更新内容',
       '软件介绍',
@@ -247,5 +246,56 @@ void main() {
       );
     }
     expect(find.textContaining('卸载应用即全部收回'), findsOneWidget);
+  });
+
+  testWidgets('版本号在头部，点它复制（报障时不用手打）', (tester) async {
+    final copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+
+    await pumpTall(tester, host(version: '1.21.6+363'));
+    expect(find.text('1.21.6+363'), findsOneWidget);
+    expect(find.text('当前版本'), findsNothing, reason: '这行已移进头部');
+
+    await tester.tap(find.text('1.21.6+363'));
+    await tester.pumpAndSettle();
+    expect(copied, ['${AboutContent.appName} 1.21.6+363']);
+    expect(find.text('版本号已复制'), findsOneWidget);
+  });
+
+  testWidgets('有新版本时「检查更新」那行直接标出来', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'update_last_check_v1':
+          '{"at":"${DateTime.now().subtract(const Duration(minutes: 2)).toIso8601String()}",'
+          '"status":"updateAvailable","latestCode":363,"latestName":"1.21.6"}',
+    });
+    await pumpTall(tester, host(version: '1.21.5+362'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('有新版本'), findsOneWidget);
+    expect(find.textContaining('发现新版本 1.21.6 (363)'), findsOneWidget);
+  });
+
+  testWidgets('已是最新时不标「有新版本」', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'update_last_check_v1':
+          '{"at":"${DateTime.now().toIso8601String()}","status":"upToDate"}',
+    });
+    await pumpTall(tester, host());
+    await tester.pumpAndSettle();
+
+    expect(find.text('有新版本'), findsNothing);
+    expect(find.textContaining('已是最新版本'), findsOneWidget);
   });
 }

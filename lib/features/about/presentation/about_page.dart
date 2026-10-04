@@ -6,6 +6,7 @@ import '../../../app/app_routes.dart';
 import '../../../config/app_config.dart';
 import '../../../design_system/app_tokens.dart';
 import '../../../design_system/settings_list.dart';
+import '../../../update/update_check_outcome.dart';
 import '../../../update/update_last_check_store.dart';
 import '../data/about_content.dart';
 import '../data/legal_documents.dart';
@@ -88,6 +89,11 @@ class _AboutPageState extends State<AboutPage> {
     return '上次检查 ${last.ageText(DateTime.now())} · ${last.describe()}';
   }
 
+  /// 上次检查的结论是不是「有新版本」。用它给「检查更新」加个标记 ——
+  /// 用户不点进去也能知道线上已经有新版。
+  bool get _hasNewVersion =>
+      _lastCheck?.status == UpdateCheckStatus.updateAvailable;
+
   String get _versionText {
     if (_version != null) return _version!;
     return _versionFailed ? '获取失败' : '读取中…';
@@ -111,16 +117,11 @@ class _AboutPageState extends State<AboutPage> {
             title: '版本信息',
             children: [
               SettingsTile(
-                icon: Icons.info_outline_rounded,
-                title: '当前版本',
-                subtitle: null,
-                onTap: null,
-                trailingText: _versionText,
-              ),
-              SettingsTile(
                 icon: Icons.system_update_outlined,
                 title: '检查更新',
                 subtitle: _updateCheckSubtitle,
+                trailingText: _hasNewVersion ? '有新版本' : null,
+                trailingTextColor: _hasNewVersion ? AppTokens.primaryBlue : null,
                 // 检查完回来刷新副标题：用户刚点过，这里必须立刻反映结果。
                 onTap: () => Navigator.of(context)
                     .pushNamed(AppRoutes.updateCheck)
@@ -522,6 +523,41 @@ class _AboutPageState extends State<AboutPage> {
           const Text(
             AboutContent.tagline,
             style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
+          ),
+          const SizedBox(height: 8),
+          // 版本号放头部并**可点复制**：报障时说「我是 1.21.6」比让用户去别处翻
+          // 要快，而版本号又是最容易被手抄错的一串数字。
+          InkWell(
+            borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+            onTap: _version == null
+                ? null
+                : () =>
+                      _copy(context, '${AboutContent.appName} ${_version!}', '版本号已复制'),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _versionText,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppTokens.textSecondary,
+                    ),
+                  ),
+                  // 取不到版本号时不显示复制图标，免得点了没事发生
+                  if (_version != null) ...[
+                    const SizedBox(width: 4),
+                    const Icon(
+                      Icons.copy_rounded,
+                      size: 13,
+                      color: AppTokens.textTertiary,
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
         ],
       ),

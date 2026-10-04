@@ -63,6 +63,7 @@ class SettingsTile extends StatelessWidget {
     required this.onTap,
     this.enabled = true,
     this.trailingText,
+    this.trailingTextColor,
   });
 
   final IconData icon;
@@ -71,6 +72,11 @@ class SettingsTile extends StatelessWidget {
   final VoidCallback? onTap;
   final bool enabled;
   final String? trailingText;
+
+  /// [trailingText] 的颜色。留空用默认的次要文字色；需要「这条要你看一眼」时
+  /// 传主题色（例如关于页的「有新版本」）。只加颜色不加角标：角标要动布局，
+  /// 而这一行本来就窄。
+  final Color? trailingTextColor;
 
   @override
   Widget build(BuildContext context) {
@@ -118,9 +124,9 @@ class SettingsTile extends StatelessWidget {
             if (trailingText != null)
               Text(
                 trailingText!,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
-                  color: AppTokens.textSecondary,
+                  color: trailingTextColor ?? AppTokens.textSecondary,
                 ),
               )
             else if (enabled && onTap != null)

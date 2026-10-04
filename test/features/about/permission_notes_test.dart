@@ -127,4 +127,76 @@ void main() {
       expect(kPermissionNotes.length, manifestPermissions().length);
     });
   });
+
+  group('第三方 SDK 自证（「没有偷偷回传数据」这句话要能被核对）', () {
+    /// 已知的统计 / 推送 / 广告 / 崩溃上报 SDK 关键词。
+    ///
+    /// 这份清单是**闸门**：以后谁引入其中一个，这条用例就会红，逼着人来改
+    /// 「权限说明」里那句自证 —— 而不是让界面上继续挂着已经过期的「没有第三方 SDK」。
+    const bannedSdkKeywords = <String>[
+      'firebase',
+      'umeng',
+      'jpush',
+      'getui',
+      'bugly',
+      'sentry',
+      'admob',
+      'talkingdata',
+      'growingio',
+      'sensors_analytics',
+      'flutter_umeng',
+      'push_plugin',
+    ];
+
+    test('pubspec 里确实没有任何统计/推送/广告 SDK', () {
+      final pubspec = File('pubspec.yaml').readAsStringSync().toLowerCase();
+      for (final keyword in bannedSdkKeywords) {
+        expect(
+          pubspec.contains(keyword),
+          isFalse,
+          reason: '检测到 $keyword：要么移除它，要么改掉「权限说明」里'
+              '「未集成任何统计、推送、广告 SDK」这句自证',
+        );
+      }
+    });
+
+    test('AndroidManifest 里没有第三方推送/统计组件', () {
+      final manifest = File(
+        'android/app/src/main/AndroidManifest.xml',
+      ).readAsStringSync();
+      for (final component in [
+        'com.umeng',
+        'cn.jpush',
+        'com.igexin',
+        'com.google.firebase',
+        'com.google.android.gms.ads',
+      ]) {
+        expect(manifest.contains(component), isFalse);
+      }
+    });
+
+    test('自证文案本身：既说了「没有」也说了「数据会去哪」', () {
+      expect(kThirdPartySdkNote.contains('未集成任何统计、推送、广告 SDK'), isTrue);
+      expect(
+        kThirdPartySdkNote.contains('Sentry'),
+        isTrue,
+        reason: '点名几个，比一句空泛的「没有第三方 SDK」可信',
+      );
+      expect(
+        kThirdPartySdkNote.contains('自己配置'),
+        isTrue,
+        reason: '必须说清数据只会发往本应用服务器或用户自己配置的服务',
+      );
+      // 不能说死「绝不外传任何数据」——云同步/OCR 是真的会传，只是由用户发起
+      expect(kThirdPartySdkNote.contains('绝不'), isFalse);
+    });
+
+    test('权限说明页会把这块渲染出来', () {
+      final page = File(
+        'lib/features/about/presentation/app_permissions_page.dart',
+      ).readAsStringSync();
+      expect(page.contains('kThirdPartySdkNote'), isTrue);
+      expect(page.contains("'第三方 SDK'"), isTrue);
+    });
+  });
 }
