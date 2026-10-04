@@ -2,16 +2,22 @@ import 'package:flutter/material.dart';
 
 import '../app_tokens.dart';
 
-/// 统一的返回按钮组件 — 用于各页面的 AppBar / HeroCard leading。
+/// 统一的返回按钮组件 — 用于各页面的头部 / HeroCard leading。
 ///
-/// 视觉特征：
-/// - filledTonal 风格的圆角容器
-/// - 蓝青渐变选中态指示条（左侧竖线）
-/// - 与全局 design token 保持一致
+/// 视觉口径：**只有箭头（+ 可选文字），不套卡片**。
+/// 改之前它是个白底圆角卡片 + 描边 + 阴影，左边还插了一根蓝青渐变竖条 ——
+/// 那根竖条是**分区标题**的语言（`AppSectionHeader` 用它），借到返回按钮上
+/// 就成了「一张浮起来的小卡片，还带个标题标记」：真机上看着很突兀，
+/// 而且它右边往往就是页面自己的标题，两个"家具"挤在一起。
+/// 现在跟系统返回一致：箭头 + 去处文字，直接落在页面底色上（无底、无边、无阴影）。
 class AppBackButton extends StatelessWidget {
   const AppBackButton({super.key, this.onPressed, this.label});
 
   final VoidCallback? onPressed;
+
+  /// 返回到**哪里**（去处），**不是当前页名** —— 当前页名交给页面自己的标题，
+  /// 否则既重复又指错方向。依据见
+  /// `test/design_system/back_button_label_semantics_test.dart`。
   final String? label;
 
   @override
@@ -19,44 +25,23 @@ class AppBackButton extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(AppTokens.radiusSm),
       onTap: onPressed,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: AppTokens.surface,
-          borderRadius: BorderRadius.circular(AppTokens.radiusSm),
-          border: Border.all(color: AppTokens.divider),
-          boxShadow: [
-            BoxShadow(
-              color: AppTokens.ink.withValues(alpha: 0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
+      child: Padding(
+        // 8/6 让点击区域不小于 40×36（只有箭头时也够点）。
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 左侧渐变指示条
-            Container(
-              width: 3,
-              height: 16,
-              decoration: BoxDecoration(
-                gradient: AppTokens.blueGradient,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(width: 8),
             const Icon(
               Icons.keyboard_arrow_left_rounded,
-              size: 20,
+              size: 24,
               color: AppTokens.textPrimary,
             ),
             if (label != null) ...[
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
               Text(
                 label!,
                 style: const TextStyle(
-                  fontSize: 13,
+                  fontSize: 15,
                   fontWeight: FontWeight.w600,
                   color: AppTokens.textPrimary,
                 ),

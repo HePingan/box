@@ -141,6 +141,56 @@ void main() {
       );
     });
   });
+
+  group('样式：不套卡片、不带渐变条', () {
+    // 真机反馈（用户截图，1.21.5）：网络诊断页的返回按钮「看着很突兀」——
+    // 白底圆角卡片 + 描边 + 阴影，左边还插了一根蓝青渐变竖条（那是分区标题的
+    // 语言，`AppSectionHeader` 用它），右边又紧跟着页面自己的标题。
+    // 现在改成跟系统返回一致：箭头 + 可选文字，直接落在页面底色上。
+    testWidgets('按钮内部没有 Container / 渐变 / 阴影 / 描边', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: AppBackButton(label: '书架'))),
+      );
+      expect(
+        find.descendant(
+          of: find.byType(AppBackButton),
+          matching: find.byType(Container),
+        ),
+        findsNothing,
+        reason: '不该再是「白底圆角卡片」—— 真机上像浮起来的小卡片',
+      );
+      final decorations = tester.widgetList<DecoratedBox>(
+        find.descendant(
+          of: find.byType(AppBackButton),
+          matching: find.byType(DecoratedBox),
+        ),
+      );
+      for (final d in decorations) {
+        final deco = d.decoration;
+        if (deco is! BoxDecoration) continue;
+        expect(
+          deco.gradient,
+          isNull,
+          reason: '蓝青渐变竖条是分区标题的语言，别借到返回按钮上',
+        );
+        expect(
+          deco.boxShadow ?? const <BoxShadow>[],
+          isEmpty,
+          reason: '返回按钮不该有阴影',
+        );
+        expect(deco.border, isNull, reason: '返回按钮不该有描边');
+      }
+    });
+
+    testWidgets('只有箭头时点击区域仍够大（≥40×36）', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: AppBackButton())),
+      );
+      final r = tester.getRect(find.byType(AppBackButton));
+      expect(r.width, greaterThanOrEqualTo(40), reason: '太小不好点');
+      expect(r.height, greaterThanOrEqualTo(36), reason: '太小不好点');
+    });
+  });
 }
 
 String _read(String path) {

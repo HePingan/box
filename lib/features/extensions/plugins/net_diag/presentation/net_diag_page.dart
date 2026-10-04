@@ -119,10 +119,9 @@ class _NetDiagPageState extends State<NetDiagPage> {
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
               child: Row(
                 children: [
-                  AppBackButton(
-                    onPressed: () => Navigator.maybePop(context),
-                    label: '返回',
-                  ),
+                  // 不传 label：箭头本身就是「返回」，右侧紧跟着页面标题，
+                  // 再写一次「返回」就是两个家具挤在一起（用户截图那处）。
+                  AppBackButton(onPressed: () => Navigator.maybePop(context)),
                   const SizedBox(width: 8),
                   const Text(
                     '网络诊断',
