@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../app_tokens.dart';
 
 /// 增强型空状态视图 — 渐变色图标容器 + 标题 + 描述 + 可选行动按钮
 class EmptyStateView extends StatelessWidget {
@@ -64,9 +65,9 @@ class EmptyStateView extends StatelessWidget {
               Text(
                 subtitle!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
-                  color: Color(0xFF94A3B8),
+                  color: AppTokens.textTertiary,
                   height: 1.5,
                 ),
               ),
@@ -137,9 +138,9 @@ class ErrorStateView extends StatelessWidget {
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
-                color: Color(0xFF64748B),
+                color: AppTokens.textSecondary,
                 height: 1.5,
               ),
             ),

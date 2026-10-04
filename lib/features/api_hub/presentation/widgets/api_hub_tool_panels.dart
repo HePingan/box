@@ -539,9 +539,9 @@ class ApiHubQrPanel extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: AppTokens.surfaceMuted,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0xFFE7ECF5)),
+                  border: Border.all(color: AppTokens.cardBorder),
                 ),
                 child: Image.network(
                   result.url,
@@ -713,7 +713,7 @@ class ApiHubAvatarPanel extends StatelessWidget {
                     width: 150,
                     height: 150,
                     alignment: Alignment.center,
-                    color: const Color(0xFFF1F5F9),
+                    color: AppTokens.surfaceMuted,
                     child: const Text('头像预览加载失败'),
                   ),
                 ),
@@ -862,7 +862,7 @@ class ApiHubCoverPanel extends StatelessWidget {
                 errorBuilder: (_, _, _) => Container(
                   height: 150,
                   alignment: Alignment.center,
-                  color: const Color(0xFFF1F5F9),
+                  color: AppTokens.surfaceMuted,
                   child: const Text('封面预览加载失败，可复制 URL 使用'),
                 ),
               ),
@@ -1019,7 +1019,7 @@ class ApiHubDummyImagePanel extends StatelessWidget {
                 errorBuilder: (_, _, _) => Container(
                   height: 120,
                   alignment: Alignment.center,
-                  color: const Color(0xFFF1F5F9),
+                  color: AppTokens.surfaceMuted,
                   child: const Text('图片预览加载失败，可复制 URL 使用'),
                 ),
               ),
@@ -1063,9 +1063,9 @@ class _ApiHubUrlResultBlock extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(color: AppTokens.cardBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

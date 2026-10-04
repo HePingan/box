@@ -250,7 +250,7 @@ class _DrawerContentState extends State<_DrawerContent> {
             end: Alignment.bottomRight,
           ),
           borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-          border: Border.all(color: const Color(0xFFE0E7FF)),
+          border: Border.all(color: AppTokens.cardBorder),
           boxShadow: [
             BoxShadow(
               color: AppTokens.primaryBlue.withValues(alpha: 0.06),

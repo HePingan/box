@@ -30,7 +30,7 @@ class ContentHubTopCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.94),
+        color: AppTokens.surface.withValues(alpha: 0.94),
         borderRadius: BorderRadius.circular(AppTokens.radiusMd),
         border: Border.all(color: AppTokens.cardBorder),
         boxShadow: AppTokens.shadowSm(color: AppTokens.emerald),
@@ -152,7 +152,7 @@ class ContentEntryGrid extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.94),
+        color: AppTokens.surface.withValues(alpha: 0.94),
         borderRadius: BorderRadius.circular(AppTokens.radiusMd),
         border: Border.all(color: AppTokens.cardBorder),
       ),
@@ -390,9 +390,9 @@ class ContentOverviewCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(color: AppTokens.cardBorder),
         boxShadow: AppTokens.shadowSm(color: AppTokens.primaryBlue),
       ),
       child: Column(
@@ -480,9 +480,9 @@ class _RecentCollectionTile extends StatelessWidget {
         child: Container(
           height: 72,
           decoration: BoxDecoration(
-            color: const Color(0xFFF5F3FF),
+            color: AppTokens.violet.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE8E0FF)),
+            border: Border.all(color: AppTokens.violet.withValues(alpha: 0.30)),
           ),
           child: Center(
             child: Row(
@@ -535,9 +535,9 @@ class _RecentCollectionTile extends StatelessWidget {
         height: 72,
         padding: const EdgeInsets.fromLTRB(8, 8, 10, 8),
         decoration: BoxDecoration(
-          color: const Color(0xFFF8F6FF),
+          color: AppTokens.violet.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE8E0FF)),
+          border: Border.all(color: AppTokens.violet.withValues(alpha: 0.30)),
         ),
         child: Row(
           children: [
@@ -652,14 +652,14 @@ class ContentSearchBar extends StatelessWidget {
           : EdgeInsets.zero,
       decoration: framed
           ? BoxDecoration(
-              color: Colors.white,
+              color: AppTokens.surface,
               borderRadius: BorderRadius.circular(AppTokens.radiusCard),
               border: Border.all(color: AppTokens.cardBorder),
             )
           : null,
       child: Row(
         children: [
-          Icon(Icons.search_rounded, size: 20, color: Colors.grey.shade500),
+          Icon(Icons.search_rounded, size: 20, color: AppTokens.textTertiary),
           const SizedBox(width: 10),
           Expanded(
             child: TextField(
@@ -1082,7 +1082,7 @@ class WarehouseCard extends StatelessWidget {
 
   Widget _buildFallback() {
     return Container(
-      color: const Color(0xFFE9ECEF),
+      color: AppTokens.surfaceMuted,
       child: Center(
         child: Icon(item.category.icon, size: 32, color: Colors.grey.shade500),
       ),
@@ -1103,9 +1103,9 @@ class WarehouseErrorBox extends StatelessWidget {
       height: 160,
       width: double.infinity,
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF4F4),
+        color: AppTokens.danger.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.red.shade100),
+        border: Border.all(color: AppTokens.danger.withValues(alpha: 0.30)),
       ),
       child: Center(
         child: Column(
@@ -1148,7 +1148,7 @@ class BatchActionBar extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         boxShadow: [
           BoxShadow(

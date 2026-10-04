@@ -544,13 +544,13 @@ class _DesktopNavItem extends StatelessWidget {
                           end: Alignment.bottomRight,
                         )
                       : null,
-                  color: selected ? null : const Color(0xFFF1F5F9),
+                  color: selected ? null : AppTokens.surfaceMuted,
                   borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                 ),
                 child: Icon(
                   icon,
                   size: selected ? 20 : 18,
-                  color: selected ? Colors.white : const Color(0xFF64748B),
+                  color: selected ? Colors.white : AppTokens.textSecondary,
                 ),
               ),
               const SizedBox(height: 4),
@@ -561,7 +561,7 @@ class _DesktopNavItem extends StatelessWidget {
                 style: TextStyle(
                   color: selected
                       ? const Color(0xFF2563EB)
-                      : const Color(0xFF64748B),
+                      : AppTokens.textSecondary,
                   fontSize: 10,
                   fontWeight: selected ? FontWeight.w900 : FontWeight.w600,
                 ),
@@ -617,13 +617,13 @@ class _ShellNavItem extends StatelessWidget {
                         end: Alignment.bottomRight,
                       )
                     : null,
-                color: selected ? null : const Color(0xFFF1F5F9),
+                color: selected ? null : AppTokens.surfaceMuted,
                 borderRadius: BorderRadius.circular(AppTokens.radiusPill),
               ),
               child: Icon(
                 icon,
                 size: selected ? 17 : 16,
-                color: selected ? Colors.white : const Color(0xFF64748B),
+                color: selected ? Colors.white : AppTokens.textSecondary,
               ),
             ),
             const SizedBox(height: 2),
@@ -632,7 +632,7 @@ class _ShellNavItem extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: selected ? selectedColor : const Color(0xFF64748B),
+                color: selected ? selectedColor : AppTokens.textSecondary,
                 fontSize: 11,
                 fontWeight: selected ? FontWeight.w900 : FontWeight.w600,
               ),

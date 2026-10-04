@@ -1028,7 +1028,7 @@ class WarehouseTabState extends State<WarehouseTab>
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.94),
+                        color: AppTokens.surface.withValues(alpha: 0.94),
                         borderRadius: BorderRadius.circular(
                           AppTokens.radiusMd,
                         ),

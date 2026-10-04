@@ -376,17 +376,17 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                   vertical: 8,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF1F5F9),
+                  color: AppTokens.surfaceMuted,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
                   '该插件声明将访问：'
                   '${permissionLabelsOf(item.permissions).join('、')}'
                   '\n（仅为作者声明，App 目前不做运行时权限拦截）',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12.5,
                     height: 1.5,
-                    color: Color(0xFF334155),
+                    color: AppTokens.textSecondary,
                   ),
                 ),
               ),
@@ -713,7 +713,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
         decoration: BoxDecoration(
           gradient: selected ? AppTokens.violetGradient : null,
-          color: selected ? null : Colors.white,
+          color: selected ? null : AppTokens.surface,
           borderRadius: BorderRadius.circular(AppTokens.radiusPill),
           border: Border.all(
             color: selected ? Colors.transparent : AppTokens.divider,
@@ -763,9 +763,9 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF5F7FB),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE6EAF2)),
+        border: Border.all(color: AppTokens.cardBorder),
       ),
       child: Wrap(
         spacing: 10,
@@ -799,9 +799,9 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF7ED),
+        color: AppTokens.warning.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFFED7AA)),
+        border: Border.all(color: AppTokens.warning.withValues(alpha: 0.35)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -831,7 +831,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     // 内容页优化：题干优先，操作下沉；标签收敛，避免窄屏 trailing 挤裁
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: installed
@@ -1005,7 +1005,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       margin: const EdgeInsets.fromLTRB(16, 10, 16, 8),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppTokens.divider),
         boxShadow: AppTokens.shadowSm(color: AppTokens.primaryBlue),
@@ -1213,7 +1213,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                         onChanged: (v) => setState(() => _keyword = v),
                         decoration: InputDecoration(
                           filled: true,
-                          fillColor: Colors.white,
+                          fillColor: AppTokens.surfaceMuted,
                           isDense: true,
                           hintText: '搜索插件名称/描述',
                           prefixIcon: const Icon(Icons.search),
@@ -1225,14 +1225,14 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                                 ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(18),
-                            borderSide: const BorderSide(
-                              color: Color(0xFFE7ECF5),
+                            borderSide: BorderSide(
+                              color: AppTokens.cardBorder,
                             ),
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(18),
-                            borderSide: const BorderSide(
-                              color: Color(0xFFE7ECF5),
+                            borderSide: BorderSide(
+                              color: AppTokens.cardBorder,
                             ),
                           ),
                         ),

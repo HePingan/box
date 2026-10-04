@@ -53,7 +53,7 @@ class LocalToolCard extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Material(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(26),
         elevation: 1.5,
         shadowColor: AppTokens.primaryBlue.withValues(alpha: 0.06),
@@ -61,7 +61,7 @@ class LocalToolCard extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(26),
-            border: Border.all(color: const Color(0xFFE9EEF7)),
+            border: Border.all(color: AppTokens.cardBorder),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -852,7 +852,7 @@ class _DateRow extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         decoration: BoxDecoration(
-          border: Border.all(color: const Color(0xFFDCE3F0)),
+          border: Border.all(color: AppTokens.cardBorder),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -3566,7 +3566,7 @@ class _DbScaleBar extends StatelessWidget {
                         width: 3,
                         height: 30,
                         decoration: BoxDecoration(
-                          color: Colors.white,
+                          color: AppTokens.surface,
                           borderRadius: BorderRadius.circular(2),
                           border: Border.all(
                             color: AppTokens.textPrimary,

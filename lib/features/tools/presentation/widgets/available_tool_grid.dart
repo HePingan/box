@@ -108,9 +108,9 @@ class AvailableToolCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppTokens.surface,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFE7ECF5)),
+          border: Border.all(color: AppTokens.cardBorder),
           boxShadow: AppTokens.shadowSm(color: AppTokens.violet),
         ),
         child: Column(

@@ -261,9 +261,9 @@ class _ToolPageState extends State<ToolPage>
                     vertical: 18,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: AppTokens.surface,
                     borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: const Color(0xFFE7ECF5)),
+                    border: Border.all(color: AppTokens.cardBorder),
                   ),
                   child: Text(
                     _offlineOnly ? '没有匹配的工具。这些工具要联网，关掉「离线可用」再看看。' : '没有匹配的工具。',
@@ -358,7 +358,7 @@ class _ToolPageState extends State<ToolPage>
       ),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.94),
+        color: AppTokens.surface.withValues(alpha: 0.94),
         borderRadius: BorderRadius.circular(AppTokens.radiusMd),
         border: Border.all(color: AppTokens.cardBorder),
         boxShadow: AppTokens.shadowSm(color: AppTokens.violet),
@@ -375,9 +375,9 @@ class _ToolPageState extends State<ToolPage>
                   gradient: AppTokens.violetGradient,
                   borderRadius: BorderRadius.circular(11),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.handyman_rounded,
-                  color: Colors.white,
+                  color: AppTokens.surface,
                   size: 18,
                 ),
               ),
@@ -443,11 +443,11 @@ class _ToolPageState extends State<ToolPage>
                     : null,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(20),
-                  borderSide: const BorderSide(color: Color(0xFFE7ECF5)),
+                  borderSide: BorderSide(color: AppTokens.cardBorder),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(20),
-                  borderSide: const BorderSide(color: Color(0xFFE7ECF5)),
+                  borderSide: BorderSide(color: AppTokens.cardBorder),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(20),
@@ -461,7 +461,7 @@ class _ToolPageState extends State<ToolPage>
                   vertical: 8,
                 ),
                 filled: true,
-                fillColor: const Color(0xFFF8F9FE),
+                fillColor: AppTokens.surfaceMuted,
               ),
             ),
           ),

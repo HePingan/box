@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../design_system/app_tokens.dart';
 
 class PublicApiToolDefinition {
   const PublicApiToolDefinition({
@@ -365,12 +366,12 @@ class PublicApiRegistry {
     group: '生活',
   );
 
-  static const dujitang = PublicApiToolDefinition(
+  static final dujitang = PublicApiToolDefinition(
     id: 'dujitang',
     title: '毒鸡汤',
     subtitle: '随机扎心语录，免密钥',
     icon: Icons.sentiment_very_dissatisfied_rounded,
-    color: Color(0xFF64748B),
+    color: AppTokens.textSecondary,
     provider: 'Shadiao API',
     group: '文本',
   );
@@ -385,7 +386,7 @@ class PublicApiRegistry {
     group: '文本',
   );
 
-  static const all = [
+  static final all = [
     weather,
     currency,
     holidays,

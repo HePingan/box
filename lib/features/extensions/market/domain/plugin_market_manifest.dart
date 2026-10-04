@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/plugin_market/models/plugin_market_security.dart';
+import '../../../../design_system/app_tokens.dart';
 
 String safeMarketString(dynamic value, [String fallback = '']) {
   if (value == null) return fallback;
@@ -153,7 +154,7 @@ Color _defaultColorForArea(String areaCode) {
     case 'novel':
       return const Color(0xFFF59E0B);
     case 'center':
-      return const Color(0xFF334155);
+      return AppTokens.textSecondary;
     case 'recommend':
     default:
       return const Color(0xFF7C3AED);

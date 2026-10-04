@@ -197,12 +197,12 @@ class _CustomSiteSectionState extends State<CustomSiteSection> {
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(color: AppTokens.cardBorder),
         boxShadow: AppTokens.shadowSm(color: AppTokens.violet),
       ),
       clipBehavior: Clip.antiAlias,
       child: Material(
-        color: Colors.white,
+        color: AppTokens.surface,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -220,9 +220,9 @@ class _CustomSiteSectionState extends State<CustomSiteSection> {
                         gradient: AppTokens.violetGradient,
                         borderRadius: BorderRadius.circular(11),
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.bookmark_rounded,
-                        color: Colors.white,
+                        color: AppTokens.surface,
                         size: 18,
                       ),
                     ),

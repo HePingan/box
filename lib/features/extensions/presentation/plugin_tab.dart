@@ -301,7 +301,7 @@ class _PluginTabState extends State<PluginTab>
                   width: 170,
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: AppTokens.surface,
                     borderRadius: BorderRadius.circular(18),
                     border: Border.all(color: AppTokens.divider),
                     boxShadow: AppTokens.shadowSm(),
@@ -519,7 +519,7 @@ class _PluginTabState extends State<PluginTab>
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF6F8FA),
+                  color: AppTokens.surfaceMuted,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: Colors.grey.shade300),
                 ),
@@ -1261,14 +1261,14 @@ class _PluginTabState extends State<PluginTab>
                               : null,
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(26),
-                            borderSide: const BorderSide(
-                              color: Color(0xFFE7ECF5),
+                            borderSide: BorderSide(
+                              color: AppTokens.cardBorder,
                             ),
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(26),
-                            borderSide: const BorderSide(
-                              color: Color(0xFFE7ECF5),
+                            borderSide: BorderSide(
+                              color: AppTokens.cardBorder,
                             ),
                           ),
                           focusedBorder: OutlineInputBorder(
@@ -1283,7 +1283,7 @@ class _PluginTabState extends State<PluginTab>
                             vertical: 10,
                           ),
                           filled: true,
-                          fillColor: const Color(0xFFF8F9FE),
+                          fillColor: AppTokens.surfaceMuted,
                         ),
                       ),
                     ),

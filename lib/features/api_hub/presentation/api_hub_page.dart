@@ -844,7 +844,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
         style: OutlinedButton.styleFrom(
           minimumSize: const Size.fromHeight(44),
           foregroundColor: AppTokens.textPrimary,
-          side: const BorderSide(color: Color(0xFFE7ECF5)),
+          side: BorderSide(color: AppTokens.cardBorder),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
@@ -924,9 +924,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
       padding: const EdgeInsets.fromLTRB(12, 11, 12, 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(color: AppTokens.cardBorder),
         boxShadow: AppTokens.shadowSm(color: AppTokens.primaryBlue),
       ),
       child: Column(
@@ -1013,8 +1013,8 @@ class _ApiHubPageState extends State<ApiHubPage> {
               color: selected ? AppTokens.primaryBlue : AppTokens.textSecondary,
               fontWeight: FontWeight.w900,
             ),
-            side: const BorderSide(color: Color(0xFFE7ECF5)),
-            backgroundColor: Colors.white,
+            side: BorderSide(color: AppTokens.cardBorder),
+            backgroundColor: AppTokens.surface,
           );
         },
         separatorBuilder: (_, _) => const SizedBox(width: 8),
@@ -1208,9 +1208,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
               width: double.infinity,
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
+                color: AppTokens.surfaceMuted,
                 borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0xFFE7ECF5)),
+                border: Border.all(color: AppTokens.cardBorder),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1421,9 +1421,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (quote == null)
-            const Text(
+            Text(
               '点「换一句」获取一条随机语录',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else ...[
             SelectableText(
@@ -1440,8 +1440,8 @@ class _ApiHubPageState extends State<ApiHubPage> {
                 alignment: Alignment.centerRight,
                 child: Text(
                   '—— ${quote.sourceLabel}',
-                  style: const TextStyle(
-                    color: Color(0xFF64748B),
+                  style: TextStyle(
+                    color: AppTokens.textSecondary,
                     fontSize: 13,
                   ),
                 ),
@@ -1472,9 +1472,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (poem == null)
-            const Text(
+            Text(
               '点「换一首」获取一句随机诗词',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else ...[
             SelectableText(
@@ -1491,7 +1491,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
                 if (poem.title.isNotEmpty) '《${poem.title}》',
                 if (poem.attribution.isNotEmpty) poem.attribution,
               ].join('  '),
-              style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
+              style: TextStyle(color: AppTokens.textSecondary, fontSize: 13),
             ),
             if (poem.fullPoem.isNotEmpty) ...[
               const SizedBox(height: 14),
@@ -1515,21 +1515,21 @@ class _ApiHubPageState extends State<ApiHubPage> {
                     ),
                     if (poem.translation.isNotEmpty) ...[
                       const SizedBox(height: 12),
-                      const Text(
+                      Text(
                         '白话翻译',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF64748B),
+                          color: AppTokens.textSecondary,
                         ),
                       ),
                       const SizedBox(height: 6),
                       SelectableText(
                         poem.translation.join('\n'),
-                        style: const TextStyle(
+                        style: TextStyle(
                           height: 1.7,
                           fontSize: 13,
-                          color: Color(0xFF475569),
+                          color: AppTokens.textSecondary,
                         ),
                       ),
                     ],
@@ -1566,9 +1566,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (daily == null)
-            const Text(
+            Text(
               '点「换一句」获取今日英文金句',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else ...[
             SelectableText(
@@ -1583,10 +1583,10 @@ class _ApiHubPageState extends State<ApiHubPage> {
               const SizedBox(height: 10),
               SelectableText(
                 daily.displayTranslation,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 15,
                   height: 1.6,
-                  color: Color(0xFF475569),
+                  color: AppTokens.textSecondary,
                 ),
               ),
             ],
@@ -1615,9 +1615,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (news == null)
-            const Text(
+            Text(
               '点「刷新资讯」拉取今日要闻',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else ...[
             Text(
@@ -1626,9 +1626,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
                 if (news.dayOfWeek.isNotEmpty) news.dayOfWeek,
                 if (news.lunarDate.isNotEmpty) news.lunarDate,
               ].join('  '),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
-                color: Color(0xFF64748B),
+                color: AppTokens.textSecondary,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -1642,21 +1642,21 @@ class _ApiHubPageState extends State<ApiHubPage> {
             ],
             if (news.tips.isNotEmpty) ...[
               const SizedBox(height: 4),
-              const Text(
+              Text(
                 '每日一句',
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF64748B),
+                  color: AppTokens.textSecondary,
                 ),
               ),
               const SizedBox(height: 6),
               SelectableText(
                 news.tips.join('\n'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   height: 1.7,
-                  color: Color(0xFF475569),
+                  color: AppTokens.textSecondary,
                 ),
               ),
             ],
@@ -1684,9 +1684,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (_historyEvents.isEmpty)
-            const Text(
+            Text(
               '点「刷新」拉取今日历史事件',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else
             for (final e in _historyEvents) ...[
@@ -1720,10 +1720,10 @@ class _ApiHubPageState extends State<ApiHubPage> {
                           const SizedBox(height: 3),
                           Text(
                             e.description,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12.5,
                               height: 1.5,
-                              color: Color(0xFF64748B),
+                              color: AppTokens.textSecondary,
                             ),
                           ),
                         ],
@@ -1758,9 +1758,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (luck == null)
-            const Text(
+            Text(
               '点「查今日」获取今天的黄历',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else ...[
             Text(
@@ -1779,7 +1779,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
                   if (luck.ganZhiYear.isNotEmpty) luck.ganZhiYear,
                   if (luck.zodiac.isNotEmpty) '属$luck.zodiac',
                 ].join('  '),
-                style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                style: TextStyle(fontSize: 13, color: AppTokens.textSecondary),
               ),
             ],
             if (luck.luckDesc.isNotEmpty) ...[
@@ -1855,9 +1855,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (wall == null)
-            const Text(
+            Text(
               '点「换一张」获取今日壁纸',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else ...[
             if (wall.url.isNotEmpty)
@@ -1867,12 +1867,12 @@ class _ApiHubPageState extends State<ApiHubPage> {
                   wall.url,
                   fit: BoxFit.cover,
                   width: double.infinity,
-                  errorBuilder: (_, _, _) => const SizedBox(
+                  errorBuilder: (_, _, _) => SizedBox(
                     height: 120,
                     child: Center(
                       child: Text(
                         '图片加载失败',
-                        style: TextStyle(color: Color(0xFF64748B)),
+                        style: TextStyle(color: AppTokens.textSecondary),
                       ),
                     ),
                   ),
@@ -1891,16 +1891,16 @@ class _ApiHubPageState extends State<ApiHubPage> {
               const SizedBox(height: 4),
               Text(
                 wall.copyright,
-                style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
               ),
             ],
             if (wall.url.isNotEmpty) ...[
               const SizedBox(height: 10),
               SelectableText(
                 wall.url,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11.5,
-                  color: Color(0xFF94A3B8),
+                  color: AppTokens.textTertiary,
                 ),
               ),
             ],
@@ -1938,9 +1938,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (_hotList.isEmpty)
-            const Text(
+            Text(
               '点「刷新榜单」拉取实时榜单',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else
             for (var i = 0; i < _hotList.length; i++)
@@ -1967,7 +1967,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
                               fontWeight: FontWeight.w800,
                               color: i < 3
                                   ? const Color(0xFFDC2626)
-                                  : const Color(0xFF94A3B8),
+                                  : AppTokens.textTertiary,
                             ),
                           ),
                         ),
@@ -1989,9 +1989,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
                                 const SizedBox(height: 2),
                                 Text(
                                   _hotList[i].hot,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 11.5,
-                                    color: Color(0xFF94A3B8),
+                                    color: AppTokens.textTertiary,
                                   ),
                                 ),
                               ],
@@ -2037,9 +2037,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (fortune == null)
-            const Text(
+            Text(
               '点上方按钮查看今日运势',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else ...[
             if (fortune.luckDesc.isNotEmpty)
@@ -2055,17 +2055,17 @@ class _ApiHubPageState extends State<ApiHubPage> {
             if (fortune.date.isNotEmpty)
               Text(
                 '日期：${fortune.date}',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12.5,
-                  color: Color(0xFF94A3B8),
+                  color: AppTokens.textTertiary,
                 ),
               ),
             if (fortune.zodiac.isNotEmpty)
               Text(
                 '生肖：${fortune.zodiac}',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12.5,
-                  color: Color(0xFF94A3B8),
+                  color: AppTokens.textTertiary,
                 ),
               ),
             if (fortune.luckTip.isNotEmpty) ...[
@@ -2100,9 +2100,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (moyu == null)
-            const Text(
+            Text(
               '点上方按钮查看摸鱼日历',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else ...[
             if (moyu.daysLeft > 0)
@@ -2119,25 +2119,25 @@ class _ApiHubPageState extends State<ApiHubPage> {
               Text(
                 '今天：${moyu.gregorianDate}'
                 '${moyu.weekday.isEmpty ? '' : ' ${moyu.weekday}'}',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12.5,
-                  color: Color(0xFF94A3B8),
+                  color: AppTokens.textTertiary,
                 ),
               ),
             if (moyu.lunarDate.isNotEmpty)
               Text(
                 '农历：${moyu.lunarDate}',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12.5,
-                  color: Color(0xFF94A3B8),
+                  color: AppTokens.textTertiary,
                 ),
               ),
             if (moyu.nextHolidayDate.isNotEmpty)
               Text(
                 '下次放假：${moyu.nextHolidayDate}',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12.5,
-                  color: Color(0xFF94A3B8),
+                  color: AppTokens.textTertiary,
                 ),
               ),
             if (moyu.description.isNotEmpty) ...[
@@ -2173,9 +2173,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (_boxOffice.isEmpty)
-            const Text(
+            Text(
               '点「刷新榜单」拉取票房总榜',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else
             for (final item in _boxOffice)
@@ -2193,7 +2193,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
                           fontWeight: FontWeight.w800,
                           color: item.rank <= 3
                               ? const Color(0xFFDC2626)
-                              : const Color(0xFF94A3B8),
+                              : AppTokens.textTertiary,
                         ),
                       ),
                     ),
@@ -2217,9 +2217,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
                                 if (item.boxOfficeDesc.isNotEmpty)
                                   item.boxOfficeDesc,
                               ].join(' · '),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 11.5,
-                                color: Color(0xFF94A3B8),
+                                color: AppTokens.textTertiary,
                               ),
                             ),
                         ],
@@ -2251,9 +2251,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (_epicGames.isEmpty)
-            const Text(
+            Text(
               '点「刷新本周免费」看看能白拿什么',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else
             for (final game in _epicGames)
@@ -2276,9 +2276,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
                         if (game.seller.isNotEmpty) game.seller,
                         if (game.freeEnd.isNotEmpty) '截至 ${game.freeEnd}',
                       ].join(' · '),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11.5,
-                        color: Color(0xFF94A3B8),
+                        color: AppTokens.textTertiary,
                       ),
                     ),
                   ],
@@ -2312,7 +2312,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (quote == null)
-            const Text('点上方按钮随机来一条', style: TextStyle(color: Color(0xFF64748B)))
+            Text('点上方按钮随机来一条', style: TextStyle(color: AppTokens.textSecondary))
           else
             SelectableText(
               quote.text,
@@ -2341,9 +2341,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (_hotSearches.isEmpty)
-            const Text(
+            Text(
               '点「刷新榜单」拉取实时热搜',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else
             for (var i = 0; i < _hotSearches.length; i++)
@@ -2361,7 +2361,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
                           fontWeight: FontWeight.w800,
                           color: i < 3
                               ? const Color(0xFFDC2626)
-                              : const Color(0xFF94A3B8),
+                              : AppTokens.textTertiary,
                         ),
                       ),
                     ),
@@ -2381,9 +2381,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
                             const SizedBox(height: 2),
                             Text(
                               _hotSearches[i].hot,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 11.5,
-                                color: Color(0xFF94A3B8),
+                                color: AppTokens.textTertiary,
                               ),
                             ),
                           ],
@@ -2420,24 +2420,24 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (entries.isEmpty)
-            const Text(
+            Text(
               '点「刷新汇率」拉取最新汇率',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else ...[
             if (rate!.updated.isNotEmpty) ...[
               Text(
                 '更新于 ${rate.updated}',
-                style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
               ),
               const SizedBox(height: 10),
             ],
             Text(
               '1 ${rate.base} =',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF64748B),
+                color: AppTokens.textSecondary,
               ),
             ),
             const SizedBox(height: 8),
@@ -2488,7 +2488,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (result == null)
-            const Text('点「查询」获取归属地', style: TextStyle(color: Color(0xFF64748B)))
+            Text('点「查询」获取归属地', style: TextStyle(color: AppTokens.textSecondary))
           else ...[
             _infoRow('IP', result.ip),
             if (result.location.isNotEmpty) _infoRow('归属地', result.location),
@@ -2516,9 +2516,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (result == null)
-            const Text(
+            Text(
               '点「查询归属地」获取结果',
-              style: TextStyle(color: Color(0xFF64748B)),
+              style: TextStyle(color: AppTokens.textSecondary),
             )
           else ...[
             if (result.province.isNotEmpty) _infoRow('省份', result.province),
@@ -2527,9 +2527,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
             if (result.province.isEmpty &&
                 result.city.isEmpty &&
                 result.carrier.isEmpty)
-              const Text(
+              Text(
                 '接口没有返回该号段的归属信息，换个号码再试',
-                style: TextStyle(color: Color(0xFF64748B)),
+                style: TextStyle(color: AppTokens.textSecondary),
               ),
           ],
         ],
@@ -2595,7 +2595,7 @@ class _ApiHubPageState extends State<ApiHubPage> {
           ),
           const SizedBox(height: 12),
           if (result == null)
-            const Text('点「翻译」查看结果', style: TextStyle(color: Color(0xFF64748B)))
+            Text('点「翻译」查看结果', style: TextStyle(color: AppTokens.textSecondary))
           else
             SelectableText(
               result.translatedText,
@@ -2616,9 +2616,9 @@ class _ApiHubPageState extends State<ApiHubPage> {
             width: 62,
             child: Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
-                color: Color(0xFF64748B),
+                color: AppTokens.textSecondary,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -2709,8 +2709,8 @@ class _ApiHubPageState extends State<ApiHubPage> {
                           : AppTokens.textSecondary,
                       fontWeight: FontWeight.w900,
                     ),
-                    side: const BorderSide(color: Color(0xFFE7ECF5)),
-                    backgroundColor: Colors.white,
+                    side: BorderSide(color: AppTokens.cardBorder),
+                    backgroundColor: AppTokens.surface,
                   ),
                 );
               }).toList(),
@@ -2731,8 +2731,8 @@ class _ApiHubPageState extends State<ApiHubPage> {
                   color: selected ? AppTokens.violet : AppTokens.textSecondary,
                   fontWeight: FontWeight.w900,
                 ),
-                side: const BorderSide(color: Color(0xFFE7ECF5)),
-                backgroundColor: Colors.white,
+                side: BorderSide(color: AppTokens.cardBorder),
+                backgroundColor: AppTokens.surface,
               );
             }).toList(),
           ),

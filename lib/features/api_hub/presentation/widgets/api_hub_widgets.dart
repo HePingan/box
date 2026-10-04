@@ -22,9 +22,9 @@ class ApiHubDirectoryDetailBlock extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(color: AppTokens.cardBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -56,9 +56,9 @@ class ApiHubMetric extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: const Color(0xFFF6F8FD),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(color: AppTokens.cardBorder),
       ),
       child: Text(
         '$value $label',
@@ -151,7 +151,7 @@ class ApiHubToolCard extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: selected ? tool.color.withValues(alpha: 0.12) : Colors.white,
+            color: selected ? tool.color.withValues(alpha: 0.12) : AppTokens.surface,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
               color: selected
@@ -224,7 +224,7 @@ class ApiHubPanel extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       child: Material(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(26),
         shadowColor: AppTokens.primaryBlue.withValues(alpha: 0.06),
         elevation: 1.5,
@@ -232,7 +232,7 @@ class ApiHubPanel extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(26),
-            border: Border.all(color: const Color(0xFFE9EEF7)),
+            border: Border.all(color: AppTokens.cardBorder),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

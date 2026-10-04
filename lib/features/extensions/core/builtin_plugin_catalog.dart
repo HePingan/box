@@ -22,6 +22,7 @@ import 'package:box/features/quiz_plugin/presentation/quiz_plugin_entry.dart';
 import 'package:box/daily_news_page.dart';
 import 'package:box/novel/pages/novel_list_page.dart';
 import 'package:box/video/video_compat_pages.dart';
+import '../../../design_system/app_tokens.dart';
 
 /// 内置插件目录（P2-2 从 home_plugin_core.dart 拆出）。
 ///
@@ -324,7 +325,7 @@ List<HomePlugin> buildDefaultPlugins() {
       title: '服务器运维',
       subtitle: '主机指标 / 运维文件 / 终端',
       icon: Icons.terminal_rounded,
-      color: const Color(0xFF334155),
+      color: AppTokens.textSecondary,
       area: HomePluginArea.center,
       builtIn: true,
       sort: 58,

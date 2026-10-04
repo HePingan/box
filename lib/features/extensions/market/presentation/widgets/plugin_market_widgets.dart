@@ -22,7 +22,7 @@ class MarketPill extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           gradient: selected ? AppTokens.blueGradient : null,
-          color: selected ? null : Colors.white,
+          color: selected ? null : AppTokens.surface,
           borderRadius: BorderRadius.circular(AppTokens.radiusPill),
           border: Border.all(
             color: selected ? Colors.transparent : AppTokens.divider,
@@ -107,7 +107,7 @@ class MarketEmptyState extends StatelessWidget {
       margin: const EdgeInsets.all(24),
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(26),
         border: Border.all(color: AppTokens.divider),
         boxShadow: AppTokens.shadowSm(),
@@ -161,7 +161,7 @@ class MarketTagChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: const Color(0xFFF2F4F7),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(AppTokens.radiusPill),
       ),
       child: Text(

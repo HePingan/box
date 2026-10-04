@@ -87,7 +87,7 @@ Future<T?> showAppModalBottomSheet<T>({
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    backgroundColor: Colors.white,
+    backgroundColor: AppTokens.surface,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(
         top: Radius.circular(AppTokens.radiusXl),

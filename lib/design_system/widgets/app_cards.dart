@@ -449,9 +449,17 @@ class AppLightHeroCard extends StatelessWidget {
       margin: margin,
       padding: padding,
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.86),
+        // 浅色档是"半透明白卡浮在页面上"，深色档必须换成"深色卡 + 常规描边"，
+        // 否则卡片里的文字用的是 tokens（深色档下变浅）→ 浅字压白卡，看不见。
+        color: AppTokens.isDark
+            ? AppTokens.surface
+            : Colors.white.withValues(alpha: 0.86),
         borderRadius: BorderRadius.circular(AppTokens.radiusXl),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.92)),
+        border: Border.all(
+          color: AppTokens.isDark
+              ? AppTokens.cardBorder
+              : Colors.white.withValues(alpha: 0.92),
+        ),
         boxShadow: AppTokens.shadowLg(color: AppTokens.primaryBlue),
       ),
       child: ClipRRect(

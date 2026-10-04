@@ -38,7 +38,7 @@ class ExtensionHeroCard extends StatelessWidget {
       decoration: BoxDecoration(
         // 与工具/内容 hero 对齐：半透明白，让页面渐变透上来，
         // 原为不透明白会切断 pageGradient，视觉上比另两页「浮」得更高。
-        color: Colors.white.withValues(alpha: 0.94),
+        color: AppTokens.surface.withValues(alpha: 0.94),
         borderRadius: BorderRadius.circular(AppTokens.radiusMd),
         border: Border.all(color: AppTokens.cardBorder),
         boxShadow: AppTokens.shadowSm(color: AppTokens.violet),
@@ -148,9 +148,9 @@ class ExtensionHeroCard extends StatelessWidget {
                   width: 32,
                   height: 32,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF6F8FD),
+                    color: AppTokens.surfaceMuted,
                     borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-                    border: Border.all(color: const Color(0xFFE7ECF5)),
+                    border: Border.all(color: AppTokens.cardBorder),
                   ),
                   child: Icon(
                     Icons.more_horiz_rounded,
@@ -279,7 +279,7 @@ class ExtensionManagementTile extends StatelessWidget {
             boxShadow: AppTokens.shadowSm(color: color),
           )
         : BoxDecoration(
-            color: Colors.white,
+            color: AppTokens.surface,
             borderRadius: BorderRadius.circular(20),
             boxShadow: AppTokens.shadowSm(color: color),
           );
@@ -534,15 +534,15 @@ class PluginDetailSheet extends StatelessWidget {
                   width: double.infinity,
                   padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF6F8FD),
+                    color: AppTokens.surfaceMuted,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFE7ECF5)),
+                    border: Border.all(color: AppTokens.cardBorder),
                   ),
                   child: Column(
                     children: [
                       _detailRow('ID', plugin.id),
                       if (payload.isNotEmpty) ...[
-                        const Divider(height: 16, color: Color(0xFFE7ECF5)),
+                        Divider(height: 16, color: AppTokens.cardBorder),
                         _detailRow('动作参数', payload),
                       ],
                     ],

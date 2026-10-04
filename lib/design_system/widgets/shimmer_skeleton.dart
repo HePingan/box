@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import '../app_tokens.dart';
 
 // ═══════════════════════════════════════════════════════════════════
 // Shimmer 骨架屏基座
@@ -90,7 +91,7 @@ class ShimmerBlock extends StatelessWidget {
       height: height,
       margin: margin,
       decoration: BoxDecoration(
-        color: const Color(0xFFEEEEEE),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(borderRadius),
       ),
     );
@@ -109,7 +110,7 @@ class DetailPageSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F3FF),
+      backgroundColor: AppTokens.surfaceMuted,
       body: Shimmer(
         child: CustomScrollView(
           slivers: [
@@ -118,7 +119,7 @@ class DetailPageSkeleton extends StatelessWidget {
               collapsedHeight: 56,
               pinned: true,
               flexibleSpace: FlexibleSpaceBar(
-                background: Container(color: const Color(0xFFEEEEEE)),
+                background: Container(color: AppTokens.surfaceMuted),
               ),
             ),
             SliverToBoxAdapter(
@@ -252,7 +253,7 @@ class BookshelfSkeleton extends StatelessWidget {
           margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: const Color(0xFFEEEEEE),
+            color: AppTokens.surfaceMuted,
             borderRadius: BorderRadius.circular(14),
           ),
           child: const Row(
@@ -279,7 +280,7 @@ class BookshelfSkeleton extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         // 分隔线
-        const Divider(height: 1, thickness: 1, color: Color(0xFFEEEEEE)),
+        Divider(height: 1, thickness: 1, color: AppTokens.surfaceMuted),
         const SizedBox(height: 16),
         // 列表骨架
         Expanded(
@@ -303,7 +304,7 @@ class _BookshelfTileSkeleton extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFFEEEEEE),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(12),
       ),
       child: const Row(
@@ -366,7 +367,7 @@ class _BookCardSkeleton extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFEEEEEE),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(24),
       ),
       child: Row(
@@ -422,7 +423,7 @@ class ReaderSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     return Scaffold(
-      backgroundColor: const Color(0xFFFDFBF7),
+      backgroundColor: AppTokens.surfaceMuted,
       body: Padding(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
         child: Shimmer(

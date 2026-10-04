@@ -149,9 +149,9 @@ class _MoreTile extends StatelessWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFFF4F6FB),
+          color: AppTokens.surfaceMuted,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFE2E8F4)),
+          border: Border.all(color: AppTokens.cardBorder),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -167,11 +167,11 @@ class _MoreTile extends StatelessWidget {
               textAlign: TextAlign.center,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 10.5,
                 height: 1.15,
                 fontWeight: FontWeight.w800,
-                color: Color(0xFF5B6B8C),
+                color: AppTokens.textSecondary,
               ),
             ),
           ],
@@ -263,10 +263,10 @@ class _Chip extends StatelessWidget {
         alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: selected ? AppTokens.violet : Colors.white,
+          color: selected ? AppTokens.violet : AppTokens.surface,
           borderRadius: BorderRadius.circular(AppTokens.radiusPill),
           border: Border.all(
-            color: selected ? AppTokens.violet : const Color(0xFFE2E8F4),
+            color: selected ? AppTokens.violet : AppTokens.cardBorder,
           ),
         ),
         child: Row(
@@ -276,7 +276,7 @@ class _Chip extends StatelessWidget {
               Icon(
                 icon,
                 size: 14,
-                color: selected ? Colors.white : const Color(0xFF5B6B8C),
+                color: selected ? Colors.white : AppTokens.textSecondary,
               ),
               const SizedBox(width: 5),
             ],
@@ -285,7 +285,7 @@ class _Chip extends StatelessWidget {
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
-                color: selected ? Colors.white : const Color(0xFF5B6B8C),
+                color: selected ? Colors.white : AppTokens.textSecondary,
               ),
             ),
           ],
@@ -397,10 +397,10 @@ class ToolRequestRow extends StatelessWidget {
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.all(Radius.circular(16)),
-          border: Border.fromBorderSide(BorderSide(color: Color(0xFFE7ECF5))),
+        decoration: BoxDecoration(
+          color: AppTokens.surface,
+          borderRadius: const BorderRadius.all(Radius.circular(16)),
+          border: Border.fromBorderSide(BorderSide(color: AppTokens.cardBorder)),
         ),
         child: Row(
           children: [
