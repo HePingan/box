@@ -414,10 +414,10 @@ class _AggregateSearchPageState extends State<AggregateSearchPage> {
         duration: const Duration(milliseconds: 150),
         padding: EdgeInsets.fromLTRB(icon != null ? 10 : 14, 7, 14, 7),
         decoration: BoxDecoration(
-          color: selected ? AppTokens.violet : Colors.white,
+          color: selected ? AppTokens.violet : AppTokens.surface,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: selected ? AppTokens.violet : const Color(0xFFE7ECF5),
+            color: selected ? AppTokens.violet : AppTokens.cardBorder,
           ),
         ),
         child: Row(

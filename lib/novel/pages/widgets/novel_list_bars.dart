@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../design_system/app_tokens.dart';
 
 /// 探索菜单项数据
 class ExploreMenuEntry {
@@ -97,7 +98,7 @@ class NovelSearchBar extends StatelessWidget {
                       )
                     : null,
                 filled: true,
-                fillColor: Colors.white,
+                fillColor: AppTokens.surfaceMuted,
                 contentPadding: const EdgeInsets.symmetric(vertical: 0),
                 border: OutlineInputBorder(
                   borderSide: BorderSide.none,
@@ -212,9 +213,9 @@ class NovelLightIconButton extends StatelessWidget {
         width: 38,
         height: 38,
         decoration: BoxDecoration(
-          color: const Color(0xFFF2F6FF),
+          color: AppTokens.surfaceMuted,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFE0E8F6)),
+          border: Border.all(color: AppTokens.cardBorder),
         ),
         child: Icon(icon, color: const Color(0xFF7C3AED), size: 21),
       ),
@@ -238,9 +239,9 @@ class NovelLightMetric extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: const Color(0xFFF6F8FD),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(color: AppTokens.cardBorder),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,

@@ -61,9 +61,9 @@ class NovelBookCard extends StatelessWidget {
           margin: const EdgeInsets.only(bottom: 14),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppTokens.surface,
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: const Color(0xFFEDE9FE)),
+            border: Border.all(color: AppTokens.violet.withValues(alpha: 0.30)),
             boxShadow: [
               BoxShadow(
                 color: const Color(0xFF7C3AED).withValues(alpha: 0.08),
@@ -178,7 +178,7 @@ class NovelBookCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
       decoration: BoxDecoration(
-        color: const Color(0xFFF2F6FF),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(

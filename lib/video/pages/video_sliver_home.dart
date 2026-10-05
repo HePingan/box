@@ -289,9 +289,9 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 7, 8, 7),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(AppTokens.radiusLg),
-        border: Border.all(color: const Color(0xFFEDF1F8)),
+        border: Border.all(color: AppTokens.cardBorder),
         boxShadow: AppTokens.shadowSm(),
       ),
       child: Row(
@@ -603,9 +603,9 @@ class _VideoLightIcon extends StatelessWidget {
       width: 38,
       height: 38,
       decoration: BoxDecoration(
-        color: const Color(0xFFF2F6FF),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE0E8F6)),
+        border: Border.all(color: AppTokens.cardBorder),
       ),
       child: Icon(icon, color: AppTokens.primaryBlue, size: 21),
     );

@@ -24,9 +24,10 @@ class _DetailInfoCardState extends State<DetailInfoCard> {
 
   // 统一设计 token，避免圆角/描边/间距各处跳变。
   static const double _cardRadius = 20;
-  static const Color _border = Color(0xFFE7ECF5);
-  static const Color _divider = Color(0xFFF1F5F9);
-  static const Color _iconMuted = Color(0xFF94A3B8);
+  // 这几个是"随主题变"的色值，所以只能是 getter（不能是 const 字段）。
+  static Color get _border => AppTokens.cardBorder;
+  static Color get _divider => AppTokens.surfaceMuted;
+  static Color get _iconMuted => AppTokens.textTertiary;
 
   String? _text(dynamic value) {
     if (value == null) return null;
@@ -88,8 +89,8 @@ class _DetailInfoCardState extends State<DetailInfoCard> {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFF64748B),
+              style: TextStyle(
+                color: AppTokens.textSecondary,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
@@ -120,7 +121,7 @@ class _DetailInfoCardState extends State<DetailInfoCard> {
     final out = <Widget>[];
     for (var i = 0; i < rows.length; i++) {
       if (i > 0) {
-        out.add(const Divider(height: 1, thickness: 1, color: _divider));
+        out.add(Divider(height: 1, thickness: 1, color: _divider));
       }
       out.add(rows[i]);
     }
@@ -144,8 +145,8 @@ class _DetailInfoCardState extends State<DetailInfoCard> {
             overflow: _synopsisExpanded
                 ? TextOverflow.visible
                 : TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF475569),
+            style: TextStyle(
+              color: AppTokens.textSecondary,
               fontSize: 13,
               height: 1.55,
               fontWeight: FontWeight.w600,
@@ -165,8 +166,8 @@ class _DetailInfoCardState extends State<DetailInfoCard> {
                 children: [
                   Text(
                     _synopsisExpanded ? '收起' : '展开',
-                    style: const TextStyle(
-                      color: Color(0xFF64748B),
+                    style: TextStyle(
+                      color: AppTokens.textSecondary,
                       fontSize: 12,
                       fontWeight: FontWeight.w800,
                     ),
@@ -177,7 +178,7 @@ class _DetailInfoCardState extends State<DetailInfoCard> {
                         ? Icons.expand_less_rounded
                         : Icons.expand_more_rounded,
                     size: 16,
-                    color: const Color(0xFF64748B),
+                    color: AppTokens.textSecondary,
                   ),
                 ],
               ),
@@ -204,7 +205,7 @@ class _DetailInfoCardState extends State<DetailInfoCard> {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(_cardRadius),
         // B5：扁平次级卡，无阴影，只用浅描边，把视觉主体让给播放器。
         border: Border.all(color: _border),

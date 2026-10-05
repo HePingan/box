@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../design_system/app_tokens.dart';
 
 class HomeEmptyState extends StatelessWidget {
   const HomeEmptyState({
@@ -23,9 +24,9 @@ class HomeEmptyState extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.fromLTRB(20, 24, 20, 22),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppTokens.surface,
             borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: const Color(0xFFE7ECF5)),
+            border: Border.all(color: AppTokens.cardBorder),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.055),
@@ -71,8 +72,8 @@ class HomeEmptyState extends StatelessWidget {
               Text(
                 message,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color(0xFF64748B),
+                style: TextStyle(
+                  color: AppTokens.textSecondary,
                   fontSize: 13,
                   height: 1.45,
                   fontWeight: FontWeight.w600,

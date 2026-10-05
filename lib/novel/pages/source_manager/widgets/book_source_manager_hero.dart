@@ -194,7 +194,7 @@ class BookSourceSearchBox extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
       padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: AppTokens.divider),
         boxShadow: AppTokens.shadowSm(color: AppTokens.violet),

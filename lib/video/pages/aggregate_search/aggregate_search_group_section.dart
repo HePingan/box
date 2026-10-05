@@ -27,7 +27,7 @@ class AggregateSearchGroupSection extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.92),
+        color: AppTokens.surface.withValues(alpha: 0.92),
         borderRadius: BorderRadius.circular(AppTokens.radiusLg),
         border: Border.all(color: AppTokens.divider),
         boxShadow: AppTokens.shadowSm(color: AppTokens.primaryBlue),

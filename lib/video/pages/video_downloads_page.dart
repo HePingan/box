@@ -82,12 +82,12 @@ class VideoDownloadsPage extends StatelessWidget {
                   paused.isEmpty &&
                   completed.isEmpty &&
                   failed.isEmpty)
-                const SliverFillRemaining(
+                SliverFillRemaining(
                   hasScrollBody: false,
                   child: Center(
                     child: Text(
                       '暂无下载任务',
-                      style: TextStyle(color: Color(0xFF94A3B8)),
+                      style: TextStyle(color: AppTokens.textTertiary),
                     ),
                   ),
                 )
@@ -157,9 +157,9 @@ class VideoDownloadsPage extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(AppTokens.radiusSm),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(color: AppTokens.cardBorder),
       ),
       child: Row(
         children: [
@@ -228,7 +228,7 @@ class VideoDownloadsPage extends StatelessWidget {
                           : task.downloadPercent,
                       minHeight: 4,
                       color: const Color(0xFF3B82F6),
-                      backgroundColor: const Color(0xFFF1F5F9),
+                      backgroundColor: AppTokens.surfaceMuted,
                     ),
                   )
                 else if (task.status == VideoDownloadStatus.paused)
@@ -238,7 +238,7 @@ class VideoDownloadsPage extends StatelessWidget {
                       value: task.downloadPercent,
                       minHeight: 4,
                       color: const Color(0xFFF59E0B),
-                      backgroundColor: const Color(0xFFF1F5F9),
+                      backgroundColor: AppTokens.surfaceMuted,
                     ),
                   )
                 else if (task.status == VideoDownloadStatus.failed)

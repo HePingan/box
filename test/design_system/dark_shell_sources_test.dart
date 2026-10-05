@@ -34,6 +34,11 @@ void main() {
     'update/',
     'features/account/',
     'features/admin/',
+    // 批次 2：内容层（列表/卡片/详情页）。播放器与阅读器自带深底（见白名单）。
+    'video/',
+    'novel/',
+    'features/comic/',
+    'features/image_generator/',
   ];
   const List<String> looseFiles = <String>[
     'lib/app/app_shell.dart',
@@ -54,6 +59,16 @@ void main() {
     // 题库管理页的"状态色板 / 题型标签色板"：这些是语义色（含中性灰 #94A3B8
     // 表示草稿/未知），只用于 chip 的淡底 + 同色描边，深浅档通用。
     'lib/features/admin/presentation/widgets/quiz_bank_tab_widgets.part.dart',
+    // ── 内容层里"自带深底"的部分（深浅档都该是深色，白色是深底上的前景）──
+    // 播放器控制层与浮层：压在视频画面上，底色必须深。
+    'lib/video/widgets/player/custom_video_controls.dart',
+    'lib/video/widgets/player/player_overlays.dart',
+    // 漫画阅读器（含在线条漫页）：沉浸式黑底 + 白色控件，与外壳深浅无关。
+    'lib/features/comic/presentation/comic_reader_page.dart',
+    'lib/features/comic/presentation/comic_online_page.dart',
+    // 小说阅读器的目录/设置弹层：跟随阅读器自己的 warm/paper/dark 三档。
+    'lib/novel/pages/reader/reader_directory_sheet.dart',
+    'lib/novel/pages/reader/reader_settings_sheet.dart',
   };
 
   const String panelContext =

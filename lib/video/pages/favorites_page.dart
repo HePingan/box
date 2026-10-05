@@ -400,7 +400,7 @@ class _FavImagePlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: const Color(0xFFEEF1F6),
+      color: AppTokens.surfaceMuted,
       alignment: Alignment.center,
       child: Icon(
         Icons.movie_outlined,

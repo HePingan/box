@@ -252,9 +252,9 @@ class _DoubanRankingSectionState extends State<DoubanRankingSection>
     return Container(
       margin: const EdgeInsets.fromLTRB(14, 4, 14, 4),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(AppTokens.radiusLg),
-        border: Border.all(color: const Color(0xFFEDF1F8)),
+        border: Border.all(color: AppTokens.cardBorder),
         boxShadow: AppTokens.shadowSm(),
       ),
       child: Column(

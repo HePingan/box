@@ -361,7 +361,7 @@ class _HistoryRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
       child: Material(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(AppTokens.radiusCard),
         child: InkWell(
           onTap: onTap,
@@ -457,7 +457,7 @@ class _HistoryRow extends StatelessWidget {
                               child: LinearProgressIndicator(
                                 value: item.progressPercentage,
                                 minHeight: 4,
-                                backgroundColor: const Color(0xFFE7ECF5),
+                                backgroundColor: AppTokens.surfaceMuted,
                                 valueColor: const AlwaysStoppedAnimation<Color>(
                                   AppTokens.primaryBlue,
                                 ),
@@ -493,7 +493,7 @@ class _RowImagePlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: const Color(0xFFEEF1F6),
+      color: AppTokens.surfaceMuted,
       alignment: Alignment.center,
       child: Icon(
         Icons.movie_outlined,

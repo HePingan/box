@@ -327,10 +327,10 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
         isSingleEpisode ? 8 : 12,
       ),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(20),
         // B5：扁平次级卡，无阴影，只用浅描边，视觉主体让给上方播放器。
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(color: AppTokens.cardBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -401,8 +401,8 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                             : '正在播放 · ${controller.currentEpisodeName}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF94A3B8),
+                        style: TextStyle(
+                          color: AppTokens.textTertiary,
                           fontSize: 11,
                           fontWeight: FontWeight.w500,
                         ),
@@ -510,8 +510,8 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
             if (!isSingleEpisode)
               Text(
                 '共 $total 集',
-                style: const TextStyle(
-                  color: Color(0xFF94A3B8),
+                style: TextStyle(
+                  color: AppTokens.textTertiary,
                   fontSize: 11.5,
                   fontWeight: FontWeight.w700,
                 ),
@@ -670,8 +670,8 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Color(0xFF64748B),
+              style: TextStyle(
+                color: AppTokens.textSecondary,
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
               ),
@@ -688,9 +688,9 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 24),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(color: AppTokens.cardBorder),
       ),
       child: _buildEpisodeEmptyState('暂无选集数据'),
     );
@@ -705,9 +705,9 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
       margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFEDF1F8)),
+        border: Border.all(color: AppTokens.cardBorder),
         boxShadow: AppTokens.shadowSm(),
       ),
       child: SafeArea(
@@ -795,7 +795,7 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
 
   // B6：加载态——居中转圈 + 提示，替掉裸 CircularProgressIndicator。
   Widget _buildLoadingView() {
-    return const Center(
+    return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -808,7 +808,7 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
           Text(
             '加载中…',
             style: TextStyle(
-              color: Color(0xFF64748B),
+              color: AppTokens.textSecondary,
               fontSize: 13,
               fontWeight: FontWeight.w700,
             ),
@@ -855,9 +855,9 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
         Container(
           padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppTokens.surface,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFFE7ECF5)),
+            border: Border.all(color: AppTokens.cardBorder),
           ),
           child: Column(
             children: [
@@ -869,8 +869,8 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
               const SizedBox(height: 14),
               Text(
                 controller.errorMessage ?? '视频详情加载失败',
-                style: const TextStyle(
-                  color: Color(0xFF64748B),
+                style: TextStyle(
+                  color: AppTokens.textSecondary,
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
                 ),
@@ -921,8 +921,8 @@ class _LabeledRow extends StatelessWidget {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFF64748B),
+              style: TextStyle(
+                color: AppTokens.textSecondary,
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
               ),
@@ -967,7 +967,7 @@ class _PlaybackChip extends StatelessWidget {
                   end: Alignment.bottomRight,
                 )
               : null,
-          color: selected ? null : const Color(0xFFF8FAFC),
+          color: selected ? null : AppTokens.surfaceMuted,
           borderRadius: BorderRadius.circular(AppTokens.radiusPill),
           border: Border.all(
             color: selected
@@ -990,8 +990,8 @@ class _PlaybackChip extends StatelessWidget {
                 color: selected
                     ? AppTokens.inkDark
                     : (unreachable
-                          ? const Color(0xFF94A3B8)
-                          : const Color(0xFF475569)),
+                          ? AppTokens.textTertiary
+                          : AppTokens.textSecondary),
                 fontSize: 13,
                 fontWeight: FontWeight.w900,
               ),
@@ -1044,7 +1044,7 @@ class _SegmentTab extends StatelessWidget {
         child: Text(
           label,
           style: TextStyle(
-            color: selected ? const Color(0xFF334155) : const Color(0xFF94A3B8),
+            color: selected ? AppTokens.textSecondary : AppTokens.textTertiary,
             fontSize: 12,
             fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
           ),
@@ -1086,10 +1086,10 @@ class _EpisodeCell extends StatelessWidget {
                   end: Alignment.bottomRight,
                 )
               : null,
-          color: selected ? null : const Color(0xFFF8FAFC),
+          color: selected ? null : AppTokens.surfaceMuted,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: selected ? Colors.transparent : const Color(0xFFE7ECF5),
+            color: selected ? Colors.transparent : AppTokens.cardBorder,
           ),
         ),
         child: Text(
@@ -1098,7 +1098,7 @@ class _EpisodeCell extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,
           style: TextStyle(
-            color: selected ? AppTokens.inkDark : const Color(0xFF475569),
+            color: selected ? AppTokens.inkDark : AppTokens.textSecondary,
             fontSize: 13,
             fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
           ),
@@ -1129,18 +1129,18 @@ class _EpisodeToolButton extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: const Color(0xFFF1F5F9),
+          color: AppTokens.surfaceMuted,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 15, color: const Color(0xFF64748B)),
+            Icon(icon, size: 15, color: AppTokens.textSecondary),
             const SizedBox(width: 4),
             Text(
               label,
-              style: const TextStyle(
-                color: Color(0xFF64748B),
+              style: TextStyle(
+                color: AppTokens.textSecondary,
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
               ),
@@ -1182,7 +1182,7 @@ class _HeroIconButton extends StatelessWidget {
             icon,
             color: highlight
                 ? const Color(0xFFEA580C)
-                : const Color(0xFF475569),
+                : AppTokens.textSecondary,
             size: 20,
           ),
         ),

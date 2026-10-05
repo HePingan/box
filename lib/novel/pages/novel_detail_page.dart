@@ -7,6 +7,7 @@ import '../../design_system/widgets/shimmer_skeleton.dart';
 import '../controllers/novel_detail_controller.dart';
 import '../core/models.dart';
 import 'reader_page.dart';
+import '../../design_system/app_tokens.dart';
 
 class NovelDetailPage extends StatefulWidget {
   const NovelDetailPage({super.key, required this.entryBook});
@@ -29,7 +30,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     }
     if (detail == null) {
       return Scaffold(
-        backgroundColor: const Color(0xFFF6F3FF),
+        backgroundColor: AppTokens.surfaceMuted,
         body: ErrorStateView(
           message: controller.error,
           onRetry: () => controller.reload(forceRefresh: true),
@@ -49,7 +50,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     final displayIntro = book.intro.isNotEmpty ? book.intro : '正在全网匹配简介与信息...';
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F3FF),
+      backgroundColor: AppTokens.surfaceMuted,
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
@@ -57,7 +58,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
             collapsedHeight: 56,
             pinned: true,
             stretch: true,
-            backgroundColor: const Color(0xFFF6F3FF),
+            backgroundColor: AppTokens.surfaceMuted,
             surfaceTintColor: Colors.transparent,
             foregroundColor: const Color(0xFF2E1065),
             leading: AppBackButtonLight(onPressed: () => Navigator.pop(context)),
@@ -110,9 +111,9 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
   Widget _buildDetailHero(NovelBook book, String metaString) {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, kToolbarHeight + 8, 20, 16),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFFF6F3FF), Color(0xFFEDE9FE)],
+          colors: [AppTokens.surfaceMuted, AppTokens.violet.withValues(alpha: 0.12)],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),
@@ -200,9 +201,9 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFEDE9FE)),
+        border: Border.all(color: AppTokens.violet.withValues(alpha: 0.30)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -226,9 +227,9 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
               const Spacer(),
               Text(
                 '${chaps.length} 章',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
-                  color: Color(0xFF94A3B8),
+                  color: AppTokens.textTertiary,
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -238,10 +239,10 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
           LayoutBuilder(
             builder: (ctx, constraints) {
               // 检测是否超 4 行
-              const style = TextStyle(
+              final style = TextStyle(
                 fontSize: 13,
                 height: 1.55,
-                color: Color(0xFF475569),
+                color: AppTokens.textSecondary,
               );
               final span = TextSpan(text: intro, style: style);
               final tp = TextPainter(
@@ -300,7 +301,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
+              color: AppTokens.surfaceMuted,
               borderRadius: BorderRadius.circular(10),
             ),
             child: Row(
@@ -323,8 +324,8 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                     style: TextStyle(
                       fontSize: 12,
                       color: controller.progress != null
-                          ? const Color(0xFF475569)
-                          : const Color(0xFF94A3B8),
+                          ? AppTokens.textSecondary
+                          : AppTokens.textTertiary,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -371,9 +372,9 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFEDE9FE)),
+        border: Border.all(color: AppTokens.violet.withValues(alpha: 0.30)),
       ),
       child: Row(
         children: [
@@ -428,7 +429,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     bool active = false,
   }) {
     return Material(
-      color: active ? const Color(0xFFF3E8FF) : Colors.transparent,
+      color: active ? AppTokens.violet.withValues(alpha: 0.12) : Colors.transparent,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -437,7 +438,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
             border: Border.all(
-              color: active ? const Color(0xFFC084FC) : const Color(0xFFE2E8F0),
+              color: active ? const Color(0xFFC084FC) : AppTokens.textSecondary,
             ),
             borderRadius: BorderRadius.circular(12),
           ),
@@ -449,7 +450,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                 size: 16,
                 color: active
                     ? const Color(0xFF7C3AED)
-                    : const Color(0xFF64748B),
+                    : AppTokens.textSecondary,
               ),
               const SizedBox(width: 4),
               Text(
@@ -459,7 +460,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                   fontWeight: FontWeight.w600,
                   color: active
                       ? const Color(0xFF7C3AED)
-                      : const Color(0xFF64748B),
+                      : AppTokens.textSecondary,
                 ),
               ),
             ],
@@ -494,9 +495,9 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: AppTokens.surface,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
+                border: Border.all(color: AppTokens.cardBorder),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -535,7 +536,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       child: Material(
-        color: isCurrent ? const Color(0xFFF3E8FF) : Colors.white,
+        color: isCurrent ? AppTokens.violet.withValues(alpha: 0.12) : Colors.white,
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
@@ -559,7 +560,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
-                      color: isCurrent ? Colors.white : const Color(0xFF94A3B8),
+                      color: isCurrent ? Colors.white : AppTokens.textTertiary,
                     ),
                   ),
                 ),
@@ -574,7 +575,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                       fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
                       color: isCurrent
                           ? const Color(0xFF6D28D9)
-                          : const Color(0xFF334155),
+                          : AppTokens.textSecondary,
                     ),
                   ),
                 ),

@@ -153,9 +153,9 @@ class _KeywordChip extends StatelessWidget {
       child: Container(
         padding: EdgeInsets.fromLTRB(12, 8, onDeleted != null ? 6 : 12, 8),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppTokens.surface,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFE7ECF5)),
+          border: Border.all(color: AppTokens.cardBorder),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,

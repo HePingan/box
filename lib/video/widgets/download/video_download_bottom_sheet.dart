@@ -191,8 +191,8 @@ class _VideoDownloadBottomSheetState extends State<VideoDownloadBottomSheet>
 
     return Container(
       height: MediaQuery.of(context).size.height * 0.65,
-      decoration: const BoxDecoration(
-        color: Colors.white,
+      decoration: BoxDecoration(
+        color: AppTokens.surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(

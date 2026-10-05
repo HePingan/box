@@ -6,6 +6,7 @@ import '../../controller/video_controller.dart';
 import '../../models/video_source.dart';
 import '../../services/source_health_service.dart';
 import '../../video_module.dart';
+import '../../../design_system/app_tokens.dart';
 
 Future<void> showHomeSourcePickerSheet(
   BuildContext context,
@@ -35,7 +36,7 @@ Future<void> showHomeSourcePickerSheet(
               constraints: BoxConstraints(maxHeight: maxHeight * 0.92),
               margin: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: AppTokens.surface,
                 borderRadius: BorderRadius.circular(24),
                 boxShadow: [
                   BoxShadow(

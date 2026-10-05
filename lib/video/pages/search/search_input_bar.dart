@@ -39,9 +39,9 @@ class SearchInputBar extends StatelessWidget {
       margin: margin,
       padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(color: AppTokens.cardBorder),
         boxShadow: AppTokens.shadowSm(color: accentColor),
       ),
       child: Row(

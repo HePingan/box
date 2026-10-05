@@ -669,9 +669,9 @@ class ImageGeneratorRequestPreviewCard extends StatelessWidget {
         tilePadding: EdgeInsets.zero,
         childrenPadding: EdgeInsets.zero,
         initiallyExpanded: false,
-        leading: const CircleAvatar(
+        leading: CircleAvatar(
           radius: 18,
-          backgroundColor: Color(0xFFEDE9FE),
+          backgroundColor: AppTokens.violet.withValues(alpha: 0.12),
           child: Icon(
             Icons.fact_check_outlined,
             color: AppTokens.violet,
@@ -756,8 +756,8 @@ class _CodePreview extends StatelessWidget {
           child: SelectableText(
             content,
             maxLines: maxLines,
-            style: const TextStyle(
-              color: Color(0xFFE2E8F0),
+            style: TextStyle(
+              color: AppTokens.textSecondary,
               fontFamily: 'monospace',
               fontSize: 12,
             ),
@@ -850,9 +850,9 @@ class ImageGeneratorDiagnosticsCard extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
+                color: AppTokens.surfaceMuted,
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFE7ECF5)),
+                border: Border.all(color: AppTokens.cardBorder),
               ),
               child: Text(
                 '暂无真实请求记录。请求预览不会消耗额度，诊断卡只记录本页最近一次真实生成结果。',
@@ -1111,9 +1111,9 @@ class _GeneratedImageTile extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(color: AppTokens.cardBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1288,9 +1288,9 @@ class _HistoryTile extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(color: AppTokens.cardBorder),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1301,7 +1301,7 @@ class _HistoryTile extends StatelessWidget {
                 ? Container(
                     width: 58,
                     height: 58,
-                    color: const Color(0xFFEFF3F9),
+                    color: AppTokens.surfaceMuted,
                     child: const Icon(Icons.image_not_supported_outlined),
                   )
                 : _buildThumbnail(normalizedImage!),
@@ -1434,7 +1434,7 @@ class _ThumbnailImageState extends State<_ThumbnailImage> {
       placeholder: (_, _) => Container(
         width: 58,
         height: 58,
-        color: const Color(0xFFEFF3F9),
+        color: AppTokens.surfaceMuted,
         child: const Center(
           child: SizedBox(
             width: 16,
@@ -1449,14 +1449,14 @@ class _ThumbnailImageState extends State<_ThumbnailImage> {
           return Container(
             width: 58,
             height: 58,
-            color: const Color(0xFFEFF3F9),
+            color: AppTokens.surfaceMuted,
             child: const Icon(Icons.broken_image_outlined, size: 24),
           );
         }
         return Container(
           width: 58,
           height: 58,
-          color: const Color(0xFFEFF3F9),
+          color: AppTokens.surfaceMuted,
           child: const Icon(Icons.broken_image_outlined, size: 24),
         );
       },

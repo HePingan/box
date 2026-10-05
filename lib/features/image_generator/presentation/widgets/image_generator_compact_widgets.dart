@@ -302,7 +302,7 @@ class GeneratedImageTileCompact extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: isNew
@@ -451,7 +451,7 @@ class _ActionChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white,
+      color: AppTokens.surface,
       borderRadius: BorderRadius.circular(20),
       elevation: 0,
       child: InkWell(
@@ -460,7 +460,7 @@ class _ActionChip extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            border: Border.all(color: AppTokens.cardBorder),
             borderRadius: BorderRadius.circular(20),
           ),
           child: Row(
@@ -559,9 +559,9 @@ class HistoryTileCompact extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE7ECF5)),
+        border: Border.all(color: AppTokens.cardBorder),
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -667,7 +667,7 @@ class _HistoryThumbnails extends StatelessWidget {
         width: 88,
         height: 88,
         decoration: BoxDecoration(
-          color: const Color(0xFFEFF3F9),
+          color: AppTokens.surfaceMuted,
           borderRadius: BorderRadius.circular(10),
         ),
         child: const Icon(Icons.image_not_supported_outlined, size: 28),
@@ -736,7 +736,7 @@ class _HistoryThumbnails extends StatelessWidget {
   }
 
   Widget get _thumbPlaceholder => Container(
-        color: const Color(0xFFEFF3F9),
+        color: AppTokens.surfaceMuted,
         child: const Center(
           child: SizedBox(
             width: 20,
@@ -747,7 +747,7 @@ class _HistoryThumbnails extends StatelessWidget {
       );
 
   Widget get _thumbError => Container(
-        color: const Color(0xFFEFF3F9),
+        color: AppTokens.surfaceMuted,
         child: const Icon(Icons.broken_image_outlined, size: 18),
       );
 
@@ -779,9 +779,9 @@ class _HistoryBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTokens.cardBorder),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

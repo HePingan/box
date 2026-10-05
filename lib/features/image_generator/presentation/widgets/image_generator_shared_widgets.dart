@@ -30,7 +30,7 @@ class SurfaceCard extends StatelessWidget {
       width: double.infinity,
       padding: padding,
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.92),
+        color: AppTokens.surface.withValues(alpha: 0.92),
         borderRadius: BorderRadius.circular(AppTokens.radiusXl),
         border: Border.all(color: Colors.white.withValues(alpha: 0.86)),
         boxShadow: AppTokens.shadowMd(),
@@ -282,7 +282,7 @@ class SmartImageLoader extends StatelessWidget {
     return Container(
       width: double.infinity,
       height: 260,
-      color: const Color(0xFFEFF3F9),
+      color: AppTokens.surfaceMuted,
       padding: const EdgeInsets.all(8),
       child: ClipRRect(borderRadius: BorderRadius.circular(14), child: child),
     );
@@ -292,7 +292,7 @@ class SmartImageLoader extends StatelessWidget {
     return Container(
       width: double.infinity,
       height: 260,
-      color: const Color(0xFFEFF3F9),
+      color: AppTokens.surfaceMuted,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -363,7 +363,7 @@ class WebImageWithFallbackState extends State<WebImageWithFallback> {
     return Container(
       width: double.infinity,
       height: 260,
-      color: const Color(0xFFEFF3F9),
+      color: AppTokens.surfaceMuted,
       padding: const EdgeInsets.all(8),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(14),
@@ -401,7 +401,7 @@ class WebImageWithFallbackState extends State<WebImageWithFallback> {
     return Container(
       width: double.infinity,
       height: 260,
-      color: const Color(0xFFEFF3F9),
+      color: AppTokens.surfaceMuted,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -498,7 +498,7 @@ class NetworkImageWithFallbackState extends State<NetworkImageWithFallback> {
     return Container(
       width: double.infinity,
       height: 260,
-      color: const Color(0xFFEFF3F9),
+      color: AppTokens.surfaceMuted,
       padding: const EdgeInsets.all(8),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(14),
@@ -537,7 +537,7 @@ class NetworkImageWithFallbackState extends State<NetworkImageWithFallback> {
     return Container(
       width: double.infinity,
       height: 260,
-      color: const Color(0xFFEFF3F9),
+      color: AppTokens.surfaceMuted,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -816,7 +816,7 @@ class ImageGeneratorReferenceCard extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 10),
               child: Container(
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: AppTokens.surfaceMuted,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
                     color: isNotEmpty && !isValidUrl
@@ -839,7 +839,7 @@ class ImageGeneratorReferenceCard extends StatelessWidget {
                           placeholder: (_, _) => Container(
                             height: 80,
                             alignment: Alignment.center,
-                            color: const Color(0xFFEFF3F9),
+                            color: AppTokens.surfaceMuted,
                             child: const Center(
                               child: SizedBox(
                                 width: 20,
@@ -853,7 +853,7 @@ class ImageGeneratorReferenceCard extends StatelessWidget {
                           errorWidget: (_, _, _) => Container(
                             height: 80,
                             alignment: Alignment.center,
-                            color: const Color(0xFFEFF3F9),
+                            color: AppTokens.surfaceMuted,
                             child: const Text('预览失败，URL 仍会保存'),
                           ),
                         ),
@@ -1048,7 +1048,7 @@ class CompactThumbnailImageState extends State<CompactThumbnailImage> {
       width: 60,
       height: 60,
       decoration: BoxDecoration(
-        color: const Color(0xFFEFF3F9),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(6),
       ),
       child: Icon(
@@ -1097,8 +1097,8 @@ class CodeBlock extends StatelessWidget {
           child: SelectableText(
             content,
             maxLines: maxLines,
-            style: const TextStyle(
-              color: Color(0xFFE2E8F0),
+            style: TextStyle(
+              color: AppTokens.textSecondary,
               fontFamily: 'monospace',
               fontSize: 11,
             ),

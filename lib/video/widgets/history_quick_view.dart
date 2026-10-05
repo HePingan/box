@@ -34,9 +34,9 @@ class HistoryQuickView extends StatelessWidget {
         return RepaintBoundary(
           child: Container(
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: AppTokens.surface,
               borderRadius: BorderRadius.circular(AppTokens.radiusLg),
-              border: Border.all(color: const Color(0xFFEDF1F8)),
+              border: Border.all(color: AppTokens.cardBorder),
               boxShadow: AppTokens.shadowSm(),
             ),
             padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
