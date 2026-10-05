@@ -39,7 +39,7 @@ Future<void> openToolTarget(
     case SourceFetchToolTarget():
       await Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => const SourceFetchPage()),
+        MaterialPageRoute(builder: (_) => SourceFetchPage()),
       );
     case LocalToolTarget(:final localId):
       // 纯本地工具：不走 ApiHubPage。那条路会先拉一次公共 API 索引，

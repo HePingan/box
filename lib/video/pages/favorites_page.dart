@@ -111,7 +111,7 @@ class FavoritesPage extends StatelessWidget {
               icon: const Icon(Icons.file_download_rounded, size: 22),
               color: AppTokens.primaryBlue,
               onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const VideoDownloadsPage()),
+                MaterialPageRoute(builder: (_) => VideoDownloadsPage()),
               ),
             ),
           if (count > 0) ...[

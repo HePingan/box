@@ -491,7 +491,7 @@ class _PluginTabState extends State<PluginTab>
     if (!mounted) return;
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const PluginSubmitPage()),
+      MaterialPageRoute(builder: (_) => PluginSubmitPage()),
     );
   }
 

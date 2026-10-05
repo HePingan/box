@@ -113,7 +113,7 @@ class HistoryQuickView extends StatelessWidget {
           TextButton(
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const WatchHistoryPage()),
+              MaterialPageRoute(builder: (_) => WatchHistoryPage()),
             ),
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8),

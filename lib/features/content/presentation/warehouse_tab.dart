@@ -821,7 +821,7 @@ class WarehouseTabState extends State<WarehouseTab>
   void _openVideoCenter() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const VideoListPage()),
+      MaterialPageRoute(builder: (_) => VideoListPage()),
     );
   }
 
@@ -835,7 +835,7 @@ class WarehouseTabState extends State<WarehouseTab>
   void _openComics() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const ComicLibraryPage()),
+      MaterialPageRoute(builder: (_) => ComicLibraryPage()),
     );
   }
 
@@ -848,7 +848,7 @@ class WarehouseTabState extends State<WarehouseTab>
   void _openMusic() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const MusicPlaceholderPage()),
+      MaterialPageRoute(builder: (_) => MusicPlaceholderPage()),
     );
   }
 

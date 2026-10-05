@@ -402,7 +402,7 @@ class _HomePageState extends State<HomePage>
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => const DailyNewsPage(
+                      builder: (_) => DailyNewsPage(
                         initialUrl: DailyNewsService.siteUrl,
                         title: '知乎日报',
                       ),
@@ -672,7 +672,7 @@ class _HomePageState extends State<HomePage>
       ),
       onBrowseVideo: () => Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => const VideoListPage()),
+        MaterialPageRoute(builder: (_) => VideoListPage()),
       ),
     );
   }
@@ -749,7 +749,7 @@ class _HomePageState extends State<HomePage>
     Navigator.push(
       context,
       MaterialPageRoute<void>(
-        builder: (_) => const DailyNewsPage(
+        builder: (_) => DailyNewsPage(
           initialUrl: AiHotService.siteUrl,
           title: 'AI 热点',
         ),

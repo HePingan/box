@@ -212,7 +212,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
 
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const AggregateSearchPage()),
+      MaterialPageRoute(builder: (_) => AggregateSearchPage()),
     );
   }
 
@@ -221,7 +221,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
 
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const FavoritesPage()),
+      MaterialPageRoute(builder: (_) => FavoritesPage()),
     );
   }
 
@@ -353,7 +353,7 @@ class _VideoSliverHomeState extends State<VideoSliverHome> {
             label: '下载',
             color: AppTokens.primaryBlue,
             onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const VideoDownloadsPage()),
+              MaterialPageRoute(builder: (_) => VideoDownloadsPage()),
             ),
           ),
         ],

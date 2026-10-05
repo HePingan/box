@@ -138,7 +138,7 @@ class _RemoteStoragePageState extends State<RemoteStoragePage> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (_) => const TransferQueueSheet(),
+      builder: (_) => TransferQueueSheet(),
     );
   }
 

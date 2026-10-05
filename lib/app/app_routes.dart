@@ -57,30 +57,38 @@ class AppRoutes {
   static const legalUserAgreement = '/legal/user-agreement';
   static const legalPrivacyPolicy = '/legal/privacy-policy';
 
+  /// 路由表。
+  ///
+  /// ⚠ 这里**故意不写 `const`**（`(_) => SettingsPage()` 而不是 `(_) => const
+  /// SettingsPage()`）：深浅切换是靠 `AppThemeRebuild` 重新调用这些 builder、
+  /// 拿到**新的**页面 widget 实例来触发的。写 `const` 会返回同一个 canonical
+  /// 实例，Element 的 `child.widget == newWidget` 会直接短路 —— 表现就是
+  /// 「改了深色要退出重进才生效」。`test/design_system/app_theme_scope_test.dart`
+  /// 有护栏钉住这一点，别让 `dart fix --apply` 把它们加回来。
   static Map<String, WidgetBuilder> buildRoutes(
     BookSourceBootstrapResult novelBootstrap,
   ) {
     return {
-      debugLog: (_) => const DebugLogPage(),
-      account: (_) => const AccountPage(),
-      personalCenter: (_) => const PersonalCenterPage(),
-      accountAdmin: (_) => const AdminPage(),
-      settings: (_) => const SettingsPage(),
-      dataSettings: (_) => const DataSettingsPage(),
-      selfCheck: (_) => const SelfCheckPage(),
-      announcements: (_) => const AnnouncementPage(),
-      about: (_) => const AboutPage(),
+      debugLog: (_) => DebugLogPage(),
+      account: (_) => AccountPage(),
+      personalCenter: (_) => PersonalCenterPage(),
+      accountAdmin: (_) => AdminPage(),
+      settings: (_) => SettingsPage(),
+      dataSettings: (_) => DataSettingsPage(),
+      selfCheck: (_) => SelfCheckPage(),
+      announcements: (_) => AnnouncementPage(),
+      about: (_) => AboutPage(),
       aboutIntroduction: (_) => AboutContentPage.introduction(),
       aboutGuide: (_) => AboutContentPage.usageDocs(),
-      aboutTutorial: (_) => const AboutTutorialPage(),
-      aboutPermissions: (_) => const AppPermissionsPage(),
-      updateCheck: (_) => const UpdateCheckPage(),
-      updateHistory: (_) => const UpdateHistoryPage(),
-      legalUserAgreement: (_) => const LegalDocumentPage(
+      aboutTutorial: (_) => AboutTutorialPage(),
+      aboutPermissions: (_) => AppPermissionsPage(),
+      updateCheck: (_) => UpdateCheckPage(),
+      updateHistory: (_) => UpdateHistoryPage(),
+      legalUserAgreement: (_) => LegalDocumentPage(
         title: LegalDocuments.userAgreementTitle,
         clauses: LegalDocuments.userAgreement,
       ),
-      legalPrivacyPolicy: (_) => const LegalDocumentPage(
+      legalPrivacyPolicy: (_) => LegalDocumentPage(
         title: LegalDocuments.privacyPolicyTitle,
         clauses: LegalDocuments.privacyPolicy,
       ),

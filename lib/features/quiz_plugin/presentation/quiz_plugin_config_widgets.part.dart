@@ -214,7 +214,7 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
               trailing: const Icon(Icons.chevron_right, size: 18),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) => const QuizPluginSelfCheckPage(),
+                  builder: (_) => QuizPluginSelfCheckPage(),
                 ),
               ),
             ),

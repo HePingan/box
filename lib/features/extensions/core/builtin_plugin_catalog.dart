@@ -45,7 +45,7 @@ List<HomePlugin> buildDefaultPlugins() {
       onTap: (context) async {
         await Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const DailyNewsPage()),
+          MaterialPageRoute(builder: (_) => DailyNewsPage()),
         );
       },
     ),
@@ -62,7 +62,7 @@ List<HomePlugin> buildDefaultPlugins() {
         await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => const LocalToolPage(localId: 'json'),
+            builder: (_) => LocalToolPage(localId: 'json'),
           ),
         );
       },
@@ -80,7 +80,7 @@ List<HomePlugin> buildDefaultPlugins() {
         await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => const LocalToolPage(localId: 'base64'),
+            builder: (_) => LocalToolPage(localId: 'base64'),
           ),
         );
       },
@@ -98,7 +98,7 @@ List<HomePlugin> buildDefaultPlugins() {
         await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => const LocalToolPage(localId: 'password_gen'),
+            builder: (_) => LocalToolPage(localId: 'password_gen'),
           ),
         );
       },
@@ -116,7 +116,7 @@ List<HomePlugin> buildDefaultPlugins() {
         await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => const LocalToolPage(localId: 'timestamp'),
+            builder: (_) => LocalToolPage(localId: 'timestamp'),
           ),
         );
       },
@@ -134,7 +134,7 @@ List<HomePlugin> buildDefaultPlugins() {
         await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => const LocalToolPage(localId: 'urlcodec'),
+            builder: (_) => LocalToolPage(localId: 'urlcodec'),
           ),
         );
       },
@@ -152,7 +152,7 @@ List<HomePlugin> buildDefaultPlugins() {
         await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => const ApiHubPage(initialTool: 'qr'),
+            builder: (_) => ApiHubPage(initialTool: 'qr'),
           ),
         );
       },
@@ -181,7 +181,7 @@ List<HomePlugin> buildDefaultPlugins() {
         if (!context.mounted) return;
         await Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const QuizEntryPage()),
+          MaterialPageRoute(builder: (_) => QuizEntryPage()),
         );
       },
     ),
@@ -209,7 +209,7 @@ List<HomePlugin> buildDefaultPlugins() {
         if (!context.mounted) return;
         await Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const QuizBankViewPage()),
+          MaterialPageRoute(builder: (_) => QuizBankViewPage()),
         );
       },
     ),
@@ -249,7 +249,7 @@ List<HomePlugin> buildDefaultPlugins() {
       onTap: (context) async {
         await Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const VideoListPage()),
+          MaterialPageRoute(builder: (_) => VideoListPage()),
         );
       },
     ),
@@ -300,7 +300,7 @@ List<HomePlugin> buildDefaultPlugins() {
       onTap: (context) async {
         await Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const ImageGeneratorPage()),
+          MaterialPageRoute(builder: (_) => ImageGeneratorPage()),
         );
       },
     ),
@@ -316,7 +316,7 @@ List<HomePlugin> buildDefaultPlugins() {
       onTap: (context) async {
         await Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const ServiceMonitorPage()),
+          MaterialPageRoute(builder: (_) => ServiceMonitorPage()),
         );
       },
     ),
@@ -332,7 +332,7 @@ List<HomePlugin> buildDefaultPlugins() {
       onTap: (context) async {
         await Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const ServerOpsPage()),
+          MaterialPageRoute(builder: (_) => ServerOpsPage()),
         );
       },
     ),

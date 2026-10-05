@@ -18,12 +18,12 @@ class LegalDocumentPage extends StatelessWidget {
   final List<LegalClause> clauses;
 
   /// 命名构造：避免调用方各自去引 LegalDocuments 的字段，写错就串页。
-  factory LegalDocumentPage.userAgreement() => const LegalDocumentPage(
+  factory LegalDocumentPage.userAgreement() => LegalDocumentPage(
         title: LegalDocuments.userAgreementTitle,
         clauses: LegalDocuments.userAgreement,
       );
 
-  factory LegalDocumentPage.privacyPolicy() => const LegalDocumentPage(
+  factory LegalDocumentPage.privacyPolicy() => LegalDocumentPage(
         title: LegalDocuments.privacyPolicyTitle,
         clauses: LegalDocuments.privacyPolicy,
       );

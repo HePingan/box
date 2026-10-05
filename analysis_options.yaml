@@ -21,7 +21,15 @@ linter:
   # `// ignore_for_file: name_of_lint` syntax on the line or in the file
   # producing the lint.
   rules:
-    - prefer_const_constructors
+    # ⚠ **故意关掉** `prefer_const_constructors`：
+    # 本仓库的深浅切换是"静态 tokens + 重建页面"（见 design_system/app_theme_scope.dart）：
+    # 路由表、页签、内联 push 处的页面构造**必须保持非 const** ——
+    # `const SettingsPage()` 每次返回同一个 canonical 实例，Element 的
+    # `child.widget == newWidget` 会短路掉重建，表现就是"改了深色要退出重进"。
+    # 开着这条 lint 会让人（和 `dart fix --apply`）把它们改回 const，静默破坏功能。
+    # 护栏：test/design_system/app_theme_scope_test.dart。
+    # `prefer_const_declarations` / `prefer_const_literals_to_create_immutables`
+    # 仍然开着 —— 只放开"页面构造"这一处。
     - prefer_const_declarations
     - prefer_const_literals_to_create_immutables
     - prefer_single_quotes

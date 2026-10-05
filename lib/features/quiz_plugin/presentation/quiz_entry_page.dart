@@ -235,7 +235,7 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
           IconButton(
             onPressed: () => Navigator.of(
               context,
-            ).push(MaterialPageRoute(builder: (_) => const QuizBankViewPage())),
+            ).push(MaterialPageRoute(builder: (_) => QuizBankViewPage())),
             icon: const Icon(Icons.library_books_outlined),
             tooltip: '题库查看',
           ),

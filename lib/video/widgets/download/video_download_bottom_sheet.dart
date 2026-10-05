@@ -171,7 +171,7 @@ class _VideoDownloadBottomSheetState extends State<VideoDownloadBottomSheet>
     if (mounted) {
       try {
         parentNavigator.push(
-          MaterialPageRoute(builder: (_) => const VideoDownloadsPage()),
+          MaterialPageRoute(builder: (_) => VideoDownloadsPage()),
         );
       } catch (e) {
         // Navigator might be closed; show feedback on current page instead.

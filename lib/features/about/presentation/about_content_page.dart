@@ -20,13 +20,13 @@ class AboutContentPage extends StatelessWidget {
   final List<AboutSection> sections;
   final String? footer;
 
-  factory AboutContentPage.introduction() => const AboutContentPage(
+  factory AboutContentPage.introduction() => AboutContentPage(
         title: '软件介绍',
         sections: AboutContent.introduction,
         footer: AboutContent.disclaimerShort,
       );
 
-  factory AboutContentPage.usageDocs() => const AboutContentPage(
+  factory AboutContentPage.usageDocs() => AboutContentPage(
         title: '使用文档',
         sections: AboutContent.usageDocs,
       );

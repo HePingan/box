@@ -355,7 +355,7 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
   Future<void> _openVisionCandidates() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => const QuizVisionCandidatesPage(),
+        builder: (_) => QuizVisionCandidatesPage(),
       ),
     );
     if (!mounted) return;

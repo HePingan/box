@@ -50,26 +50,29 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
   late final PageController _pageController;
   bool _novelBootstrapPromptShown = false;
 
+  // 页签存 **builder** 而不是现成的 widget 实例：深浅切换时外壳会重建，
+  // 用 builder 才能让四个页签页面跟着用新的 tokens 重画（存实例会被 Element
+  // 的 `child.widget == newWidget` 短路掉，表现就是"首页要刷新才变暗"）。
   late final List<_TabItem> _tabs = [
     _TabItem(
       title: '首页',
       icon: Icons.home_rounded,
-      widget: HomePage(onSwitchTab: _onItemTapped),
+      builder: () => HomePage(onSwitchTab: _onItemTapped),
     ),
-    const _TabItem(
+    _TabItem(
       title: '工具',
       icon: Icons.grid_view_rounded,
-      widget: ToolPage(),
+      builder: () => ToolPage(),
     ),
     _TabItem(
       title: '内容',
       icon: Icons.collections_bookmark_rounded,
-      widget: WarehouseTab(key: _contentKey),
+      builder: () => WarehouseTab(key: _contentKey),
     ),
-    const _TabItem(
+    _TabItem(
       title: '扩展',
       icon: Icons.extension_rounded,
-      widget: PluginTab(),
+      builder: () => PluginTab(),
     ),
   ];
 
@@ -312,7 +315,9 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
   Widget _buildDesktopLayout() {
     return Scaffold(
       key: appScaffoldKey,
-      drawer: const AppDrawer(),
+      // 不写 const：抽屉也要在深浅切换时重建（写 const 会复用同一个实例，
+      // 被 Element 短路，抽屉会保持旧配色）。
+      drawer: AppDrawer(),
       drawerScrimColor: Colors.black.withValues(alpha: 0.30),
       body: Row(
         children: [
@@ -332,7 +337,7 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
                 }
                 _onTabShown(index);
               },
-              children: _tabs.map((tab) => tab.widget).toList(),
+              children: _tabs.map((tab) => tab.builder()).toList(),
             ),
           ),
         ],
@@ -344,7 +349,7 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
   Widget _buildMobileLayout() {
     return Scaffold(
       key: appScaffoldKey,
-      drawer: const AppDrawer(),
+      drawer: AppDrawer(),
       drawerScrimColor: Colors.black.withValues(alpha: 0.30),
       body: PageView(
         controller: _pageController,
@@ -355,7 +360,7 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
           }
           _onTabShown(index);
         },
-        children: _tabs.map((tab) => tab.widget).toList(),
+        children: _tabs.map((tab) => tab.builder()).toList(),
       ),
       bottomNavigationBar: SafeArea(
         top: false,
@@ -399,12 +404,14 @@ class _MainAppShellState extends State<MainAppShell> with WidgetsBindingObserver
 class _TabItem {
   final String title;
   final IconData icon;
-  final Widget widget;
+
+  /// 每次构建都新建页面 widget —— 深浅切换时外壳重建，页面才会跟着重画。
+  final Widget Function() builder;
 
   const _TabItem({
     required this.title,
     required this.icon,
-    required this.widget,
+    required this.builder,
   });
 }
 

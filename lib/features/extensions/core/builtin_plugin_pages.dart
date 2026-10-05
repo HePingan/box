@@ -24,10 +24,10 @@ import 'package:box/video/video_compat_pages.dart';
 ///
 /// 保持与拆分前逐条一致：同一页面绑定两个 code（短码 + open 前缀码）。
 void registerBuiltinRouteDefaults() {
-  HomePluginRouteRegistry.register('daily_news', (_) => const DailyNewsPage());
+  HomePluginRouteRegistry.register('daily_news', (_) => DailyNewsPage());
   HomePluginRouteRegistry.register(
     'openDailyNews',
-    (_) => const DailyNewsPage(),
+    (_) => DailyNewsPage(),
   );
   HomePluginRouteRegistry.register(
     'novel_list',
@@ -39,59 +39,59 @@ void registerBuiltinRouteDefaults() {
   );
   HomePluginRouteRegistry.register(
     'video_list',
-    (_) => const VideoListPage(),
+    (_) => VideoListPage(),
   );
   HomePluginRouteRegistry.register(
     'openVideoList',
-    (_) => const VideoListPage(),
+    (_) => VideoListPage(),
   );
   HomePluginRouteRegistry.register(
     'image_generator',
-    (_) => const ImageGeneratorPage(),
+    (_) => ImageGeneratorPage(),
   );
   HomePluginRouteRegistry.register(
     'openImageGenerator',
-    (_) => const ImageGeneratorPage(),
+    (_) => ImageGeneratorPage(),
   );
   HomePluginRouteRegistry.register(
     'remote_storage',
-    (_) => const RemoteStoragePage(),
+    (_) => RemoteStoragePage(),
   );
   HomePluginRouteRegistry.register(
     'openRemoteStorage',
-    (_) => const RemoteStoragePage(),
+    (_) => RemoteStoragePage(),
   );
   HomePluginRouteRegistry.register(
     'service_monitor',
-    (_) => const ServiceMonitorPage(),
+    (_) => ServiceMonitorPage(),
   );
   HomePluginRouteRegistry.register(
     'openServiceMonitor',
-    (_) => const ServiceMonitorPage(),
+    (_) => ServiceMonitorPage(),
   );
   HomePluginRouteRegistry.register(
     'comic_library',
-    (_) => const ComicLibraryPage(),
+    (_) => ComicLibraryPage(),
   );
   HomePluginRouteRegistry.register(
     'openComicLibrary',
-    (_) => const ComicLibraryPage(),
+    (_) => ComicLibraryPage(),
   );
   HomePluginRouteRegistry.register(
     'net_diag',
-    (_) => const NetDiagPage(),
+    (_) => NetDiagPage(),
   );
   HomePluginRouteRegistry.register(
     'openNetDiag',
-    (_) => const NetDiagPage(),
+    (_) => NetDiagPage(),
   );
   HomePluginRouteRegistry.register(
     'server_ops',
-    (_) => const ServerOpsPage(),
+    (_) => ServerOpsPage(),
   );
   HomePluginRouteRegistry.register(
     'openServerOps',
-    (_) => const ServerOpsPage(),
+    (_) => ServerOpsPage(),
   );
 }
 

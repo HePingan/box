@@ -293,7 +293,7 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
             icon: const Icon(Icons.health_and_safety_outlined),
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const ComicSourceCheckPage()),
+              MaterialPageRoute(builder: (_) => ComicSourceCheckPage()),
             ),
           ),
           IconButton(

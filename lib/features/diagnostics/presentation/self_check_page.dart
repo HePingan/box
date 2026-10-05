@@ -146,7 +146,7 @@ class _SelfCheckPageState extends State<SelfCheckPage> {
   void _openNetDiag() {
     Navigator.of(
       context,
-    ).push(MaterialPageRoute(builder: (_) => const NetDiagPage()));
+    ).push(MaterialPageRoute(builder: (_) => NetDiagPage()));
   }
 
   @override
