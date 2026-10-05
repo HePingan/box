@@ -30,7 +30,7 @@ class AdminProviderCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(AppTokens.radiusLg),
         border: Border.all(color: AppTokens.divider),
         boxShadow: AppTokens.shadowSm(),
@@ -40,9 +40,9 @@ class AdminProviderCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const CircleAvatar(
-                backgroundColor: Color(0xFFEFF6FF),
-                child: Icon(Icons.hub_rounded, color: AppTokens.primaryBlue),
+              CircleAvatar(
+                backgroundColor: AppTokens.softPanel(AppTokens.info),
+                child: const Icon(Icons.hub_rounded, color: AppTokens.primaryBlue),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -230,7 +230,7 @@ class AdminUsageSummaryCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(AppTokens.radiusLg),
         border: Border.all(color: AppTokens.divider),
         boxShadow: AppTokens.shadowSm(),
@@ -240,9 +240,9 @@ class AdminUsageSummaryCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const CircleAvatar(
-                backgroundColor: Color(0xFFFFF7ED),
-                child: Icon(
+              CircleAvatar(
+                backgroundColor: AppTokens.softPanel(AppTokens.warning),
+                child: const Icon(
                   Icons.query_stats_rounded,
                   color: AppTokens.warning,
                 ),
@@ -444,7 +444,7 @@ class AdminUsageCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(AppTokens.radiusLg),
         border: Border.all(color: AppTokens.divider),
         boxShadow: AppTokens.shadowSm(),
@@ -454,9 +454,9 @@ class AdminUsageCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const CircleAvatar(
-                backgroundColor: Color(0xFFF0FDF4),
-                child: Icon(
+              CircleAvatar(
+                backgroundColor: AppTokens.softPanel(AppTokens.success),
+                child: const Icon(
                   Icons.receipt_long_rounded,
                   color: AppTokens.success,
                 ),
@@ -731,7 +731,7 @@ class AdminUserQuotaCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: disabled ? const Color(0xFFF8FAFC) : Colors.white,
+        color: disabled ? AppTokens.surfaceMuted : AppTokens.surface,
         borderRadius: BorderRadius.circular(AppTokens.radiusLg),
         border: Border.all(
           color: disabled
@@ -872,7 +872,7 @@ class AdminEmptyCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(AppTokens.radiusLg),
         border: Border.all(color: AppTokens.divider),
       ),

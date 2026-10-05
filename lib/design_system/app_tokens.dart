@@ -120,6 +120,26 @@ class AppTokens {
   static const double shellBottomNavHeight = 68;
   static const double pageBottomPadding = 96;
 
+  /// 「淡色底面板」的渐变（抽屉顶部账号卡片这类）。
+  /// 浅色档是淡蓝→淡青；深色档必须换成深底 —— 否则整块白卡，而卡上的文字
+  /// 用的是 tokens（深色档下变浅），会变成"浅字压白卡"。
+  static LinearGradient get softPanelGradient => _dark
+      ? const LinearGradient(
+          colors: [Color(0xFF1A2230), Color(0xFF16232A)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        )
+      : const LinearGradient(
+          colors: [Color(0xFFEEF2FF), Color(0xFFF0FDFA)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        );
+
+  /// 「淡色调提示面板」的底：浅色档是 10% 的淡色（≈ #EFF6FF / #FFF7ED / #F0FDF4），
+  /// 深色档提高到 16% 让它在深底上仍能看出是一块"提示"。
+  static Color softPanel(Color accent) =>
+      accent.withValues(alpha: _dark ? 0.16 : 0.10);
+
   /// 卡片统一描边色。此前四个主页面混用 0xFFE7ECF5 / 0xFFE9EEF7 两个值。
   static const Color _cardBorderLight = Color(0xFFE7ECF5);
   static const Color _cardBorderDark = Color(0xFF272D38);

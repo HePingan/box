@@ -29,6 +29,11 @@ void main() {
     'features/extensions/',
     'features/local_tools/',
     'features/api_hub/',
+    // 更新弹窗与账号/管理页也是"外壳级别"的界面 —— 之前漏在外，真机截图
+    // 立刻暴露：更新弹窗整块白底、抽屉账号卡片是写死的淡色渐变。
+    'update/',
+    'features/account/',
+    'features/admin/',
   ];
   const List<String> looseFiles = <String>[
     'lib/app/app_shell.dart',
@@ -43,6 +48,12 @@ void main() {
     'lib/features/extensions/market/domain/plugin_market_manifest.dart',
     'lib/features/extensions/plugins/remote_storage/presentation/'
         'remote_storage_player_page.dart',
+    // 更新弹窗顶部那条蓝色信息带：它自己就是彩色底，圆环描边与图标必然是白的
+    // （正文/按钮/提示底都已改用 tokens）。
+    'lib/update/update_dialog.dart',
+    // 题库管理页的"状态色板 / 题型标签色板"：这些是语义色（含中性灰 #94A3B8
+    // 表示草稿/未知），只用于 chip 的淡底 + 同色描边，深浅档通用。
+    'lib/features/admin/presentation/widgets/quiz_bank_tab_widgets.part.dart',
   };
 
   const String panelContext =
@@ -128,6 +139,7 @@ void main() {
   test('外壳页面里没有"写死的板岩色文字"（深色档下会消失）', () {
     final List<String> bad = <String>[];
     for (final String path in shellSources()) {
+      if (allowFiles.contains(path)) continue;
       final List<String> lines = File(path).readAsLinesSync();
       for (int i = 0; i < lines.length; i++) {
         if (slateText.hasMatch(lines[i])) {

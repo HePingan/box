@@ -244,11 +244,7 @@ class _DrawerContentState extends State<_DrawerContent> {
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFFEEF2FF), Color(0xFFF0FDFA)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
+          gradient: AppTokens.softPanelGradient,
           borderRadius: BorderRadius.circular(AppTokens.radiusMd),
           border: Border.all(color: AppTokens.cardBorder),
           boxShadow: [

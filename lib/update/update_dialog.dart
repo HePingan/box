@@ -10,6 +10,7 @@ import 'update_install_failure.dart';
 import 'update_ignore_store.dart';
 import 'update_models.dart';
 import 'update_security.dart';
+import '../design_system/app_tokens.dart';
 
 class UpdateDialog extends StatefulWidget {
   final UpdateManifest manifest;
@@ -391,7 +392,7 @@ class _UpdateDialogState extends State<UpdateDialog>
           child: ClipRRect(
             borderRadius: BorderRadius.circular(22),
             child: Container(
-              color: Colors.white,
+              color: AppTokens.surface,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -417,27 +418,27 @@ class _UpdateDialogState extends State<UpdateDialog>
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
                                     textAlign: TextAlign.center,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 30,
                                       fontWeight: FontWeight.w600,
-                                      color: Color(0xFF222222),
+                                      color: AppTokens.textPrimary,
                                     ),
                                   ),
                                 ),
                                 const SizedBox(height: 18),
                                 Text(
                                   '最新版本为：${manifest.latestVersionName} (${manifest.latestVersionCode})',
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 16,
-                                    color: Color(0xFF333333),
+                                    color: AppTokens.textPrimary,
                                   ),
                                 ),
                                 const SizedBox(height: 10),
                                 Text(
                                   '已安装版本：${widget.currentVersionName} (${widget.currentVersionCode})',
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 16,
-                                    color: Color(0xFF333333),
+                                    color: AppTokens.textPrimary,
                                   ),
                                 ),
                                 if (manifest.notice != null &&
@@ -447,20 +448,20 @@ class _UpdateDialogState extends State<UpdateDialog>
                                     manifest.notice!,
                                     maxLines: 8,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 14,
-                                      color: Color(0xFF666666),
+                                      color: AppTokens.textSecondary,
                                     ),
                                   ),
                                 ],
                                 if (manifest.changelog.isNotEmpty) ...[
                                   const SizedBox(height: 14),
-                                  const Text(
+                                  Text(
                                     '更新内容：',
                                     style: TextStyle(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w600,
-                                      color: Color(0xFF333333),
+                                      color: AppTokens.textPrimary,
                                     ),
                                   ),
                                   const SizedBox(height: 6),
@@ -471,9 +472,9 @@ class _UpdateDialogState extends State<UpdateDialog>
                                         '• $item',
                                         maxLines: 3,
                                         overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontSize: 13,
-                                          color: Color(0xFF666666),
+                                          color: AppTokens.textSecondary,
                                         ),
                                       ),
                                     ),
@@ -484,15 +485,21 @@ class _UpdateDialogState extends State<UpdateDialog>
                                   Container(
                                     padding: const EdgeInsets.all(12),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFFFFF4E5),
+                                      color: AppTokens.softPanel(
+                                        AppTokens.warning,
+                                      ),
                                       borderRadius: BorderRadius.circular(8),
                                     ),
                                     child: Text(
                                       blocked.guidance,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 13,
                                         height: 1.5,
-                                        color: Color(0xFF8A5A00),
+                                        // 浅色档原本就是深琥珀字配淡橙底；深色档底变深了，
+                                        // 字要跟着提亮，否则是"深字压深底"。
+                                        color: AppTokens.isDark
+                                            ? const Color(0xFFF7C87A)
+                                            : const Color(0xFF8A5A00),
                                       ),
                                     ),
                                   ),
@@ -541,10 +548,10 @@ class _UpdateDialogState extends State<UpdateDialog>
                                 const SizedBox(height: 10),
                                 Text(
                                   _stageHint!,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 13,
                                     height: 1.5,
-                                    color: Color(0xFF666666),
+                                    color: AppTokens.textSecondary,
                                   ),
                                 ),
                               ],
@@ -558,11 +565,11 @@ class _UpdateDialogState extends State<UpdateDialog>
                                     onPressed: _downloading
                                         ? null
                                         : _ignoreThisVersion,
-                                    child: const Text(
+                                    child: Text(
                                       '忽略此版本',
                                       style: TextStyle(
                                         fontSize: 15,
-                                        color: Color(0xFF888888),
+                                        color: AppTokens.textTertiary,
                                       ),
                                     ),
                                   ),

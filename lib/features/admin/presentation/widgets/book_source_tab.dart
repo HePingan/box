@@ -829,7 +829,7 @@ class _BookSourceTabState extends State<_BookSourceTab> {
                                     vertical: 8,
                                   ),
                                   filled: true,
-                                  fillColor: Colors.white,
+                                  fillColor: AppTokens.surfaceMuted,
                                 ),
                                 style: const TextStyle(fontSize: 13),
                                 onChanged: (v) => setState(() => _keyword = v),

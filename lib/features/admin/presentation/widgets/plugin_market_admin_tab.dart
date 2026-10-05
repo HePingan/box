@@ -7,6 +7,7 @@ import 'package:box/features/account/domain/account_models.dart';
 import 'package:box/features/admin/domain/admin_resource.dart';
 import 'package:box/features/admin/domain/admin_resource_provider.dart';
 import 'package:box/features/extensions/market/data/plugin_market_api.dart';
+import '../../../../design_system/app_tokens.dart';
 
 class PluginMarketAdminResourceProvider
     implements ResourceProvider<PluginMarketAdminPlaceholder> {
@@ -244,7 +245,7 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(10),
-                      color: const Color(0xFFF5F5F5),
+                      color: AppTokens.surfaceMuted,
                       child: Text(
                         const JsonEncoder.withIndent('  ')
                             .convert(pluginJson),
@@ -869,7 +870,7 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFFEEF2FF),
+        color: AppTokens.softPanel(AppTokens.info),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(

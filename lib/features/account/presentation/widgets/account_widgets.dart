@@ -560,7 +560,7 @@ class _AccountCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: color ?? Colors.white,
+        color: color ?? AppTokens.surface,
         borderRadius: BorderRadius.circular(AppTokens.radiusLg),
         border: Border.all(color: borderColor ?? AppTokens.divider),
         boxShadow: AppTokens.shadowSm(),

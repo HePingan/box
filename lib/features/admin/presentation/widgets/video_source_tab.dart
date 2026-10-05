@@ -234,8 +234,8 @@ class _VideoSourceTabState extends State<VideoSourceTab> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFEEF2FF), Color(0xFFE0E7FF)],
+        gradient: LinearGradient(
+          colors: AppTokens.softPanelGradient.colors,
         ),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.indigo.withValues(alpha: 0.3)),
@@ -345,7 +345,7 @@ class _VideoSourceTabState extends State<VideoSourceTab> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(
-          color: isActive ? Colors.deepPurple : const Color(0xFFE6EAF2),
+          color: isActive ? Colors.deepPurple : AppTokens.cardBorder,
           width: isActive ? 1.5 : 1,
         ),
       ),
