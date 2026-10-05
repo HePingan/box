@@ -669,10 +669,10 @@ class _NovelListPageState extends State<NovelListPage> {
         }
 
         if (!_hasMore) {
-          return const Padding(
+          return Padding(
             padding: EdgeInsets.symmetric(vertical: 16),
             child: Center(
-              child: Text('到底了', style: TextStyle(color: Colors.black45)),
+              child: Text('到底了', style: TextStyle(color: AppTokens.textTertiary)),
             ),
           );
         }

@@ -253,9 +253,9 @@ class BookSourceCard extends StatelessWidget {
                       source.bookSourceUrl,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11.5,
-                        color: Colors.black54,
+                        color: AppTokens.textSecondary,
                       ),
                     ),
                   ),
@@ -379,8 +379,8 @@ class BookSourceCard extends StatelessWidget {
               source.bookSourceUrl,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.black54,
+              style: TextStyle(
+                color: AppTokens.textSecondary,
                 fontSize: 12.5,
                 fontFamily: 'monospace',
               ),
@@ -391,8 +391,8 @@ class BookSourceCard extends StatelessWidget {
                 '搜索：${source.searchUrl}',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.black54,
+                style: TextStyle(
+                  color: AppTokens.textSecondary,
                   fontSize: 12,
                   fontFamily: 'monospace',
                 ),
@@ -404,8 +404,8 @@ class BookSourceCard extends StatelessWidget {
                 '发现：${source.exploreUrl}',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.black54,
+                style: TextStyle(
+                  color: AppTokens.textSecondary,
                   fontSize: 12,
                   fontFamily: 'monospace',
                 ),

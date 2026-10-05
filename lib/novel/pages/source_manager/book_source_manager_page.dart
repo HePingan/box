@@ -68,10 +68,10 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     '粘贴单个书源、书源数组，或按空行分隔的多个 JSON。导入前会先做可用性预检查。',
                     style: TextStyle(
-                      color: Colors.black54,
+                      color: AppTokens.textSecondary,
                       fontSize: 12.5,
                       height: 1.45,
                     ),
@@ -625,9 +625,9 @@ class _BookSourceManagerPageState extends State<BookSourceManagerPage> {
                                 if (b.category.isNotEmpty) b.category,
                                 if (b.status.isNotEmpty) b.status,
                               ].join(' · '),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.black54,
+                                color: AppTokens.textSecondary,
                               ),
                             ),
                           ],

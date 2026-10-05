@@ -17,6 +17,7 @@ import 'package:box/features/comic/infrastructure/comic_importer_widget.dart';
 import 'package:box/features/comic/presentation/comic_reader_page.dart';
 import 'package:box/features/comic/presentation/comic_source_check_page.dart';
 import 'package:box/features/comic/presentation/comic_cover_image.dart';
+import '../../../design_system/app_tokens.dart';
 
 /// 书架一行的展示数据：漫画本体 + 它的真实阅读进度（没读过就是 null）。
 class _ShelfEntry {
@@ -464,7 +465,7 @@ class _ComicBookCard extends StatelessWidget {
                           vertical: 2,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.black54,
+                          color: AppTokens.textSecondary,
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Text(
@@ -486,7 +487,7 @@ class _ComicBookCard extends StatelessWidget {
                           vertical: 2,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.black54,
+                          color: AppTokens.textSecondary,
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Text(

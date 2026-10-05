@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'design_system/app_tokens.dart';
 
 import 'daily_news_url_policy.dart';
 import 'design_system/widgets/app_back_button.dart';
@@ -102,9 +103,9 @@ class _DailyNewsPageState extends State<DailyNewsPage> {
   Widget build(BuildContext context) {
     final controller = _controller;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppTokens.surface,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: AppTokens.surface,
         scrolledUnderElevation: 0,
         elevation: 0,
         // label 故意留空：当前页名交给下面的 title。
@@ -117,8 +118,8 @@ class _DailyNewsPageState extends State<DailyNewsPage> {
         ),
         title: Text(
           _pageTitle,
-          style: const TextStyle(
-            color: Colors.black87,
+          style: TextStyle(
+            color: AppTokens.textPrimary,
             fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
@@ -128,7 +129,7 @@ class _DailyNewsPageState extends State<DailyNewsPage> {
             ? null
             : <Widget>[
                 IconButton(
-                  icon: const Icon(Icons.refresh, color: Colors.black87),
+                  icon: Icon(Icons.refresh, color: AppTokens.textPrimary),
                   onPressed: () => controller.reload(),
                 ),
               ],
@@ -153,37 +154,37 @@ class _BlockedLinkBody extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
-          const Icon(Icons.link_off_rounded, size: 40, color: Colors.black38),
+          Icon(Icons.link_off_rounded, size: 40, color: AppTokens.textTertiary),
           const SizedBox(height: 14),
-          const Text(
+          Text(
             '这条内容要在浏览器里打开',
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
-              color: Colors.black87,
+              color: AppTokens.textPrimary,
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             '它指向站外站点（AI 热点的原文常在 X、arXiv 这类地方），App 内的阅读器打不开。'
             '可以把下面的地址复制到浏览器。',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, height: 1.5, color: Colors.black54),
+            style: TextStyle(fontSize: 13, height: 1.5, color: AppTokens.textSecondary),
           ),
           const SizedBox(height: 18),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: const Color(0xFFF4F5F7),
+              color: AppTokens.surfaceMuted,
               borderRadius: BorderRadius.circular(10),
             ),
             child: SelectableText(
               url,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12.5,
                 height: 1.4,
-                color: Colors.black87,
+                color: AppTokens.textPrimary,
               ),
             ),
           ),

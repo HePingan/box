@@ -5,6 +5,7 @@ import 'package:box/features/account/domain/account_models.dart';
 import 'package:box/features/admin/domain/admin_resource.dart';
 import 'package:box/features/admin/domain/admin_resource_provider.dart';
 import 'package:box/features/policy/plugin_policy.dart';
+import '../../../../design_system/app_tokens.dart';
 
 /// 管理后台「插件策略」Tab：全局/分插件/用户级远程禁用。
 class PluginPolicyResourceProvider
@@ -446,7 +447,7 @@ class _PluginPolicyAdminTabState extends State<PluginPolicyAdminTab> {
         Text(
           '远程禁止 > 本地开关。投稿/拉取 API 服务端会二次校验。',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Colors.black54,
+                color: AppTokens.textSecondary,
               ),
         ),
       ],

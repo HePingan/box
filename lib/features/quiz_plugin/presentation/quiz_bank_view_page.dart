@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import '../../../design_system/app_tokens.dart';
 
 import '../domain/quiz_bank.dart';
 import '../data/quiz_cloud_pull.dart';
@@ -321,15 +322,15 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
   Color _syncStatusBg(String status) {
     switch (status) {
       case QuizSyncStatus.pendingReview:
-        return Colors.orange.shade50;
+        return Colors.orange.withValues(alpha: 0.12);
       case QuizSyncStatus.published:
-        return Colors.indigo.shade50;
+        return Colors.indigo.withValues(alpha: 0.12);
       case QuizSyncStatus.rejected:
-        return Colors.red.shade50;
+        return Colors.red.withValues(alpha: 0.12);
       case QuizSyncStatus.merged:
-        return Colors.teal.shade50;
+        return Colors.teal.withValues(alpha: 0.12);
       default:
-        return Colors.green.shade50;
+        return Colors.green.withValues(alpha: 0.12);
     }
   }
 
@@ -966,18 +967,18 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
                       _pullTotal > 0
                           ? '拉取进度：第 $_pullDone/$_pullTotal 页'
                           : '',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11,
-                        color: Colors.black54,
+                        color: AppTokens.textSecondary,
                       ),
                     ),
                     const Spacer(),
                     if (_pullTotal > 0)
                       Text(
                         '${((_pullDone / _pullTotal) * 100).clamp(0, 100).toStringAsFixed(0)}%',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
-                          color: Colors.black54,
+                          color: AppTokens.textSecondary,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -993,10 +994,10 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
                 children: [
                   Row(
                     children: [
-                      const Icon(
+                      Icon(
                         Icons.cloud_outlined,
                         size: 16,
-                        color: Colors.black54,
+                        color: AppTokens.textSecondary,
                       ),
                       const SizedBox(width: 6),
                       Expanded(
@@ -1004,9 +1005,9 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
                           _cloudStatusText!,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
-                            color: Colors.black54,
+                            color: AppTokens.textSecondary,
                           ),
                         ),
                       ),
@@ -1166,11 +1167,11 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
                           ? Colors.indigo.shade700
                           : _syncStatusColor(item.syncStatus);
                       final statusBg = item.isCloud
-                          ? Colors.indigo.shade50
+                          ? Colors.indigo.withValues(alpha: 0.12)
                           : _syncStatusBg(item.syncStatus);
                       return Card(
                         margin: const EdgeInsets.symmetric(vertical: 6),
-                        color: selected ? Colors.blue.shade50 : null,
+                        color: selected ? Colors.blue.withValues(alpha: 0.12) : null,
                         child: InkWell(
                           onLongPress: () {
                             if (!_selectMode) {
@@ -1205,7 +1206,7 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
                                           size: 22,
                                           color: selected
                                               ? Colors.blue
-                                              : Colors.black45,
+                                              : AppTokens.textTertiary,
                                         ),
                                       ),
                                     ],
@@ -1228,8 +1229,8 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
                                         color:
                                             item.type ==
                                                 QuizQuestionType.trueFalse
-                                            ? Colors.orange.shade50
-                                            : Colors.blue.shade50,
+                                            ? Colors.orange.withValues(alpha: 0.12)
+                                            : Colors.blue.withValues(alpha: 0.12),
                                         borderRadius: BorderRadius.circular(4),
                                       ),
                                       child: Text(
@@ -1276,9 +1277,9 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
                                   const SizedBox(height: 4),
                                   Text(
                                     '分类：${item.category}',
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 11,
-                                      color: Colors.black54,
+                                      color: AppTokens.textSecondary,
                                     ),
                                   ),
                                 ],
@@ -1340,9 +1341,9 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
                                   const SizedBox(height: 6),
                                   Text(
                                     '解析：${item.analysis}',
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 12,
-                                      color: Colors.black54,
+                                      color: AppTokens.textSecondary,
                                     ),
                                   ),
                                 ],
@@ -1631,7 +1632,7 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
                   _questionImage != null
                       ? '新题图将用于同题不同图消歧。'
                       : '已具备图像指纹，答题助手会优先按题图匹配。',
-                  style: const TextStyle(fontSize: 11, color: Colors.black54),
+                  style: TextStyle(fontSize: 11, color: AppTokens.textSecondary),
                 ),
               ),
             const SizedBox(height: 12),
@@ -1737,9 +1738,9 @@ class _CloudSubscriptionSheetState extends State<_CloudSubscriptionSheet> {
           children: [
             Text('订阅云端分类', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 4),
-            const Text(
+            Text(
               '只同步勾选的分类。取消订阅不会删除本机已有题目。',
-              style: TextStyle(fontSize: 12, color: Colors.black54),
+              style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
             ),
             const SizedBox(height: 8),
             if (catalogs.isEmpty)

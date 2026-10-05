@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../design_system/app_tokens.dart';
 
 import '../../account/data/account_store.dart';
 import '../data/resource_registry.dart';
@@ -103,9 +104,9 @@ class _AdminPageState extends State<AdminPage> with TickerProviderStateMixin {
               const SizedBox(height: 12),
               Text('暂无可用功能', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 4),
-              const Text(
+              Text(
                 '未注册任何管理模块',
-                style: TextStyle(color: Colors.black54, fontSize: 13),
+                style: TextStyle(color: AppTokens.textSecondary, fontSize: 13),
               ),
             ],
           ),

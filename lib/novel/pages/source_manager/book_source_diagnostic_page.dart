@@ -181,13 +181,13 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
 
   Widget _buildBody() {
     if (_running) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 16),
-            Text('正在诊断…', style: TextStyle(color: Colors.black54)),
+            Text('正在诊断…', style: TextStyle(color: AppTokens.textSecondary)),
           ],
         ),
       );
@@ -298,7 +298,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
             width: 60,
             child: Text(
               label,
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
+              style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
             ),
           ),
           Expanded(child: Text(value, style: const TextStyle(fontSize: 13))),
@@ -373,14 +373,14 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
             _metaRow('基础地址', report.baseUrl),
             if (report.matchedSignals.isNotEmpty) ...[
               const SizedBox(height: 4),
-              const Text(
+              Text(
                 '匹配信号',
-                style: TextStyle(fontSize: 11, color: Colors.black45),
+                style: TextStyle(fontSize: 11, color: AppTokens.textTertiary),
               ),
               for (final s in report.matchedSignals)
                 Text(
                   '  · $s',
-                  style: const TextStyle(fontSize: 11, color: Colors.black54),
+                  style: TextStyle(fontSize: 11, color: AppTokens.textSecondary),
                 ),
             ],
           ],
@@ -419,7 +419,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
             const SizedBox(height: 6),
             Text(
               '耗时: ${result.elapsedSeconds}s · 关键词: "${result.keyword}"',
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
+              style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
             ),
           ],
         ),
@@ -474,10 +474,10 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: SelectableText(
                 step.detail,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
                   height: 1.5,
-                  color: Colors.black87,
+                  color: AppTokens.textPrimary,
                 ),
               ),
             ),

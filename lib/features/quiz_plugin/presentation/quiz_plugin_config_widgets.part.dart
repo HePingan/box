@@ -59,7 +59,7 @@ class _AccessibilityStatusCardState extends State<_AccessibilityStatusCard> {
     return Container(
       padding: const EdgeInsets.all(AppTokens.spaceLg),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(AppTokens.radiusSm),
         border: Border.all(color: AppTokens.divider),
       ),
@@ -143,7 +143,7 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
       child: Container(
         margin: const EdgeInsets.only(bottom: AppTokens.spaceSm),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppTokens.surface,
           borderRadius: BorderRadius.circular(AppTokens.radiusSm),
           border: Border.all(color: AppTokens.divider),
         ),
@@ -446,11 +446,11 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                       await QuizPluginEntry.saveConfig(_cfg);
                     },
                   ),
-                  const Padding(
+                  Padding(
                     padding: EdgeInsets.only(top: 4),
                     child: Text(
                       '标准：兼顾不挡题与答案可读性；考试窗仍只显示答案与相似度。',
-                      style: TextStyle(fontSize: 12, color: Colors.black54),
+                      style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
                     ),
                   ),
                 ],

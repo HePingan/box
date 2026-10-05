@@ -107,7 +107,7 @@ class _LinkRow extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF1F5F9),
+        color: AppTokens.surfaceMuted,
         borderRadius: BorderRadius.circular(AppTokens.radiusInner),
       ),
       child: Row(

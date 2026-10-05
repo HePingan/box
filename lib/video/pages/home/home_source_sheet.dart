@@ -190,7 +190,7 @@ class _SourcePickerBodyState extends State<_SourcePickerBody> {
       case _SourceHealth.checking:
         return const Color(0xFF2563EB);
       case _SourceHealth.unknown:
-        return Colors.black45;
+        return AppTokens.textTertiary;
     }
   }
 
@@ -307,8 +307,8 @@ class _SourcePickerBodyState extends State<_SourcePickerBody> {
                       autoHiddenCount > 0
                           ? '共 ${sources.length} 个片源，$autoHiddenCount 个已自动隐藏（可恢复）'
                           : '当前可切换 ${sources.length} 个片源，选择后立即应用',
-                      style: const TextStyle(
-                        color: Colors.black54,
+                      style: TextStyle(
+                        color: AppTokens.textSecondary,
                         fontSize: 12.5,
                       ),
                     ),
@@ -434,8 +434,8 @@ class _SourcePickerBodyState extends State<_SourcePickerBody> {
                                 subtitle,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.black54,
+                                style: TextStyle(
+                                  color: AppTokens.textSecondary,
                                   fontSize: 12,
                                 ),
                               ),

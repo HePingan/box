@@ -58,9 +58,11 @@ class LegalDraftBanner extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF7ED),
+        color: AppTokens.warning.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(AppTokens.radiusSm),
-        border: Border.all(color: const Color(0xFFFED7AA)),
+        border: Border.all(
+          color: AppTokens.warning.withValues(alpha: 0.35),
+        ),
       ),
       child: const Row(
         crossAxisAlignment: CrossAxisAlignment.start,

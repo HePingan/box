@@ -193,7 +193,7 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                   Text(
                     '${item.pluginId}\n动作 ${item.actionCode} · 分区 ${item.areaCode} · v${item.version}'
                     '${item.hasPackage ? ' · ZIP ${item.packageSize}B' : ''}',
-                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                    style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
                   ),
                   const SizedBox(height: 12),
                   Text('兼容检查', style: Theme.of(ctx).textTheme.titleSmall),
@@ -309,7 +309,7 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
           children: [
             Text(
               'ID: ${item.pluginId}\n动作: ${item.actionCode}\n分区: ${item.areaCode}\n版本: ${item.version}',
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
+              style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
             ),
             const SizedBox(height: 10),
             if (!approve)
@@ -605,7 +605,7 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
             '今日拒绝 ${queue.rejectsToday} · 举报 ${queue.openReports} · '
             '禁投作者 ${queue.bannedAuthors.length}',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.black54,
+                  color: AppTokens.textSecondary,
                 ),
           ),
           if (queue.storage.isNotEmpty) ...[
@@ -616,7 +616,7 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                   '${(int.tryParse(queue.storage['limitBytes']?.toString() ?? '') ?? 0) / 1024 / 1024 / 1024}'
                       .replaceAll(RegExp(r'(\.\d{1})\d+'), r'$1')}GB · 文件 ${queue.storage['fileCount'] ?? 0}${queue.counters.isEmpty ? '' : ' · 计数 ${queue.counters.entries.take(3).map((e) => '${e.key}:${e.value}').join(' ')}'}',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.black45,
+                    color: AppTokens.textTertiary,
                     fontSize: 11,
                   ),
             ),
@@ -714,7 +714,7 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                 ),
               )
             else
-              const Text('暂无计数', style: TextStyle(color: Colors.black54)),
+              Text('暂无计数', style: TextStyle(color: AppTokens.textSecondary)),
           ] else if (_filter == 'audit') ...[
             Text('最近操作', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
@@ -848,7 +848,7 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
               _buildBulkToolbar(pending),
             const SizedBox(height: 8),
             if (pending.isEmpty && _filter == 'pending_review')
-              const Text('暂无待审投稿', style: TextStyle(color: Colors.black54)),
+              Text('暂无待审投稿', style: TextStyle(color: AppTokens.textSecondary)),
             ...pending.map(_buildSubmissionCard),
             if (_filter == 'all') ...[
               const SizedBox(height: 12),
@@ -891,7 +891,7 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
           ),
           Text(
             '已选 ${_selectedIds.length}',
-            style: const TextStyle(fontSize: 12, color: Colors.black54),
+            style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
           ),
           const Spacer(),
           if (_bulkRunning)
@@ -966,7 +966,7 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                       '状态 ${item.statusLabel}'
                       '${item.reviewNote.isEmpty ? '' : '\n备注 ${item.reviewNote}'}',
                       style:
-                          const TextStyle(fontSize: 12, color: Colors.black54),
+                          TextStyle(fontSize: 12, color: AppTokens.textSecondary),
                     ),
                     if (!_selectMode) ...[
                       const SizedBox(height: 8),

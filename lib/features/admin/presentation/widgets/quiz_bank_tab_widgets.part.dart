@@ -732,7 +732,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
                               style: TextStyle(
                                 color: selected
                                     ? Colors.white
-                                    : Colors.black87,
+                                    : AppTokens.textPrimary,
                                 fontSize: 12,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -942,7 +942,7 @@ class _DiffConfirmDialog extends StatelessWidget {
           child: Text(
             '$now',
             style: TextStyle(
-              color: same ? Colors.grey : Colors.black,
+              color: same ? AppTokens.textTertiary : AppTokens.textPrimary,
               decoration: same ? null : TextDecoration.underline,
             ),
           ),
@@ -1253,10 +1253,10 @@ class _IncompleteQueueDialogState extends State<_IncompleteQueueDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
+            Text(
               '为选中待补全题填写统一正确答案后发布到正式库。\n'
               '已有答案/选项不合法的条目会跳过并保留在队列。',
-              style: TextStyle(fontSize: 12, color: Colors.black54),
+              style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
             ),
             const SizedBox(height: 10),
             TextField(
@@ -1492,9 +1492,9 @@ class _IncompleteQueueDialogState extends State<_IncompleteQueueDialog> {
                                       const SizedBox(height: 2),
                                       Text(
                                         '分类：$category',
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontSize: 12,
-                                          color: Colors.black54,
+                                          color: AppTokens.textSecondary,
                                         ),
                                       ),
                                     ],
@@ -1504,9 +1504,9 @@ class _IncompleteQueueDialogState extends State<_IncompleteQueueDialog> {
                                         '选项：${options.join(' · ')}',
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontSize: 12,
-                                          color: Colors.black54,
+                                          color: AppTokens.textSecondary,
                                           height: 1.3,
                                         ),
                                       ),
@@ -1625,7 +1625,7 @@ class _IncompleteEditorState extends State<_IncompleteEditor> {
                 const SizedBox(height: 10),
                 Text(
                   '选项：${_options.join('  ·  ')}',
-                  style: const TextStyle(color: Colors.black54),
+                  style: TextStyle(color: AppTokens.textSecondary),
                 ),
                 const SizedBox(height: 8),
                 Wrap(
@@ -2059,9 +2059,9 @@ class _PendingSubmissionsDialogState extends State<_PendingSubmissionsDialog> {
                                         if (q.category.trim().isNotEmpty)
                                           '分类 ${q.category}',
                                       ].join(' · '),
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 11,
-                                        color: Colors.black54,
+                                        color: AppTokens.textSecondary,
                                       ),
                                     ),
                                     if (options.isNotEmpty) ...[
@@ -2088,9 +2088,9 @@ class _PendingSubmissionsDialogState extends State<_PendingSubmissionsDialog> {
                                         '解析：${q.explanation}',
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontSize: 12,
-                                          color: Colors.black54,
+                                          color: AppTokens.textSecondary,
                                         ),
                                       ),
                                     ],

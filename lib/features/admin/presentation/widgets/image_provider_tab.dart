@@ -419,7 +419,7 @@ class _ImageProviderTabState extends State<_ImageProviderTab> {
               const SizedBox(height: 12),
               Text('加载失败', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 4),
-              Text(_error!, style: const TextStyle(color: Colors.black54, fontSize: 13)),
+              Text(_error!, style: TextStyle(color: AppTokens.textSecondary, fontSize: 13)),
               const SizedBox(height: 16),
               FilledButton.tonalIcon(
                 onPressed: _load,

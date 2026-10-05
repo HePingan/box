@@ -292,10 +292,10 @@ class _BookSourceTabState extends State<_BookSourceTab> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     '粘贴单个书源、书源数组，或按空行分隔的多个 JSON。',
                     style: TextStyle(
-                      color: Colors.black54,
+                      color: AppTokens.textSecondary,
                       fontSize: 12.5,
                       height: 1.45,
                     ),
@@ -723,7 +723,7 @@ class _BookSourceTabState extends State<_BookSourceTab> {
                                     size: 16,
                                     color: _batchMode
                                         ? AppTokens.primaryBlue
-                                        : Colors.black54,
+                                        : AppTokens.textSecondary,
                                   ),
                                   label: Text(
                                     _batchMode ? '退出批量' : '批量',
@@ -731,7 +731,7 @@ class _BookSourceTabState extends State<_BookSourceTab> {
                                       fontSize: 12,
                                       color: _batchMode
                                           ? AppTokens.primaryBlue
-                                          : Colors.black54,
+                                          : AppTokens.textSecondary,
                                     ),
                                   ),
                                   style: OutlinedButton.styleFrom(
@@ -875,11 +875,11 @@ class _BookSourceTabState extends State<_BookSourceTab> {
                                   ?.copyWith(fontWeight: FontWeight.bold),
                             ),
                             const SizedBox(height: 8),
-                            const Text(
+                            Text(
                               '导入书源规则 JSON 后即可使用小说搜索和阅读功能',
                               textAlign: TextAlign.center,
                               style: TextStyle(
-                                color: Colors.black54,
+                                color: AppTokens.textSecondary,
                                 fontSize: 13,
                                 height: 1.4,
                               ),
@@ -1008,15 +1008,15 @@ class _BookSourceTabState extends State<_BookSourceTab> {
                     if (source.bookSourceGroup.isNotEmpty)
                       Text(
                         source.bookSourceGroup,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
-                          color: Colors.black45,
+                          color: AppTokens.textTertiary,
                         ),
                       ),
                     const SizedBox(height: 4),
                     Text(
                       source.bookSourceUrl,
-                      style: const TextStyle(fontSize: 12, color: Colors.black45),
+                      style: TextStyle(fontSize: 12, color: AppTokens.textTertiary),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),

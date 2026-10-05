@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/extensions/market/data/plugin_market_api.dart';
+import '../../../../design_system/app_tokens.dart';
 
 /// 用户投稿配置型插件（表单 / zip）。
 class PluginSubmitPage extends StatefulWidget {
@@ -224,7 +225,7 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
             '规则：每日最多 5 次；待审 ≤20；拒绝 ≥8 禁投；zip ≤5MB。\n'
             '审核通过后进入插件商店，其他人可下载安装。',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.black54,
+                  color: AppTokens.textSecondary,
                 ),
           ),
           const SizedBox(height: 12),
@@ -374,7 +375,7 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
           else if (_error != null)
             Text(_error!, style: const TextStyle(color: Colors.red))
           else if (_mine.isEmpty)
-            const Text('暂无投稿', style: TextStyle(color: Colors.black54))
+            Text('暂无投稿', style: TextStyle(color: AppTokens.textSecondary))
           else
             ..._mine.map((e) {
               return Card(
@@ -401,7 +402,7 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
             '    payload.json  # 可选\n'
             'plugin.json 字段：id/title/actionCode/areaCode/version/payload/tags…',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.black45,
+                  color: AppTokens.textTertiary,
                   fontFamily: 'monospace',
                   fontSize: 11,
                 ),

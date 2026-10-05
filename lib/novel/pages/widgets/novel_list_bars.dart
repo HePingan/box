@@ -156,7 +156,7 @@ class SourceInfoBar extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             subtitle,
-            style: const TextStyle(fontSize: 12.5, color: Colors.black54),
+            style: TextStyle(fontSize: 12.5, color: AppTokens.textSecondary),
           ),
         ],
       ),

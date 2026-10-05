@@ -217,9 +217,9 @@ class _VideoSourceTabState extends State<VideoSourceTab> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
+                  Text(
                     '片源通过采集站 API 动态加载',
-                    style: TextStyle(fontSize: 12, color: Colors.black45),
+                    style: TextStyle(fontSize: 12, color: AppTokens.textTertiary),
                   ),
                 ],
               ),
@@ -313,9 +313,9 @@ class _VideoSourceTabState extends State<VideoSourceTab> {
             const SizedBox(height: 16),
             const Text('暂无可用片源', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               '片源通过采集站自动加载',
-              style: TextStyle(color: Colors.black54, fontSize: 13),
+              style: TextStyle(color: AppTokens.textSecondary, fontSize: 13),
             ),
             const SizedBox(height: 16),
             FilledButton.tonalIcon(
@@ -436,7 +436,7 @@ class _VideoSourceTabState extends State<VideoSourceTab> {
               const SizedBox(height: 6),
               Text(
                 source.url.isNotEmpty ? source.url : source.detailUrl,
-                style: const TextStyle(fontSize: 12, color: Colors.black45),
+                style: TextStyle(fontSize: 12, color: AppTokens.textTertiary),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),

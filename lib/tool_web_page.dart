@@ -1,6 +1,7 @@
 // lib/tool_web_page.dart
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'design_system/app_tokens.dart';
 
 import 'design_system/widgets/app_back_button.dart';
 
@@ -80,14 +81,14 @@ class _ToolWebPageState extends State<ToolWebPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppTokens.surface,
       appBar: AppBar(
         title: Text(
           widget.title,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.bold,
-            color: Colors.black87,
+            color: AppTokens.textPrimary,
           ),
         ),
         backgroundColor: Colors.white,

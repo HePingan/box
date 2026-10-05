@@ -119,12 +119,12 @@ class _AnnouncementCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTokens.surface,
         borderRadius: BorderRadius.circular(AppTokens.radiusCard),
         border: Border.all(
           color: unread
               ? _levelColor.withValues(alpha: 0.4)
-              : const Color(0xFFE2E8F0),
+              : AppTokens.cardBorder,
         ),
       ),
       child: Column(

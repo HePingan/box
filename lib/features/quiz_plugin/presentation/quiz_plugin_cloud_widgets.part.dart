@@ -229,7 +229,7 @@ class _CloudQuizBankCardState extends State<_CloudQuizBankCard> {
             const SizedBox(height: 6),
             Text(
               subtitle,
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
+              style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
             ),
             if (_busy) ...[
               const SizedBox(height: 8),
@@ -247,17 +247,17 @@ class _CloudQuizBankCardState extends State<_CloudQuizBankCard> {
                     children: [
                       Text(
                         '拉取进度：第 $_pullDone/$_pullTotal 页',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
-                          color: Colors.black54,
+                          color: AppTokens.textSecondary,
                         ),
                       ),
                       const Spacer(),
                       Text(
                         '${((_pullDone / _pullTotal) * 100).clamp(0, 100).toStringAsFixed(0)}%',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
-                          color: Colors.black54,
+                          color: AppTokens.textSecondary,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -304,7 +304,7 @@ class _CloudQuizBankCardState extends State<_CloudQuizBankCard> {
               status == null ? '同步正式发布题到本机，供离线搜题' : '服务：${status.serverUrl}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11, color: Colors.black45),
+              style: TextStyle(fontSize: 11, color: AppTokens.textTertiary),
             ),
           ],
         ),
@@ -353,9 +353,9 @@ class _CloudCategoryPickerState extends State<_CloudCategoryPicker> {
           children: [
             Text('订阅云端分类', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 4),
-            const Text(
+            Text(
               '只同步勾选的分类。取消订阅不会删除本机已有题目。',
-              style: TextStyle(fontSize: 12, color: Colors.black54),
+              style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
             ),
             const SizedBox(height: 8),
             if (catalogs.isEmpty)

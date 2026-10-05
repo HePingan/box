@@ -43,10 +43,10 @@ class NovelNotConfiguredView extends StatelessWidget {
       ),
       children: [
         const SizedBox(height: 80),
-        const Icon(
+        Icon(
           Icons.auto_stories_outlined,
           size: 60,
-          color: Colors.black26,
+          color: AppTokens.textTertiary,
         ),
         const SizedBox(height: 16),
         const Center(
@@ -64,9 +64,9 @@ class NovelNotConfiguredView extends StatelessWidget {
           child: Text(
             message.isNotEmpty ? message : '请先导入并启用一个小说书源。',
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
-              color: Colors.black54,
+              color: AppTokens.textSecondary,
               height: 1.6,
             ),
           ),
@@ -100,7 +100,7 @@ class NovelEmptyView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = TextStyle(
-      color: isError ? Colors.redAccent : Colors.black54,
+      color: isError ? Colors.redAccent : AppTokens.textSecondary,
     );
 
     return ListView(

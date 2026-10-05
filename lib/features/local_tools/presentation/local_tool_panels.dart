@@ -2711,7 +2711,7 @@ class _DeadPixelPanelBodyState extends State<DeadPixelPanelBody> {
                   style: TextStyle(
                     fontSize: 13,
                     color: color.computeLuminance() > 0.5
-                        ? Colors.black54
+                        ? AppTokens.textSecondary
                         : Colors.white70,
                   ),
                 ),

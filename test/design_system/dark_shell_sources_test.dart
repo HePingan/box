@@ -19,34 +19,16 @@ import 'package:flutter_test/flutter_test.dart';
 ///    应改用 `AppTokens.textSecondary` / `textTertiary`。
 /// 4. 低阶灰 `Colors.grey.shade50/100/200` → 判红（浅色档的灰抄成字面量，
 ///    深色档下依旧是浅灰块）。
+/// 5. 黑色系文字 `Colors.black87/54/45/38/26` → 判红（深色档下看不清）。
 ///
 /// 例外文件（`allowFiles`）是**内容层**：视频/音频播放器与彩色圆底图标，
 /// 那里的白色是"深色媒体底上的前景色"，深浅档都该是白的。
 void main() {
-  const List<String> trees = <String>[
-    'design_system/',
-    'features/home/',
-    'features/tools/',
-    'features/content/',
-    'features/extensions/',
-    'features/local_tools/',
-    'features/api_hub/',
-    // 更新弹窗与账号/管理页也是"外壳级别"的界面 —— 之前漏在外，真机截图
-    // 立刻暴露：更新弹窗整块白底、抽屉账号卡片是写死的淡色渐变。
-    'update/',
-    'features/account/',
-    'features/admin/',
-    // 批次 2：内容层（列表/卡片/详情页）。播放器与阅读器自带深底（见白名单）。
-    'video/',
-    'novel/',
-    'features/comic/',
-    'features/image_generator/',
-  ];
-  const List<String> looseFiles = <String>[
-    'lib/app/app_shell.dart',
-    'lib/app_drawer.dart',
-  ];
-
+  // 不再逐个目录列举 —— 直接扫整棵 lib/。
+  // 为什么改：批次 1/2 各漏过一次目录（update/account/admin 漏过，app/ about/
+  // cloud_sync/ quiz_plugin/ 又漏过），每次都是真机截图才发现。判据改成
+  // "整棵树 + 具名例外"后，新写的页面自动在管。
+  const String libRoot = 'lib';
   /// 白色本来就是对的前景（深色媒体底 / 彩色底上的文字与图标）。
   const Set<String> allowFiles = <String>{
     'lib/design_system/app_tokens.dart',
@@ -58,6 +40,9 @@ void main() {
     // 更新弹窗顶部那条蓝色信息带：它自己就是彩色底，圆环描边与图标必然是白的
     // （正文/按钮/提示底都已改用 tokens）。
     'lib/update/update_dialog.dart',
+    // 关于页头部那个 64×64 的圆角方块：底色是 AppTokens.blueGradient（彩色渐变），
+    // 里面的图标必然是白的（该文件只有这一处白色）。
+    'lib/features/about/presentation/about_page.dart',
     // ── 内容层里"自带深底"的部分（深浅档都该是深色，白色是深底上的前景）──
     // 播放器控制层与浮层：压在视频画面上，底色必须深。
     'lib/video/widgets/player/custom_video_controls.dart',
@@ -82,6 +67,9 @@ void main() {
     r'Colors\.(grey|blueGrey|blue|indigo|teal|cyan)\.shade(50|100|200)\b',
   );
 
+  /// 黑色系文字：浅色档的"黑字"抄成字面量，深色档下看不清。
+  final RegExp blackText = RegExp(r'Colors\.black(87|54|45|38|26)\b');
+
   const String panelContext =
       r'BoxDecoration|decoration:|Container\(|Material\(|Card\(|Scaffold\(';
   final RegExp whiteFill = RegExp(
@@ -101,14 +89,9 @@ void main() {
 
   List<String> shellSources() {
     final List<String> out = <String>[];
-    for (final String tree in trees) {
-      final Directory dir = Directory('lib/$tree');
-      if (!dir.existsSync()) continue;
-      for (final FileSystemEntity e in dir.listSync(recursive: true)) {
-        if (e is File && e.path.endsWith('.dart')) out.add(e.path);
-      }
+    for (final FileSystemEntity e in Directory(libRoot).listSync(recursive: true)) {
+      if (e is File && e.path.endsWith('.dart')) out.add(e.path);
     }
-    out.addAll(looseFiles);
     return out;
   }
 
@@ -159,6 +142,27 @@ void main() {
       reason: '这些地方写死了近白色（≥0xE0 三通道全是高值），深色档下会发亮：\n'
           '${bad.join('\n')}\n→ 浅灰底用 AppTokens.surfaceMuted，'
           '描边/割线用 AppTokens.cardBorder / AppTokens.divider。',
+    );
+  });
+
+  test('外壳页面里没有"黑色系文字"（Colors.black87/54/45/38/26，深色档下看不清）', () {
+    final List<String> bad = <String>[];
+    for (final String path in shellSources()) {
+      if (allowFiles.contains(path)) continue;
+      final List<String> lines = File(path).readAsLinesSync();
+      for (int i = 0; i < lines.length; i++) {
+        if (blackText.hasMatch(lines[i])) {
+          bad.add('$path:${i + 1} ${lines[i].trim()}');
+        }
+      }
+    }
+    expect(
+      bad,
+      isEmpty,
+      reason: '把"浅色档的黑字"抄成了字面量，深色档下就是深字压深底：\n'
+          '${bad.join('\n')}\n→ 正文用 AppTokens.textPrimary / textSecondary，'
+          '次要信息用 textTertiary。（本规则只管 black87/54/45/38/26；'
+          '纯 Colors.black 的遮罩 / 阴影 / 播放器黑底是合法的。）',
     );
   });
 
