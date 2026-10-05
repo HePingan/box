@@ -306,7 +306,7 @@ class _DoubanRankingSectionState extends State<DoubanRankingSection>
                     decoration: BoxDecoration(
                       color: isActive
                           ? AppTokens.primaryBlue
-                          : const Color(0xFFF0F3F8),
+                          : AppTokens.surfaceMuted,
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Text(

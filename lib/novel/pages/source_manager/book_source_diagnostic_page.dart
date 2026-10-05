@@ -6,6 +6,7 @@ import '../../core/novel_source_capability.dart';
 import 'book_source_diagnostic_models.dart';
 import 'book_source_diagnostic_runner.dart';
 import 'book_source_model.dart';
+import '../../../design_system/app_tokens.dart';
 
 class BookSourceDiagnosticPage extends StatefulWidget {
   const BookSourceDiagnosticPage({
@@ -262,7 +263,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: status ? Colors.green.shade50 : Colors.grey.shade100,
+                    color: status ? Colors.green.shade50 : AppTokens.surfaceMuted,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
@@ -439,7 +440,7 @@ class _BookSourceDiagnosticPageState extends State<BookSourceDiagnosticPage> {
       RuntimeDiagnosticStepState.success => Colors.green.shade200,
       RuntimeDiagnosticStepState.warning => Colors.orange.shade200,
       RuntimeDiagnosticStepState.failure => Colors.red.shade200,
-      _ => Colors.grey.shade200,
+      _ => AppTokens.cardBorder,
     };
 
     return Card(

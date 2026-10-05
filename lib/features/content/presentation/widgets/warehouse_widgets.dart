@@ -242,8 +242,11 @@ class ContentOnboardingBanner extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 2),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFE8F5E9), Color(0xFFF1F8E9)],
+        gradient: LinearGradient(
+          colors: [
+            AppTokens.success.withValues(alpha: 0.18),
+            AppTokens.success.withValues(alpha: 0.08),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),

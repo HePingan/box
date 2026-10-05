@@ -141,7 +141,7 @@ class LocalToolResult extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
       decoration: BoxDecoration(
         color: error
-            ? const Color(0xFFFDECEC)
+            ? AppTokens.danger.withValues(alpha: 0.12)
             : AppTokens.primaryBlue.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(14),
       ),
@@ -292,7 +292,7 @@ class _CalcKey extends StatelessWidget {
           ? AppTokens.primaryBlue
           : isOp
               ? AppTokens.primaryBlue.withValues(alpha: 0.10)
-              : const Color(0xFFF4F6FB),
+              : AppTokens.surfaceMuted,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),

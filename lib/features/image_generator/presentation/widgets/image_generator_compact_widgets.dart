@@ -307,7 +307,7 @@ class GeneratedImageTileCompact extends StatelessWidget {
         border: Border.all(
           color: isNew
               ? AppTokens.primaryBlue.withValues(alpha: 0.4)
-              : const Color(0xFFE7ECF5),
+              : AppTokens.cardBorder,
           width: isNew ? 1.5 : 1,
         ),
       ),

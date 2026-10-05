@@ -973,8 +973,8 @@ class _PlaybackChip extends StatelessWidget {
             color: selected
                 ? Colors.transparent
                 : (unreachable
-                      ? const Color(0xFFFDE7C8) // 淡橙：与「上次没取到流」呼应
-                      : const Color(0xFFE7ECF5)),
+                      ? AppTokens.warning.withValues(alpha: 0.35) // 淡橙：与「上次没取到流」呼应
+                      : AppTokens.cardBorder),
           ),
         ),
         child: Row(
@@ -1170,7 +1170,7 @@ class _HeroIconButton extends StatelessWidget {
     return Material(
       color: highlight
           ? const Color(0xFFFB923C).withValues(alpha: 0.16)
-          : const Color(0xFFF1F5F9),
+          : AppTokens.surfaceMuted,
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),

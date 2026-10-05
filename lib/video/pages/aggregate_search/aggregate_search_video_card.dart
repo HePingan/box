@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart'; // 🚀 引入高性能图片缓存
 
 import '../../models/aggregate_result.dart';
+import '../../../design_system/app_tokens.dart';
 
 /// 聚合搜索封面统一解码宽度(px)。卡片解码与搜索页预取共用此值,
 /// 确保预取的即展示的那份内存缓存,零重复解码。卡片宽仅 96px,
@@ -68,7 +69,7 @@ class AggregateSearchVideoCard extends StatelessWidget {
               subtitle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+              style: TextStyle(fontSize: 11, color: AppTokens.textTertiary),
             ),
           ],
         ),
@@ -97,7 +98,7 @@ class AggregateSearchVideoCard extends StatelessWidget {
       fadeInDuration: const Duration(milliseconds: 180),
       fadeOutDuration: const Duration(milliseconds: 80),
       placeholder: (context, url) => Container(
-        color: Colors.grey.shade200,
+        color: AppTokens.surfaceMuted,
         alignment: Alignment.center,
         child: const SizedBox(
           width: 18,
@@ -111,9 +112,9 @@ class AggregateSearchVideoCard extends StatelessWidget {
 
   Widget _buildPlaceholder() {
     return Container(
-      color: Colors.grey.shade200,
+      color: AppTokens.surfaceMuted,
       alignment: Alignment.center,
-      child: Icon(Icons.movie_outlined, size: 30, color: Colors.grey.shade600),
+      child: Icon(Icons.movie_outlined, size: 30, color: AppTokens.textTertiary),
     );
   }
 }

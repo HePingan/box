@@ -341,13 +341,13 @@ class _QuestionEditorState extends State<_QuestionEditor> {
         decoration: BoxDecoration(
           color: selected
               ? Theme.of(context).colorScheme.primary
-              : Colors.grey.shade200,
+              : AppTokens.surfaceMuted,
           borderRadius: BorderRadius.circular(16),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: selected ? Colors.white : Colors.black87,
+            color: selected ? Colors.white : AppTokens.textPrimary,
             fontWeight: selected ? FontWeight.bold : FontWeight.normal,
           ),
         ),
@@ -407,7 +407,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
             decoration: BoxDecoration(
               color: active
                   ? _statusStyle(val).color.withValues(alpha: 0.18)
-                  : Colors.grey.shade200,
+                  : AppTokens.surfaceMuted,
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: active ? _statusStyle(val).color : Colors.transparent,
@@ -416,7 +416,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
             child: Text(
               label,
               style: TextStyle(
-                color: active ? _statusStyle(val).color : Colors.black87,
+                color: active ? _statusStyle(val).color : AppTokens.textPrimary,
                 fontWeight: active ? FontWeight.bold : FontWeight.normal,
               ),
             ),
@@ -441,7 +441,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
               const SizedBox(width: 8),
               Text(
                 '${_d.options.length} 个',
-                style: TextStyle(color: Colors.grey.shade600),
+                style: TextStyle(color: AppTokens.textTertiary),
               ),
               const Spacer(),
               TextButton.icon(
@@ -488,7 +488,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
                   if (_d.options.length > 2)
                     IconButton(
                       icon: const Icon(Icons.close, size: 18),
-                      color: Colors.grey.shade600,
+                      color: AppTokens.textTertiary,
                       onPressed: () => _removeOption(idx),
                     ),
                 ],
@@ -525,7 +525,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.amber.shade50,
+                color: AppTokens.warning.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: Colors.amber),
               ),
@@ -642,7 +642,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
           const SizedBox(height: 4),
           Text(
             '支持 JPG / PNG / WebP，最大 10MB',
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+            style: TextStyle(color: AppTokens.textTertiary, fontSize: 12),
           ),
         ],
       ],
@@ -654,7 +654,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
       onTap: () => setState(() => _previewOpen = !_previewOpen),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        color: Colors.grey.shade100,
+        color: AppTokens.surfaceMuted,
         child: Row(
           children: [
             Icon(
@@ -664,7 +664,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
             const SizedBox(width: 8),
             Text(
               _previewOpen ? '收起预览' : '展开预览',
-              style: TextStyle(color: Colors.grey.shade600),
+              style: TextStyle(color: AppTokens.textTertiary),
             ),
           ],
         ),

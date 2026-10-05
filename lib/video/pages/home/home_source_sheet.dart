@@ -386,12 +386,12 @@ class _SourcePickerBodyState extends State<_SourcePickerBody> {
                     decoration: BoxDecoration(
                       color: selected
                           ? Colors.blue.withValues(alpha: 0.07)
-                          : const Color(0xFFF7F8FA),
+                          : AppTokens.surfaceMuted,
                       borderRadius: BorderRadius.circular(18),
                       border: Border.all(
                         color: selected
                             ? Colors.blue.withValues(alpha: 0.22)
-                            : const Color(0xFFE6EAF2),
+                            : AppTokens.cardBorder,
                       ),
                     ),
                     child: Row(

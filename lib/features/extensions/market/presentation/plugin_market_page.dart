@@ -338,7 +338,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
               decoration: BoxDecoration(
                 color: blocking
                     ? AppTokens.rose.withValues(alpha: 0.08)
-                    : const Color(0xFFFFF7ED),
+                    : AppTokens.warning.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(AppTokens.radiusMd),
                 border: Border.all(
                   color: blocking

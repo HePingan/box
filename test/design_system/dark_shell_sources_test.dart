@@ -15,8 +15,10 @@ import 'package:flutter_test/flutter_test.dart';
 ///    （带 alpha 的 `Colors.white.withValues(...)` 是"彩色底上的高光/覆层"，放行）。
 /// 2. 写死的近白色 `Color(0xFF……)`（R、G、B 三个通道都 ≥ 0xE0）出现在
 ///    颜色位置 → 判红（品牌色如 `0xFFEC4899` G 通道很低，不会误伤）。
-/// 3. 写死的板岩色文字（`0xFF5B6B8C` / `0xFF64748B`）→ 判红，应改用
-///    `AppTokens.textSecondary`。
+/// 3. 写死的板岩色文字（`0xFF5B6B8C` / `0xFF64748B` / `0xFF94A3B8`）→ 判红，
+///    应改用 `AppTokens.textSecondary` / `textTertiary`。
+/// 4. 低阶灰 `Colors.grey.shade50/100/200` → 判红（浅色档的灰抄成字面量，
+///    深色档下依旧是浅灰块）。
 ///
 /// 例外文件（`allowFiles`）是**内容层**：视频/音频播放器与彩色圆底图标，
 /// 那里的白色是"深色媒体底上的前景色"，深浅档都该是白的。
@@ -56,9 +58,6 @@ void main() {
     // 更新弹窗顶部那条蓝色信息带：它自己就是彩色底，圆环描边与图标必然是白的
     // （正文/按钮/提示底都已改用 tokens）。
     'lib/update/update_dialog.dart',
-    // 题库管理页的"状态色板 / 题型标签色板"：这些是语义色（含中性灰 #94A3B8
-    // 表示草稿/未知），只用于 chip 的淡底 + 同色描边，深浅档通用。
-    'lib/features/admin/presentation/widgets/quiz_bank_tab_widgets.part.dart',
     // ── 内容层里"自带深底"的部分（深浅档都该是深色，白色是深底上的前景）──
     // 播放器控制层与浮层：压在视频画面上，底色必须深。
     'lib/video/widgets/player/custom_video_controls.dart',
@@ -70,6 +69,18 @@ void main() {
     'lib/novel/pages/reader/reader_directory_sheet.dart',
     'lib/novel/pages/reader/reader_settings_sheet.dart',
   };
+
+  /// 只对"板岩色文字"那条规则例外：题库管理页的状态色板里 `#94A3B8`
+  /// 是"草稿/未知"的语义色（chip 淡底 + 同色描边），深浅档通用；
+  /// 这个文件其余部分该收口的照样要收口 —— 所以**不能**整文件放进 allowFiles。
+  const Set<String> slateAllowExtra = <String>{
+    'lib/features/admin/presentation/widgets/quiz_bank_tab_widgets.part.dart',
+  };
+
+  /// 低阶灰（`Colors.grey.shade50/100/200` 之类）：深色档下仍是浅灰，会成白块。
+  final RegExp lowShadeGrey = RegExp(
+    r'Colors\.(grey|blueGrey|blue|indigo|teal|cyan)\.shade(50|100|200)\b',
+  );
 
   const String panelContext =
       r'BoxDecoration|decoration:|Container\(|Material\(|Card\(|Scaffold\(';
@@ -132,9 +143,9 @@ void main() {
       final List<String> lines = File(path).readAsLinesSync();
       for (int i = 0; i < lines.length; i++) {
         final String line = lines[i];
-        if (!RegExp(r'color:|fillColor|backgroundColor').hasMatch(line)) {
-          continue;
-        }
+        final String trimmed = line.trimLeft();
+        // 注释行跳过（说明文字里提到色值不算）。
+        if (trimmed.startsWith('//')) continue;
         for (final RegExpMatch m in hexColor.allMatches(line)) {
           if (isNearWhite(m.group(1)!)) {
             bad.add('$path:${i + 1} ${line.trim()}');
@@ -151,10 +162,32 @@ void main() {
     );
   });
 
-  test('外壳页面里没有"写死的板岩色文字"（深色档下会消失）', () {
+  test('外壳页面里没有"低阶灰"（Colors.grey.shade50/100/200，深色档下仍是浅灰）', () {
     final List<String> bad = <String>[];
     for (final String path in shellSources()) {
       if (allowFiles.contains(path)) continue;
+      final List<String> lines = File(path).readAsLinesSync();
+      for (int i = 0; i < lines.length; i++) {
+        if (lowShadeGrey.hasMatch(lines[i])) {
+          bad.add('$path:${i + 1} ${lines[i].trim()}');
+        }
+      }
+    }
+    expect(
+      bad,
+      isEmpty,
+      reason: '低阶灰是把"浅色档的灰"抄成了字面量，深色档下依然是浅灰块：\n'
+          '${bad.join('\n')}\n→ 底色用 AppTokens.surface / surfaceMuted，'
+          '文字用 textSecondary / textTertiary，描边用 cardBorder。',
+    );
+  });
+
+  test('外壳页面里没有"写死的板岩色文字"（深色档下会消失）', () {
+    final List<String> bad = <String>[];
+    for (final String path in shellSources()) {
+      if (allowFiles.contains(path) || slateAllowExtra.contains(path)) {
+        continue;
+      }
       final List<String> lines = File(path).readAsLinesSync();
       for (int i = 0; i < lines.length; i++) {
         if (slateText.hasMatch(lines[i])) {

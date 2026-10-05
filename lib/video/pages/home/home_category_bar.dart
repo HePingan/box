@@ -47,7 +47,7 @@ class HomeCategoryBar extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: isSelected
                       ? AppTokens.primaryBlue.withValues(alpha: 0.10)
-                      : const Color(0xFFF3F5FA),
+                      : AppTokens.surfaceMuted,
                   borderRadius: BorderRadius.circular(AppTokens.radiusPill),
                   border: Border.all(
                     color: isSelected

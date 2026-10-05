@@ -40,14 +40,14 @@ class ExploreBar extends StatelessWidget {
               decoration: BoxDecoration(
                 color: isSelected
                     ? Colors.blue.shade600
-                    : Colors.grey.shade100,
+                    : AppTokens.surfaceMuted,
                 borderRadius: BorderRadius.circular(20),
               ),
               alignment: Alignment.center,
               child: Text(
                 entry.title,
                 style: TextStyle(
-                  color: isSelected ? Colors.white : Colors.black87,
+                  color: isSelected ? Colors.white : AppTokens.textPrimary,
                   fontSize: 13,
                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
                 ),
@@ -110,8 +110,8 @@ class NovelSearchBar extends StatelessWidget {
           const SizedBox(width: 8),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue.shade50,
-              foregroundColor: Colors.blue.shade700,
+              backgroundColor: AppTokens.primaryBlue.withValues(alpha: 0.12),
+              foregroundColor: AppTokens.primaryBlue,
               elevation: 0,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),

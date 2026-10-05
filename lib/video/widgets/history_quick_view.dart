@@ -438,7 +438,7 @@ class _HistoryLoadingPlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: Colors.grey.shade100,
+      color: AppTokens.surfaceMuted,
       alignment: Alignment.center,
       child: const SizedBox(
         width: 20,
@@ -455,7 +455,7 @@ class _HistoryImagePlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: Colors.grey.shade100,
+      color: AppTokens.surfaceMuted,
       alignment: Alignment.center,
       child: Icon(
         Icons.movie_outlined,

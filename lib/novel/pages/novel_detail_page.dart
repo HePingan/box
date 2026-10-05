@@ -552,7 +552,7 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
                   decoration: BoxDecoration(
                     color: isCurrent
                         ? const Color(0xFF7C3AED)
-                        : const Color(0xFFF1F5F9),
+                        : AppTokens.surfaceMuted,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(

@@ -65,7 +65,7 @@ class PluginCard extends StatelessWidget {
           border: Border.all(
             color: isSelected
                 ? AppTokens.violet.withValues(alpha: 0.22)
-                : const Color(0xFFE7ECF5),
+                : AppTokens.cardBorder,
           ),
           boxShadow: AppTokens.shadowSm(),
         ),

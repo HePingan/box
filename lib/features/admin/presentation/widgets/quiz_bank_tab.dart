@@ -13,6 +13,7 @@ import '../../domain/quiz_bank_models.dart';
 import '../../domain/quiz_thumb_image_source.dart';
 
 import 'package:box/features/quiz_plugin/presentation/quiz_question_image_store.dart';
+import '../../../../design_system/app_tokens.dart';
 
 part 'quiz_bank_tab_widgets.part.dart';
 

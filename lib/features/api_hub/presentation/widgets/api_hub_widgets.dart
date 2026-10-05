@@ -100,12 +100,12 @@ class ApiHubQuickChip extends StatelessWidget {
           decoration: BoxDecoration(
             color: selected
                 ? tool.color.withValues(alpha: 0.14)
-                : const Color(0xFFF8FAFC),
+                : AppTokens.surfaceMuted,
             borderRadius: BorderRadius.circular(AppTokens.radiusPill),
             border: Border.all(
               color: selected
                   ? tool.color.withValues(alpha: 0.48)
-                  : const Color(0xFFE7ECF5),
+                  : AppTokens.cardBorder,
             ),
           ),
           child: Row(
@@ -156,7 +156,7 @@ class ApiHubToolCard extends StatelessWidget {
             border: Border.all(
               color: selected
                   ? tool.color.withValues(alpha: 0.55)
-                  : const Color(0xFFE9EEF7),
+                  : AppTokens.cardBorder,
             ),
             boxShadow: selected ? AppTokens.shadowSm(color: tool.color) : null,
           ),

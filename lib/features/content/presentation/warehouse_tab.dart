@@ -981,7 +981,7 @@ class WarehouseTabState extends State<WarehouseTab>
                           ),
                           decoration: BoxDecoration(
                             color: _syncing
-                                ? Colors.grey.shade100
+                                ? AppTokens.surfaceMuted
                                 : AppTokens.emerald.withValues(alpha: 0.10),
                             borderRadius: BorderRadius.circular(8),
                           ),

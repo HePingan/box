@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../../../design_system/app_tokens.dart';
 
 class SearchResultCard extends StatelessWidget {
   const SearchResultCard({
@@ -70,7 +71,7 @@ class SearchResultCard extends StatelessWidget {
       fadeInDuration: const Duration(milliseconds: 180),
       fadeOutDuration: const Duration(milliseconds: 80),
       placeholder: (context, url) => Container(
-        color: Colors.grey.shade200,
+        color: AppTokens.surfaceMuted,
         alignment: Alignment.center,
         child: const SizedBox(
           width: 20,

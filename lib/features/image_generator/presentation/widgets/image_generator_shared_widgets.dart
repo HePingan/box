@@ -821,7 +821,7 @@ class ImageGeneratorReferenceCard extends StatelessWidget {
                   border: Border.all(
                     color: isNotEmpty && !isValidUrl
                         ? Colors.red.shade200
-                        : const Color(0xFFE7ECF5),
+                        : AppTokens.cardBorder,
                   ),
                 ),
                 padding: const EdgeInsets.all(8),

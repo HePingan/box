@@ -280,7 +280,7 @@ class _VideoDownloadBottomSheetState extends State<VideoDownloadBottomSheet>
                             decoration: BoxDecoration(
                               color: selected
                                   ? const Color(0xFF3B82F6)
-                                  : const Color(0xFFF1F5F9),
+                                  : AppTokens.surfaceMuted,
                               borderRadius: BorderRadius.circular(8),
                             ),
                             alignment: Alignment.center,

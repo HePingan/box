@@ -52,10 +52,10 @@ class _ShimmerState extends State<Shimmer>
             return LinearGradient(
               begin: Alignment(-1.0 + pos * 2.5, 0),
               end: Alignment(-0.6 + pos * 2.5, 0),
-              colors: const [
-                Color(0xFFEEEEEE),
-                Color(0xFFFAFAFA),
-                Color(0xFFEEEEEE),
+              colors: [
+                AppTokens.surfaceMuted,
+                AppTokens.surface,
+                AppTokens.surfaceMuted,
               ],
               stops: const [0.0, 0.45, 0.9],
             ).createShader(bounds);
