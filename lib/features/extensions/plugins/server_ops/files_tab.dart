@@ -15,6 +15,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
@@ -28,6 +29,7 @@ import 'package:box/features/extensions/plugins/server_ops/server_ops_request_lo
 import 'package:box/features/extensions/plugins/server_ops/server_ops_runtime.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_settings.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_transfer_queue.dart';
+import 'package:box/utils/text_sniff.dart';
 
 /// 文本预览最多读这么多字节（够看配置/日志片段，又不会把大文件拖下来）。
 const int kOpsPreviewMaxBytes = 64 * 1024;
@@ -754,6 +756,11 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
   /// 以前一律走文本预览，图片/压缩包被当文本解码成一屏乱码方块（真机上打开
   /// 截图就是这样）。二进制文件没有"文本预览"这回事，必须按 remoteEntryKind 分流：
   /// 图片 → 相册式预览；文本 → 文本预览；其余 → 交给本机应用。
+  ///
+  /// **白名单只作"快速肯定"，不肯定时按内容判**（`:other` 那一档）。后缀表永远会漏
+  /// 下一个新后缀 —— 实测 `.dev.vars`（113 B 纯文本）就这么被弹了「这是二进制文件」，
+  /// 而 `.env` / `Dockerfile` / `Makefile` / `README` / `nginx.conf.bak` 一大批同样中招
+  /// （65 个真实文件名里 44 个判错）。判据与编辑器用的是同一套（`text_sniff.dart`）。
   Future<void> _open(RemoteStorageEntry entry) async {
     switch (remoteEntryKind(entry)) {
       case RemoteEntryKind.folder:
@@ -761,21 +768,74 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
       case RemoteEntryKind.image:
         await _openImage(entry);
       case RemoteEntryKind.text:
-        await showDialog<void>(
-          context: context,
-          builder: (_) => _TextPreviewDialog(
-            service: _service,
-            entry: entry,
-            onSaved: () async {
-              // 保存/恢复之后刷新列表（大小与时间会变）
-              await _load(silent: true);
-            },
-          ),
-        );
+        await _previewText(entry);
       case RemoteEntryKind.video:
       case RemoteEntryKind.audio:
       case RemoteEntryKind.other:
-        await _openExternal(entry);
+        // 名字上就不可能是文本（图片/视频/音频/压缩包）→ 直接交给本机应用，
+        // 不必为它多读一次开头。
+        if (_nameLooksNonText(entry.name)) {
+          await _openExternal(entry, reason: _NonTextReason.notTextByName);
+          return;
+        }
+        // 其余：拿开头几个字节判一下。是文本就当文本预览（里面能直接编辑），
+        // 不是才走「用其他应用打开」。
+        final sniff = await _sniffText(entry);
+        if (!mounted) return;
+        if (sniff == _SniffResult.text) {
+          await _previewText(entry);
+        } else {
+          await _openExternal(entry, reason: _nonTextReasonOf(sniff));
+        }
+    }
+  }
+
+  /// 读开头几个字节，判断这个文件是不是文本。
+  ///
+  /// 读不出来（网络/权限）时返回 `unknown` 并按"不是文本"处理 —— 交给本机应用
+  /// 那条路是纯入口、不会有副作用，比硬着头皮当文本打开安全。
+  Future<_SniffResult> _sniffText(RemoteStorageEntry entry) async {
+    try {
+      final result =
+          await _service.readUpTo(entry.path, kTextSniffBytes);
+      final bytes = Uint8List.fromList(result.bytes);
+      if (bytes.isEmpty) return _SniffResult.empty;
+      if (textSniffLooksBinary(bytes)) return _SniffResult.binary;
+      if (!textSniffIsValidUtf8(bytes)) return _SniffResult.otherEncoding;
+      return _SniffResult.text;
+    } catch (_) {
+      return _SniffResult.unknown;
+    }
+  }
+
+  Future<void> _previewText(RemoteStorageEntry entry) {
+    return showDialog<void>(
+      context: context,
+      builder: (_) => _TextPreviewDialog(
+        service: _service,
+        entry: entry,
+        onSaved: () async {
+          // 保存/恢复之后刷新列表（大小与时间会变）
+          await _load(silent: true);
+        },
+      ),
+    );
+  }
+
+
+  /// 把嗅探结果翻成给用户看的理由。
+  _NonTextReason _nonTextReasonOf(_SniffResult sniff) {
+    switch (sniff) {
+      case _SniffResult.binary:
+        return _NonTextReason.binary;
+      case _SniffResult.otherEncoding:
+        return _NonTextReason.otherEncoding;
+      case _SniffResult.empty:
+        return _NonTextReason.empty;
+      case _SniffResult.unknown:
+        return _NonTextReason.unknown;
+      case _SniffResult.text:
+        return _NonTextReason.notTextByName;
     }
   }
 
@@ -797,15 +857,19 @@ class _ServerOpsFilesTabState extends State<ServerOpsFilesTab> {
   }
 
   /// 视频/音频/其它二进制：不当文本看，交给本机应用（先下到临时目录）。
-  Future<void> _openExternal(RemoteStorageEntry entry) async {
+  ///
+  /// [reason] 决定正文怎么写 —— "看着是二进制"和"后缀不在文本表里"对用户
+  /// 是两件事：前者是真读过内容，后者只是我们没认出来（措辞要和实际一致，
+  /// 不要拿"二进制"给"没认出来"当借口）。
+  Future<void> _openExternal(
+    RemoteStorageEntry entry, {
+    required _NonTextReason reason,
+  }) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(entry.name, maxLines: 2, overflow: TextOverflow.ellipsis),
-        content: const Text(
-          '这是二进制文件，用文本方式打开只会看到乱码。\n'
-          '可以下载后用本机应用打开（会先存到临时目录）。',
-        ),
+        content: Text(reason.body),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -1716,6 +1780,69 @@ class _DirectoryPickerDialogState extends State<_DirectoryPickerDialog> {
       ],
     );
   }
+}
+
+/// 名字上就能排除文本的文件（图片/视频/音频/压缩包等）吗。
+///
+/// 这里只是"快速否定"，用来省掉一次开头读取；判定文本以内容为准
+/// （`kDefinitelyNonTextExts` 的注释里写了为什么不做成白名单）。
+bool _nameLooksNonText(String name) => textSniffNameLooksNonText(name);
+
+/// 嗅探开头几个字节的结论。
+enum _SniffResult {
+  /// 是 UTF-8 文本。
+  text,
+
+  /// 出现了 NUL —— 真二进制。
+  binary,
+
+  /// 没有 NUL，但不是合法 UTF-8（GBK 之类）。
+  otherEncoding,
+
+  /// 文件是空的。
+  empty,
+
+  /// 没读成（网络/权限）。
+  unknown,
+}
+
+/// 「为什么不能当文本打开」—— 正文按**实际读到的结论**写。
+///
+/// 原先不论哪种情况都写「这是二进制文件」，于是"后缀不在我们的文本表里"
+/// 和"真读出来是二进制"对用户是同一句话；而前者只是我们没认出来。
+enum _NonTextReason {
+  /// 后缀就属于图片/视频/音频/压缩包这类。
+  notTextByName(
+    '这个文件按类型就不是文本（图片/视频/音频/压缩包等）。\n'
+    '可以下载后用本机应用打开（会先存到临时目录）。',
+  ),
+
+  /// 读到了 NUL，是真二进制。
+  binary(
+    '这个文件是二进制（内容里有 NUL 字节），用文本方式打开只会看到乱码。\n'
+    '可以下载后用本机应用打开（会先存到临时目录）。',
+  ),
+
+  /// 不是 UTF-8：当文本编辑会写坏它。
+  otherEncoding(
+    '这个文件不是 UTF-8 编码（可能是 GBK 等）。\n'
+    '直接当文本编辑存回去会变乱码，所以不当文本打开；'
+    '可以下载后用本机应用打开，或在终端里用 iconv 转好。',
+  ),
+
+  /// 空文件：没有内容可判，也没有内容可看。
+  empty('这个文件是空的（0 字节）。'),
+
+  /// 没读到开头（网络/权限），不敢当文本处理。
+  unknown(
+    '没能读到这个文件的开头，无法判断是不是文本。\n'
+    '可以下载后用本机应用打开（会先存到临时目录）。',
+  );
+
+  const _NonTextReason(this.body);
+
+  /// 弹窗正文。
+  final String body;
 }
 
 class _TextPreviewDialog extends StatefulWidget {

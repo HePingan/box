@@ -10,6 +10,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../../../../utils/text_sniff.dart';
+
 /// 允许编辑的大小上限。预览另有一套更小的（`kOpsPreviewMaxBytes = 64KB`）：
 /// 看 64KB 够，改 256KB 也够；再大就该用专门的工具，而不是在手机软键盘上滚。
 const int kOpsEditMaxBytes = 256 * 1024;
@@ -28,28 +30,21 @@ const String kOpsBackupMarker = '.box-bak-';
 
 /// 看起来是二进制吗：前 8KB 里出现 NUL 就当作二进制。
 ///
-/// 判据跟 `file(1)` 的常用启发式一致 —— 文本文件里不该有 NUL，
+/// 判据与 `file(1)` 的常用启发式一致 —— 文本文件里不该有 NUL，
 /// 有就说明是图片/压缩包/可执行文件，不能拿去当文本编辑。
-bool opsLooksBinary(Uint8List bytes) {
-  final n = bytes.length < 8192 ? bytes.length : 8192;
-  for (var i = 0; i < n; i++) {
-    if (bytes[i] == 0) return true;
-  }
-  return false;
-}
+///
+/// 实现已抽到 `lib/utils/text_sniff.dart`（远端存储的「点开」那一跳也要用同一套
+/// 判据，否则两边会对同一个文件给出不同结论）；这里保留原名字与签名，只做转发。
+bool opsLooksBinary(Uint8List bytes) => textSniffLooksBinary(bytes);
 
 /// 是合法 UTF-8 吗。
 ///
 /// 只支持 UTF-8：GBK/GB18030 的配置读进来是乱码，存回去就是**把好好的文件改坏**。
 /// 遇到这种文件只给预览、不给编辑，并在界面上说明原因。
-bool opsIsValidUtf8(Uint8List bytes) {
-  try {
-    utf8.decode(bytes);
-    return true;
-  } on FormatException {
-    return false;
-  }
-}
+///
+/// 同 `opsLooksBinary`：实现移到 `text_sniff.dart`，这里只转发。
+bool opsIsValidUtf8(Uint8List bytes) => textSniffIsValidUtf8(bytes);
+
 
 /// 原文件的"风格"：有没有 BOM、结尾有没有换行、换行是 CRLF 还是 LF。
 ///

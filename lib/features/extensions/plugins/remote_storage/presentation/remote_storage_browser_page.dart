@@ -21,6 +21,7 @@ import '../application/transfer_queue.dart';
 import '../domain/remote_storage_models.dart';
 import 'image_preview_dialog.dart';
 import 'remote_storage_player_page.dart';
+import 'package:box/utils/text_sniff.dart';
 import 'remote_thumbnail.dart';
 
 /// 跨目录搜索的进度弹窗（284 D10）。
@@ -1885,6 +1886,30 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
 
   // ------------------------------------------------------------- 预览 / 播放
 
+  /// 「其它」那一档：读开头几个字节，是文本就当文本看，否则下载。
+  ///
+  /// 读不出来（网络/权限）时按"不是文本"处理 —— 下载是纯入口、不会有副作用，
+  /// 比硬着头皮当文本打开安全。与服务器文件页用的是同一套判据（`text_sniff.dart`）。
+  Future<void> _openUnknownKind(RemoteStorageEntry entry) async {
+    var treatAsText = false;
+    try {
+      final payload = await remoteStorageService().readTextPreview(
+        widget.account,
+        entry.path,
+      );
+      final bytes = Uint8List.fromList(payload.bytes);
+      treatAsText = textSniffSaysText(bytes);
+    } catch (_) {
+      treatAsText = false;
+    }
+    if (!mounted) return;
+    if (treatAsText) {
+      await _previewEntry(entry);
+    } else {
+      _enqueueDownload(entry);
+    }
+  }
+
   Future<void> _previewEntry(RemoteStorageEntry entry) async {
     final kind = remoteEntryKind(entry);
     switch (kind) {
@@ -1948,7 +1973,17 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
       case RemoteEntryKind.text:
         _previewEntry(entry);
       case RemoteEntryKind.other:
-        _enqueueDownload(entry);
+        // 名单上就排除文本的（图片/视频/音频/压缩包）直接下载，不必多读一次；
+        // 其余按**内容**判一下：是本子就当文本预览，否则才走下载。
+        //
+        // 为什么不能只靠后缀：`_textExts` 这种白名单永远会漏下一个新后缀 ——
+        // 实测 `.dev.vars`、`.env.local`、`Dockerfile`、`README` 全被当成"其它"，
+        // 在服务器文件页里表现就是点开弹「这是二进制文件」。
+        if (textSniffNameLooksNonText(entry.name)) {
+          _enqueueDownload(entry);
+          return;
+        }
+        unawaited(_openUnknownKind(entry));
     }
   }
 

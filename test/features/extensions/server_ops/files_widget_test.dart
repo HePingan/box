@@ -31,13 +31,19 @@ class _FakeFilesService extends ServerOpsFilesService {
   /// 正是真机上报的 bug（截图打开是一屏乱码方块）。
   final List<String> textReads = [];
 
+  /// 指定路径返回的字节（不给就用默认的纯文本）。用来造「后缀看不出、
+  /// 内容是真二进制」这种反证场景。
+  Map<String, List<int>> payloadByPath = const {};
+
   @override
   Future<ReadUpTo> readUpTo(String path, int maxBytes) async {
     textReads.add(path);
+    final custom = payloadByPath[path];
+    final bytes = custom ?? utf8.encode('hello text');
     return ReadUpTo(
-      bytes: Uint8List.fromList(utf8.encode('hello text')),
+      bytes: Uint8List.fromList(bytes),
       truncated: false,
-      totalLength: 10,
+      totalLength: bytes.length,
     );
   }
 
@@ -368,8 +374,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.text('用其他应用打开'), findsOneWidget);
-    expect(find.textContaining('二进制文件'), findsOneWidget);
-    expect(service.textReads, isEmpty, reason: '二进制不能走文本读取');
+    // 文案是「按类型就不是文本」而不是「这是二进制文件」：zip 这类后缀压根没读过内容，
+    // 说成二进制是在陈述一件我们没验证过的事（真二进制那条另有专门文案）。
+    expect(find.textContaining('按类型就不是文本'), findsOneWidget);
+    expect(service.textReads, isEmpty, reason: '压缩包不能走文本读取');
 
     await tester.tap(find.widgetWithText(TextButton, '取消'));
     await tester.pump();
@@ -396,5 +404,145 @@ void main() {
 
     expect(service.textReads, ['notes.txt']);
     expect(find.text('hello text'), findsOneWidget);
+  });
+
+  testWidgets('未知后缀但内容是文本 → 按文本打开（真机现场：.dev.vars）', (tester) async {
+    // 由来：后缀白名单（txt/md/json/env…）没命中就会弹「这是二进制文件」。
+    // 真机上 .dev.vars（113 B 纯文本）就是这么被挡住的，而宝塔的编辑器能打开它。
+    // 影响面不止一个后缀：.env.local / Dockerfile / Makefile / README / nginx.conf.bak
+    // 这一大批同样是纯文本，65 个真实文件名里 44 个判错。
+    final service = _FakeFilesService(
+      entries: const [
+        RemoteStorageEntry(
+          name: '.dev.vars',
+          path: '.dev.vars',
+          size: 113,
+          isDirectory: false,
+        ),
+      ],
+    );
+    await _pumpTab(tester, service);
+
+    await tester.tap(find.widgetWithText(ListTile, '.dev.vars'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(
+      service.textReads,
+      contains('.dev.vars'),
+      reason: '要先读开头才能判内容',
+    );
+    expect(
+      find.text('用其他应用打开'),
+      findsNothing,
+      reason: '纯文本不该被说成二进制；宝塔能开，我们也得能开',
+    );
+    expect(find.text('hello text'), findsOneWidget, reason: '应当进文本预览');
+    expect(
+      find.text('编辑'),
+      findsOneWidget,
+      reason: '文本预览里要能直接进编辑 —— 用户要的就是「能改」',
+    );
+  });
+
+  // 无后缀的纯文本：Dockerfile / Makefile / README 都没有后缀，
+  // 旧的后缀白名单必然漏掉它们（真机上点开就是「这是二进制文件」）。
+  for (final name in const ['Dockerfile', 'Makefile', 'README']) {
+    testWidgets('无后缀的纯文本 $name 能按文本打开', (tester) async {
+      final service = _FakeFilesService(
+        entries: [
+          RemoteStorageEntry(
+            name: name,
+            path: name,
+            size: 40,
+            isDirectory: false,
+          ),
+        ],
+      );
+      await _pumpTab(tester, service);
+
+      await tester.tap(find.widgetWithText(ListTile, name));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        find.text('hello text'),
+        findsOneWidget,
+        reason: '$name 是纯文本，不该被当成二进制挡下来',
+      );
+    });
+  }
+
+  testWidgets('反证：未知后缀 + 真二进制内容，仍不当文本打开', (tester) async {
+    // 必须有一条反证，否则分不清「规则通过」和「规则根本没在查」：
+    // 上面两条证明了"按内容放行"，这条证明"按内容拦下"这一半也真的在跑。
+    final service = _FakeFilesService(
+      entries: const [
+        RemoteStorageEntry(
+          name: 'data.weird',
+          path: 'data.weird',
+          size: 16,
+          isDirectory: false,
+        ),
+      ],
+    )..payloadByPath = {
+        'data.weird': [0x41, 0x00, 0x42, 0x43],
+      };
+    await _pumpTab(tester, service);
+
+    await tester.tap(find.widgetWithText(ListTile, 'data.weird'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('用其他应用打开'), findsOneWidget);
+    expect(
+      find.textContaining('二进制'),
+      findsOneWidget,
+      reason: '这次是真读过内容、确实见到了 NUL，文案可以明说是二进制',
+    );
+    expect(find.text('hello text'), findsNothing);
+  });
+
+  testWidgets('反证：内容不是 UTF-8（GBK）不当文本编辑', (tester) async {
+    final service = _FakeFilesService(
+      entries: const [
+        RemoteStorageEntry(
+          name: 'legacy.cfg2',
+          path: 'legacy.cfg2',
+          size: 8,
+          isDirectory: false,
+        ),
+      ],
+    )..payloadByPath = {
+        // 「中文」的 GBK 编码：合法字节序列，但不是 UTF-8
+        'legacy.cfg2': [0xD6, 0xD0, 0xCE, 0xC4],
+      };
+    await _pumpTab(tester, service);
+
+    await tester.tap(find.widgetWithText(ListTile, 'legacy.cfg2'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.textContaining('不是 UTF-8'), findsOneWidget);
+    expect(find.text('hello text'), findsNothing, reason: 'GBK 存回去会写坏文件');
+  });
+
+  testWidgets('图片/压缩包这类后缀不做多余的开头读取', (tester) async {
+    // 口径：名字上就能排除文本的，不该为它多花一次网络读取。
+    final service = _FakeFilesService(
+      entries: const [
+        RemoteStorageEntry(
+          name: 'pkg.zip',
+          path: 'pkg.zip',
+          size: 2048,
+          isDirectory: false,
+        ),
+      ],
+    );
+    await _pumpTab(tester, service);
+    await tester.tap(find.widgetWithText(ListTile, 'pkg.zip'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(service.textReads, isEmpty, reason: 'zip 不必读开头就能否定');
   });
 }
