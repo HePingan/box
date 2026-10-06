@@ -31,11 +31,36 @@ void main() {
     return names;
   }
 
+  /// 从页面源码里抠出**分区标题**（页面上真会渲染出来的区块名）。
+  ///
+  /// 三种写法都要认，否则清单会静默变窄（漏掉的分区名会让文案里的路径被误判为
+  /// "走不通"，也会让真走不通的路径混进来）：
+  ///   * `_buildSectionHeader(title: '快捷入口')` / `_buildSectionHeader('已安装插件')`
+  ///   * `AppSectionHeader(title: '内容入口')`
+  ///   * `_tabChip(HomeFeedTab.news, '热闻')`（首页资讯卡里的两个 tab）
+  Set<String> sectionTitlesOf(String path) {
+    final source = readLib(path);
+    final names = <String>{};
+    for (final re in [
+      RegExp(r"_buildSectionHeader\(\s*(?:title:\s*)?'([^']+)'"),
+      RegExp(r"AppSectionHeader\(\s*(?:title:\s*)?'([^']+)'"),
+      RegExp(r"_tabChip\([^,]+,\s*'([^']+)'\)"),
+    ]) {
+      for (final m in re.allMatches(source)) {
+        names.add(m.group(1)!);
+      }
+    }
+    return names;
+  }
+
   /// 各容器的真实入口清单。
   ///
-  /// 「首页」这一档是拼出来的：首页插件的 title + 专区名（专区名由
-  /// `home_plugin_core.dart` 的 `area.title` 决定，这里按同一份枚举写死并在下面
-  /// 用一条断言钉住它在源码里确实存在）。
+  /// **一律从渲染源码里取，不许手写**。这里踩过一次大的：原来「首页」那一档是
+  /// 「内置插件目录的 title + 手写的六个专区名（推荐/音乐/影视/漫画/小说/工具）」，
+  /// 而首页**根本不按专区渲染** —— `HomePluginArea` 全仓只在投稿页当下拉选项用，
+  /// `home_page.dart` 实际只有问候栏 / 快捷入口 / 已安装插件 / 继续使用 / 资讯卡。
+  /// 于是「首页 → 影视」这类路径写了很久、用户照着找不到，而这条护栏还一路绿灯：
+  /// 它拿文案自己的假设（专区名）去验文案，等于自己给自己盖章。
   final containers = <String, Set<String>>{
     '侧边栏': titlesOf(['app_drawer.dart']),
     '设置': titlesOf([
@@ -43,15 +68,29 @@ void main() {
       'features/settings/presentation/data_settings_page.dart',
     ]),
     '关于': titlesOf(['features/about/presentation/about_page.dart']),
+    // 「首页」这一档：只放首页**真的会渲染出来的**区块名，
+    // 以及「快捷入口」卡片的来源（内置插件目录，默认几个入口就是它的 title）。
     '首页': {
+      ...sectionTitlesOf('features/home/presentation/home_page.dart'),
+      ...sectionTitlesOf('features/home/presentation/widgets/continue_rail.dart'),
+      ...sectionTitlesOf('features/home/presentation/widgets/home_feed_card.dart'),
+      // 快捷入口卡片的标题来自插件目录，不是首页自己写的字符串。
       ...titlesOf(['features/extensions/core/builtin_plugin_catalog.dart']),
-      ...titlesOf(['features/home/presentation/home_page.dart']),
-      '推荐',
-      '音乐',
-      '影视',
-      '漫画',
-      '小说',
-      '工具',
+    },
+    // 「内容」页：四宫格（内容入口 → 影视/小说/漫画/音乐）+ 收藏库各分区名。
+    '内容': {
+      ...titlesOf(
+        ['features/content/presentation/widgets/warehouse_widgets.dart'],
+      ),
+      ...titlesOf(['features/content/presentation/warehouse_tab.dart']),
+      ...sectionTitlesOf('features/content/presentation/warehouse_tab.dart'),
+    },
+    // 「扩展」页：列表里列出的就是内置插件（title 来自目录），外加顶部几个动作。
+    '扩展': {
+      ...titlesOf(['features/extensions/core/builtin_plugin_catalog.dart']),
+      ...titlesOf([
+        'features/extensions/presentation/widgets/extension_management_widgets.dart',
+      ]),
     },
   };
 
@@ -62,6 +101,8 @@ void main() {
     '关于': '关于',
     '关于页': '关于',
     '首页': '首页',
+    '内容': '内容',
+    '扩展': '扩展',
   };
 
   /// 从一段里认出容器名：规范化后**以容器名结尾**就算。
@@ -110,13 +151,45 @@ void main() {
     ...AboutContent.tutorials.expand((t) => [t.title, t.description]),
   ].join('\n');
 
-  test('专区名与源码里的枚举一致（首页那一档的清单不是编的）', () {
-    final core = readLib('features/extensions/core/home_plugin_core.dart');
+  test('首页不按专区渲染：文案里不许再出现「首页 → 专区名」', () {
+    // 由来（真实翻车）：文案曾写「首页 → 影视」「首页 → 小说」，而首页从来没有专区。
+    // 根因是这条护栏原来拿 `HomePluginArea` 的 `area.title`（推荐/音乐/影视/漫画/小说/工具）
+    // 当「首页的真实入口」—— 那份枚举全仓只有投稿页当下拉选项用，没有任何页面按它渲染。
+    // 于是护栏拿文案自己的假设去验文案，一路绿灯。现在改成**反向**钉住：
+    // 只要首页还不按专区渲染，文案里就不许出现这类路径。
+    expect(
+      readLib('features/home/presentation/home_page.dart')
+          .contains('HomePluginArea'),
+      isFalse,
+      reason: '首页一旦真的按专区渲染，才能把「首页 → 影视」写回文案；在那之前不许写',
+    );
     for (final area in ['推荐', '音乐', '影视', '漫画', '小说', '工具']) {
       expect(
-        core.contains("return '$area';"),
-        isTrue,
-        reason: '首页专区名「$area」在源码里找不到，清单就是编的',
+        allText().contains('首页 → $area'),
+        isFalse,
+        reason: '「首页 → $area」用户走不通：首页只有问候栏 / 快捷入口 / 已安装插件 / '
+            '继续使用 / 资讯卡，专区只是数据模型里的一层分类',
+      );
+    }
+  });
+
+  test('文案里不许出现应用没有的能力词', () {
+    // 这些词都真在文案里出现过，但界面里没有对应的能力（全仓 grep 零命中），
+    // 用户照着找会扑空。加进来是防止「顺手写回去」。
+    const nonexistent = <String, String>{
+      '练习': '没有练习模式，题库只有录入 / 查看 / 答题助手读屏',
+      '错题': '没有错题本',
+      '最近使用': '工具页那行是「常用」，按点击次数排，不能手动固定/置顶',
+      '音乐收藏': '内容页只有书架 / 影视收藏 / 漫画收藏三类，音乐是占位页',
+      '漫画源检测': '界面上的说法是「漫画源自检」',
+      '四类收藏': '只有三类',
+    };
+    final text = allText();
+    for (final entry in nonexistent.entries) {
+      expect(
+        text.contains(entry.key),
+        isFalse,
+        reason: '文案里出现「${entry.key}」，但${entry.value}',
       );
     }
   });
