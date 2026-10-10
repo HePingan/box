@@ -1375,6 +1375,7 @@ class PlatformQuotaServer {
       'hasApiKey': apiKey.trim().isNotEmpty,
       'model': provider?.model ?? '',
       'enabled': provider?.enabled ?? false,
+      'thinkingOff': provider?.thinkingOff ?? true,
       'dailyCapPerAccount': quizVisionDailyCap,
       'updatedAt': provider?.updatedAt?.toIso8601String(),
     };
@@ -1470,12 +1471,16 @@ class PlatformQuotaServer {
     final enabled = decoded['enabled'] is bool
         ? decoded['enabled'] as bool
         : previous?.enabled ?? false;
+    final thinkingOff = decoded['thinkingOff'] is bool
+        ? decoded['thinkingOff'] as bool
+        : previous?.thinkingOff ?? true;
     store.quizVisionProvider = QuizVisionProviderConfig(
       baseUrl: baseUrl,
       apiKeyCipher: nextApiKeyCipher,
       model: model,
       enabled: enabled,
       updatedAt: DateTime.now(),
+      thinkingOff: thinkingOff,
     );
     await store.save();
     store.markQuizVisionPersisted();
@@ -1523,6 +1528,17 @@ class PlatformQuotaServer {
     // 透传 chat/completions 请求体；后台配置了 model 则强制覆盖。
     if (provider.model.isNotEmpty) {
       decoded['model'] = provider.model;
+    }
+    // ⚠️ 上游思考开关（2026-10-10 实测，flr.hpa888.top 上的 qwen3.8-flash）：
+    // 默认（带思考）在真实尺寸截图上实测 **16.4s / 76s / 90s 超时** 三态漂移，
+    // 客户端引擎硬顶只有 45s（QuizVisionTimeouts.engineHard）→ 症状是
+    // 「点击 AI 转半天没反应」。追加 reasoning_effort=none 后 6 次实测
+    // **1.5~3.6s、无思考 token、输出更短更贴 JSON**。
+    // 该字段是 OpenAI 兼容协议的标准字段，不识别的上游会忽略它
+    // （已对旧 newapi 渠道实测：不报 400），故放在这里对两档上游都安全。
+    // 复现：见 docs/quiz-vision-upstream-switch-20261010.md。
+    if (provider.thinkingOff) {
+      decoded['reasoning_effort'] = 'none';
     }
     final UpstreamResponse upstream;
     try {
@@ -7965,6 +7981,7 @@ class QuizVisionProviderConfig {
     required this.model,
     required this.enabled,
     required this.updatedAt,
+    this.thinkingOff = true,
   });
 
   factory QuizVisionProviderConfig.fromJson(Map<String, dynamic> json) =>
@@ -7975,6 +7992,8 @@ class QuizVisionProviderConfig {
         model: json['model']?.toString() ?? '',
         enabled: json['enabled'] == true,
         updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? ''),
+        // 缺省 true：老 state 没有该键时，行为与本次实测结论一致（关思考）。
+        thinkingOff: json['thinkingOff'] is bool ? json['thinkingOff'] as bool : true,
       );
 
   final String baseUrl;
@@ -7983,12 +8002,21 @@ class QuizVisionProviderConfig {
   final bool enabled;
   final DateTime? updatedAt;
 
+  /// 转发上游时是否追加 `reasoning_effort: "none"`（关掉模型思考）。
+  ///
+  /// 为什么要有：读屏走的视觉模型默认「先长思考再作答」，真实尺寸截图上
+  /// 实测 16~90s 漂移，而客户端引擎硬顶 45s。关思考后 1.5~3.6s。
+  /// 默认 true，管理员可在 /admin/quiz-vision/provider 关掉（换到不支持该
+  /// 字段的上游时，它会被忽略而不是报错，故一般不必关）。
+  final bool thinkingOff;
+
   Map<String, dynamic> toJson() => {
         'baseUrl': baseUrl,
         'apiKeyCipher': apiKeyCipher,
         'model': model,
         'enabled': enabled,
         'updatedAt': updatedAt?.toIso8601String(),
+        'thinkingOff': thinkingOff,
       };
 }
 

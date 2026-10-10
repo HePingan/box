@@ -74,20 +74,28 @@ class QuizResult {
 /// 从模型读屏输出的散文/JSON 混合文本中提取结构化答案。
 ///
 /// 实测（2026-09-13，NewAPI 渠道 `deepseek`；2026-09-19 切换 `gemini-3-8-flash`
-/// 后输出形态同样不稳定）模型输出有三种形态，解析器对全兼容：
+/// 后输出形态同样不稳定；2026-10-10 切 `qodercn/qwen3.8-flash`）模型输出有
+/// 五种形态，解析器对全兼容：
 ///   1. 纯 JSON：`{"stem":...}`
 ///   2. ```json 围栏包裹
 ///   3. Markdown 散文（`## 分析` 之类标题）后跟 JSON
+///   4. ```json 围栏里包**数组**：`[{"stem":...}]`（截图上同时有两道题时出现）
+///   5. 裸数组：`[{"stem":...}]`
 /// 故按「围栏 → 首个 JSON 对象」顺序宽松提取；**提取不到一律返回 null**，
 /// 由调用方转为明确错误，绝不猜测答案。
+///
+/// ⚠️ 数组形态是 2026-10-10 实测到的真实缺口：旧正则只认 `{...}`，
+/// 围栏里是数组时整个匹配落空，再用首个 `{` 到末个 `}` 去 decode 也解不出，
+/// 用户看到的是「读屏返回无法解析」→ 白等一次（实测 8 次样本里 1 次）。
+/// 现在围栏与裸文本两处都先取出数组里的**第一个**对象。
 Map<String, dynamic>? parseVisionJson(String content) {
   final trimmed = content.trim();
   if (trimmed.isEmpty) return null;
-  // 1) ```json ... ``` 围栏
-  final fenced = RegExp(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```');
+  // 1) ```json ... ``` 围栏（对象或数组）
+  final fenced = RegExp(r'```(?:json)?\s*([\[{][\s\S]*?[\]}])\s*```');
   final m1 = fenced.firstMatch(trimmed);
   if (m1 != null) {
-    final parsed = _tryDecodeJsonMap(m1.group(1)!);
+    final parsed = _tryDecodeJsonAnswer(m1.group(1)!);
     if (parsed != null) return parsed;
   }
   // 2) 首个完整 JSON 对象（贪婪失败则退回最长匹配）
@@ -95,7 +103,33 @@ Map<String, dynamic>? parseVisionJson(String content) {
     final parsed = _tryDecodeJsonMap(m.group(0)!);
     if (parsed != null) return parsed;
   }
+  // 3) 裸数组：`[{...}]`（可能是围栏内 regex 未闭合，或直接裸输出）
+  for (final m in RegExp(r'\[[\s\S]*\]').allMatches(trimmed)) {
+    final parsed = _tryDecodeJsonAnswer(m.group(0)!);
+    if (parsed != null) return parsed;
+  }
   return null;
+}
+
+/// 解码「对象或数组」形态的 JSON：数组取第一个对象元素。
+///
+/// 为什么取第一个：读屏一次只回答用户当前在看的那道题，模型给出数组时
+/// 首元素对应截图上第一题（实测 stem 与卷面第一题一致）；多题场景由上层
+/// 的题图/题干比对再消歧，解析器不做语义挑选。
+Map<String, dynamic>? _tryDecodeJsonAnswer(String raw) {
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map<String, dynamic>) return decoded;
+    if (decoded is List) {
+      for (final item in decoded) {
+        if (item is Map<String, dynamic>) return item;
+        if (item is Map) return item.cast<String, dynamic>();
+      }
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
 }
 
 Map<String, dynamic>? _tryDecodeJsonMap(String raw) {

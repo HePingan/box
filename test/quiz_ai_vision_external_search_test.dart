@@ -117,6 +117,35 @@ void main() {
       const raw = '抱歉，我无法识别这张图片。';
       expect(parseVisionJsonUnderTest(raw), isNull);
     });
+
+    // 2026-10-10 实测缺口（切 qodercn/qwen3.8-flash 后）：截图上同时有两道题时，
+    // 模型会把答案包成**数组**（常带 ```json 围栏）。旧正则只认 `{...}`，
+    // 整个匹配落空 → 用户看到「读屏返回无法解析」白等一次。8 次真实样本里出现 1 次。
+    test('```json 围栏里是数组时取首个元素（实测真实缺口）', () {
+      const raw = '```json\n[\n  {\n    "stem": "驾驶机动车在道路上违反道路交通安全法的行为，属于什么行为？",\n'
+          '    "options": ["A. 违法行为", "B. 违章行为"],\n'
+          '    "answer": "A",\n    "confidence": 0.95\n  },\n'
+          '  {\n    "stem": "机动车驾驶人初次申领驾驶证后的实习期是多长时间？",\n'
+          '    "options": ["A. 6个月", "B. 12个月"],\n    "answer": "B"\n  }\n]\n```';
+      final j = parseVisionJsonUnderTest(raw);
+      expect(j, isNotNull);
+      expect(j!['answer'], 'A');
+      expect(j['stem'], contains('违反道路交通安全法'));
+    });
+
+    test('裸数组（无围栏）也能解析，取第一个对象', () {
+      const raw = '[{"stem":"甲题","options":["A. 对","B. 错"],"answer":"对"},'
+          '{"stem":"乙题","options":["A. 对","B. 错"],"answer":"错"}]';
+      final j = parseVisionJsonUnderTest(raw);
+      expect(j, isNotNull);
+      expect(j!['stem'], '甲题');
+      expect(j['answer'], '对');
+    });
+
+    test('数组里没有对象元素时返回 null（不猜测）', () {
+      expect(parseVisionJsonUnderTest('["A","B"]'), isNull);
+      expect(parseVisionJsonUnderTest('[1,2,3]'), isNull);
+    });
   });
 
   group('AI 读屏配置契约', () {
