@@ -20,7 +20,12 @@ enum QuizVisionMode { ownKey, platformProxy, deviceProxy, unavailable }
 /// 直连兜底**端点**（B 档渠道）：用户手填了 key 但没填地址时用。
 ///
 /// 只放端点、不放密钥 —— 密钥只能来自用户手填或服务端签发。
-const String defaultVisionApiUrl = 'https://newapi.hpa888.top/v1';
+///
+/// 2026-10-10 随上游切换一起改：旧值 `https://newapi.hpa888.top/v1` 那个渠道
+/// 对 `model=deepseek` 已经回 503 `model_not_found`（实测），留着它等于给
+/// 「手填 key 没填地址」的用户一个**必然失败**的默认值。这里换到当前在用的
+/// flr 网关（与后台代理同源），用户在设置里手填自己的 key 即可直连。
+const String defaultVisionApiUrl = 'https://flr.hpa888.top/v1';
 
 
 /// 读屏端点/凭证解析结果（纯数据）。

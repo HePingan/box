@@ -78,6 +78,13 @@ curl -s -X POST https://background.hpa888.top/api/quiz/vision/device-token \
   -H 'Content-Type: application/json' -d '{"deviceId":"selftest-xxxxxxxx"}'
 ```
 
+## 附：直连兜底端点已同步
+
+`defaultVisionApiUrl`（用户手填 key 但没填地址时用的端点）旧值也是
+`https://newapi.hpa888.top/v1` —— 那个渠道对 `deepseek` 已 503，留着等于给这类
+用户一个**必然失败**的默认值。已同步改为 `https://flr.hpa888.top/v1`，
+设置页的地址提示文案一并改。这条需要**下次发版**才到用户手里（服务端代理路径与它无关）。
+
 ## 回滚
 
 `provider` 是 state 里的一条配置，回滚 = 用管理接口写回旧值：

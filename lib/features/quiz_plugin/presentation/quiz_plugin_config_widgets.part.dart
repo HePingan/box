@@ -357,7 +357,7 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                       enabled: _cfg.allowExternalApi,
                       decoration: const InputDecoration(
                         labelText: 'API 地址（可选）',
-                        hintText: 'https://newapi.hpa888.top/v1',
+                        hintText: 'https://flr.hpa888.top/v1',
                         helperText: 'OpenAI 兼容地址（不含 /chat/completions），留空走平台代理',
                         border: OutlineInputBorder(),
                         isDense: true,
