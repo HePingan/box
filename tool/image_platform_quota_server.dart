@@ -1992,11 +1992,14 @@ class PlatformQuotaServer {
     }
     final body = await readJsonObject(request);
     if (body == null) return;
-    final question = QuizQuestion.fromRequest(
+    final question = await QuizQuestion.externalizeImage(
+   QuizQuestion.fromRequest(
       body,
       id: store.nextQuizSubmissionId(),
       status: 'pending',
-    );
+    ),
+   _externalizeQuizImage,
+ );
     final error = question.validationError;
     if (error != null) {
       await jsonResponse(request.response, HttpStatus.badRequest, {
@@ -2060,11 +2063,14 @@ class PlatformQuotaServer {
         }
         continue;
       }
-      final question = QuizQuestion.fromRequest(
+      final question = await QuizQuestion.externalizeImage(
+   QuizQuestion.fromRequest(
         Map<String, dynamic>.from(raw),
         id: store.nextQuizQuestionId(),
         status: publish ? 'published' : 'pending',
-      );
+      ),
+   _externalizeQuizImage,
+ );
       final error = question.validationError;
       if (error != null) {
         invalid++;
@@ -2101,11 +2107,14 @@ class PlatformQuotaServer {
       for (var index = 0; index < rawItems.length; index++) {
         final raw = rawItems[index];
         if (raw is! Map) continue;
-        final candidate = QuizQuestion.fromRequest(
+        final candidate = await QuizQuestion.externalizeImage(
+   QuizQuestion.fromRequest(
           Map<String, dynamic>.from(raw),
           id: '',
           status: 'incomplete',
-        );
+        ),
+   _externalizeQuizImage,
+ );
         final error = candidate.validationError;
         if (error != null) {
           store.quizIncomplete.add(
@@ -2371,7 +2380,8 @@ class PlatformQuotaServer {
             defaultCategory.isNotEmpty ? defaultCategory : record.category;
         final analysis =
             defaultAnalysis.isNotEmpty ? defaultAnalysis : record.analysis;
-        final question = QuizQuestion.fromRequest(
+        final question = await QuizQuestion.externalizeImage(
+   QuizQuestion.fromRequest(
           {
             'question': record.question,
             'type': record.type,
@@ -2384,7 +2394,9 @@ class PlatformQuotaServer {
           },
           id: store.nextQuizQuestionId(),
           status: 'published',
-        );
+        ),
+   _externalizeQuizImage,
+ );
         final error = question.validationError;
         if (error != null) {
           skipped++;
@@ -2485,7 +2497,8 @@ class PlatformQuotaServer {
       return;
     }
     final category = (body['category']?.toString() ?? record.category).trim();
-    final question = QuizQuestion.fromRequest(
+    final question = await QuizQuestion.externalizeImage(
+   QuizQuestion.fromRequest(
       {
         'question': body['question']?.toString() ?? record.question,
         'type': type,
@@ -2501,7 +2514,9 @@ class PlatformQuotaServer {
       },
       id: store.nextQuizQuestionId(),
       status: 'published',
-    );
+    ),
+   _externalizeQuizImage,
+ );
     final error = question.validationError;
     if (error != null) {
       await jsonResponse(request.response, HttpStatus.badRequest, {
@@ -2691,6 +2706,58 @@ class PlatformQuotaServer {
     await request.response.close();
   }
 
+
+  /// 把请求里的 base64 图片外置为独立文件，返回 `/api/quiz/images/<name>`。
+  ///
+  /// 幂等：非 `data:` 前缀（含已是 URL、空串、http 链接）一律原样返回。
+  /// 失败时返回原值，不阻断业务（宁可存 base64，也不能丢图）。
+  Future<String> _externalizeQuizImage(String raw) async {
+    final value = raw.trim();
+    if (value.isEmpty) return value;
+    // 只处理 data URL；已是 /api/... 或 http(s):// 的直接放行
+    if (!value.startsWith('data:image/')) return value;
+
+    try {
+      final m = RegExp(
+        r'^data:image/([a-zA-Z0-9+.-]+);base64,(.+)$',
+        multiLine: false,
+      ).firstMatch(value);
+      if (m == null) return value;
+
+      final bytes = base64Decode(m.group(2)!);
+      if (bytes.isEmpty || bytes.length > 8 * 1024 * 1024) return value;
+
+      final ext = _normalizeImageExt(m.group(1)!);
+      final hash = sha256.convert(bytes).toString().substring(0, 16);
+      final dir = store.quizImagesDir;
+      if (!await dir.exists()) await dir.create(recursive: true);
+
+      // 去重：文件名含时间戳，不能靠 file.exists() 判断，
+      // 必须先扫目录找同 hash 的既有文件（hash 是内容摘要，同 hash 即同图）。
+      final suffix = '_$hash.$ext';
+      String? existingName;
+      await for (final entity in dir.list()) {
+        if (entity is File) {
+          final base = entity.uri.pathSegments.last;
+          if (base.startsWith('quiz_') && base.endsWith(suffix)) {
+            existingName = base;
+            break;
+          }
+        }
+      }
+      if (existingName != null) {
+        return '/api/quiz/images/$existingName';
+      }
+
+      final filename =
+          'quiz_${DateTime.now().millisecondsSinceEpoch}_$hash.$ext';
+      await File('${dir.path}/$filename').writeAsBytes(bytes, flush: true);
+      return '/api/quiz/images/$filename';
+    } catch (_) {
+      return value; // 解码/写入失败：保留原值，不影响提交
+    }
+  }
+
   String _normalizeImageExt(String raw) {
     final value = raw.toLowerCase();
     if (value.contains('jpeg') || value == 'jpg') return 'jpg';
@@ -2744,11 +2811,14 @@ class PlatformQuotaServer {
   Future<void> createQuizQuestion(HttpRequest request) async {
     final body = await readJsonObject(request);
     if (body == null) return;
-    final question = QuizQuestion.fromRequest(
+    final question = await QuizQuestion.externalizeImage(
+   QuizQuestion.fromRequest(
       body,
       id: store.nextQuizQuestionId(),
       status: body['status']?.toString() ?? 'published',
-    );
+    ),
+   _externalizeQuizImage,
+ );
     final error = question.validationError;
     if (error != null) {
       await jsonResponse(request.response, HttpStatus.badRequest, {
@@ -2841,13 +2911,16 @@ class PlatformQuotaServer {
       for (final id in ids) {
         final old = store.quizQuestions[id];
         if (old == null || old.status == 'archived') continue;
-        final question = QuizQuestion.fromRequest(
+        final question = await QuizQuestion.externalizeImage(
+   QuizQuestion.fromRequest(
           {...old.toJson(), 'category': category},
           id: id,
           status: old.status,
           revision: old.revision + 1,
           createdAt: old.createdAt,
-        );
+        ),
+   _externalizeQuizImage,
+ );
         store.quizQuestions[id] = question;
         if (question.status == 'published') {
           store.recordQuizChange(id, 'upsert');
@@ -2880,7 +2953,8 @@ class PlatformQuotaServer {
     final body = await readJsonObject(request);
     if (body == null) return;
     final status = body['status']?.toString() ?? old.status;
-    final question = QuizQuestion.fromRequest(
+    final question = await QuizQuestion.externalizeImage(
+   QuizQuestion.fromRequest(
       {
         ...old.toJson(),
         ...body,
@@ -2893,7 +2967,9 @@ class PlatformQuotaServer {
       status: status,
       revision: old.revision + 1,
       createdAt: old.createdAt,
-    );
+    ),
+   _externalizeQuizImage,
+ );
     final error = question.validationError;
     if (error != null) {
       await jsonResponse(request.response, HttpStatus.badRequest, {
@@ -6380,6 +6456,16 @@ class QuizQuestion {
       imageStatus: json['imageStatus']?.toString().trim() ?? '',
       issueReason: json['issueReason']?.toString().trim() ?? '',
     );
+  }
+
+  /// 把本题图片外置（base64 -> 文件），幂等。
+  static Future<QuizQuestion> externalizeImage(
+    QuizQuestion q,
+    Future<String> Function(String) externalize,
+  ) async {
+    final url = await externalize(q.image);
+    if (url != q.image) q.image = url;
+    return q;
   }
 
   factory QuizQuestion.fromJson(Map<String, dynamic> json) {
