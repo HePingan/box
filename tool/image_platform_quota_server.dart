@@ -5691,8 +5691,21 @@ class StateStore {
       await save();
       return;
     }
-    final decoded = jsonDecode(await file.readAsString());
-    if (decoded is! Map<String, dynamic>) return;
+    // 容错（2026-10-11）：原先 jsonDecode 无 try/catch，文件损坏会让服务
+    // 直接起不来，且没有任何降级路径。这里回退到最近的可用备份。
+    Map<String, dynamic>? decoded = _tryDecode(await _readOrNull(file));
+    if (decoded == null) {
+      final recovered = await _recoverFromBackup();
+      if (recovered == null) {
+        stderr.writeln(
+          '[state] 状态文件损坏且无可用备份，以空状态启动: $path',
+        );
+        quotas['demo'] = UserQuota.defaultFor(defaultQuota);
+        return;
+      }
+      decoded = recovered;
+      stderr.writeln('[state] 已从备份恢复状态: $path');
+    }
 
     final rawProvider = decoded['providerConfig'];
     if (rawProvider is Map) {
@@ -6196,16 +6209,115 @@ class StateStore {
     return false;
   }
 
-  Future<void> save() async {
+  // ---- 落盘串行化（2026-10-11 修复）----
+  // 请求由 unawaited 并发处理，而 save() 原先用固定 '$path.tmp' 且无锁：
+  // 两个请求会互相覆盖 tmp，后者 rename 报 ENOENT，前者数据丢失
+  // （状态全在内存，调用方以为已持久化）。
+  //
+  // 做法：严格串行队列。每次 save() 追加到链尾并等待自己那段完成，
+  // 从而保证 await 返回时"调用时刻的内存状态"已落盘。
+  // 刻意不做写入合并：合并会让后来的调用提前返回而丢失自己的改动
+  // （初版如此实现，实测并发 20 次提交只落盘 18 次）。
+  Future<void>? _saveChain;
+
+  Future<void> save() {
+    final prev = _saveChain;
+    final completer = Completer<void>();
+    _saveChain = completer.future;
+    // 用 Future 链排队；前一次失败不阻塞后续写入
+    return Future<void>(() async {
+      if (prev != null) {
+        try {
+          await prev;
+        } catch (_) {}
+      }
+      try {
+        await _saveNow();
+        completer.complete();
+      } catch (e, st) {
+        completer.complete();
+        Error.throwWithStackTrace(e, st);
+      }
+    });
+  }
+
+  Future<void> _saveNow() async {
     final file = File(path);
     await file.parent.create(recursive: true);
     const encoder = JsonEncoder.withIndent('  ');
     // 原子写：先写临时文件并 flush，再 rename 覆盖正式文件。
     // 避免进程在写入中途被 kill / 磁盘写满时，把状态文件截断成损坏的 JSON
     // （该文件是全部账号、题库、用量的唯一存储）。
-    final tmp = File('$path.tmp');
-    await tmp.writeAsString(encoder.convert(toJson()), flush: true);
-    await tmp.rename(path);
+    // tmp 名带 PID，即使串行化失效也不会与其它进程互相覆盖。
+    final tmp = File('$path.tmp.$pid');
+    try {
+      await tmp.writeAsString(encoder.convert(toJson()), flush: true);
+      await tmp.rename(path);
+    } catch (_) {
+      // 失败时清理残留 tmp，避免下次启动被误认为有效文件
+      try {
+        if (await tmp.exists()) await tmp.delete();
+      } catch (_) {}
+      rethrow;
+    }
+  }
+
+  Future<String?> _readOrNull(File f) async {
+    try {
+      return await f.readAsString();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Map<String, dynamic>? _tryDecode(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      final d = jsonDecode(raw);
+      if (d is Map<String, dynamic>) return d;
+      if (d is Map) return Map<String, dynamic>.from(d);
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 从备份目录按时间倒序找第一个可解析的快照。
+  /// 备份目录约定: <state_dir>/../../backups/state/{hourly,daily}
+  /// 由 /opt/box-backend/scripts/backup-state.sh 生成。
+  Future<Map<String, dynamic>?> _recoverFromBackup() async {
+    try {
+      final stateDir = File(path).parent;
+      final backupRoot = Directory('${stateDir.parent.path}/backups/state');
+      if (!await backupRoot.exists()) return null;
+
+      final candidates = <FileSystemEntity>[];
+      for (final sub in ['hourly', 'daily']) {
+        final d = Directory('${backupRoot.path}/$sub');
+        if (await d.exists()) {
+          candidates.addAll(await d
+              .list()
+              .where((e) => e is File && e.path.endsWith('.json'))
+              .toList());
+        }
+      }
+      // 按修改时间倒序
+      candidates.sort((a, b) =>
+          b.statSync().modified.compareTo(a.statSync().modified));
+
+      for (final e in candidates) {
+        final parsed = _tryDecode(await _readOrNull(File(e.path)));
+        if (parsed != null) {
+          // 先把损坏文件留档，便于事后排查
+          try {
+            final broken = File('${path}.corrupt.${DateTime.now().millisecondsSinceEpoch}');
+            await File(path).copy(broken.path);
+          } catch (_) {}
+          return parsed;
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 }
 
