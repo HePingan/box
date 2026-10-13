@@ -686,7 +686,7 @@ class ContentSearchBar extends StatelessWidget {
                 height: 14,
                 child: CircularProgressIndicator(
                   strokeWidth: 1.5,
-                  color: Colors.grey.shade400,
+                  color: AppTokens.textTertiary,
                 ),
               ),
             ),
@@ -842,7 +842,7 @@ class _WarehouseSectionState extends State<WarehouseSection>
                         ' · 暂无内容',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey.shade400,
+                          color: AppTokens.textTertiary,
                         ),
                       ),
                     const Spacer(),
@@ -1010,7 +1010,7 @@ class WarehouseCard extends StatelessWidget {
                           border: Border.all(
                             color: isSelected
                                 ? AppTokens.emerald
-                                : Colors.grey.shade400,
+                                : AppTokens.cardBorder,
                             width: 2,
                           ),
                         ),

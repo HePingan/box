@@ -85,7 +85,7 @@ class SearchResultCard extends StatelessWidget {
 
   Widget _buildPlaceholder() {
     return Container(
-      color: Colors.grey.shade300,
+      color: AppTokens.surfaceMuted,
       alignment: Alignment.center,
       child: Icon(Icons.movie_outlined, size: 34, color: Colors.grey.shade600),
     );

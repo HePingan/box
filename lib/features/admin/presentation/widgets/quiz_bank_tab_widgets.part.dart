@@ -723,7 +723,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
                           decoration: BoxDecoration(
                             color: selected
                                 ? Theme.of(context).colorScheme.primary
-                                : Colors.grey.shade300,
+                                : AppTokens.surfaceMuted,
                             shape: BoxShape.circle,
                           ),
                           child: Center(

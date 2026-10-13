@@ -350,7 +350,7 @@ class _PluginTabState extends State<PluginTab>
                       Icon(
                         Icons.arrow_forward_ios_rounded,
                         size: 12,
-                        color: Colors.grey.shade400,
+                        color: AppTokens.textTertiary,
                       ),
                     ],
                   ),
@@ -521,7 +521,7 @@ class _PluginTabState extends State<PluginTab>
                 decoration: BoxDecoration(
                   color: AppTokens.surfaceMuted,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.grey.shade300),
+                  border: Border.all(color: AppTokens.cardBorder),
                 ),
                 child: SingleChildScrollView(
                   child: SelectableText(

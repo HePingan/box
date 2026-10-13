@@ -184,7 +184,7 @@ class LoadMoreIndicator extends StatelessWidget {
             : Text(
                 '—— 已显示全部 ——',
                 style: TextStyle(
-                  color: Colors.grey.shade400,
+                  color: AppTokens.textTertiary,
                   fontSize: 12,
                 ),
               ),

@@ -62,10 +62,20 @@ void main() {
     'lib/features/admin/presentation/widgets/quiz_bank_tab_widgets.part.dart',
   };
 
-  /// 低阶灰（`Colors.grey.shade50/100/200` 之类）：深色档下仍是浅灰，会成白块。
+  /// 低阶/中阶灰（`Colors.grey.shade50/100/200/300/400` 之类）：深色档下仍是
+  /// 浅灰，会成白块。2026-10 扩到 300/400（审计发现 image_generator 等模块
+  /// 的 shade300/400 全部漏网）；shade500 刻意不纳入——#9E9E9E 在深色档可读
+  /// 性尚可，且是禁用态/占位文字的常用色，判红误伤面大于收益。
   final RegExp lowShadeGrey = RegExp(
-    r'Colors\.(grey|blueGrey|blue|indigo|teal|cyan)\.shade(50|100|200)\b',
+    r'Colors\.(grey|blueGrey|blue|indigo|teal|cyan)\.shade(50|100|200|300|400)\b',
   );
+
+  /// 已知局限（2026-10 审计确认，刻意不修）：
+  /// 1. `panelContext` 只回溯 6 行，像 `AppBar(backgroundColor: Colors.white)`
+  ///    这种嵌在 Scaffold 内部、但离 `Scaffold(` 超过 6 行的参数会漏网。
+  ///    实例：lib/tool_web_page.dart:94 曾因此逃过检测；已手工改为 AppTokens.surface。
+  ///    若未来因此漏出真实问题，优先补这条规则的位置窗口或显式检查 AppBar，
+  ///    而非扩写成无差别扫描 —— 误报比理论漏洞更糟。
 
   /// 黑色系文字：浅色档的"黑字"抄成字面量，深色档下看不清。
   final RegExp blackText = RegExp(r'Colors\.black(87|54|45|38|26)\b');

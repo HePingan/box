@@ -989,7 +989,7 @@ class _BookSourceTabState extends State<_BookSourceTab> {
                 margin: const EdgeInsets.only(top: 5),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: source.enabled ? Colors.green : Colors.grey.shade300,
+                  color: source.enabled ? Colors.green : AppTokens.textTertiary,
                 ),
               ),
               const SizedBox(width: 10),

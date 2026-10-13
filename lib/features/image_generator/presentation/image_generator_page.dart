@@ -599,7 +599,7 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage>
                   width: 36,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
+                    color: AppTokens.cardBorder,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),

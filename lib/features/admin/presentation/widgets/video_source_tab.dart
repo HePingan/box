@@ -375,7 +375,7 @@ class _VideoSourceTabState extends State<VideoSourceTab> {
                       shape: BoxShape.circle,
                       color: source.isAvailable
                           ? Colors.green
-                          : Colors.grey.shade300,
+                          : AppTokens.textTertiary,
                     ),
                   ),
                   const SizedBox(width: 10),
