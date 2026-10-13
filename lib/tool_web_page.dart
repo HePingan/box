@@ -91,7 +91,7 @@ class _ToolWebPageState extends State<ToolWebPage> {
             color: AppTokens.textPrimary,
           ),
         ),
-        backgroundColor: Colors.white,
+        backgroundColor: AppTokens.surface,
         elevation: 0,
         scrolledUnderElevation: 0,
         // label 留空：`widget.title` 已经交给上面的 title 了。
