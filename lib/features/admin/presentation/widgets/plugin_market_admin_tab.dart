@@ -18,16 +18,14 @@ class PluginMarketAdminResourceProvider
   Future<List<PluginMarketAdminPlaceholder>> fetchAll(
     String? serverUrl,
     String? token,
-  ) async =>
-      const [];
+  ) async => const [];
 
   @override
   Future<PluginMarketAdminPlaceholder> create(
     String? serverUrl,
     String? token,
     Map<String, dynamic> data,
-  ) async =>
-      const PluginMarketAdminPlaceholder();
+  ) async => const PluginMarketAdminPlaceholder();
 
   @override
   Future<PluginMarketAdminPlaceholder> update(
@@ -35,8 +33,7 @@ class PluginMarketAdminResourceProvider
     String? token,
     String id,
     Map<String, dynamic> data,
-  ) async =>
-      const PluginMarketAdminPlaceholder();
+  ) async => const PluginMarketAdminPlaceholder();
 
   @override
   Future<void> delete(String? serverUrl, String? token, String id) async {}
@@ -139,9 +136,9 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
           : <String, dynamic>{};
       final files = (data['files'] is List)
           ? (data['files'] as List)
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList()
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList()
           : <Map<String, dynamic>>[];
       final pluginJson = data['pluginJson'];
       final packageError = data['packageError']?.toString();
@@ -193,7 +190,10 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                   Text(
                     '${item.pluginId}\n动作 ${item.actionCode} · 分区 ${item.areaCode} · v${item.version}'
                     '${item.hasPackage ? ' · ZIP ${item.packageSize}B' : ''}',
-                    style: TextStyle(fontSize: 12, color: AppTokens.textSecondary),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppTokens.textSecondary,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Text('兼容检查', style: Theme.of(ctx).textTheme.titleSmall),
@@ -216,8 +216,10 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                     ),
                   ),
                   if (packageError != null)
-                    Text(packageError,
-                        style: const TextStyle(color: Colors.red, fontSize: 12)),
+                    Text(
+                      packageError,
+                      style: const TextStyle(color: Colors.red, fontSize: 12),
+                    ),
                   if (files.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Text('包内文件', style: Theme.of(ctx).textTheme.titleSmall),
@@ -240,15 +242,16 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                   ],
                   if (pluginJson != null) ...[
                     const SizedBox(height: 8),
-                    Text('plugin.json',
-                        style: Theme.of(ctx).textTheme.titleSmall),
+                    Text(
+                      'plugin.json',
+                      style: Theme.of(ctx).textTheme.titleSmall,
+                    ),
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(10),
                       color: AppTokens.surfaceMuted,
                       child: Text(
-                        const JsonEncoder.withIndent('  ')
-                            .convert(pluginJson),
+                        const JsonEncoder.withIndent('  ').convert(pluginJson),
                         style: const TextStyle(
                           fontSize: 11,
                           fontFamily: 'monospace',
@@ -289,13 +292,16 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('预览失败：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('预览失败：$e')));
     }
   }
 
-  Future<void> _review(PluginSubmissionDto item, {required bool approve}) async {
+  Future<void> _review(
+    PluginSubmissionDto item, {
+    required bool approve,
+  }) async {
     final noteCtrl = TextEditingController(
       text: approve ? '' : _rejectTemplates.first,
     );
@@ -355,15 +361,15 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
         note: noteCtrl.text.trim(),
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(approve ? '已发布' : '已拒绝')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(approve ? '已发布' : '已拒绝')));
       await _load();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('操作失败：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('操作失败：$e')));
     }
   }
 
@@ -452,9 +458,9 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _bulkRunning = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('批量操作失败：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('批量操作失败：$e')));
     }
   }
 
@@ -502,23 +508,17 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
     );
     if (ok != true) return;
     try {
-      await _api.adminYank(
-        id,
-        note: '管理员下架',
-        forceUninstall: forceUninstall,
-      );
+      await _api.adminYank(id, note: '管理员下架', forceUninstall: forceUninstall);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(forceUninstall ? '已下架并标记强制卸载' : '已下架'),
-        ),
+        SnackBar(content: Text(forceUninstall ? '已下架并标记强制卸载' : '已下架')),
       );
       await _load();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('下架失败：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('下架失败：$e')));
     }
   }
 
@@ -550,22 +550,171 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
     );
     if (ok != true) return;
     try {
-      await _api.adminBanAuthor(
-        userId,
-        ban: ban,
-        note: noteCtrl.text.trim(),
-      );
+      await _api.adminBanAuthor(userId, ban: ban, note: noteCtrl.text.trim());
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(ban ? '已禁止投稿' : '已解禁')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(ban ? '已禁止投稿' : '已解禁')));
       await _load();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('操作失败：$e')),
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('操作失败：$e')));
+    }
+  }
+
+  /// 空状态：图标 + 主文案 + 副文案，替代裸文字，减少"整屏空白"的观感。
+  Widget _buildEmptyState(String title, String hint) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 32),
+      child: Column(
+        children: [
+          Icon(Icons.inbox_rounded, size: 40, color: AppTokens.textTertiary),
+          const SizedBox(height: 10),
+          Text(
+            title,
+            style: TextStyle(fontSize: 14, color: AppTokens.textSecondary),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            hint,
+            style: TextStyle(fontSize: 12, color: AppTokens.textTertiary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 概览卡片：把原先挤在一行的统计数字做成卡片，主次分明。
+  /// 手机上比纯文本行更易扫读，也自然与下方筛选栏拉开层次。
+  Widget _buildOverviewCard(BuildContext context, AdminPluginQueue queue) {
+    Widget metric(String label, String value, {Color? color}) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              color: color ?? AppTokens.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(fontSize: 11, color: AppTokens.textSecondary),
+          ),
+        ],
       );
     }
+
+    final pending = queue.pendingCount;
+    final reports = queue.openReports;
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: metric(
+                    '待审',
+                    '$pending',
+                    color: pending > 0 ? AppTokens.primaryBlue : null,
+                  ),
+                ),
+                Expanded(child: metric('已发布', '${queue.published.length}')),
+                Expanded(
+                  child: metric(
+                    '举报',
+                    '$reports',
+                    color: reports > 0 ? AppTokens.rose : null,
+                  ),
+                ),
+                Expanded(child: metric('禁投', '${queue.bannedAuthors.length}')),
+              ],
+            ),
+            if (queue.storage.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              const Divider(height: 1),
+              const SizedBox(height: 8),
+              Text(
+                _storageLine(queue),
+                style: TextStyle(fontSize: 11, color: AppTokens.textTertiary),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 存储与计数的单行描述。抽出来只为让上面的卡片结构清爽。
+  String _storageLine(AdminPluginQueue queue) {
+    String mb(Object? bytes) {
+      final b = int.tryParse(bytes?.toString() ?? '') ?? 0;
+      return (b / 1024 / 1024).toStringAsFixed(1);
+    }
+
+    final used = mb(queue.storage['bytesUsed']);
+    final limit = mb(queue.storage['limitBytes']);
+    final files = queue.storage['fileCount'] ?? 0;
+    final counters = queue.counters.isEmpty
+        ? ''
+        : ' · ${queue.counters.entries.take(3).map((e) => '${e.key}:${e.value}').join(' ')}';
+    return '存储 $used MB / $limit MB · 文件 $files$counters';
+  }
+
+  /// 筛选栏：横向滚动单行，标签带计数徽标。
+  /// 原用 Wrap 会在窄屏折成两行占掉大量高度；这里保证始终一行。
+  Widget _buildFilterBar(BuildContext context, AdminPluginQueue queue) {
+    Widget chip(String id, String label, int? count) {
+      final selected = _filter == id;
+      return Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: ChoiceChip(
+          label: Text(count == null ? label : '$label $count'),
+          selected: selected,
+          visualDensity: VisualDensity.compact,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          labelStyle: TextStyle(
+            fontSize: 13,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+          ),
+          onSelected: (_) {
+            setState(() => _filter = id);
+            // 本地视图无需回源；其余需要拉取对应数据
+            if (id != 'published_view' && id != 'stats') {
+              _load();
+            }
+          },
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 40,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: EdgeInsets.zero,
+        children: [
+          chip('pending_review', '待审', queue.pendingCount),
+          chip('all', '全部投稿', null),
+          chip('published_view', '已发布', queue.published.length),
+          chip('reports', '举报', queue.openReports),
+          // 原名「运行状态」与下方区块标题重复，改叫「存储」更贴合内容
+          chip('stats', '存储', null),
+          chip('audit', '审计', queue.audit.length),
+          chip('banned', '禁投', queue.bannedAuthors.length),
+        ],
+      ),
+    );
   }
 
   @override
@@ -590,98 +739,24 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
     }
 
     final queue = _queue!;
-    final pending =
-        queue.items.where((e) => e.status == 'pending_review').toList();
-    final others =
-        queue.items.where((e) => e.status != 'pending_review').toList();
+    final pending = queue.items
+        .where((e) => e.status == 'pending_review')
+        .toList();
+    final others = queue.items
+        .where((e) => e.status != 'pending_review')
+        .toList();
 
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
         children: [
-          Text(
-            '待审 ${queue.pendingCount} · 已发布 ${queue.published.length} · '
-            '今日拒绝 ${queue.rejectsToday} · 举报 ${queue.openReports} · '
-            '禁投作者 ${queue.bannedAuthors.length}',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppTokens.textSecondary,
-                ),
-          ),
-          if (queue.storage.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              '${'存储 ${(int.tryParse(queue.storage['bytesUsed']?.toString() ?? '') ?? 0) / 1024 / 1024}'
-                      .replaceAll(RegExp(r'(\.\d{1})\d+'), r'$1')}${'MB / '
-                  '${(int.tryParse(queue.storage['limitBytes']?.toString() ?? '') ?? 0) / 1024 / 1024 / 1024}'
-                      .replaceAll(RegExp(r'(\.\d{1})\d+'), r'$1')}GB · 文件 ${queue.storage['fileCount'] ?? 0}${queue.counters.isEmpty ? '' : ' · 计数 ${queue.counters.entries.take(3).map((e) => '${e.key}:${e.value}').join(' ')}'}',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: AppTokens.textTertiary,
-                    fontSize: 11,
-                  ),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: [
-              ChoiceChip(
-                label: Text('待审 ${queue.pendingCount}'),
-                selected: _filter == 'pending_review',
-                onSelected: (_) {
-                  setState(() => _filter = 'pending_review');
-                  _load();
-                },
-              ),
-              ChoiceChip(
-                label: const Text('全部投稿'),
-                selected: _filter == 'all',
-                onSelected: (_) {
-                  setState(() => _filter = 'all');
-                  _load();
-                },
-              ),
-              ChoiceChip(
-                label: Text('已发布 ${queue.published.length}'),
-                selected: _filter == 'published_view',
-                onSelected: (_) {
-                  setState(() => _filter = 'published_view');
-                },
-              ),
-              ChoiceChip(
-                label: Text('举报 ${queue.openReports}'),
-                selected: _filter == 'reports',
-                onSelected: (_) {
-                  setState(() => _filter = 'reports');
-                  _load();
-                },
-              ),
-              ChoiceChip(
-                label: const Text('运行状态'),
-                selected: _filter == 'stats',
-                onSelected: (_) {
-                  setState(() => _filter = 'stats');
-                },
-              ),
-              ChoiceChip(
-                label: Text('审计 ${queue.audit.length}'),
-                selected: _filter == 'audit',
-                onSelected: (_) {
-                  setState(() => _filter = 'audit');
-                },
-              ),
-              ChoiceChip(
-                label: Text('禁投 ${queue.bannedAuthors.length}'),
-                selected: _filter == 'banned',
-                onSelected: (_) {
-                  setState(() => _filter = 'banned');
-                },
-              ),
-            ],
-          ),
+          _buildOverviewCard(context, queue),
+          const SizedBox(height: 10),
+          _buildFilterBar(context, queue),
           const SizedBox(height: 12),
           if (_filter == 'stats') ...[
-            Text('运行状态', style: Theme.of(context).textTheme.titleMedium),
+            Text('存储与计数', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             Card(
               child: ListTile(
@@ -703,11 +778,16 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('计数器', style: TextStyle(fontWeight: FontWeight.w600)),
+                      const Text(
+                        '计数器',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
                       const SizedBox(height: 6),
                       ...queue.counters.entries.map(
-                        (e) => Text('${e.key}: ${e.value}',
-                            style: const TextStyle(fontSize: 12)),
+                        (e) => Text(
+                          '${e.key}: ${e.value}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
                       ),
                     ],
                   ),
@@ -770,9 +850,7 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                     ),
                     isThreeLine: true,
                     trailing: TextButton(
-                      onPressed: () => _yank({
-                        'id': r['pluginId'],
-                      }),
+                      onPressed: () => _yank({'id': r['pluginId']}),
                       child: const Text('下架'),
                     ),
                   ),
@@ -831,9 +909,9 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                     onPressed: _bulkRunning
                         ? null
                         : () => setState(() {
-                              _selectMode = !_selectMode;
-                              if (!_selectMode) _selectedIds.clear();
-                            }),
+                            _selectMode = !_selectMode;
+                            if (!_selectMode) _selectedIds.clear();
+                          }),
                     icon: Icon(
                       _selectMode
                           ? Icons.close_rounded
@@ -844,11 +922,10 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                   ),
               ],
             ),
-            if (_selectMode && pending.isNotEmpty)
-              _buildBulkToolbar(pending),
+            if (_selectMode && pending.isNotEmpty) _buildBulkToolbar(pending),
             const SizedBox(height: 8),
             if (pending.isEmpty && _filter == 'pending_review')
-              Text('暂无待审投稿', style: TextStyle(color: AppTokens.textSecondary)),
+              _buildEmptyState('暂无待审投稿', '所有投稿都已处理完毕'),
             ...pending.map(_buildSubmissionCard),
             if (_filter == 'all') ...[
               const SizedBox(height: 12),
@@ -879,14 +956,14 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
             onPressed: _bulkRunning
                 ? null
                 : () => setState(() {
-                      if (allSelected) {
-                        _selectedIds.clear();
-                      } else {
-                        _selectedIds
-                          ..clear()
-                          ..addAll(pending.map((e) => e.id));
-                      }
-                    }),
+                    if (allSelected) {
+                      _selectedIds.clear();
+                    } else {
+                      _selectedIds
+                        ..clear()
+                        ..addAll(pending.map((e) => e.id));
+                    }
+                  }),
             child: Text(allSelected ? '清空' : '全选'),
           ),
           Text(
@@ -928,12 +1005,12 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
       child: InkWell(
         onTap: selectable
             ? () => setState(() {
-                  if (checked) {
-                    _selectedIds.remove(item.id);
-                  } else {
-                    _selectedIds.add(item.id);
-                  }
-                })
+                if (checked) {
+                  _selectedIds.remove(item.id);
+                } else {
+                  _selectedIds.add(item.id);
+                }
+              })
             : null,
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -955,8 +1032,10 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(item.title,
-                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                    Text(
+                      item.title,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
                     const SizedBox(height: 4),
                     Text(
                       '${item.pluginId}\n'
@@ -965,8 +1044,10 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                       '${item.hasPackage ? ' · ZIP' : ''}\n'
                       '状态 ${item.statusLabel}'
                       '${item.reviewNote.isEmpty ? '' : '\n备注 ${item.reviewNote}'}',
-                      style:
-                          TextStyle(fontSize: 12, color: AppTokens.textSecondary),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppTokens.textSecondary,
+                      ),
                     ),
                     if (!_selectMode) ...[
                       const SizedBox(height: 8),
