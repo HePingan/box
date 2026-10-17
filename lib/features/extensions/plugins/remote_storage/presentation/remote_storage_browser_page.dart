@@ -1812,6 +1812,7 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
     }
     if (share) {
       await SharePlus.instance.share(ShareParams(files: [XFile(path)]));
+      await _deletePreviewTempFileQuietly(path);
       return;
     }
     if (!mounted) return;
@@ -1819,17 +1820,66 @@ class _RemoteStorageBrowserPageState extends State<RemoteStorageBrowserPage> {
   }
 
   /// 把预览字节落到临时目录（分享/另存都需要一个真实文件路径）。
+  ///
+  /// 这个目录以前只写不清：预览里每导出一次就留一份（预览上限 20MB，
+  /// 大图/PDF 攒几次就是几百 MB），而临时目录里这些文件没有任何清理入口。
+  /// 现在每次写入前先收一次上限，分享外出之后再把自家的那份删掉。
   Future<String?> _writePreviewTempFile(String name, List<int> bytes) async {
     try {
       final dir = Directory(
-        '${(await getTemporaryDirectory()).path}/box_preview',
+        '${(await getTemporaryDirectory()).path}/$_previewTempDirName',
       );
       if (!await dir.exists()) await dir.create(recursive: true);
+      unawaited(_prunePreviewTempDir(dir));
+
+      // 同名会覆盖 —— 这是期望行为（同一个文件重新导出不该留两份）。
       final file = File('${dir.path}/$name');
       await file.writeAsBytes(bytes, flush: true);
       return file.path;
     } catch (_) {
       return null;
+    }
+  }
+
+  static const String _previewTempDirName = 'box_preview';
+
+  /// 收上限：超过 20 个文件或 100MB 就按 mtime 删到一半。
+  static Future<void> _prunePreviewTempDir(Directory dir) async {
+    try {
+      final entries = <(File, FileStat)>[];
+      await for (final item in dir.list()) {
+        if (item is! File) continue;
+        try {
+          entries.add((item, await item.stat()));
+        } on FileSystemException {
+          // 刚被别人删掉：跳过。
+        }
+      }
+      var total = entries.fold<int>(0, (sum, e) => sum + e.$2.size);
+      if (entries.length <= 20 && total <= 100 * 1024 * 1024) return;
+
+      entries.sort((a, b) => a.$2.modified.compareTo(b.$2.modified));
+      for (var i = 0; i < entries.length; i++) {
+        if (entries.length - i <= 10 && total <= 50 * 1024 * 1024) break;
+        try {
+          await entries[i].$1.delete();
+          total -= entries[i].$2.size;
+        } on FileSystemException {
+          // 占用中：下一轮再收。
+        }
+      }
+    } catch (_) {
+      // 收上限失败不该影响这次导出。
+    }
+  }
+
+  /// 分享完删掉我们在临时目录里写的那份（真正发出去的是接收方的副本）。
+  static Future<void> _deletePreviewTempFileQuietly(String path) async {
+    try {
+      final f = File(path);
+      if (await f.exists()) await f.delete();
+    } on FileSystemException {
+      // 已删 / 被占用：不该让「分享成功」变成失败。
     }
   }
 
