@@ -204,9 +204,10 @@ class ContentEntryGrid extends StatelessWidget {
               Expanded(
                 child: AppCompactActionCard(
                   title: '音乐',
-                  // 音乐规划为「本地播放 + 在线源爬取下载」，当前仅占位页说明规划，
-                  // 副标题不能写「本地收藏」——那是撤掉的手填收藏时代的说法。
-                  subtitle: '播放器开发中',
+                  // 阶段 1（在线音频 URL 下载后播放）已可用，副标题如实写它能做什么；
+                  // 不能写「本地收藏」（撤掉的手填收藏时代的说法），也不能再写
+                  // 「播放器开发中」（那已经是假话）。本地文件扫描（阶段 3）还没做。
+                  subtitle: '在线音频播放',
                   icon: Icons.library_music_rounded,
                   color: AppTokens.emerald,
                   onTap: onOpenMusic,
