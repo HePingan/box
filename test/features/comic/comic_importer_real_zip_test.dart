@@ -9,6 +9,7 @@ library;
 import 'dart:io';
 
 import 'package:archive/archive.dart';
+import 'package:box/features/comic/domain/comic_book.dart';
 import 'package:box/features/comic/infrastructure/comic_importer.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -38,11 +39,18 @@ int _markerOf(String path) => File(path).readAsBytesSync().first;
 void main() {
   late Directory work;
 
+  late Directory importRoot;
+
   setUp(() {
     work = Directory.systemTemp.createTempSync('comic_importer_e2e_');
+    // 解压产物默认落应用文档目录，纯 test 里没有 path_provider 平台通道，
+    // 所以每例注入到本用例自己的临时目录。
+    importRoot = Directory(p.join(work.path, 'imports'))..createSync(recursive: true);
+    ComicImporter.importRoot = () async => importRoot;
   });
 
   tearDown(() {
+    ComicImporter.resetImportRoot();
     if (work.existsSync()) work.deleteSync(recursive: true);
   });
 
@@ -88,7 +96,7 @@ void main() {
     );
   });
 
-  test('一本漫画只用一个临时目录', () async {
+  test('一本漫画只用一个解压目录', () async {
     final zip = _makeZipNames(
       work,
       'many.cbz',
@@ -176,5 +184,59 @@ void main() {
     expect(ComicImporter.isComicFile('/a/b.zip'), isTrue);
     expect(ComicImporter.isComicFile('/a/b.rar'), isFalse);
     expect(ComicImporter.isComicFile('/a/b.jpg'), isFalse);
+  });
+
+  test('解压产物落在文档目录（系统清临时目录不会让书白页）', () async {
+    final zip = _makeZipNames(work, 'book.cbz', ['001.jpg', '002.jpg']);
+    final pages = await ComicImporter.extractPages(zip.path);
+
+    for (final page in pages) {
+      expect(
+        p.isWithin(importRoot.path, page),
+        isTrue,
+        reason: '页图必须在文档目录里，路径会被 ComicBook.pages 长期引用',
+      );
+    }
+  });
+
+  test('disposePages 只删自己的解压目录，不碰用户原包', () async {
+    final zip = _makeZipNames(work, 'book.cbz', ['001.jpg', '002.jpg']);
+    final pages = await ComicImporter.extractPages(zip.path);
+    final dir = p.dirname(pages.first);
+
+    final book = ComicBook(
+      id: 'b1',
+      title: '测试书',
+      sourceType: ComicSourceType.file,
+      filePath: zip.path,
+      pages: pages,
+      createdAt: 0,
+    );
+
+    final freed = await ComicImporter.disposePages(book);
+
+    expect(freed, greaterThan(0));
+    expect(Directory(dir).existsSync(), isFalse, reason: '解压副本要删掉');
+    expect(File(zip.path).existsSync(), isTrue, reason: '用户的原包不能动');
+  });
+
+  test('disposePages 不删 importRoot 之外的目录（folder 类型）', () async {
+    // 模拟用户自己的文件夹：不在 importRoot 里。
+    final userDir = Directory(p.join(work.path, 'my_comics'))..createSync();
+    final page = File(p.join(userDir.path, '001.jpg'))..writeAsBytesSync([1, 2, 3]);
+
+    final book = ComicBook(
+      id: 'b2',
+      title: '用户文件夹',
+      sourceType: ComicSourceType.folder,
+      folderPath: userDir.path,
+      pages: [page.path],
+      createdAt: 0,
+    );
+
+    final freed = await ComicImporter.disposePages(book);
+
+    expect(freed, 0);
+    expect(page.existsSync(), isTrue, reason: '用户文件一律不碰');
   });
 }

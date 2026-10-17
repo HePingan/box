@@ -4,6 +4,9 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+
+import '../domain/comic_book.dart';
 
 /// 一次解压的产物：页面列表 + 封面。
 class ComicExtraction {
@@ -19,12 +22,32 @@ class ComicExtraction {
 /// - **自然序**排页：`2.jpg` 必须排在 `10.jpg` 之前，字典序会把页序排乱。
 /// - 一本漫画只建**一个**临时目录，页文件带序号前缀；早先每页一个 temp 目录的
 ///   写法在几百页的大部头上会炸出上百个目录且无人清理。
-///   注意：这个目录的路径会被记进 `ComicBook.pages` 长期使用，所以**不能**解压完就删；
-///   但它落在系统临时目录里，系统清临时目录后书就白了 —— 真要根治得迁到文档目录，
-///   那会牵动备份/离线链路，留作单独一版（见 docs/todo_consolidated_20261013.md）。
+/// - 解压目录落在**应用文档目录**（`comic_imported/时间戳`），不是系统临时目录：
+///   路径会被记进 `ComicBook.pages` 长期使用，放临时目录的话系统清理后书会白页。
 /// - 解压只做**一次**：封面和页面来自同一个 [ComicExtraction]。
 class ComicImporter {
   const ComicImporter._();
+
+  /// 解压产物落盘位置。
+  ///
+  /// 为什么不能留在系统临时目录：`ComicBook.pages` 里记的就是这些路径，
+  /// 是**长期引用**而不是一次性中转。系统清临时目录（低存储、重启清理）之后，
+  /// 书架上的书还在、点开全是白页，而且备份只存元数据、不存图片，等于丢了。
+  ///
+  /// 默认放 `应用文档目录/comic_imported/<时间戳-随机>/`。目录本身不自动清理：
+  /// 一本书一份，粒度与书一致，用户删书时才有机会连带删（见 ComicImporter.disposePages）。
+  static Future<Directory> Function() importRoot =
+      _defaultImportRoot;
+
+  static Future<Directory> _defaultImportRoot() async {
+    final base = await getApplicationDocumentsDirectory();
+    return Directory('${base.path}/comic_imported');
+  }
+
+  /// 单测/宿主注入用：恢复默认实现。
+  static void resetImportRoot() {
+    importRoot = _defaultImportRoot;
+  }
 
   static const Set<String> _imageExtensions = {
     '.jpg',
@@ -59,8 +82,12 @@ class ComicImporter {
       return const ComicExtraction(pages: <String>[], coverPath: null);
     }
 
-    // 整本只用一个临时目录。
-    final outDir = await Directory.systemTemp.createTemp('comic_');
+    // 整本只用一个目录（不是每页一个），且落在文档目录下而不是系统临时目录。
+    final root = await importRoot();
+    if (!await root.exists()) await root.create(recursive: true);
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final outDir = Directory(p.join(root.path, '$stamp'));
+    await outDir.create(recursive: true);
 
     final pages = <String>[];
     String? coverPath;
@@ -86,6 +113,46 @@ class ComicImporter {
       pages: pages,
       coverPath: coverPath ?? pages.first,
     );
+  }
+
+  /// 删除一本书的解压产物（只删落在 [importRoot] 里的目录）。
+  ///
+  /// **只删我们自己的解压目录**：`folder` 类型的书指向用户自己的文件夹、
+  /// `file` 类型的原包也在用户选择的位置，这些一律不碰 —— 删除收藏永远不该
+  /// 动用户的原件（界面文案就是这么承诺的）。
+  ///
+  /// 返回释放的字节数；目录已不在（老版本导出的书）时返回 0。
+  static Future<int> disposePages(ComicBook book) async {
+    if (book.pages.isEmpty) return 0;
+    final roots = <String>{};
+    for (final page in book.pages) {
+      roots.add(p.dirname(page));
+    }
+
+    final importDir = (await importRoot()).path;
+    var freed = 0;
+    for (final dirPath in roots) {
+      // isWithin 是按路径段判断的（不是字符串前缀）：/data/comic_importedX
+      // 不会被当成 /data/comic_imported 的子目录，用户自己的文件夹也不会被删。
+      if (!p.isWithin(importDir, p.normalize(dirPath))) continue;
+      final dir = Directory(dirPath);
+      if (!await dir.exists()) continue;
+      await for (final item in dir.list(recursive: true)) {
+        if (item is File) {
+          try {
+            freed += await item.length();
+          } on FileSystemException {
+            // 量不到就跳过，别让删除整个卡住。
+          }
+        }
+      }
+      try {
+        await dir.delete(recursive: true);
+      } on FileSystemException {
+        // 被占用（正在阅读）：下次再说，不要因此让删除收藏失败。
+      }
+    }
+    return freed;
   }
 
   /// 从 CBZ/ZIP 提取页面列表（自然序）。

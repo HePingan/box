@@ -13,6 +13,7 @@ import 'package:box/features/comic/domain/comic_update_watch.dart';
 import 'package:box/features/comic/data/comic_sync_ops.dart';
 import 'package:box/features/comic/presentation/comic_online_page.dart';
 import 'package:box/features/comic/domain/comic_reader_state.dart';
+import 'package:box/features/comic/infrastructure/comic_importer.dart';
 import 'package:box/features/comic/infrastructure/comic_importer_widget.dart';
 import 'package:box/features/comic/presentation/comic_reader_page.dart';
 import 'package:box/features/comic/presentation/comic_source_check_page.dart';
@@ -239,7 +240,7 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('删除漫画'),
-        content: Text('确定从收藏里移除《${book.title}》吗？原始文件不会被删除。'),
+        content: Text(_deleteHint(book)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -254,6 +255,12 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
     );
 
     if (confirmed != true) return;
+    // 先清解压产物再删记录：CBZ 导入的书，页图是我们自己解到文档目录的，
+    // 不删就永远留着（用户以为删了书就腾出了空间）。只删我们自己解出来的那份，
+    // 用户的原包/原文件夹不动。
+    if (book.sourceType == ComicSourceType.file) {
+      unawaited(ComicImporter.disposePages(book));
+    }
     await _store.remove(book.id);
     // 把"删了这本书"记成墓碑再同步：不然别的设备上它还留着，下次同步又把它推回来
     // （删除必须传得出去，这是跨设备同步最容易漏的一环）。
@@ -261,6 +268,19 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
       unawaited(_syncRemoved(book.onlineUrl ?? book.id));
     }
     if (mounted) _reload();
+  }
+
+  /// 删除确认里的说明。
+  ///
+  /// `file` 类型：原包（用户选的 CBZ/zip）不动，但**解压出来放在应用里的那份会删**——
+  /// 以前这里一律写「原始文件不会被删除」，而解压产物其实一直没人清。
+  /// `folder`：页面就是用户文件夹里的原件，一律不碰。
+  String _deleteHint(ComicBook book) {
+    if (book.sourceType == ComicSourceType.file) {
+      return '确定从收藏里移除《${book.title}》吗？'
+          '你导入的压缩包不会被删除，但 App 解压出来的阅读副本会一并清理。';
+    }
+    return '确定从收藏里移除《${book.title}》吗？原始文件不会被删除。';
   }
 
   /// 记墓碑 + 顺带同步一次；失败不弹错（删除已经落本地了，同步下次还会再试）。

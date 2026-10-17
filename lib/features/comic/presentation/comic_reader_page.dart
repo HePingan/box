@@ -168,8 +168,10 @@ class _ComicReaderPageState extends State<ComicReaderPage> {
           child: Image.file(
             File(imagePath),
             fit: BoxFit.contain,
-            errorBuilder: (context, error, stack) => const Center(
-              child: Icon(Icons.broken_image, size: 64, color: Colors.white54),
+            errorBuilder: (context, error, stack) => Center(
+              child: _MissingPageHint(
+                pageLabel: '${index + 1} / $totalPages',
+              ),
             ),
           ),
         ),
@@ -199,10 +201,12 @@ class _ComicReaderPageState extends State<ComicReaderPage> {
           return Image.file(
             File(controller.comicBook.pages[index]),
             fit: BoxFit.contain,
-            errorBuilder: (context, error, stack) => const SizedBox(
+            errorBuilder: (context, error, stack) => SizedBox(
               height: 400,
               child: Center(
-                child: Icon(Icons.broken_image, size: 48, color: Colors.white54),
+                child: _MissingPageHint(
+                  pageLabel: '${index + 1} / ${controller.totalPages}',
+                ),
               ),
             ),
           );
@@ -277,5 +281,38 @@ class _ComicReaderPageState extends State<ComicReaderPage> {
       _controller.setPage(target);
     }
     _saveProgressDebounced();
+  }
+}
+
+/// 页图找不到时的说明。
+///
+/// 以前这里只有一个破图标，用户能看到的全部信息就是「坏了」——但真实原因是
+/// 页图文件没了（早期版本把解压产物放在系统临时目录，系统清理后书还在、页没了），
+/// 或者说出来:重新导入这本压缩包即可。给一个能行动的下一步，而不是让人干瞪眼。
+class _MissingPageHint extends StatelessWidget {
+  const _MissingPageHint({required this.pageLabel});
+
+  final String pageLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.broken_image, size: 56, color: Colors.white54),
+        const SizedBox(height: 12),
+        Text(
+          '这一页的图片找不到了（$pageLabel）',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white70, fontSize: 14),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          '可能是 App 清理存储时删掉了。\n重新导入这本压缩包即可恢复。',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white54, fontSize: 12, height: 1.5),
+        ),
+      ],
+    );
   }
 }
