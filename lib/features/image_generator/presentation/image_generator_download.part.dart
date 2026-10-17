@@ -91,12 +91,7 @@ void _downloadImage(String imageUrl) async {
       final bytes = _imageBytesCache[imageUrl];
       if (bytes != null && bytes.length > 1024) {
         try {
-          final docDir = await getApplicationDocumentsDirectory();
-          final saveDir = Directory('${docDir.path}/box_downloads');
-          if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
-          localFile = File(
-            '${saveDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
-          );
+          final localFile = await _aiDownloadStore.create();
           await localFile.writeAsBytes(bytes);
         } catch (e) {
           debugPrint('Strategy 0b (bytes cache) failed: $e');
@@ -162,12 +157,7 @@ void _downloadImage(String imageUrl) async {
     if (fileInfo == null || !fileInfo.file.existsSync()) return null;
     final bytes = await fileInfo.file.readAsBytes();
     if (bytes.length <= 1024) return null;
-    final docDir = await getApplicationDocumentsDirectory();
-    final saveDir = Directory('${docDir.path}/box_downloads');
-    if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
-    final file = File(
-      '${saveDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
-    );
+    final file = await _aiDownloadStore.create();
     await file.writeAsBytes(bytes);
     return file;
   }
@@ -190,24 +180,14 @@ void _downloadImage(String imageUrl) async {
     await for (final chunk in response) {
       bytes.addAll(chunk);
     }
-    final docDir = await getApplicationDocumentsDirectory();
-    final saveDir = Directory('${docDir.path}/box_downloads');
-    if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
-    final file = File(
-      '${saveDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
-    );
+    final file = await _aiDownloadStore.create();
     await file.writeAsBytes(bytes);
     return file;
   }
 
 /// Strategy 2: download via Dio with browser headers.
   Future<File?> _downloadViaDio(String imageUrl) async {
-    final docDir = await getApplicationDocumentsDirectory();
-    final saveDir = Directory('${docDir.path}/box_downloads');
-    if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
-    final file = File(
-      '${saveDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
-    );
+    final file = await _aiDownloadStore.create();
 
     final client = Dio(
       BaseOptions(
@@ -262,12 +242,7 @@ void _downloadImage(String imageUrl) async {
         if (fi != null && fi.file.existsSync()) {
           final bytes = await fi.file.readAsBytes();
           if (bytes.length > 1024) {
-            final docDir = await getApplicationDocumentsDirectory();
-            final saveDir = Directory('${docDir.path}/box_downloads');
-            if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
-            final file = File(
-              '${saveDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
-            );
+            final file = await _aiDownloadStore.create();
             await file.writeAsBytes(bytes);
             return file;
           }
@@ -279,12 +254,7 @@ void _downloadImage(String imageUrl) async {
     {
       final bytes = _imageBytesCache[imageUrl] ?? _imageBytesCache[normalisedUrl];
       if (bytes != null && bytes.length > 1024) {
-        final docDir = await getApplicationDocumentsDirectory();
-        final saveDir = Directory('${docDir.path}/box_downloads');
-        if (!saveDir.existsSync()) saveDir.createSync(recursive: true);
-        final file = File(
-          '${saveDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
-        );
+        final file = await _aiDownloadStore.create();
         await file.writeAsBytes(bytes);
         return file;
       }
@@ -343,10 +313,9 @@ void _downloadImage(String imageUrl) async {
       );
       if (byteData == null) return null;
 
-      final tmpDir = await getTemporaryDirectory();
-      final file = File(
-        '${tmpDir.path}/ai_original_${DateTime.now().millisecondsSinceEpoch}.png',
-      );
+      // 截屏兜底也落 box_downloads：临时目录根下的散文件没有任何清理入口，
+      // 而这里的产物和「下载原图」走同一套保存/清理流程。
+      final file = await _aiDownloadStore.create(prefix: 'ai_original_');
       await file.writeAsBytes(byteData.buffer.asUint8List());
       return file;
     } finally {
@@ -370,10 +339,7 @@ void _downloadImage(String imageUrl) async {
     );
     if (byteData == null) return null;
 
-    final tmpDir = await getTemporaryDirectory();
-    final file = File(
-      '${tmpDir.path}/ai_img_${DateTime.now().millisecondsSinceEpoch}.png',
-    );
+    final file = await _aiDownloadStore.create();
     await file.writeAsBytes(byteData.buffer.asUint8List());
     return file;
   }

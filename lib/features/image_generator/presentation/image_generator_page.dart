@@ -16,8 +16,8 @@ import 'package:share_plus/share_plus.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import 'package:box/features/account/data/account_store.dart';
 import 'package:box/features/account/domain/account_models.dart';
-import 'package:path_provider/path_provider.dart';
 
+import '../data/ai_image_download_store.dart';
 import '../data/image_generator_client.dart';
 import '../data/image_generator_store.dart';
 import '../domain/image_download.dart';
@@ -44,6 +44,7 @@ class ImageGeneratorPage extends StatefulWidget {
 class _ImageGeneratorPageState extends State<ImageGeneratorPage>
     with WidgetsBindingObserver {
   final ImageGeneratorClient _client = const ImageGeneratorClient();
+  final AiImageDownloadStore _aiDownloadStore = AiImageDownloadStore();
   final ImageGeneratorStore _store = const ImageGeneratorStore();
   final BoxAccountStore _accountStore = BoxAccountStore();
   final TextEditingController _baseUrlController = TextEditingController();
@@ -658,8 +659,14 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage>
 
   Future<void> _saveToGallery(File file, String imageUrl) async {
     // Strategy 1: gal (MediaStore on Android 10+)
+    //
+    // 成功后必须删掉 box_downloads 里那份：Gal 是把文件**复制**进相册的，
+    // 源文件仍在应用私有目录里 —— 以前每下载一次就永久留一份，用户看不见、
+    // 「清理缓存」也清不到（那是文档目录不是缓存），只有卸载才消失。
     try {
       await Gal.putImage(file.path);
+      await _aiDownloadStore.deleteQuietly(file);
+      await _aiDownloadStore.prune();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('✅ 已保存到相册')),
@@ -681,6 +688,8 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage>
       // Try Gal again from the public path
       try {
         await Gal.putImage(target.path);
+        await _aiDownloadStore.deleteQuietly(file);
+        await _aiDownloadStore.prune();
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('✅ 已保存到相册')),
@@ -729,6 +738,9 @@ class _ImageGeneratorPageState extends State<ImageGeneratorPage>
           text: 'AI 生成的图片',
         ),
       );
+      // 分享面板关掉后这份临时文件就没用了（真正发出去的是接收方的副本）。
+      await _aiDownloadStore.deleteQuietly(file);
+      await _aiDownloadStore.prune();
     } catch (e) {
       debugPrint('分享失败: $e');
       // Fallback: try open_filex
