@@ -329,7 +329,10 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('清理缓存'),
-        content: const Text('仅清除图片（含在线漫画图片）和阅读器临时缓存，不会删除登录信息、离线书籍或题库数据。'),
+        content: const Text(
+          '仅清除图片（含在线漫画图片、AI 生图下载的中间文件）和阅读器临时缓存，'
+          '不会删除登录信息、离线书籍或题库数据。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -352,8 +355,8 @@ class _DataSettingsPageState extends State<DataSettingsPage> {
       // freed 只统计漫画图片那部分 —— 另外两类（图片缓存管理器、阅读器内存）给不出
       // 「释放了多少」，不编数字。
       final detail = freed > 0
-          ? '（漫画图片释放 ${_fmtBytes(freed)}）'
-          : '（漫画图片本来没有占用）';
+          ? '（图片缓存释放 ${_fmtBytes(freed)}）'
+          : '（图片缓存本来没有占用）';
       if (mounted) _showSnack(context, '缓存已清理$detail');
       await _loadComicCacheSize();
     } catch (error) {

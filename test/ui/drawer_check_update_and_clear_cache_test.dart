@@ -155,6 +155,8 @@ void main() {
         clearNetworkCache: () async {},
         clearReaderMemoryCache: () {},
         clearComicImageCache: () async => 77 * 1024 * 1024,
+        // 不注入的话默认实现会碰 path_provider 平台通道（纯 test 里没有插件）。
+        clearAiImageDownloads: () async => 0,
       );
       await tester.pumpWidget(
         MaterialApp(
@@ -177,7 +179,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.textContaining('漫画图片释放 77.0 MB'), findsOneWidget,
+      expect(find.textContaining('图片缓存释放 77.0 MB'), findsOneWidget,
           reason: '只说「已清理」看不出到底有没有用');
 
       await tester.pumpAndSettle();

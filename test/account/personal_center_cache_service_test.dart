@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:box/features/account/data/personal_center_cache_service.dart';
 
 void main() {
-  // 三个清理口都要注入假实现：不注入的话默认实现会去碰 path_provider 的平台通道
+  // 四个清理口都要注入假实现：不注入的话默认实现会去碰 path_provider 的平台通道
   // （纯 test 里没有插件 → MissingPluginException），用例会红在一个跟被测逻辑无关的地方。
   test('clears network / reader memory / comic image caches', () async {
     var networkCalls = 0;
@@ -16,6 +16,7 @@ void main() {
         comicCalls++;
         return 0;
       },
+      clearAiImageDownloads: () async => 0,
     );
 
     await service.clearRegenerableCaches();
@@ -30,6 +31,7 @@ void main() {
       clearNetworkCache: () async {},
       clearReaderMemoryCache: () {},
       clearComicImageCache: () async => 77 * 1024 * 1024,
+      clearAiImageDownloads: () async => 0,
     );
 
     expect(await service.clearRegenerableCaches(), 77 * 1024 * 1024);
@@ -45,10 +47,28 @@ void main() {
         comicCalls++;
         return 0;
       },
+      clearAiImageDownloads: () async => 0,
     );
 
     await expectLater(service.clearRegenerableCaches(), throwsStateError);
     expect(readerCalls, 0);
     expect(comicCalls, 0, reason: '前一步失败就不该继续清（半清状态更难解释）');
+  });
+
+  test('AI 生图下载残留也纳入清理，且字节数合并上报', () async {
+    var aiCalls = 0;
+    final service = PersonalCenterCacheService(
+      clearNetworkCache: () async {},
+      clearReaderMemoryCache: () {},
+      clearComicImageCache: () async => 100,
+      clearAiImageDownloads: () async {
+        aiCalls++;
+        // 正常情况下保存到相册/分享后就删了，这里模拟「进程被杀」留下的残骸。
+        return 200;
+      },
+    );
+
+    expect(await service.clearRegenerableCaches(), 300);
+    expect(aiCalls, 1, reason: 'box_downloads 不在 DefaultCacheManager 里，必须单独清');
   });
 }
