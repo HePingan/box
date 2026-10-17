@@ -40,7 +40,11 @@ class AppBootstrap {
 
     await Hive.initFlutter();
     await _initLogger();
-    await _attachWindowDiagnostics();
+    // 诊断通道**不在这里 await**：它要等两个平台通道往返（invokeMethod('ready')
+    // 与 FlutterViewportDiagnostics.attach），而这两件事对首帧没有任何影响。
+    // 以前排在首帧前，等于让每个用户为"诊断增强能力"多等一次平台往返。
+    // 注册顺序仍然保持在 logger 之后（原生回放的早期事件要能落进 AppLogger）。
+    _scheduleWindowDiagnostics();
     _installErrorHandlers();
     applySystemUi();
     _configureImageCache();
@@ -61,9 +65,39 @@ class AppBootstrap {
       debugPrint('AppLogger init failed: $e');
     }
 
-    // 预取版本/系统信息，供诊断报告同步取用。
-    // 放在这里而不是复制时才取：复制是报障的核心动作，不能等 platform channel。
-    await DiagnosticHeader.prime();
+    // 预取版本/系统信息，供诊断报告同步取用 —— **不阻塞启动**。
+    //
+    // 以前这里是 `await DiagnosticHeader.prime()`：它内部走
+    // `PackageInfo.fromPlatform()`（平台通道），最坏情况还带 2 秒超时。
+    // 而这批信息只在用户点「复制诊断报告」时才用得上，不该让每个人
+    // 每次冷启动为它排队。现在挪到后台，并把顺序固定在本函数返回后
+    // 立即开始 —— 复制通常发生在用户操作之后，届时候选值早已就绪。
+    unawaited(_primeDiagnosticHeader());
+  }
+
+  /// 后台预取诊断报告头（版本/系统信息）。失败不影响任何功能。
+  static Future<void> _primeDiagnosticHeader() async {
+    try {
+      await DiagnosticHeader.prime();
+    } catch (_) {
+      // 预取失败时复制会落到占位值，与改动前行为一致。
+    }
+  }
+
+  /// 首帧后接上诊断通道（不阻塞启动）。
+  ///
+  /// 为什么可以推迟：`setMethodCallHandler` 是同步注册，真正要等的是
+  /// `invokeMethod('ready')` 这个平台往返 —— 它只影响"原生缓冲的早期事件
+  /// 什么时候回放过来"，不影响用户看到第一帧。
+  ///
+  /// 为什么用 `endOfFrame` 而不是 `Future.microtask`：平台通道的回放本身不慢，
+  /// 但启动期主线程在忙（图片解码、布局），这时候插一次通道往返会和首帧抢时间。
+  /// 等首帧画完再做，既不影响"早期事件"的完整性（原生那侧是缓冲的，不会丢），
+  /// 也不占首帧的预算。
+  static void _scheduleWindowDiagnostics() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_attachWindowDiagnostics());
+    });
   }
 
   /// 接上原生小窗诊断通道。
