@@ -722,6 +722,13 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
           text: '共 ${_items.length} 题',
         ),
       );
+      // 分享出去的是接收方的副本，临时目录里这份留着只会在下次导出前一直占着
+      // （题库 JSON 可以有几十 MB）。删失败不影响「已导出」这件事。
+      try {
+        if (await file.exists()) await file.delete();
+      } on FileSystemException {
+        // 占用中就算了，下次导出会写新文件（名字带时间戳，不会与旧文件同名）。
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
