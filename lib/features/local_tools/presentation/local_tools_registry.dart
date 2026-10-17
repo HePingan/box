@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../design_system/app_tokens.dart';
 import '../../../design_system/widgets/app_back_button.dart';
+import 'image_grid_panel.dart';
 import 'local_tool_panels.dart';
 
 /// 一个纯本地工具的定义。
@@ -100,6 +101,16 @@ final Map<String, LocalToolDef> kLocalTools = {
     subtitle: '本地生成强随机密码，可调长度与字符集',
     icon: Icons.key_rounded,
     builder: (_) => const _PasswordBody(),
+  ),
+  // ── 图片处理 ──
+  // 九宫格切图先落地：它只需要 dart:ui 的裁切+编码，不新增任何三方依赖。
+  // 压缩/格式转换/拼接要引图像库（构建环境受限时是实打实的成本），单独一版。
+  'image_grid': LocalToolDef(
+    id: 'image_grid',
+    title: '九宫格切图',
+    subtitle: '无损按网格切开，行数列数可调，适合多图排版',
+    icon: Icons.grid_on_rounded,
+    builder: (_) => const ImageGridPanelBody(),
   ),
   'relation': LocalToolDef(
     id: 'relation',
@@ -308,7 +319,7 @@ class LocalToolPage extends StatelessWidget {
             Expanded(
               // 内容不足一屏时把卡片**撑满**内容区：以前卡片按内容高度自适应、
               // 顶部对齐，短工具（指南针/水平仪/秒表…）就成了「半张白卡浮在
-              // 上半屏」，28 个本地工具实测留白 28%~69%（中位约 50%）。
+              // 上半屏」，全部本地工具实测留白 28%~69%（中位约 50%）。
               // 这里给内容一个 minHeight = 可视高度，卡片自己就会长到底；
               // 内容真的超过一屏时 minHeight 不起作用，照旧滚动。
               child: LayoutBuilder(

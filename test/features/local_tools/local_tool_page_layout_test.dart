@@ -47,7 +47,7 @@ void main() {
   group('卡片撑满 + 内容居中', () {
     final ids = kLocalTools.keys.toList();
 
-    testWidgets('28 个本地工具的卡片都撑满内容区，且都不抛异常', (tester) async {
+    testWidgets('每个本地工具的卡片都撑满内容区，且都不抛异常', (tester) async {
       expect(ids.length, greaterThanOrEqualTo(28));
       for (final id in ids) {
         await _pumpTool(tester, id);
