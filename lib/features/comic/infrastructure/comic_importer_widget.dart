@@ -40,8 +40,11 @@ class ComicImporterWidget {
 
     final loading = _showLoading(context);
     try {
-      final pages = await ComicImporter.extractPages(filePath);
-      final coverPath = await ComicImporter.extractCover(filePath);
+      // 一次解压拿到页面和封面：以前调两次 extractPages + extractCover，
+      // 等于把整本 CBZ 解两遍、多写一整个临时目录，而且第一份直接成了垃圾。
+      final extraction = await ComicImporter.extract(filePath);
+      final pages = extraction.pages;
+      final coverPath = extraction.coverPath;
       loading.close();
 
       if (pages.isEmpty) {
