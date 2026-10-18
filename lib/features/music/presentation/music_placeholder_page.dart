@@ -27,6 +27,11 @@ import 'package:box/features/extensions/plugins/remote_storage/presentation/remo
 /// 这既是 Android 现在推荐的做法，也省掉一次"申请权限被拒"的困惑。
 /// 代价是不能"打开就列出我手机里所有歌"，需要用户主动挑一次。
 ///
+/// ⚠ 另一个容易被忽略的事实：`file_picker` 的 Android 实现会把选中的文件**复制**到
+/// `cacheDir/file_picker/<时间戳>/`，Dart 侧拿到的 `path` 指向那份副本，而不是用户原件。
+/// 所以这里会再复制一份到我们自己的临时目录（系统清插件缓存时正在播的音频不会断），
+/// 并在复制完成后清掉插件那份（否则每挑一次就多一份，谁也清不到）。
+///
 /// 文件名与类名沿用 `MusicPlaceholderPage`：仓库里已有测试与入口按这个名字引用，
 /// 改名的收益（好看）小于它带来的全仓改动面。
 class MusicPlaceholderPage extends StatefulWidget {
@@ -142,15 +147,64 @@ class _MusicPlaceholderPageState extends State<MusicPlaceholderPage> {
       }
 
       final name = path.split(Platform.pathSeparator).last;
-      // 本地文件由用户自己拥有：不复制、不落临时目录，也不在离开时删除。
-      // （_lastTempFile 只用于我们自己下载下来的那份。）
+
+      // ⚠ 这里拿到的 `path` **不是**用户的原文件：`file_picker` 的 Android 实现
+      // 会把选中的文件复制到 `context.cacheDir/file_picker/<时间戳>/`，返回的是
+      // 那份**缓存副本**（见 android_file_picker 的 FileUtils.getFileInfo）。
+      // 两个后果都得处理：
+      //   1. 缓存随时可能被系统清掉 —— 正在播的音频会断，所以复制一份到我们自己的
+      //      目录再播（这也解释了为什么"不复制"是错的）；
+      //   2. 每选一次就留一份副本 —— 播完就把插件缓存清掉，别让它越积越多。
+      final owned = await _copyToOwnedDir(file, name);
+      // 复制可能要几十毫秒到几秒（大文件/慢存储）：用户完全可能在这期间退出本页。
+      if (!mounted) return;
       setState(() => _status = '准备播放 $name');
-      await _pushPlayer(path, _entryForName(name), localPath: path);
+      await _pushPlayer(
+        owned.path,
+        _entryForName(name),
+        localPath: owned.path,
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _status = '打开本地音频失败：$e');
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// 把插件给的缓存副本复制到我们自己的目录，返回那份文件。
+  ///
+  /// 为什么不直接播插件给的那份：那是 `cacheDir/file_picker/...` 下的临时副本，
+  /// 系统在低存储时会整目录清理，播到一半断掉是必然发生的。我们自己的目录由
+  /// 本页的 `dispose` 负责收尾（见 [_lastTempFile]）。
+  ///
+  /// 复制失败就退回原路径：能用总比不能用好，只是要接受"可能被系统清掉"。
+  Future<File> _copyToOwnedDir(File source, String name) async {
+    try {
+      final tmpDir = await getTemporaryDirectory();
+      final dir = Directory('${tmpDir.path}/music_local');
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final ext = name.contains('.') ? name.substring(name.lastIndexOf('.')) : '';
+      final target = File(
+        '${dir.path}/picked_${DateTime.now().microsecondsSinceEpoch}$ext',
+      );
+      await source.copy(target.path);
+      _lastTempFile = target;
+
+      // 复制完就清掉插件那份（否则每挑一次就多一份，谁也清不到）。
+      // 失败无所谓：下次挑文件时插件自己也会清。
+      unawaited(_clearPickerCacheQuietly());
+      return target;
+    } catch (_) {
+      return source;
+    }
+  }
+
+  static Future<void> _clearPickerCacheQuietly() async {
+    try {
+      await FilePicker.clearTemporaryFiles();
+    } catch (_) {
+      // 清不掉不影响播放。
     }
   }
 
