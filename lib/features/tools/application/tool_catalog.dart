@@ -184,6 +184,10 @@ const Map<String, ToolTarget> kToolTargets = {
   '亲戚称呼计算': LocalToolTarget('relation'),
   // ── 图片处理（纯本地，无三方依赖）──
   '九宫格切图': LocalToolTarget('image_grid'),
+  '图片压缩': LocalToolTarget('image_compress'),
+  '格式转换': LocalToolTarget('image_convert'),
+  '水印添加': LocalToolTarget('image_watermark'),
+  '图片拼接': LocalToolTarget('image_collage'),
 };
 
 /// 已接线工具名单。派生自 [kToolTargets]，不再手抄。

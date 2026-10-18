@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../../design_system/app_tokens.dart';
 import '../../../design_system/widgets/app_back_button.dart';
+import 'image_collage_panel.dart';
+import 'image_compress_panel.dart';
+import 'image_convert_panel.dart';
 import 'image_grid_panel.dart';
+import 'image_watermark_panel.dart';
 import 'local_tool_panels.dart';
 
 /// 一个纯本地工具的定义。
@@ -111,6 +115,34 @@ final Map<String, LocalToolDef> kLocalTools = {
     subtitle: '无损按网格切开，行数列数可调，适合多图排版',
     icon: Icons.grid_on_rounded,
     builder: (_) => const ImageGridPanelBody(),
+  ),
+  'image_compress': LocalToolDef(
+    id: 'image_compress',
+    title: '图片压缩',
+    subtitle: '按体积/画质预设压缩，压完更大就保留原图',
+    icon: Icons.compress_rounded,
+    builder: (_) => const ImageCompressPanelBody(),
+  ),
+  'image_convert': LocalToolDef(
+    id: 'image_convert',
+    title: '格式转换',
+    subtitle: 'PNG / JPEG / BMP 互转，透明的处理方式由你定',
+    icon: Icons.swap_horiz_rounded,
+    builder: (_) => const ImageConvertPanelBody(),
+  ),
+  'image_watermark': LocalToolDef(
+    id: 'image_watermark',
+    title: '水印添加',
+    subtitle: '文字水印，九宫格定位（仅英文数字）',
+    icon: Icons.branding_watermark_outlined,
+    builder: (_) => const ImageWatermarkPanelBody(),
+  ),
+  'image_collage': LocalToolDef(
+    id: 'image_collage',
+    title: '图片拼接',
+    subtitle: '2-9 张拼成网格图，等比缩放不拉伸',
+    icon: Icons.grid_view_rounded,
+    builder: (_) => const ImageCollagePanelBody(),
   ),
   'relation': LocalToolDef(
     id: 'relation',
