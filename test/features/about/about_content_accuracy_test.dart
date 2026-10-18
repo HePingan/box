@@ -17,6 +17,19 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   String readLib(String path) => File('lib/$path').readAsStringSync();
 
+  /// 读一个目录下所有 .dart（含 part 文件）拼起来。
+  ///
+  /// 为什么要这个：本地工具面板已按用途拆成 part 文件（2026-10-18），
+  /// 文案散在 `*_panels_sensor.part.dart` 这类兄弟文件里。只读主文件会让
+  /// 「文案必须在某处出现」类的护栏**假通过**（找不到就当没写），
+  /// 护栏失效比没有护栏更危险。
+  String readLibDir(String path) => Directory('lib/$path')
+      .listSync()
+      .whereType<File>()
+      .where((f) => f.path.endsWith('.dart'))
+      .map((f) => f.readAsStringSync())
+      .join('\n');
+
   group('文案里提到的功能必须真实存在', () {
     test('不得出现项目里没有实现的功能词', () {
       final allText = [
@@ -235,8 +248,7 @@ void main() {
       final label = RegExp(r'android:label="([^"]+)"')
           .firstMatch(manifest)!
           .group(1)!;
-      final panels =
-          readLib('features/local_tools/presentation/local_tool_panels.dart');
+      final panels = readLibDir('features/local_tools/presentation');
       expect(
         panels.contains('显示的名字是 $label'),
         isTrue,
