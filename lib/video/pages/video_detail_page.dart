@@ -13,6 +13,7 @@ import '../widgets/download/video_download_bottom_sheet.dart';
 import '../widgets/video_play_container.dart';
 import 'detail/detail_info_card.dart';
 import 'detail/detail_models.dart';
+import 'detail/episode_label.dart';
 import '../../design_system/app_tokens.dart';
 import '../../design_system/widgets/app_section_title.dart';
 
@@ -395,10 +396,11 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                       const SizedBox(height: 3),
                       // A3：副标题降级——更小字号、更弱字重与颜色，
                       // 只作轻提示，不与「选集」大标题抢层级。
+                      // 原先写「正在播放 · 第01集」，而网格里第 01 集本来就是
+                      // 橙色高亮 —— 同一件事说了两遍。这里换成用户真的想知道、
+                      // 而页面上又没别处写的信息：这条线路有多少集。
                       Text(
-                        controller.currentEpisodeName == null
-                            ? '待选集'
-                            : '正在播放 · ${controller.currentEpisodeName}',
+                        '当前线路 ${episodes.length} 集',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -415,23 +417,15 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
               // （都调 controller.loadDetail）—— 同一屏两个入口，删掉这个。
             ],
           ),
-          if (controller.playLines.length > 1) ...[
-            const SizedBox(height: AppTokens.spaceMd),
-            // ② 线路 / 剧集两行共用同一个左侧标签列（_LabeledRow），
-            // 两行内容左边缘因此对齐 —— 原来是「线路」行有图标+文字、
-            // 剧集行直接铺满，起点差约 54px，看着错位。
-            // chip 仍可横向滚动，长线路名不会挤压或换行。
-            _LabeledRow(
-              label: '线路',
-              child: _buildLineChips(
-                playLines: controller.playLines,
-                selectedIndex: controller.selectedLineIndex,
-                onSelected: controller.selectLine,
-                isUnreachable: controller.isLineRecentlyUnreachable,
-              ),
-            ),
-          ],
           const SizedBox(height: AppTokens.spaceMd),
+          // 剧集在前、线路在后。
+          //
+          // 为什么换顺序：线路通常 2-4 条、用户选定后基本不再改；剧集有 20-40 集
+          // 且每次都要点。原来线路那条带渐变填充的大胶囊压在剧集上方，
+          // **次要信息抢了主要信息的位置**。
+          //
+          // 两行仍共用 _LabeledRow（内容左边缘对齐）—— 这条是上一轮修过的，
+          // video_detail_layout_test 锁着，不能因为换顺序就丢。
           _LabeledRow(
             label: '剧集',
             topPadding: 6,
@@ -441,6 +435,19 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
               onEpisodeTap: controller.selectEpisode,
             ),
           ),
+          if (controller.playLines.length > 1) ...[
+            const SizedBox(height: AppTokens.spaceMd),
+            _LabeledRow(
+              label: '线路',
+              // chip 仍可横向滚动，长线路名不会挤压或换行。
+              child: _buildLineChips(
+                playLines: controller.playLines,
+                selectedIndex: controller.selectedLineIndex,
+                onSelected: controller.selectLine,
+                isUnreachable: controller.isLineRecentlyUnreachable,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -577,14 +584,17 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
           ),
         ],
         SizedBox(height: isSingleEpisode ? 0 : 10),
-        // A1：等宽宫格。按容器宽度算列数（每格目标约 72px），
-        // 每格等宽居中，避免集名长短导致的参差右边界。
+        // A1：等宽宫格。按容器宽度算列数，每格等宽居中，
+        // 避免集名长短导致的参差右边界。
+        //
+        // 2026-10-18：目标宽度 62 → 56，让常见手机宽度落在 **5 列**
+        // （4 列时每屏只排 24 集，28 集的剧要展开一次才能看全）。
+        // 5 列 × 约 56dp 仍能放下「序号 15px + 集名 9px」两行。
         LayoutBuilder(
           builder: (context, constraints) {
-            // ② 网格现在缩在标签列右边（可用宽度少 38px），
-            // 格子目标宽度 72 → 62、列数下限 4 → 3，窄屏也还是整齐的等宽宫格。
+            // 网格缩在标签列右边（可用宽度少 38px），窄屏下限 3 列。
             const spacing = 8.0;
-            final columns = ((constraints.maxWidth + spacing) / (62 + spacing))
+            final columns = ((constraints.maxWidth + spacing) / (56 + spacing))
                 .floor()
                 .clamp(3, 8);
             final cellWidth =
@@ -613,7 +623,12 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
               icon: _episodesExpanded
                   ? Icons.expand_less_rounded
                   : Icons.expand_more_rounded,
-              label: _episodesExpanded ? '收起' : '展开全部 (${indices.length})',
+              // 文案改成「展开剩余 N 集」：原先写「展开全部 (28)」，
+              // 而收起时只显示 24 集 —— 同一屏「共 28 集」「展开全部 (28)」
+              // 两个 28 并列，用户会疑惑"现在到底看到几集"。
+              label: _episodesExpanded
+                  ? '收起'
+                  : '展开剩余 ${indices.length - visibleIndices.length} 集',
               onTap: () =>
                   setState(() => _episodesExpanded = !_episodesExpanded),
             ),
@@ -643,7 +658,9 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
             return Padding(
               padding: const EdgeInsets.only(right: 8),
               child: _PlaybackChip(
-                label: line.name,
+                // 站点技术名（lzm3u8 / liangzi）改成「线路 N」，原名作副注
+                label: lineDisplayName(line.name, index),
+                subLabel: lineSubName(line.name),
                 selected: selected,
                 // ② 前置标注：这条线最近取不到流（默认也不会选它），
                 // 免得用户点进去先卡一次、再被自动换线。
@@ -940,10 +957,15 @@ class _PlaybackChip extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onTap,
+    this.subLabel = '',
     this.unreachable = false,
   });
 
   final String label;
+
+  /// 副注：线路名是站点技术名时，这里放原名（`lzm3u8`），主显示是「线路 N」。
+  final String subLabel;
+
   final bool selected;
   final VoidCallback onTap;
 
@@ -958,23 +980,27 @@ class _PlaybackChip extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          gradient: selected
-              ? const LinearGradient(
-                  colors: [Color(0xFFFFE08A), Color(0xFFFB923C)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                )
-              : null,
-          color: selected ? null : AppTokens.surfaceMuted,
+          // 选中态从「渐变填充」降级为「描边 + 淡底」。
+          //
+          // 为什么：渐变那个橙色是全页最重的视觉元素，而线路只有 2-4 条、
+          // 选定后基本不再改 —— 它抢了下方 28 个剧集格子的注意力。
+          // 现在全页的"橙色强调"只留给当前正在看的那一集。
+          // 当前集的淡底用 token 而不是写死 0xFFFFF5E6：
+          // 深色档下写死的近白色会变成一块发亮的浅底（护栏当场抓到）。
+          // softPanel() 会把强调色按当前明暗取 alpha，两档都协调。
+          color: selected
+              ? AppTokens.softPanel(const Color(0xFFFB923C))
+              : AppTokens.surfaceMuted,
           borderRadius: BorderRadius.circular(AppTokens.radiusPill),
           border: Border.all(
             color: selected
-                ? Colors.transparent
+                ? const Color(0xFFFB923C)
                 : (unreachable
                       ? AppTokens.warning.withValues(alpha: 0.35) // 淡橙：与「上次没取到流」呼应
                       : AppTokens.cardBorder),
+            width: selected ? 1.5 : 1,
           ),
         ),
         child: Row(
@@ -988,22 +1014,34 @@ class _PlaybackChip extends StatelessWidget {
               style: TextStyle(
                 // 标了「上次没取到流」的线路名字弱化一档（仍可读、仍可点）。
                 color: selected
-                    ? AppTokens.inkDark
+                    ? const Color(0xFFB45309)
                     : (unreachable
                           ? AppTokens.textTertiary
                           : AppTokens.textSecondary),
-                fontSize: 13,
-                fontWeight: FontWeight.w900,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w800,
               ),
             ),
+            // 技术名作副注：既保留"这条是 lzm3u8"的信息，又不让它占主位。
+            if (subLabel.isNotEmpty) ...[
+              const SizedBox(width: 4),
+              Text(
+                subLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: AppTokens.textTertiary,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
             if (unreachable) ...[
               const SizedBox(width: 5),
-              Icon(
+              const Icon(
                 Icons.wifi_off_rounded,
                 size: 13,
-                color: selected
-                    ? AppTokens.inkDark.withValues(alpha: 0.75)
-                    : const Color(0xFFFB923C),
+                color: Color(0xFFFB923C),
               ),
             ],
           ],
@@ -1068,40 +1106,65 @@ class _EpisodeCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 集名是片源原样给的，长度不可控。旧实现把整个名字塞进一行再截断，
+    // 于是「第04集 高清」会变成「第04…」—— 用户看不出这是第几集，
+    // 而"点第几集"正是他唯一在做的事。
+    //
+    // 现在拆成两行：序号（大、永远完整）+ 其余文字（小、次要、可省略）。
+    final parts = parseEpisodeLabel(label);
+
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        // A1：宽度由外部等宽网格的 SizedBox 决定，这里只管高度内边距。
-        padding: EdgeInsets.symmetric(
-          horizontal: 8,
-          vertical: selected ? 8 : 7,
-        ),
+        // 宽度由外部等宽网格的 SizedBox 决定，这里只管内边距。
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         decoration: BoxDecoration(
-          gradient: selected
-              ? const LinearGradient(
-                  colors: [Color(0xFFFFE08A), Color(0xFFFB923C)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                )
-              : null,
-          color: selected ? null : AppTokens.surfaceMuted,
+          // 选中态用「描边 + 淡底」而不是渐变填充：
+          // 渐变填充视觉太重，会和上方线路 chip 的选中态撞在一起，
+          // 而这一屏真正需要强调的只有"当前这一集"。
+          color: selected
+              ? AppTokens.softPanel(const Color(0xFFFB923C))
+              : AppTokens.surfaceMuted,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: selected ? Colors.transparent : AppTokens.cardBorder,
+            color: selected ? const Color(0xFFFB923C) : AppTokens.cardBorder,
+            width: selected ? 1.5 : 1,
           ),
         ),
-        child: Text(
-          label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: selected ? AppTokens.inkDark : AppTokens.textSecondary,
-            fontSize: 13,
-            fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              // 抽不到序号就显示原名（不猜一个编号出来）
+              parts.number ?? label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: selected ? const Color(0xFFB45309) : AppTokens.textPrimary,
+                fontSize: parts.hasNumber ? 15 : 12,
+                fontWeight: FontWeight.w900,
+                height: 1.1,
+              ),
+            ),
+            if (parts.hasNumber && parts.rest.isNotEmpty) ...[
+              const SizedBox(height: 1),
+              Text(
+                parts.rest,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: AppTokens.textTertiary,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                  height: 1.1,
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );

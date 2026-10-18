@@ -201,6 +201,85 @@ void main() {
   /// ② 线路「最近取不到流」要在**点进去之前**看出来，且默认不落在它上面。
   /// 行为判据在 `test/video/line_reachability_test.dart`；这里只钉界面接线，
   /// 免得哪天重构把标注或默认跳过的落点弄丢（这两处都在私有 State 里）。
+  group('第三轮（2026-10-18）：序号优先 + 权重修正', () {
+    test('剧集格子：序号与副注两行，不再把整串塞一行截断', () {
+      final src = readLib('video/pages/video_detail_page.dart');
+      expect(
+        src.contains('parseEpisodeLabel(label)'),
+        isTrue,
+        reason: '集名要先拆成「序号 + 其余文字」，否则长名字会把序号截掉',
+      );
+      expect(
+        src.contains('parts.number ?? label'),
+        isTrue,
+        reason: '抽不到序号时回落到原名（不猜编号）',
+      );
+    });
+
+    test('当前集用描边而不是渐变填充（把橙色强调留给"这一集"）', () {
+      final src = readLib('video/pages/video_detail_page.dart');
+      // 剧集格子选区不应再有 LinearGradient 做背景
+      final cellIdx = src.indexOf('class _EpisodeCell');
+      final cellSrc = src.substring(cellIdx, cellIdx + 2000);
+      expect(
+        cellSrc.contains('LinearGradient'),
+        isFalse,
+        reason: '渐变填充视觉太重，和线路 chip 的选中态撞在一起',
+      );
+      expect(
+        cellSrc.contains('0xFFFB923C'),
+        isTrue,
+        reason: '改用橙色描边标识当前集',
+      );
+    });
+
+    test('剧集在前、线路在后（次要信息不压主要信息）', () {
+      final src = readLib('video/pages/video_detail_page.dart');
+      final epIdx = src.indexOf("label: '剧集'");
+      final lineIdx = src.indexOf("label: '线路'");
+      expect(epIdx, greaterThan(0));
+      expect(lineIdx, greaterThan(0));
+      expect(
+        epIdx,
+        lessThan(lineIdx),
+        reason: '线路只有 2-4 条且选定后不改，不该排在 28 集之前',
+      );
+    });
+
+    test('展开按钮文案是「展开剩余 N 集」，不再重复总数', () {
+      final src = readLib('video/pages/video_detail_page.dart');
+      expect(
+        src.contains('展开剩余 '),
+        isTrue,
+        reason: '「展开全部 (28)」与旁边「共 28 集」两个 28 并列，容易误读',
+      );
+      expect(
+        src.contains("'展开全部 ("),
+        isFalse,
+      );
+    });
+
+    test('副标题不再重复「正在播放 · X」', () {
+      final src = readLib('video/pages/video_detail_page.dart');
+      expect(
+        src.contains("'正在播放 · "),
+        isFalse,
+        reason: '网格里当前集已高亮，同一件事说两遍',
+      );
+      expect(
+        src.contains('当前线路 \${episodes.length} 集'),
+        isTrue,
+        reason: '换成页面上没别处写、用户真的想知道的信息',
+      );
+    });
+
+    test('线路技术名改成「线路 N」+ 原名副注', () {
+      final src = readLib('video/pages/video_detail_page.dart');
+      expect(src.contains('lineDisplayName('), isTrue);
+      expect(src.contains('lineSubName('), isTrue);
+    });
+  });
+
   group('② 线路可用性前置标注', () {
     test('线路 chip 带「取不到流」标记，且标注仍可点（不是禁用）', () {
       final page = readLib('video/pages/video_detail_page.dart');
