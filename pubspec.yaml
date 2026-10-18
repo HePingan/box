@@ -58,11 +58,20 @@ dependencies:
   cached_network_image: ^3.4.1
   flutter_cache_manager: ^3.4.1
   image_picker: ^1.1.2
-  archive: ^3.6.1
+  archive: ^4.5.2
   uuid: ^4.5.1
   file_picker: 12.2.0
   web: ^1.1.1
   gal: ^2.3.2
+  # 图片工具（压缩/格式转换/水印/拼接）：纯 Dart 实现，无原生依赖。
+  # 为什么需要它：dart:ui 的 ImageByteFormat **只有 png**，没有 JPEG 编码，
+  # 所以"把图压小""转成 jpg"这两类事用 Canvas 做不到（PNG 无损，重编码只会更大）。
+  #
+  # 为什么钉 4.3.0 而不是最新的 4.12：image ≥4.6 要求 `archive ^4.x`，而本项目的
+  # `archive` 还停在 ^3.6.1（漫画导入器用它的 ZipDecoder）。升 archive 4.x 是破坏性
+  # 变更（API 有改动），为了一个图片工具去动漫画导入链路不划算 —— 4.3.0 的编解码
+  # 能力对"压缩/转格式/水印/拼接"完全够用。
+  image: ^4.12.0
   share_plus: ^13.1.0
   wakelock_plus: ^1.3.1
   sensors_plus: ^7.1.0

@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
@@ -69,9 +68,25 @@ class ComicImporter {
   }
 
   /// 一次性解压：同时拿到页面列表与封面，避免重复解包。
+  ///
+  /// 损坏文件**必须抛出**而不是返回空列表：调用方对"空"的提示是
+  /// 「文件中没有找到图片」，对"坏"的提示是「导入失败: ...」—— 两者对用户
+  /// 是不同的事。archive 4.x 起 `decodeBytes` 对垃圾字节不再抛，而是返回一个
+  /// 空归档，所以这里自己补一道校验（见下面的 `files.isEmpty`）。
   static Future<ComicExtraction> extract(String filePath) async {
     final bytes = await File(filePath).readAsBytes();
     final archive = ZipDecoder().decodeBytes(bytes);
+
+    // 损坏文件**必须抛出**而不是返回空列表：调用方对"空"的提示是
+    // 「文件中没有找到图片」，对"坏"的提示是「导入失败: ...」—— 对用户是不同的事。
+    //
+    // 为什么不能只看 `archive.files.isEmpty`：**合法的空 zip** 也是空归档，
+    // 那属于"没有图片"而不是"文件坏了"（有专门的用例锁着这个区别）。
+    // archive 4.x 起 decodeBytes 对垃圾字节不再抛，所以这里按**压缩包签名**判：
+    // zip 必须以 `PK\x03\x04`（或空归档的 `PK\x05\x06`）开头。
+    if (!_looksLikeZip(bytes)) {
+      throw const FormatException('这个文件不是有效的 CBZ/ZIP（读不出压缩包结构，可能已损坏）');
+    }
 
     final imageEntries = archive.files
         .where((e) => e.isFile && _isImageName(e.name))
@@ -97,14 +112,15 @@ class ComicImporter {
       final index = i.toString().padLeft(_indexWidth, '0');
       final name = '${index}_${_hash(entry.name)}$ext';
       final outPath = p.join(outDir.path, name);
-      await File(outPath).writeAsBytes(entry.content as Uint8List);
+      // archive 4.x 起 entry.content 已是 Uint8List（3.x 是 dynamic，需要强转）。
+      await File(outPath).writeAsBytes(entry.content);
       pages.add(outPath);
 
       // 名字里带 cover / 封面的条目优先当封面（第一个命中的为准）。
       if (coverPath == null && _looksLikeCover(entry.name)) {
         final coverName = 'cover_${_hash(entry.name)}$ext';
         final coverOut = p.join(outDir.path, coverName);
-        await File(coverOut).writeAsBytes(entry.content as Uint8List);
+        await File(coverOut).writeAsBytes(entry.content);
         coverPath = coverOut;
       }
     }
@@ -153,6 +169,18 @@ class ComicImporter {
       }
     }
     return freed;
+  }
+
+  /// 字节是否像 zip：以 `PK\x03\x04`（有条目）或 `PK\x05\x06`（空归档）开头。
+  ///
+  /// 只看签名、不做完整校验：目标是区分「垃圾字节」与「合法但没图片的包」，
+  /// 后者必须保持"返回空列表"的既有语义（有测试锁着）。
+  static bool _looksLikeZip(List<int> bytes) {
+    const p1 = 0x50, p2 = 0x4B;
+    if (bytes.length < 4) return false;
+    if (bytes[0] != p1 || bytes[1] != p2) return false;
+    final tag = bytes[2] << 8 | bytes[3];
+    return tag == 0x0304 || tag == 0x0506 || tag == 0x0708 || tag == 0x0102;
   }
 
   /// 从 CBZ/ZIP 提取页面列表（自然序）。

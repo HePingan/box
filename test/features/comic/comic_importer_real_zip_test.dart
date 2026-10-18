@@ -22,7 +22,8 @@ File _makeZip(Directory dir, String name, Map<String, int> entries) {
     final bytes = List<int>.filled(8, marker);
     archive.addFile(ArchiveFile(entryName, bytes.length, bytes));
   });
-  final zipped = ZipEncoder().encode(archive)!;
+  // archive 4.x 起 encode() 返回非空。
+  final zipped = ZipEncoder().encode(archive);
   return File(p.join(dir.path, name))..writeAsBytesSync(zipped);
 }
 
