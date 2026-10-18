@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:box/features/comic/domain/comic_book.dart';
 import 'package:box/features/comic/domain/comic_fetcher.dart';
 import 'package:box/features/comic/domain/comic_image_cache.dart';
+import 'package:box/features/comic/domain/comic_page_health.dart';
 import 'package:box/features/comic/domain/comic_offline_store.dart';
 import 'package:box/features/comic/domain/comic_library_store.dart';
 import 'package:box/features/comic/domain/comic_online_progress.dart';
@@ -15,6 +16,7 @@ import 'package:box/features/comic/presentation/comic_online_page.dart';
 import 'package:box/features/comic/domain/comic_reader_state.dart';
 import 'package:box/features/comic/infrastructure/comic_importer.dart';
 import 'package:box/features/comic/infrastructure/comic_importer_widget.dart';
+import 'package:box/features/comic/presentation/comic_legacy_repair_banner.dart';
 import 'package:box/features/comic/presentation/comic_reader_page.dart';
 import 'package:box/features/comic/presentation/comic_source_check_page.dart';
 import 'package:box/features/comic/presentation/comic_cover_image.dart';
@@ -69,6 +71,8 @@ class ComicLibraryPage extends StatefulWidget {
     this.onlineProgressStore,
     this.coverCache,
     this.offlineStore,
+    this.missingPagesProbe,
+    this.pageHealthNoticeStore,
   });
 
   /// 可注入存储（测试用）；生产省略即走默认实例。
@@ -82,6 +86,20 @@ class ComicLibraryPage extends StatefulWidget {
 
   /// 在线阅读进度的存储（测试用内存版）；生产省略即走默认实例。
   final ComicOnlineProgressStore? onlineProgressStore;
+
+  /// 可注入的「哪些书页图丢了」判定（测试 / 集成用）。
+  ///
+  /// 生产省略即走 [_loadBooksWithMissingPages]（domain 侧判定接上之前的空实现）。
+  /// 有它才能在 widget 测试里把提示条**画出来**：真判定要 stat 磁盘上的页图，
+  /// 没有这个口子就只能测到"没有坏书 → 不显示"这一半。
+  final Future<List<ComicBook>> Function(List<ComicBook> books)?
+      missingPagesProbe;
+
+  /// 「已经告诉过用户」的本机状态存储（测试注入用）。
+  ///
+  /// 生产省略即走 `CacheStore(namespace: 'comic_page_health')`。它是**本机状态**
+  /// 而不是书的属性：换设备该重新提示，备份也不该把它带出去。
+  final ComicPageHealthNoticeStore? pageHealthNoticeStore;
 
   @override
   State<ComicLibraryPage> createState() => _ComicLibraryPageState();
@@ -113,6 +131,18 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
   ComicUpdateWatch? _updates;
   bool _updatesReady = false;
 
+  /// 「旧漫画丢了页图」提示条要不要画。
+  ///
+  /// 进程内初值 false，真正的"已提示过"由 [ComicPageHealthNoticeStore] 落盘：
+  /// 只提示**没提示过**的书，用户点「暂不处理」或看过之后标记，重启不再打扰。
+  bool _bannerDismissed = false;
+
+  /// 页图已经不在的旧书（空 = 不需要提示）。
+  ///
+  /// 查一次就够：进页面时算一遍，导入/删除后再算一遍，不随每次重建重算 ——
+  /// 这个判定要逐本 stat 文件，几百本书时放在 build 里会明显拖慢书架。
+  List<ComicBook> _legacyBroken = const <ComicBook>[];
+
   @override
   void initState() {
     super.initState();
@@ -120,6 +150,7 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
     // 预热离线库：下载过的书断网时封面/阅读都能直接读本机那份。
     unawaited(_offline.warmUp());
     _future = _load();
+    unawaited(_refreshLegacyBroken());
     unawaited(() async {
       await _ensureUpdates();
       await _checkComicUpdates();
@@ -206,8 +237,116 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
       context: context,
       builder: (_) => _ImportDialog(store: _store),
     );
-    if (book != null && mounted) _reload();
+    if (book != null && mounted) {
+      _reload();
+      // 刚导进来的书是好的，但库里可能还有别的坏书；也顺手让提示条感知"少了一本"。
+      await _refreshLegacyBroken();
+    }
   }
+
+  /// 返回"页图已经丢失、需要用户重新导入"的书。
+  ///
+  /// 判断口径归 domain 侧（`comic_page_health.dart`）：只算本地书（在线书的页在站点上、
+  /// 本地没有文件），且每本只抽头/中/尾几页 stat 一次 —— 一本几百页的书不会被全量扫。
+  /// 本页不再自己判一遍，免得多出第二种口径。
+  Future<List<ComicBook>> _loadBooksWithMissingPages() async {
+    final books = await _store.fetch();
+
+    // 谁是"页没了"的书：生产走 domain 判定；测试/预演可用 probe 直接给结论。
+    //
+    // 注意 probe 只替换**判定**这一步，后面的"是否已经提示过"照常走 —— 两条路
+    // 共用同一套过滤，测试里才测得到真实的抑制行为。
+    //
+    // 为什么 widget 测试必须用 probe：`ComicPageHealthChecker` 的真实探针是
+    // `File.exists()`，而 `testWidgets` 跑在假时钟里，真实文件 IO 的 Future
+    // 不会完成（实测会一直挂到超时）。所以"真实 IO + 真实页面"这条组合只能在
+    // 真机验证，单测用注入。
+    final probe = widget.missingPagesProbe;
+    final Set<String> missingIds;
+    if (probe != null) {
+      missingIds = (await probe(books)).map((b) => b.id).toSet();
+    } else {
+      final health = await checkComicPageHealth(books);
+      missingIds = health.missingBookIds.toSet();
+    }
+    if (missingIds.isEmpty) return const <ComicBook>[];
+
+    // 只提示**没提示过**的书：用户已经点过「暂不处理」的那批，不在每次进书架时
+    // 重新冒出来。这个状态按设备存、不写进 ComicBook —— 换设备该再提示一次，
+    // 备份导出也不该把"这台机器已经看过了"带出去。
+    final pending = await _pendingLegacyNoticeIds(missingIds);
+    if (pending.isEmpty) return const <ComicBook>[];
+
+    return books
+        .where((b) => pending.contains(b.id))
+        .toList(growable: false);
+  }
+
+  /// 这次该提示的书 id（缺页 ∩ 没提示过）。
+  Future<Set<String>> _pendingLegacyNoticeIds(Set<String> missingBookIds) async {
+    if (missingBookIds.isEmpty) return const <String>{};
+    try {
+      final notified = await _noticeStore.notifiedIds();
+      return missingBookIds.where((id) => !notified.contains(id)).toSet();
+    } catch (_) {
+      // 读不出"提示过"的记录时按全都没提示过处理：宁可多提示一次，
+      // 也不要因为一个坏掉的缓存文件让用户的书永远白页且无人告知。
+      return missingBookIds;
+    }
+  }
+
+  /// 重算坏书清单。失败按"没有坏书"处理：提示条不该成为打开书架的前置条件。
+  Future<void> _refreshLegacyBroken() async {
+    List<ComicBook> broken;
+    try {
+      broken = await _loadBooksWithMissingPages();
+    } catch (_) {
+      broken = const <ComicBook>[];
+    }
+    if (!mounted) return;
+    setState(() => _legacyBroken = broken);
+  }
+
+  /// 提示条的「重新导入」：走既有导入流程，一次一本。
+  ///
+  /// 不假装能自动对上"新文件 = 旧书"：用户可能改过文件名、换过压缩包，按标题猜错
+  /// 会删掉一本好书。所以导入成功后只做两件事——刷新书架、重算坏书清单；
+  /// 由用户自己确认后删旧的（提示条正文里已经写清楚了）。
+  Future<void> _reimportLegacy() async {
+    // 还没接判定时这里不会显示；留着这句是为了语义完整（也方便测试注入）。
+    if (_legacyBroken.isEmpty) return;
+    final before = (await _store.fetch()).length;
+    if (!mounted) return;
+    // 提示落到外层：_importFlow 里会弹对话框、走系统文件选择器，中间页面可能被
+    // 别的事情重建/销毁，闭包里拿着这个 messenger 比事后碰 context 稳。
+    final messenger = ScaffoldMessenger.of(context);
+    await _importFlow();
+    final after = (await _store.fetch()).length;
+    if (after <= before) return; // 用户在文件选择器里取消了：不必说"已完成"
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('导入完成。内容确认无误后，长按旧的那本删除即可。'),
+      ),
+    );
+  }
+
+  /// 「暂不处理」：关掉提示，并把这几本记成"已经告诉过用户"。
+  ///
+  /// 落盘失败也要关掉本次的提示：用户按了按钮就该有反应，不能因为写文件失败
+  /// 让提示条杵在那里（尤其这类提示的本意就是"别烦我"）。
+  Future<void> _dismissLegacyBanner() async {
+    final ids = _legacyBroken.map((b) => b.id).toList(growable: false);
+    if (mounted) setState(() => _bannerDismissed = true);
+    if (ids.isEmpty) return;
+    try {
+      await _noticeStore.markNotified(ids);
+    } catch (_) {
+      // 写不进去就算了：下次启动会再提示一次，比假装成功更诚实。
+    }
+  }
+
+  ComicPageHealthNoticeStore get _noticeStore =>
+      widget.pageHealthNoticeStore ?? ComicPageHealthNoticeStore();
 
   Future<void> _openReader(ComicBook book) async {
     final url = book.onlineUrl ?? '';
@@ -268,6 +407,8 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
       unawaited(_syncRemoved(book.onlineUrl ?? book.id));
     }
     if (mounted) _reload();
+    // 删掉的很可能就是那本坏书：清单要跟着缩，不然提示条会一直指着一本不存在的书。
+    await _refreshLegacyBroken();
   }
 
   /// 删除确认里的说明。
@@ -324,40 +465,55 @@ class _ComicLibraryPageState extends State<ComicLibraryPage> {
           ),
         ],
       ),
-      body: FutureBuilder<List<_ShelfEntry>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(child: Text('加载失败: ${snapshot.error}'));
-          }
-
-          final entries = snapshot.data ?? const <_ShelfEntry>[];
-          if (entries.isEmpty) return _buildEmpty();
-
-          return GridView.builder(
-            padding: const EdgeInsets.all(12),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 0.7,
+      body: Column(
+        children: [
+          // 提示条压在书架上方、和书架一起滚动之外：它只占一行信息的高度，不挡任何
+          // 操作；没有坏书时组件自己返回 shrink，所以这里不必再判一次。
+          if (!_bannerDismissed)
+            ComicLegacyRepairBanner(
+              affectedBooks: _legacyBroken,
+              onReimportRequested: _reimportLegacy,
+              // 关掉只在**本次运行**生效（见 _bannerDismissed 的注释）。
+              onDismiss: _dismissLegacyBanner,
             ),
-            itemCount: entries.length,
-            itemBuilder: (context, index) {
-              final entry = entries[index];
-              return _ComicBookCard(
-                entry: entry,
-                cache: _coverCache,
-                offline: _offline,
-                onTap: () => _openReader(entry.book),
-                onDelete: () => _confirmDelete(entry.book),
-              );
-            },
-          );
-        },
+          Expanded(
+            child: FutureBuilder<List<_ShelfEntry>>(
+              future: _future,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return Center(child: Text('加载失败: ${snapshot.error}'));
+                }
+
+                final entries = snapshot.data ?? const <_ShelfEntry>[];
+                if (entries.isEmpty) return _buildEmpty();
+
+                return GridView.builder(
+                  padding: const EdgeInsets.all(12),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    childAspectRatio: 0.7,
+                  ),
+                  itemCount: entries.length,
+                  itemBuilder: (context, index) {
+                    final entry = entries[index];
+                    return _ComicBookCard(
+                      entry: entry,
+                      cache: _coverCache,
+                      offline: _offline,
+                      onTap: () => _openReader(entry.book),
+                      onDelete: () => _confirmDelete(entry.book),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
