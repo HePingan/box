@@ -7,6 +7,7 @@ import 'image_compress_panel.dart';
 import 'image_convert_panel.dart';
 import 'image_grid_panel.dart';
 import 'image_watermark_panel.dart';
+import 'image_wallpaper_panel.dart';
 import 'local_tool_panels.dart';
 
 /// 一个纯本地工具的定义。
@@ -143,6 +144,13 @@ final Map<String, LocalToolDef> kLocalTools = {
     subtitle: '2-9 张拼成网格图，等比缩放不拉伸',
     icon: Icons.grid_view_rounded,
     builder: (_) => const ImageCollagePanelBody(),
+  ),
+  'image_wallpaper': LocalToolDef(
+    id: 'image_wallpaper',
+    title: '壁纸提取',
+    subtitle: '裁成手机/平板屏幕比例，选保留哪一块',
+    icon: Icons.wallpaper_rounded,
+    builder: (_) => const ImageWallpaperPanelBody(),
   ),
   'relation': LocalToolDef(
     id: 'relation',

@@ -188,6 +188,7 @@ const Map<String, ToolTarget> kToolTargets = {
   '格式转换': LocalToolTarget('image_convert'),
   '水印添加': LocalToolTarget('image_watermark'),
   '图片拼接': LocalToolTarget('image_collage'),
+  '壁纸提取': LocalToolTarget('image_wallpaper'),
 };
 
 /// 已接线工具名单。派生自 [kToolTargets]，不再手抄。
