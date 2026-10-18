@@ -49,7 +49,11 @@ void main() {
     'lib/video/widgets/player/player_overlays.dart',
     // 漫画阅读器（含在线条漫页）：沉浸式黑底 + 白色控件，与外壳深浅无关。
     'lib/features/comic/presentation/comic_reader_page.dart',
-    'lib/features/comic/presentation/comic_online_page.dart',
+    // 在线漫画页已按职责拆成 part（2026-10-18）。**白名单必须跟着拆分走**：
+    // 沉浸层（黑底 + 白控件）落在 *_reader_chrome.part.dart 里，其余 part 是
+    // 正常的浅色页面、照常受这条规则管 —— 所以这里只放 reader_chrome，
+    // 不要把整个 comic_online_page_* 前缀都放进来（那等于给拆分后的文件开后门）。
+    'lib/features/comic/presentation/comic_online_page_reader_chrome.part.dart',
     // 小说阅读器的目录/设置弹层：跟随阅读器自己的 warm/paper/dark 三档。
     'lib/novel/pages/reader/reader_directory_sheet.dart',
     'lib/novel/pages/reader/reader_settings_sheet.dart',
