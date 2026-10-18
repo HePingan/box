@@ -6,6 +6,7 @@ import 'update_check_outcome.dart';
 import 'update_dialog.dart';
 import 'update_ignore_store.dart';
 import 'update_security.dart';
+import 'update_device_id.dart';
 import 'update_service.dart';
 
 /// 启动时的更新检查（B2：非阻塞）。
@@ -107,6 +108,7 @@ class _UpdateBootstrapPageState extends State<UpdateBootstrapPage> {
               channel: widget.channel,
               versionCode: currentCode,
               packageName: packageName,
+              deviceId: await UpdateDeviceId.get(),
               security: widget.updateSecurity,
             );
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../config/app_config.dart';
+import 'update_device_id.dart';
 import 'update_dialog.dart';
 import 'update_service.dart';
 
@@ -65,6 +66,9 @@ class ManualUpdateCheck {
       channel: AppConfig.appChannel,
       versionCode: currentCode,
       packageName: info.packageName,
+      // 灰度发布靠它认人：服务端把名单内的设备提到 beta 渠道。
+      // 空串是允许的（读不到偏好设置时），服务端会按 release 返回。
+      deviceId: await UpdateDeviceId.get(),
       security: AppConfig.updateSecurityConfig,
     );
 
