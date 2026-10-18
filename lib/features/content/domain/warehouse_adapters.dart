@@ -1,4 +1,5 @@
 import 'package:box/features/comic/domain/comic_book.dart';
+import 'package:box/features/music/data/music_favorites_store.dart';
 import 'package:box/features/content/domain/warehouse_models.dart';
 import 'package:box/video/models/video_source.dart';
 import 'package:box/video/services/favorites_repository.dart';
@@ -19,6 +20,12 @@ const String videoFavoriteSourceLabel = '影视收藏';
 
 /// 漫画收藏在收藏库里的来源标记。
 const String comicFavoriteSourceLabel = '漫画收藏';
+
+/// 音乐收藏在收藏库里的来源标记。
+///
+/// 音乐区的能力是「贴一个音频地址 → 下载 → 播」，所以收藏的就是那个地址本身。
+/// 没有源/歌单这些概念，因此不需要像影视那样拼 sourceId::vodId 的唯一键。
+const String musicFavoriteSourceLabel = '音乐收藏';
 
 /// 小说书架在收藏库里的来源标记。
 ///
@@ -114,6 +121,41 @@ List<WarehouseItem> warehouseItemsFromFavorites(Iterable<FavoriteItem> items) =>
 
 List<WarehouseItem> warehouseItemsFromComicBooks(Iterable<ComicBook> books) =>
     books.map(warehouseItemFromComicBook).toList();
+
+/// 单条音乐收藏 → [WarehouseItem]。
+///
+/// [WarehouseItem.detailUrl] 直接放音频地址：点开时收藏库据此判断"这条能播"，
+/// 而不是当成一个需要再查详情的条目（音乐没有详情页）。
+WarehouseItem warehouseItemFromMusicFavorite(MusicFavorite item) {
+  return WarehouseItem(
+    id: item.url,
+    title: item.title,
+    subtitle: _musicHost(item.url),
+    coverUrl: '',
+    detailUrl: item.url,
+    meta: '',
+    category: WarehouseCategory.music,
+    sourceLabel: musicFavoriteSourceLabel,
+    createdAt: item.savedAt,
+    raw: item,
+  );
+}
+
+List<WarehouseItem> warehouseItemsFromMusicFavorites(
+  Iterable<MusicFavorite> items,
+) => items.map(warehouseItemFromMusicFavorite).toList();
+
+/// 副标题显示域名（`https://cdn.example.com/a.mp3` → `cdn.example.com`）。
+///
+/// 显示完整 URL 会把一行挤满而且看不出区别 —— 同域名的几条看起来一模一样。
+String _musicHost(String url) {
+  try {
+    final host = Uri.parse(url).host;
+    return host.isEmpty ? '' : host;
+  } catch (_) {
+    return '';
+  }
+}
 
 /// 封面是否是本地文件路径（而非网络 URL）。
 ///

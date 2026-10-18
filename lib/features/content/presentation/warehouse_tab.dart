@@ -19,6 +19,9 @@ import 'package:box/features/content/domain/warehouse_adapters.dart';
 import 'package:box/features/content/domain/warehouse_cleanup.dart';
 import 'package:box/features/content/domain/warehouse_models.dart';
 import 'package:box/features/content/presentation/warehouse_search.dart';
+import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
+import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_player_page.dart';
+import 'package:box/features/music/data/music_favorites_store.dart';
 import 'package:box/features/music/presentation/music_placeholder_page.dart';
 import 'package:box/video/widgets/cross_source_resume_sheet.dart';
 import 'package:box/novel/novel_module.dart';
@@ -50,17 +53,21 @@ class WarehouseTabState extends State<WarehouseTab>
   // 于是 Hive 里明明有收藏，页面却永远空白 —— 这就是用户报的
   // 「内容页收藏库影视收藏没显示出来」。
   //
-  // music 仍无数据通道（播放器未开发，入口进占位页），所以不建状态字段。
+  // 音乐曾经没有数据通道（播放器未开发、入口是占位页），所以不建状态字段。
+  // 现在音乐页能「贴地址 → 下载 → 播」，也有了收藏动作，因此补上。
   List<WarehouseItem> _bookItems = [];
   List<WarehouseItem> _videoItems = [];
   List<WarehouseItem> _comicItems = [];
+  List<WarehouseItem> _musicItems = [];
   bool _booksLoaded = false;
   bool _videosLoaded = false;
   bool _comicsLoaded = false;
+  bool _musicLoaded = false;
   bool _loading = true;
   bool _booksError = false;
   bool _videosError = false;
   bool _comicsError = false;
+  bool _musicError = false;
 
   /// 打开条目前的阻塞提示文案（null = 不忙）。
   ///
@@ -78,6 +85,9 @@ class WarehouseTabState extends State<WarehouseTab>
   ComicUpdateWatch? _updates;
   bool _updatesReady = false;
   final FavoritesRepository _favoritesRepo = FavoritesRepository();
+
+  /// 音乐收藏（CacheStore `music_favorites`）。
+  final MusicFavoritesStore _musicStore = MusicFavoritesStore();
 
   // 搜索状态
   final TextEditingController _searchController = TextEditingController();
@@ -119,7 +129,12 @@ class WarehouseTabState extends State<WarehouseTab>
     await _purgeLegacyManualEntries();
     // 三条通道互不依赖，并行加载：串行会让首屏等三次 IO。
     // 单条失败只影响自己的分区（各自有 error 标记），不拖垮整页。
-    await Future.wait([_loadBooks(), _loadVideoFavorites(), _loadComics()]);
+    await Future.wait([
+      _loadBooks(),
+      _loadVideoFavorites(),
+      _loadComics(),
+      _loadMusicFavorites(),
+    ]);
     if (mounted) setState(() => _loading = false);
   }
 
@@ -144,6 +159,32 @@ class WarehouseTabState extends State<WarehouseTab>
         setState(() {
           _videosLoaded = true;
           _videosError = true;
+        });
+      }
+    }
+  }
+
+  /// 音乐收藏（CacheStore `music_favorites`）。
+  ///
+  /// 和影视收藏同样直接读存储、不走 controller：收藏库在 initState 阶段
+  /// 就要拿到数据，controller 的加载时机不保证。
+  Future<void> _loadMusicFavorites() async {
+    try {
+      final items = warehouseItemsFromMusicFavorites(
+        await _musicStore.load(),
+      );
+      if (mounted) {
+        setState(() {
+          _musicItems = items;
+          _musicLoaded = true;
+          _musicError = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _musicLoaded = true;
+          _musicError = true;
         });
       }
     }
@@ -401,6 +442,7 @@ class WarehouseTabState extends State<WarehouseTab>
     _bookItems,
     _videoItems,
     _comicItems,
+    _musicItems,
   ];
 
   int get _totalFiltered =>
@@ -687,6 +729,44 @@ class WarehouseTabState extends State<WarehouseTab>
     return true;
   }
 
+  /// 收藏里的音乐：直接进播放页（复用 remote_storage，与音乐页同一套）。
+  ///
+  /// 不在收藏库里另写一个播放器：音乐页已经验证过这条路（本地文件 + 中继），
+  /// 再写一份等于维护两套播放逻辑，迟早只修一边。
+  Future<void> _openMusicFavorite(MusicFavorite fav) async {
+    if (mounted) setState(() => _busyHint = '正在准备播放…');
+    try {
+      final uri = Uri.parse(fav.url);
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => RemoteStoragePlayerPage(
+            account: RemoteStorageAccount(
+              id: 'music-favorite',
+              label: '音乐收藏',
+              baseUrl: uri.hasScheme ? '${uri.scheme}://${uri.host}/' : '',
+              username: '',
+              password: '',
+            ),
+            entry: RemoteStorageEntry(
+              name: fav.title,
+              path: '/${fav.title}',
+              isDirectory: false,
+              size: 0,
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('打开失败：$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _busyHint = null);
+    }
+  }
+
   Future<void> _openItem(WarehouseItem item) async {
     // 每个分区都跳到「用户点这个卡片时真正想去的地方」，
     // 而不是统一弹一个只能看不能用的详情浮层。
@@ -718,6 +798,10 @@ class WarehouseTabState extends State<WarehouseTab>
           return;
         }
       case WarehouseCategory.music:
+        if (item.raw is MusicFavorite) {
+          await _openMusicFavorite(item.raw as MusicFavorite);
+          return;
+        }
         break;
     }
 
@@ -922,7 +1006,7 @@ class WarehouseTabState extends State<WarehouseTab>
                               ? '搜索结果：$_totalFiltered 项'
                               // 只列真的有数据通道的三个分区。
                               // 音乐播放器未开发，写进来就是承诺一个不存在的功能。
-                              : '我的书架 / 影视收藏 / 漫画收藏',
+                              : '我的书架 / 影视收藏 / 漫画收藏 / 音乐收藏',
                         ),
                       ),
                       IconButton(
@@ -1072,10 +1156,11 @@ class WarehouseTabState extends State<WarehouseTab>
                         _applySearchQuery('');
                       },
                     ),
-                  // 三个实时分区：书架 / 影视收藏 / 漫画收藏。
+                  // 四个实时分区：书架 / 影视收藏 / 漫画收藏 / 音乐收藏。
                   //
-                  // music 不建分区：播放器还没做，入口进占位页，
-                  // 建一个永远空白的分区比不建更像功能坏了。
+                  // music 曾经不建分区（播放器没做、入口是占位页，空分区更糟）。
+                  // 现在音乐页能「贴地址 → 下载 → 播」并且有收藏动作，
+                  // 分区背后的数据是真的，可以建了。
                   if (_shouldShowSection(WarehouseCategory.books))
                     WarehouseSection(
                       category: WarehouseCategory.books,
@@ -1116,6 +1201,23 @@ class WarehouseTabState extends State<WarehouseTab>
                       isLoading: !_comicsLoaded,
                       hasError: _comicsError,
                       emptyText: '在漫画库导入 CBZ/ZIP 或文件夹',
+                      onOpenItem: _openItem,
+                      onOpenVideoCenter: _openVideoCenter,
+                      onOpenNovelLibrary: _openNovelLibrary,
+                      editMode: _editMode,
+                      selectedKeys: _selectedKeys,
+                      onToggleSelect: _toggleSelectItem,
+                      searchQuery: _searchQuery,
+                    ),
+                  ],
+                  if (_shouldShowSection(WarehouseCategory.music)) ...[
+                    const SizedBox(height: 10),
+                    WarehouseSection(
+                      category: WarehouseCategory.music,
+                      items: _filtered(_musicItems),
+                      isLoading: !_musicLoaded,
+                      hasError: _musicError,
+                      emptyText: '在音乐页把常听的音频收藏起来',
                       onOpenItem: _openItem,
                       onOpenVideoCenter: _openVideoCenter,
                       onOpenNovelLibrary: _openNovelLibrary,
@@ -1197,7 +1299,7 @@ class WarehouseTabState extends State<WarehouseTab>
       case WarehouseCategory.comics:
         return _comicItems;
       case WarehouseCategory.music:
-        return const [];
+        return _musicItems;
     }
   }
 }

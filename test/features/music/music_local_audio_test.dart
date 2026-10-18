@@ -50,7 +50,15 @@ void main() {
     expect(find.textContaining('错误'), findsNothing);
 
     // 按钮没有被 busy 卡住（onPressed 非空）。
-    final btn = tester.widget<OutlinedButton>(find.byType(OutlinedButton));
+    //
+    // 注意用 ancestor+文字定位，不要用 byType：页面上现在有两个 OutlinedButton
+    // （「选择本地音频」与「收藏」），byType 会匹配到两个并抛 Too many elements。
+    final btnFinder = find.ancestor(
+      of: find.text('选择本地音频'),
+      matching: find.byType(OutlinedButton),
+    );
+    expect(btnFinder, findsOneWidget, reason: '「选择本地音频」按钮应当只有一个');
+    final btn = tester.widget<OutlinedButton>(btnFinder);
     expect(btn.onPressed, isNotNull, reason: '取消后必须还能再选一次');
   });
 

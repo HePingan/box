@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:box/design_system/app_tokens.dart';
+import 'package:box/features/music/data/music_favorites_store.dart';
 import 'package:box/design_system/widgets/app_back_button.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_player_page.dart';
@@ -59,6 +60,11 @@ class _MusicPlaceholderPageState extends State<MusicPlaceholderPage> {
   double _progress = 0;
   String? _status;
 
+  final MusicFavoritesStore _favorites = MusicFavoritesStore();
+
+  /// 当前输入框里的 URL 是否已收藏（只用于按钮显示"收藏/已收藏"）。
+  bool _favorited = false;
+
   /// 本次下载落下的临时文件，离开页面时删掉。
   ///
   /// 音频动辄几 MB～几十 MB，而下载目录是**临时目录根**、没有任何清理入口
@@ -71,6 +77,13 @@ class _MusicPlaceholderPageState extends State<MusicPlaceholderPage> {
     } on FileSystemException {
       // 已删 / 被占用：离开页面时不该因为清理失败而报错。
     }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // 进来先看一眼默认 URL 是否已收藏，按钮上直接显示「已收藏」。
+    unawaited(_refreshFavorited());
   }
 
   @override
@@ -112,6 +125,44 @@ class _MusicPlaceholderPageState extends State<MusicPlaceholderPage> {
       setState(() => _status = '错误: $e\n\n堆栈:\n$st');
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _refreshFavorited() async {
+    try {
+      final has = await _favorites.contains(_urlController.text.trim());
+      if (mounted) setState(() => _favorited = has);
+    } catch (_) {
+      // 查不到就当没收藏，不影响其它功能
+    }
+  }
+
+  /// 把输入框里那条 URL 加入音乐收藏。
+  ///
+  /// 只收藏 URL 与显示名：音乐区没有歌单/元数据概念，存多了都是猜的。
+  Future<void> _favoriteCurrentUrl() async {
+    final url = _urlController.text.trim();
+    if (url.isEmpty) {
+      setState(() => _status = '先填一个音频 URL 再收藏');
+      return;
+    }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      setState(() => _status = '只能收藏 http(s) 地址');
+      return;
+    }
+
+    try {
+      final added = await _favorites.add(url: url);
+      if (!mounted) return;
+      setState(() {
+        _favorited = true;
+        _status = added
+            ? '已加入收藏，可在「内容 → 收藏库 → 音乐收藏」里找到'
+            : '这条已经在收藏里了';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _status = '收藏失败：$e');
     }
   }
 
@@ -365,9 +416,26 @@ class _MusicPlaceholderPageState extends State<MusicPlaceholderPage> {
             ),
           ),
           const SizedBox(height: 12),
-          FilledButton(
-            onPressed: _busy ? null : _downloadAndPlay,
-            child: const Text('下载并播放'),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton(
+                  onPressed: _busy ? null : _downloadAndPlay,
+                  child: const Text('下载并播放'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              // 收藏是「内容页 → 收藏库 → 音乐收藏」的唯一入口。
+              // 收藏的是这条 URL 本身（音乐区的能力就是「贴地址 → 播」）。
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _favoriteCurrentUrl,
+                icon: Icon(
+                  _favorited ? Icons.bookmark_added : Icons.bookmark_add_outlined,
+                  size: 18,
+                ),
+                label: Text(_favorited ? '已收藏' : '收藏'),
+              ),
+            ],
           ),
 
           if (_busy || _status != null) ...[
