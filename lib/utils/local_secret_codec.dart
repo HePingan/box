@@ -104,6 +104,15 @@ class LocalSecretCodec {
   ///
   /// 只为迁移而存在：读到旧密文能解出来就用它，随后由调用方按新格式重写。
   /// 新代码不允许用它加密。
+  ///
+  /// ⚠ **这个函数返回 null 只能说明「大概率解不开」，不能说明「一定不是这份
+  /// 密文」。** 旧格式是 AES-CBC + PKCS7 padding，没有认证标签：用错误的盐解密
+  /// 时，末尾的 padding 仍有约 1/256 的概率「碰巧」通过校验，于是这里会返回
+  /// 一段**乱码而不是 null**（实测 2000 次错盐解密里出现 9 次）。
+  ///
+  /// 所以调用方**必须**自己校验明文形态（本仓两处调用解的都是 JSON，见
+  /// [decryptLegacyJson]），否则会把垃圾数据当成真凭据、还可能把它按新格式
+  /// 重新加密写回——那等于把用户原凭据覆盖掉。
   static String? decryptLegacy(String encoded, String legacySalt) {
     try {
       final raw = base64.decode(encoded);
@@ -118,6 +127,27 @@ class LocalSecretCodec {
     } catch (_) {
       return null;
     }
+  }
+
+  /// 旧格式解密 + **明文形态校验**（JSON 对象或数组）。
+  ///
+  /// 存在的理由见 [decryptLegacy] 的警示：CBC 没有认证，错盐有约 1/256 概率
+  /// 解出乱码。本仓旧密文解出来的一律是 JSON（账号列表 / 远程存储凭据），
+  /// 所以用「能不能 parse 成 JSON 且是 Map/List」当认证标签
+  /// （账号凭据是对象、远程存储是数组，两种形态都要收）。
+  ///
+  /// 这不等于密码学意义的认证——它只是把「错盐被当成成功」的概率从 1/256
+  /// 压到实际不可能，足够撑住迁移这一步。
+  static String? decryptLegacyJson(String encoded, String legacySalt) {
+    final plain = decryptLegacy(encoded, legacySalt);
+    if (plain == null) return null;
+    try {
+      final decoded = jsonDecode(plain);
+      if (decoded is Map || decoded is List) return plain;
+    } catch (_) {
+      // 不是 JSON：几乎可以确定是错盐解出来的乱码。
+    }
+    return null;
   }
 
   /// 由密钥材料与 context 派生该模块的 32 字节密钥。

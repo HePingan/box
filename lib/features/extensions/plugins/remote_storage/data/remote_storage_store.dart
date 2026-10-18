@@ -39,7 +39,14 @@ class RemoteStorageStore {
       var needsMigration = false;
       if (plain == null && LocalSecretCodec.looksLegacy(raw)) {
         // 旧格式：解出来就按新格式重写一次，避免每次启动都走兼容分支。
-        plain = LocalSecretCodec.decryptLegacy(raw, kRemoteStorageLegacySalt);
+        // 旧格式 AES-CBC **无认证**：错盐有约 1/256 概率「碰巧」通过 padding
+        // 校验并解出乱码（实测 5000 次泄漏 17 次）。若认了乱码，needsMigration
+        // 会把它按新格式写回，把真凭据覆盖成垃圾。
+        // 本仓旧密文解出来的是账号数组，所以用"是不是 JSON 容器"当认证。
+        plain = LocalSecretCodec.decryptLegacyJson(
+          raw,
+          kRemoteStorageLegacySalt,
+        );
         needsMigration = plain != null;
       }
       if (plain == null || plain.isEmpty) return <RemoteStorageAccount>[];

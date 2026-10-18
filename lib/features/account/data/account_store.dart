@@ -69,8 +69,18 @@ class BoxAccountStore {
     }
 
     final codec = await LocalSecretCodec.openWithPrefs(prefs, _codecContext);
-    final tokenResult = _decodeValue(codec, tokenEnc);
-    final userResult = _decodeValue(codec, userJsonEnc);
+    final tokenResult = _decodeValue(
+      codec,
+      tokenEnc,
+      // token 是纯文本，不是 JSON：只要求"非空且不含控制字符"。
+      // 错盐解出来的乱码几乎必然带控制字符（实测样本里大量 U+FFFD）。
+      looksValid: _looksLikeToken,
+    );
+    final userResult = _decodeValue(
+      codec,
+      userJsonEnc,
+      looksValid: _looksLikeJsonObject,
+    );
     final token = tokenResult.plain;
     final userText = userResult.plain;
     if (token == null ||
@@ -163,17 +173,50 @@ class BoxAccountStore {
     clearGlobalSessionInvalid();
   }
 
+  /// token 的形态：非空、无控制字符（错盐解出的乱码几乎必然违反这条）。
+  static bool _looksLikeToken(String plain) {
+    if (plain.isEmpty || plain.length > 4096) return false;
+    for (final unit in plain.codeUnits) {
+      // 允许 tab/newline 之外的 C0/C1 控制字符？不：token 里不该有任何一个。
+      if (unit < 0x20 || (unit >= 0x7F && unit <= 0x9F)) return false;
+    }
+    return true;
+  }
+
+  /// userJson 的形态：必须是 JSON 对象。
+  static bool _looksLikeJsonObject(String plain) {
+    try {
+      final decoded = jsonDecode(plain);
+      return decoded is Map;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// 解密一个值：先按新格式，再退回旧格式（并标记需要迁移）。
+  ///
+  /// [looksValid] 是这个值的**形态校验**，只作用于旧格式这条分支。
+  /// 为什么必须有它：旧格式是 AES-CBC + PKCS7，**没有认证**，用错误的盐解密时
+  /// 末尾 padding 有约 1/256 的概率「碰巧」通过，于是拿到一段乱码而不是失败
+  /// （实测 5000 次错盐解密泄漏 17 次）。若把乱码当成功，[loadSession] 会按
+  /// 新格式把它重新加密写回 —— 把用户真实凭据覆盖成垃圾。
+  ///
+  /// 校验放在调用方而不是解码层：同一个存储里既有 JSON（userJson）也有纯文本
+  /// （token），在解码层统一按 JSON 校验会误杀合法的 token。
   ({String? plain, bool wasLegacy}) _decodeValue(
     LocalSecretCodec codec,
-    String encoded,
-  ) {
+    String encoded, {
+    required bool Function(String plain) looksValid,
+  }) {
     final plain = codec.decrypt(encoded);
     if (plain != null) return (plain: plain, wasLegacy: false);
     if (!LocalSecretCodec.looksLegacy(encoded)) {
       return (plain: null, wasLegacy: false);
     }
     final legacy = LocalSecretCodec.decryptLegacy(encoded, _legacySalt);
-    return (plain: legacy, wasLegacy: legacy != null);
+    if (legacy == null || !looksValid(legacy)) {
+      return (plain: null, wasLegacy: false);
+    }
+    return (plain: legacy, wasLegacy: true);
   }
 }

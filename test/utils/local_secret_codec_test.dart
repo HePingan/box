@@ -112,7 +112,86 @@ void main() {
     expect(codec.decrypt(legacy), isNull);
 
     // 盐不对 → 解不出来（不会拿错盐的密钥解出垃圾）。
-    expect(LocalSecretCodec.decryptLegacy(legacy, 'another-salt'), isNull);
+    // 用 Json 版本：裸 decryptLegacy 在错盐下**本来就可能返回乱码**（见下一条）。
+    expect(LocalSecretCodec.decryptLegacyJson(legacy, 'another-salt'), isNull);
+  });
+
+  // 回归锁：这条曾经是偶发红的（约 0.5% 的跑批会遇到）。
+  //
+  // 根因不是测试写得松，而是**旧格式本身没有认证**：AES-CBC + PKCS7 padding，
+  // 用错误的盐解密时，末尾 padding 有约 1/256 的概率「碰巧」通过校验，
+  // 于是 decryptLegacy 返回一段乱码而不是 null。实测 2000 次错盐解密里出现 9 次。
+  //
+  // 危险的不只是测试变红：两个调用方（account_store / remote_storage_store）
+  // 一旦认了这份乱码，就会把它当作"旧数据"按新格式**重新加密写回**，
+  // 把用户真实凭据覆盖成垃圾。修法是解密后校验明文形态（本仓旧密文一律是 JSON）。
+  test('错盐解旧密文：批量尝试也不许返回内容（CBC 无认证的已知坑）', () {
+    const legacySalt = 'box-remote-storage-v1';
+    const plain = '{"accounts":["旧版本写下的凭据"]}';
+
+    var leaked = 0;
+    String? sample;
+    for (var i = 0; i < 300; i++) {
+      final legacy = legacyEncrypt(plain, legacySalt);
+      // 裸版本：这里**允许**偶发返回乱码（这就是那条坑本身），但只做统计。
+      // 真正要守的是下面那个 Json 版本必须一次都不漏。
+      final validated = LocalSecretCodec.decryptLegacyJson(
+        legacy,
+        'another-salt',
+      );
+      if (validated != null) {
+        leaked++;
+        sample ??= validated;
+      }
+    }
+
+    expect(
+      leaked,
+      0,
+      reason: '带 JSON 校验后，错盐一次都不该解出可用的明文'
+          '（漏了说明校验没生效，或 padding 碰撞被当成了成功）：$sample',
+    );
+  });
+
+  test('错盐解出的乱码：token 形态校验能挡住（账号凭据那条路）', () {
+    // account_store 的 token 不是 JSON，不能套 decryptLegacyJson；它用的是
+    // "非空 + 无控制字符"这条形态校验。这里直接验证乱码会被它挡住。
+    const legacySalt = 'box-remote-storage-v1';
+    const plain = 'legacy-token-abc123';
+
+    // 与 account_store._looksLikeToken 同口径（那边是私有的，这里复刻判据）。
+    bool looksLikeToken(String s) {
+      if (s.isEmpty || s.length > 4096) return false;
+      for (final unit in s.codeUnits) {
+        if (unit < 0x20 || (unit >= 0x7F && unit <= 0x9F)) return false;
+      }
+      return true;
+    }
+
+    var leaked = 0;
+    for (var i = 0; i < 300; i++) {
+      final legacy = legacyEncrypt(plain, legacySalt);
+      final out = LocalSecretCodec.decryptLegacy(legacy, 'wrong-salt');
+      if (out != null && looksLikeToken(out)) leaked++;
+    }
+    expect(
+      leaked,
+      0,
+      reason: '错盐解出的乱码几乎必然带控制字符；'
+          '若这里不为 0，说明 token 的形态校验挡不住，用户会被"迁移"成乱码 token',
+    );
+  });
+
+  test('decryptLegacyJson 对非 JSON 明文一律拒绝（它就是那道认证）', () {
+    // 用一个非 JSON 的旧密文：裸 decryptLegacy 解得出，Json 版本必须拒绝。
+    const legacySalt = 'box-remote-storage-v1';
+    final legacy = legacyEncrypt('this is not json at all', legacySalt);
+
+    expect(LocalSecretCodec.decryptLegacy(legacy, legacySalt),
+        'this is not json at all',
+        reason: '裸版本仍保留通用能力（不做形态假设）');
+    expect(LocalSecretCodec.decryptLegacyJson(legacy, legacySalt), isNull,
+        reason: 'Json 版本只认 JSON 对象/数组，其余一律当"解不开"');
   });
 
   test('非法输入一律返回 null，不抛异常', () async {
