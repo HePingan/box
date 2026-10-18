@@ -17,6 +17,7 @@ import 'package:box/features/extensions/plugins/net_diag/presentation/net_diag_p
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_page.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_page.dart';
 import 'package:box/features/image_generator/presentation/image_generator_page.dart';
+import 'package:box/features/music/presentation/music_placeholder_page.dart';
 import 'package:box/novel/pages/novel_list_page.dart';
 import 'package:box/video/video_compat_pages.dart';
 
@@ -61,6 +62,8 @@ void registerBuiltinRouteDefaults() {
     'openRemoteStorage',
     (_) => RemoteStoragePage(),
   );
+  // 音乐入口：在线音频 URL → 下载 → 复用 remote_storage 播放页。
+  HomePluginRouteRegistry.register('openMusic', (_) => MusicPlaceholderPage());
   HomePluginRouteRegistry.register(
     'service_monitor',
     (_) => ServiceMonitorPage(),

@@ -253,6 +253,27 @@ List<HomePlugin> buildDefaultPlugins() {
         );
       },
     ),
+    // 音乐分区的第一个**真插件**（阶段 2）。
+    //
+    // 此前 music 分区是 0 插件：内容页「音乐」四宫格能进占位页，但插件区什么都没有，
+    // 市场里那两条（专注白噪音 / 睡眠电台）还都是 comingSoon。现在它背后是
+    // 在线音频 URL → 下载 → 复用 remote_storage 播放页的真实能力。
+    HomePlugin(
+      id: 'builtin_music_online',
+      title: '在线音频',
+      subtitle: '贴一个音频链接，下载后播放',
+      icon: Icons.library_music_outlined,
+      color: Colors.pink,
+      area: HomePluginArea.music,
+      builtIn: true,
+      sort: 10,
+      onTap: (context) async {
+        HomePluginRouteRegistry.registerDefaults();
+        final builder = HomePluginRouteRegistry.lookup('openMusic');
+        if (builder == null) return;
+        await Navigator.push(context, MaterialPageRoute(builder: builder));
+      },
+    ),
     HomePlugin(
       id: 'builtin_comic_shelf',
       title: '漫画收藏',

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -11,14 +12,31 @@ import 'package:box/design_system/widgets/app_back_button.dart';
 import 'package:box/features/extensions/plugins/remote_storage/domain/remote_storage_models.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_player_page.dart';
 
-/// 音乐入口页：输入音频 URL → 下载到本地 → 交给 remote_storage 的播放页。
+/// 音乐入口页。两种来源，同一个播放器：
 ///
-/// 这是 `docs/music_area_entry_plan.md` 里「阶段 1（在线下载 + 播放）」的实现，
-/// 播放能力全部复用 remote_storage，不新写播放器。
+/// 1. **在线音频**（阶段 1）：贴一个音频 URL → 下载到本地 → 交给 remote_storage 播放页；
+/// 2. **本地文件**（阶段 3）：用系统文件选择器挑音频 → 直接播。
+///
+/// 播放能力 100% 复用 remote_storage（video_player + chewie + 中继），不新写播放器。
+///
+/// 为什么阶段 3 用**文件选择器**而不是扫描整个存储：
+/// `docs/music_area_entry_plan.md` 原计划是 MediaStore 全盘扫描，但那需要
+/// `READ_MEDIA_AUDIO`（Android 13+）/ `READ_EXTERNAL_STORAGE`（更早版本）的运行时权限，
+/// 而这个仓库**没有任何权限申请插件**（所有现有权限都是安装时授权或系统 Intent 触发）。
+/// 走 SAF 文件选择器拿 URI 则**零权限**：用户挑哪个文件，App 才看得到哪个文件 ——
+/// 这既是 Android 现在推荐的做法，也省掉一次"申请权限被拒"的困惑。
+/// 代价是不能"打开就列出我手机里所有歌"，需要用户主动挑一次。
+///
 /// 文件名与类名沿用 `MusicPlaceholderPage`：仓库里已有测试与入口按这个名字引用，
 /// 改名的收益（好看）小于它带来的全仓改动面。
 class MusicPlaceholderPage extends StatefulWidget {
-  const MusicPlaceholderPage({super.key});
+  const MusicPlaceholderPage({super.key, this.pickAudioPath});
+
+  /// 本地音频选择口的注入点（测试用）。
+  ///
+  /// 生产不传即走系统文件选择器。widget 测试里真调 FilePicker 会碰平台通道
+  /// （纯 test 环境没有插件 → MissingPluginException），所以留这个口子。
+  final Future<String?> Function()? pickAudioPath;
 
   @override
   State<MusicPlaceholderPage> createState() => _MusicPlaceholderPageState();
@@ -90,6 +108,75 @@ class _MusicPlaceholderPageState extends State<MusicPlaceholderPage> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// 挑一个本地音频并播放（阶段 3）。
+  ///
+  /// 走 SAF 文件选择器：**不需要任何存储权限** —— 用户挑了哪个文件，App 才拿到
+  /// 那个文件的访问权。这与"扫描全盘音频"是两条路，后者要 READ_MEDIA_AUDIO。
+  Future<void> _pickLocalAndPlay() async {
+    setState(() {
+      _busy = true;
+      _status = '选择中...';
+    });
+    try {
+      final picker = widget.pickAudioPath ?? _defaultPickAudioPath;
+      final path = await picker();
+      if (!mounted) return;
+      if (path == null || path.isEmpty) {
+        // 用户取消：不是错误，别弹红字。
+        setState(() {
+          _busy = false;
+          _status = null;
+        });
+        return;
+      }
+
+      final file = File(path);
+      if (!await file.exists()) {
+        setState(() {
+          _busy = false;
+          _status = '选中的文件读不到了（可能已被移动或删除）';
+        });
+        return;
+      }
+
+      final name = path.split(Platform.pathSeparator).last;
+      // 本地文件由用户自己拥有：不复制、不落临时目录，也不在离开时删除。
+      // （_lastTempFile 只用于我们自己下载下来的那份。）
+      setState(() => _status = '准备播放 $name');
+      await _pushPlayer(path, _entryForName(name), localPath: path);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _status = '打开本地音频失败：$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// 系统文件选择器：只列音频类扩展名。
+  static Future<String?> _defaultPickAudioPath() async {
+    final picked = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: const [
+        'mp3', 'flac', 'wav', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'amr', 'ape',
+      ],
+    );
+    return picked?.path;
+  }
+
+  /// 由文件名造一个 entry（播放页要求 entry 非空，哪怕播的是本地文件）。
+  RemoteStorageEntry _entryForName(String name) {
+    final ext = name.contains('.')
+        ? name.substring(name.lastIndexOf('.'))
+        : '.mp3';
+    final safeName = 'local_${DateTime.now().millisecondsSinceEpoch}$ext';
+    return RemoteStorageEntry(
+      name: safeName,
+      path: '/$safeName',
+      isDirectory: false,
+      size: 0,
+    );
   }
 
   /// 构造一个能被 [RemoteStoragePlayerPage] 识别的 entry。
@@ -177,31 +264,99 @@ class _MusicPlaceholderPageState extends State<MusicPlaceholderPage> {
         title: const Text('音乐'),
         backgroundColor: AppTokens.surface,
       ),
-      body: Padding(
+      body: ListView(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: _urlController,
-              decoration: const InputDecoration(
-                labelText: '音频 URL',
-                border: OutlineInputBorder(),
-              ),
+        children: [
+          // ── 本地文件（阶段 3）──
+          _SectionTitle(title: '本地音频', icon: Icons.audio_file_outlined),
+          const SizedBox(height: 8),
+          Text(
+            '从手机上挑一个音频文件播放。不需要给 App 存储权限 —— '
+            '你选哪个文件，App 才看得到哪个。',
+            style: TextStyle(
+              fontSize: 12.5,
+              height: 1.5,
+              color: AppTokens.textSecondary,
             ),
-            const SizedBox(height: 12),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _pickLocalAndPlay,
+            icon: const Icon(Icons.folder_open_rounded),
+            label: const Text('选择本地音频'),
+          ),
+
+          const SizedBox(height: 24),
+          const Divider(),
+          const SizedBox(height: 16),
+
+          // ── 在线音频（阶段 1）──
+          _SectionTitle(title: '在线音频', icon: Icons.language_rounded),
+          const SizedBox(height: 8),
+          Text(
+            '贴一个音频链接，App 下载完再播放（不是在线流播）。'
+            '仅用于你自己有权使用的音频。',
+            style: TextStyle(
+              fontSize: 12.5,
+              height: 1.5,
+              color: AppTokens.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _urlController,
+            decoration: const InputDecoration(
+              labelText: '音频 URL',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: _busy ? null : _downloadAndPlay,
+            child: const Text('下载并播放'),
+          ),
+
+          if (_busy || _status != null) ...[
+            const SizedBox(height: 20),
             if (_busy)
               LinearProgressIndicator(value: _progress > 0 ? _progress : null),
             if (_status != null)
-              Text(_status!, style: TextStyle(color: AppTokens.textSecondary)),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: _busy ? null : _downloadAndPlay,
-              child: const Text('下载并播放'),
-            ),
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: SelectableText(
+                  _status!,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.5,
+                    color: AppTokens.textSecondary,
+                  ),
+                ),
+              ),
           ],
-        ),
+        ],
       ),
+    );
+  }
+}
+
+/// 页面里的小节标题（本地 / 在线两类来源各一节，别混在一屏里）。
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle({required this.title, required this.icon});
+
+  final String title;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: AppTokens.primaryBlue),
+        const SizedBox(width: 8),
+        Text(
+          title,
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+        ),
+      ],
     );
   }
 }

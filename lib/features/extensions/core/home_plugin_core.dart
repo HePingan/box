@@ -121,7 +121,13 @@ enum HomePluginActionType {
   openVideoList,
   openImageGenerator,
   openGithubAccel,
-  openRemoteStorage;
+  openRemoteStorage,
+
+  /// 打开音乐入口（在线音频 URL 下载后播放，复用 remote_storage 的播放页）。
+  ///
+  /// 阶段 2 加的：music 分区此前是 0 插件的空区，占位条目只会 toast「开发中」。
+  /// 现在它背后是**真能用的页面**，投稿页也能选到这个动作。
+  openMusic;
 
   /// 中文标签（单一事实源）。此前散落在市场页与投稿页各一份且已漂移
   /// （toast：提示动作 vs 弹出提示）。
@@ -143,6 +149,8 @@ enum HomePluginActionType {
         return '打开加速';
       case HomePluginActionType.openRemoteStorage:
         return '打开远程存储';
+      case HomePluginActionType.openMusic:
+        return '打开音乐';
     }
   }
 
@@ -157,6 +165,7 @@ enum HomePluginActionType {
     HomePluginActionType.openImageGenerator,
     HomePluginActionType.openGithubAccel,
     HomePluginActionType.openRemoteStorage,
+    HomePluginActionType.openMusic,
   ];
 }
 
@@ -377,6 +386,13 @@ class HomePluginActionRegistry {
       if (context == null) return;
       HomePluginRouteRegistry.registerDefaults();
       final builder = HomePluginRouteRegistry.lookup('openRemoteStorage');
+      if (builder == null) return;
+      await Navigator.push(context, MaterialPageRoute(builder: builder));
+    });
+    register(HomePluginActionType.openMusic.name, (context, actionContext) async {
+      if (context == null) return;
+      HomePluginRouteRegistry.registerDefaults();
+      final builder = HomePluginRouteRegistry.lookup('openMusic');
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));
     });
