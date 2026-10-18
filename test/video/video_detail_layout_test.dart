@@ -105,17 +105,36 @@ void main() {
   });
 
   group('② / ⑦ 详情页源码结构护栏', () {
-    test('线路行与剧集行都用 _LabeledRow：两行内容同一起点', () {
+    test('剧集行走 _LabeledRow；线路已上提到播放器下方（第四轮重排）', () {
+      // 第四轮把线路从"选集卡里的一行"改成"贴在播放器下面的一条".
+      // 原因：换线路是**播放动作**，和"选第几集"是两件事，塞在选集卡里
+      // 要先展开 Tab 再往下找，多两步。
+      //
+      // 因此这条断言从"两行都要 _LabeledRow"改成：
+      //   * 剧集行仍走 _LabeledRow（保证与"选集"标题左对齐）；
+      //   * 线路改用 _buildLineStrip，且**紧跟在播放器之后**。
       final page = readLib('video/pages/video_detail_page.dart');
-      expect(
-        RegExp(r"_LabeledRow\(\s*label: '线路'").hasMatch(page),
-        isTrue,
-        reason: '线路行必须走 _LabeledRow，否则又和剧集行错开',
-      );
       expect(
         RegExp(r"_LabeledRow\(\s*label: '剧集'").hasMatch(page),
         isTrue,
-        reason: '剧集行必须走 _LabeledRow，否则又和线路行错开',
+        reason: '剧集行必须走 _LabeledRow，否则和上方标题错开',
+      );
+      expect(
+        page.contains('_buildLineStrip(controller)'),
+        isTrue,
+        reason: '线路改成独立的紧凑条',
+      );
+      final playerIdx = page.indexOf('_buildPlayerShell(controller, detail)');
+      final stripIdx = page.indexOf('_buildLineStrip(controller)');
+      expect(
+        playerIdx,
+        greaterThan(0),
+        reason: '没找到播放器调用点，断言失效',
+      );
+      expect(
+        stripIdx,
+        greaterThan(playerIdx),
+        reason: '线路条要紧跟在播放器之后（播放中换线的动作）',
       );
     });
 
@@ -142,12 +161,19 @@ void main() {
       );
     });
 
-    test('③ 线路 chip 行高与剧集胶囊接近（34，而不是 42）', () {
+    test('③ 线路条行高紧凑（32，别又变回那个空荡的 42）', () {
+      // 第四轮：线路从选集卡里的行（34）改成贴播放器的条（32）。
+      // 共同点是不许回到 42 —— 两条线路用 42 会显得那一片很空。
       final page = readLib('video/pages/video_detail_page.dart');
       expect(
-        RegExp(r'height: 34,').hasMatch(page),
+        RegExp(r'height: 32,').hasMatch(page),
         isTrue,
-        reason: '线路 chip 行高应回到 34，别又变回那个空荡的 42',
+        reason: '线路条行高应保持紧凑',
+      );
+      expect(
+        RegExp(r'height: 42,').hasMatch(page),
+        isFalse,
+        reason: '42 是上一轮修掉的空荡高度，别回来',
       );
     });
   });
@@ -233,16 +259,28 @@ void main() {
       );
     });
 
-    test('剧集在前、线路在后（次要信息不压主要信息）', () {
+    test('线路不再是"大胶囊抢在选集前"——它已收成播放器下的一条', () {
+      // 第三轮的做法是「剧集在前、线路在后」，都塞在选集卡里。
+      // 第四轮改了：线路**上提到播放器下方**（播放动作），选集卡里只剩剧集。
+      //
+      // 原意图「次要信息不压主要信息」仍然成立，但实现方式变了：
+      // 线路不再是带渐变的大胶囊，而是 32dp 高的紧凑条，且不在选集卡里。
       final src = readLib('video/pages/video_detail_page.dart');
-      final epIdx = src.indexOf("label: '剧集'");
-      final lineIdx = src.indexOf("label: '线路'");
-      expect(epIdx, greaterThan(0));
-      expect(lineIdx, greaterThan(0));
       expect(
-        epIdx,
-        lessThan(lineIdx),
-        reason: '线路只有 2-4 条且选定后不改，不该排在 28 集之前',
+        src.contains("label: '剧集'"),
+        isTrue,
+        reason: '选集卡里仍有剧集行',
+      );
+      // 选集卡（_buildPlaybackPanel）内部不该再出现线路选择
+      final panelIdx = src.indexOf('Widget _buildPlaybackPanel(');
+      final panelEnd = src.indexOf('Widget _buildEpisodeSection(');
+      expect(panelIdx, greaterThan(0));
+      expect(panelEnd, greaterThan(panelIdx));
+      final panelSrc = src.substring(panelIdx, panelEnd);
+      expect(
+        panelSrc.contains('_buildLineStrip'),
+        isFalse,
+        reason: '线路条在播放器下方，不在选集卡内部 —— 否则就是"又回到卡里"',
       );
     });
 
@@ -282,11 +320,16 @@ void main() {
 
   group('② 线路可用性前置标注', () {
     test('线路 chip 带「取不到流」标记，且标注仍可点（不是禁用）', () {
+      // 第四轮起线路条自己构造 chip，参数名从 isUnreachable 直接落到
+      // _PlaybackChip 的 unreachable 字段（少一层中转）。
       final page = readLib('video/pages/video_detail_page.dart');
-      expect(page.contains('unreachable: isUnreachable(index)'), isTrue);
+      expect(
+        page.contains('unreachable: controller.isLineRecentlyUnreachable(index)'),
+        isTrue,
+      );
       expect(page.contains('Icons.wifi_off_rounded'), isTrue);
       // chip 仍然把 onTap 传下去 —— 标记是前置告知，不拦用户手动选。
-      expect(page.contains('onTap: () => onSelected(index)'), isTrue);
+      expect(page.contains('onTap: () => controller.selectLine(index)'), isTrue);
       expect(
         readLib(
           'video/pages/video_detail_page.dart',
@@ -299,8 +342,9 @@ void main() {
     test('详情页把「最近取不到流」判据接进 chip 行', () {
       final page = readLib('video/pages/video_detail_page.dart');
       expect(
-        page.contains('isUnreachable: controller.isLineRecentlyUnreachable'),
+        page.contains('controller.isLineRecentlyUnreachable(index)'),
         isTrue,
+        reason: '线路条仍要按"最近取不到流"打标',
       );
     });
 

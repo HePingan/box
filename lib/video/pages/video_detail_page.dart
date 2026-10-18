@@ -80,6 +80,12 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
   bool _episodesExpanded = false;
   bool _episodesReversed = false;
 
+  /// 下方 Tab：0 = 选集，1 = 影片资料。
+  ///
+  /// 默认选集：进详情页的第一件事几乎都是"从第几集开始看"。
+  /// 资料是选片时才关心的东西，放在第二个 Tab 里不占版面。
+  int _panelTab = 0;
+
   @override
   void initState() {
     super.initState();
@@ -179,21 +185,32 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                         ),
                         child: _buildPlayerShell(controller, detail),
                       ),
+                      // 线路选择紧贴播放器下方。
+                      //
+                      // 为什么放这里而不是塞进「选集」Tab 里：换线路是**播放动作**
+                      // （这条卡了换一条），和"选第几集"是两件事。
+                      // 塞在选集卡里时要先展开 Tab、再往下找，多两步。
+                      if (controller.playLines.length > 1)
+                        Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            horizontal,
+                            10,
+                            horizontal,
+                            0,
+                          ),
+                          child: _buildLineStrip(controller),
+                        ),
                       // ③ 区块间距统一到 spaceMd(12)：原来是 10/10/12/36 各写各的。
                       const SizedBox(height: AppTokens.spaceMd),
+                      // 选集与资料改成 Tab 切换。
+                      //
+                      // 为什么：原来两个卡片**竖向堆叠**，28 集的网格展开后
+                      // 资料卡被推到屏幕外两三屏 —— 想看"导演是谁"要往下翻很久，
+                      // 而选集又要翻上去。两者本来就是"看剧时关心"与"选片时关心"
+                      // 两种场景，不该同时铺满一屏。
                       Padding(
                         padding: EdgeInsets.symmetric(horizontal: horizontal),
-                        child: controller.playLines.isEmpty
-                            ? _buildEmptyEpisodePanel()
-                            : _buildPlaybackPanel(controller: controller),
-                      ),
-                      const SizedBox(height: AppTokens.spaceMd),
-                      Padding(
-                        padding: EdgeInsets.symmetric(horizontal: horizontal),
-                        child: DetailInfoCard(
-                          detail: detail,
-                          source: controller.source,
-                        ),
+                        child: _buildTabbedPanels(controller: controller, detail: detail),
                       ),
                       const SizedBox(height: AppTokens.space2xl),
                     ],
@@ -310,6 +327,123 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                 ),
               ),
       ),
+    );
+  }
+
+  /// 播放器下方那条紧凑的线路选择器。
+  ///
+  /// 与详情卡里的「线路」行不同：这里是**单行 pill + 左侧小标签**，
+  /// 贴在播放器下面不占版面 —— 换线路是播放中的高频动作。
+  Widget _buildLineStrip(VideoDetailController controller) {
+    return Row(
+      children: [
+        Text(
+          '线路',
+          style: TextStyle(
+            color: AppTokens.textTertiary,
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: SizedBox(
+            height: 32,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              itemCount: controller.playLines.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                final line = controller.playLines[index];
+                return _PlaybackChip(
+                  label: lineDisplayName(line.name, index),
+                  subLabel: lineSubName(line.name),
+                  selected: index == controller.selectedLineIndex,
+                  unreachable: controller.isLineRecentlyUnreachable(index),
+                  onTap: () => controller.selectLine(index),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 选集 / 资料 两个面板的 Tab 切换外壳。
+  ///
+  /// 为什么不做成"两个卡片竖排"：28 集的网格展开后会把资料卡推到两三屏之外，
+  /// 而这两块内容服务的是两种不同时机（看剧 vs 选片），同时铺满只会互相挤。
+  Widget _buildTabbedPanels({
+    required VideoDetailController controller,
+    required dynamic detail,
+  }) {
+    const tabs = <String>['选集', '影片资料'];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 分段控件：贴合卡片圆角，选中态用主色淡底（不用纯色块 —— 那是按钮的语言）
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: AppTokens.surfaceMuted,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppTokens.cardBorder),
+          ),
+          child: Row(
+            children: [
+              for (var i = 0; i < tabs.length; i++)
+                Expanded(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => setState(() => _panelTab = i),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: _panelTab == i
+                            ? AppTokens.surface
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: _panelTab == i
+                            ? [
+                                BoxShadow(
+                                  color: const Color(0xFF0F172A)
+                                      .withValues(alpha: 0.06),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ]
+                            : null,
+                      ),
+                      child: Text(
+                        tabs[i],
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: _panelTab == i
+                              ? FontWeight.w800
+                              : FontWeight.w600,
+                          color: _panelTab == i
+                              ? AppTokens.textPrimary
+                              : AppTokens.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppTokens.spaceMd),
+        if (_panelTab == 0)
+          controller.playLines.isEmpty
+              ? _buildEmptyEpisodePanel()
+              : _buildPlaybackPanel(controller: controller)
+        else
+          DetailInfoCard(detail: detail, source: controller.source),
+      ],
     );
   }
 
@@ -435,19 +569,6 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
               onEpisodeTap: controller.selectEpisode,
             ),
           ),
-          if (controller.playLines.length > 1) ...[
-            const SizedBox(height: AppTokens.spaceMd),
-            _LabeledRow(
-              label: '线路',
-              // chip 仍可横向滚动，长线路名不会挤压或换行。
-              child: _buildLineChips(
-                playLines: controller.playLines,
-                selectedIndex: controller.selectedLineIndex,
-                onSelected: controller.selectLine,
-                isUnreachable: controller.isLineRecentlyUnreachable,
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -635,42 +756,6 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
           ),
         ],
       ],
-    );
-  }
-
-  Widget _buildLineChips({
-    required List<DetailPlayLine> playLines,
-    required int selectedIndex,
-    required ValueChanged<int> onSelected,
-    required bool Function(int index) isUnreachable,
-  }) {
-    return SizedBox(
-      // ③ 行高 42 → 34：只有两三条线路时，原来那行显得空荡，
-      // 现在与下方剧集胶囊的高度基本齐平，两行看着是一个整体。
-      height: 34,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
-        child: Row(
-          children: List.generate(playLines.length, (index) {
-            final line = playLines[index];
-            final selected = index == selectedIndex;
-            return Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: _PlaybackChip(
-                // 站点技术名（lzm3u8 / liangzi）改成「线路 N」，原名作副注
-                label: lineDisplayName(line.name, index),
-                subLabel: lineSubName(line.name),
-                selected: selected,
-                // ② 前置标注：这条线最近取不到流（默认也不会选它），
-                // 免得用户点进去先卡一次、再被自动换线。
-                unreachable: isUnreachable(index),
-                onTap: () => onSelected(index),
-              ),
-            );
-          }),
-        ),
-      ),
     );
   }
 
