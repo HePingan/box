@@ -133,9 +133,15 @@ void main() {
       // `{required String path}`；传空串会一路走到
       // `MediaRecorder.setOutputFile("")` —— 原生崩溃，Dart 侧 catch 不住。
       // 这条护栏钉住：不许再出现空路径，且必须走临时目录 + 停时删掉。
-      final src = File(
-        'lib/features/local_tools/presentation/local_tool_panels.dart',
-      ).readAsStringSync();
+      // 面板已按用途拆成 part 文件（2026-10-18）：分贝仪在 *_sensor.part.dart 里。
+      // 护栏不能只盯主文件 —— 那会变成"代码挪个位置护栏就失效"，比没有护栏更糟。
+      final dir = Directory('lib/features/local_tools/presentation');
+      final src = dir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.dart'))
+          .map((f) => f.readAsStringSync())
+          .join('\n');
       final start = src.indexOf('class _DecibelPanelBodyState');
       expect(start, greaterThan(0), reason: '找不到分贝仪的实现');
       // 先把 // 与 /// 的注释行去掉再查 —— 注释里讲这件事是正常的，
