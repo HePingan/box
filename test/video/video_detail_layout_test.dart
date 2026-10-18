@@ -297,15 +297,24 @@ void main() {
       );
     });
 
-    test('副标题不再重复「正在播放 · X」', () {
+    test('选集卡副标题不再重复「正在播放 · X」', () {
+      // 范围要限定在**选集卡内部**：收起播放器后的迷你条也会写「正在播放 · X」，
+      // 但那里没有橙色高亮的集数胶囊作视觉提示，不算重复 —— 全文件禁用这个词
+      // 会把正常用法一起误杀。
       final src = readLib('video/pages/video_detail_page.dart');
+      final panelIdx = src.indexOf('Widget _buildPlaybackPanel(');
+      final panelEnd = src.indexOf('Widget _buildEpisodeSection(');
+      expect(panelIdx, greaterThan(0));
+      expect(panelEnd, greaterThan(panelIdx));
+      final panelSrc = src.substring(panelIdx, panelEnd);
+
       expect(
-        src.contains("'正在播放 · "),
+        panelSrc.contains("'正在播放 · "),
         isFalse,
         reason: '网格里当前集已高亮，同一件事说两遍',
       );
       expect(
-        src.contains('当前线路 \${episodes.length} 集'),
+        panelSrc.contains('当前线路 \${episodes.length} 集'),
         isTrue,
         reason: '换成页面上没别处写、用户真的想知道的信息',
       );

@@ -80,6 +80,14 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
   bool _episodesExpanded = false;
   bool _episodesReversed = false;
 
+  /// 播放器是否收起（收起后变成一个窄条，把空间让给选集）。
+  ///
+  /// 为什么是"视觉收起"而不是"销毁播放器"：
+  /// `VideoPlayContainer` 的 state 里握着解码器与播放进度，销毁再建会
+  /// 中断当前播放（用户只是想翻选集，不是想停）。所以这里只缩高度，
+  /// **widget 树里的位置和 key 都不变**，state 与音频都不受影响。
+  bool _playerCollapsed = false;
+
   /// 下方 Tab：0 = 选集，1 = 影片资料。
   ///
   /// 默认选集：进详情页的第一件事几乎都是"从第几集开始看"。
@@ -183,7 +191,59 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                           horizontal,
                           0,
                         ),
-                        child: _buildPlayerShell(controller, detail),
+                        child: AnimatedSize(
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeOutCubic,
+                          alignment: Alignment.topCenter,
+                          child: _playerCollapsed
+                              // 收起态：保留播放器（不销毁、不换 key），
+                              // 只把它压成 0 高 + 不可见 —— 音频继续，选集腾出空间。
+                              // Offstage 会同时让它不参与布局与命中测试。
+                              ? Stack(
+                                  children: [
+                                    Offstage(
+                                      offstage: true,
+                                      child: _buildPlayerShell(
+                                        controller,
+                                        detail,
+                                      ),
+                                    ),
+                                    _buildCollapsedPlayerBar(controller),
+                                  ],
+                                )
+                              : Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    _buildPlayerShell(controller, detail),
+                                    // 收起入口：放在播放器右下角，不遮挡控制条。
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(top: 6),
+                                        child: TextButton.icon(
+                                          onPressed: () => setState(
+                                            () => _playerCollapsed = true,
+                                          ),
+                                          icon: const Icon(
+                                            Icons.keyboard_arrow_up_rounded,
+                                            size: 18,
+                                          ),
+                                          label: const Text('收起播放器'),
+                                          style: TextButton.styleFrom(
+                                            visualDensity: VisualDensity.compact,
+                                            foregroundColor:
+                                                AppTokens.textSecondary,
+                                            textStyle: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                        ),
                       ),
                       // 线路选择紧贴播放器下方。
                       //
@@ -326,6 +386,60 @@ class _VideoDetailViewState extends State<_VideoDetailView> {
                   ),
                 ),
               ),
+      ),
+    );
+  }
+
+  /// 播放器收起后的迷你条。
+  ///
+  /// 只保留「当前在播什么 + 展开」两件事：用户收起播放器是为了**看选集**，
+  /// 不是要在一条窄条里继续操作播放（那有横屏全屏可用）。
+  Widget _buildCollapsedPlayerBar(VideoDetailController controller) {
+    final episode = controller.currentEpisodeName?.trim();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTokens.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTokens.cardBorder),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.play_circle_outline_rounded,
+            size: 20,
+            color: Color(0xFFFB923C),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              episode == null || episode.isEmpty
+                  ? '正在播放'
+                  : '正在播放 · $episode',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: AppTokens.textPrimary,
+              ),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () => setState(() => _playerCollapsed = false),
+            icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 18),
+            label: const Text('展开'),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              foregroundColor: const Color(0xFFFB923C),
+              textStyle: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
