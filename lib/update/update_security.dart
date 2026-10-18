@@ -91,6 +91,14 @@ const Set<String> updateManifestRuntimeFields = <String>{
   'effectiveForceUpdate',
   'deviceId',
   'userId',
+  // 灰度发布加的两个**运行时**字段（服务端按设备现算，不参与签名）。
+  //
+  // 漏掉它们的后果很严重：客户端会把这两个字段也算进 HMAC，
+  // 于是每个用户检查更新都报「更新清单签名不匹配」——更新链路整体断掉，
+  // 而且看起来像服务端签名坏了（实际服务端是对的）。
+  // 2026-10-18 发 371 时真实踩到，验签工具当场报了 passed=false。
+  'effectiveChannel',
+  'rolloutReason',
 };
 
 Map<String, dynamic> updateManifestSignaturePayload(

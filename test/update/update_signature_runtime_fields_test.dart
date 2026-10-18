@@ -65,6 +65,9 @@ void main() {
       'effectiveForceUpdate': false,
       'deviceId': null,
       'userId': null,
+      // 灰度发布加的两个运行时字段（2026-10-18 起服务端会返回）
+      'effectiveChannel': 'release',
+      'rolloutReason': null,
     };
   }
 
@@ -99,6 +102,35 @@ void main() {
         result.passed,
         isTrue,
         reason: 'currentVersionCode=$code 时验签失败：${result.message}',
+      );
+    }
+  });
+
+  test('灰度字段（effectiveChannel / rolloutReason）也必须被剥离', () {
+    // 2026-10-18 的真实事故：服务端新增了这两个运行时字段，但本文件的白名单
+    // 没跟上。结果每个用户 check 都报「更新清单签名不匹配」，
+    // 看起来像服务端签名坏了 —— 实际服务端是对的，是客户端多算了两个字段。
+    //
+    // 这里逐个值验证：只要它们被正确剥离，签名就该过。
+    for (final (channel, reason) in <(String, String?)>[
+      ('release', null),
+      ('beta', '设备在 beta 名单内（rollout id=1）'),
+      ('canary', null),
+    ]) {
+      final resp = checkApiResponse()
+        ..['effectiveChannel'] = channel
+        ..['rolloutReason'] = reason;
+
+      final result = verifyUpdateManifestSignature(
+        manifestJson: resp,
+        security: security,
+      );
+      expect(
+        result.passed,
+        isTrue,
+        reason: 'effectiveChannel=$channel / rolloutReason=$reason 时验签失败：'
+            '${result.message}\n'
+            '（说明运行时字段白名单漏了这个字段）',
       );
     }
   });

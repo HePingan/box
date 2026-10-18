@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.21.13+370
+version: 1.21.15+372
 
 environment:
   sdk: ^3.11.1
@@ -40,6 +40,20 @@ dependencies:
   path_provider: ^2.1.5
   encrypt: ^5.0.3
   shared_preferences: ^2.5.5
+
+  # ⚠ 钉住 Android 实现，**不要**跟着 shared_preferences 自动升。
+  #
+  # 为什么：2.5.0 把内部实现整体换成了 Pigeon JNI（见其 CHANGELOG：
+  # "Updates internal implementation to use Pigeon JNI"），Java 侧原来的
+  # `SharedPreferencesApiRegistrar.getAll(...)` 签名消失了。升级后某些构建缓存
+  # 组合下会出现：
+  #   NoSuchMethodError: no non-static method
+  #   "io/flutter/plugins/sharedpreferences/SharedPreferencesApiRegistrar;.getAll(...)"
+  # 直接导致 App 启动即崩（Bootstrap failed）。
+  #
+  # 2.4.28 是 1.21.13 之前一直用的版本，实测稳定。等确认 2.5.x 与当前
+  # Flutter 3.44.6 + AGP 组合干净后，再一起抬。
+  shared_preferences_android: 2.4.28
   # C1 中期档：运维通道口令只存本机（Android 侧 Keystore 支持的 AES-GCM + RSA-OAEP），
   # 安装包里不再带任何口令字节。
   flutter_secure_storage: ^11.2.0
