@@ -1,7 +1,10 @@
 # 音乐区真入口 · 实施方案（2026-10-13）
 
-> 状态：**已拍板（B→A，先做在线下载，再做本地扫描）**。本文是调研后的实施方案，
-> 不写代码。承接 `docs/todo_consolidated_20261013.md` 的真欠债第 1 件。
+> 状态：**阶段 1/2/3 已落地（2026-10-18）**。本文是调研后的实施方案。
+> 承接 `docs/todo_consolidated_20261013.md` 的真欠债第 1 件。
+>
+> 落地记录见文末「阶段 2/3 实施结果」——其中阶段 3 的实现方式与原计划**不同**
+> （原计划 MediaStore 全盘扫描，实际改成 SAF 文件选择器），原因在那一节说明。
 
 ## 一、结论先行
 
@@ -133,3 +136,43 @@ remote_storage 现在就是一个现成的「视频/音频」双用途播放器�
 
 推荐测试音频：https://box.hpa888.top/updates/box/android/test-music/test-tone-440hz.mp3
 15 秒 440Hz 正弦波，同域，HTTP/2 200，Range 请求返回 206，无 CORS 限制。
+
+---
+
+## 阶段 2/3 实施结果（2026-10-18）
+
+### 阶段 2：music 分区接线（已完成）
+
+- `HomePluginActionType` 新增 `openMusic`（label「打开音乐」），进 `displayOrder`
+  —— 投稿页下拉能选到它。
+- 动作 handler + 路由 `openMusic` → `MusicPlaceholderPage`。
+- 内置插件 `builtin_music_online`（在线音频）挂进 `HomePluginArea.music`：
+  **music 分区从 0 插件变成 1 个真插件**。
+
+回归锁：`test/plugin_manager/builtin_music_entry_test.dart`（4 条）。
+
+### 阶段 3：本地音频（已完成，但**换了实现方式**）
+
+原计划是 MediaStore 全盘扫描（`READ_MEDIA_AUDIO` / `READ_EXTERNAL_STORAGE`），
+实际改成 **SAF 文件选择器**，原因：
+
+1. 本仓库**没有任何权限申请插件**（现有权限全是安装时授权或系统 Intent 触发）。
+   引入运行时权限 = 新依赖 + 新权限 + 各 Android 版本的真机验证，成本远超收益。
+2. 走 SAF 是**零权限**：用户挑哪个文件，App 才看得到哪个 —— 也是 Android 现在
+   推荐的做法。
+3. 代价：不能「打开就列出我手机里所有歌」，需要用户主动挑一次。
+
+**一个必须写下来的坑**：`file_picker` 的 Android 实现会把选中文件**复制**到
+`cacheDir/file_picker/<时间戳>/`，Dart 侧拿到的 `path` 是那份**缓存副本**，
+不是用户原件（见 `android_file_picker` 的 `FileUtils.getFileInfo`）。所以：
+
+- 不能直接播那个路径 —— 系统清缓存时正在播的音频会断；
+- 也不能让它越积越多 —— 每挑一次就多一份，`clearTemporaryFiles()` 在插件里有但
+  不调就永远不清。
+
+本页因此复制一份到自己的临时目录再播，复制完成后清掉插件那份，
+`dispose` 时只删自己那份（用户原件一律不碰）。
+
+### 阶段 4：在线源「订阅/缓存」（未做）
+
+仍是可选项，取决于用户实际需求强度（文档第 6 节第 3 条「待与用户确认」仍未答）。
