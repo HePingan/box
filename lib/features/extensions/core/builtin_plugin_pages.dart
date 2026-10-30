@@ -16,6 +16,7 @@ import 'package:box/features/extensions/plugins/monitor/monitor_page.dart';
 import 'package:box/features/extensions/plugins/quick_note/presentation/quick_note_page.dart';
 import 'package:box/features/extensions/plugins/net_diag/presentation/net_diag_page.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_page.dart';
+import 'package:box/features/extensions/plugins/wallpaper/presentation/wallpaper_gallery_page.dart';
 import 'package:box/features/extensions/plugins/watch_later/presentation/watch_later_page.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_page.dart';
 import 'package:box/features/image_generator/presentation/image_generator_page.dart';
@@ -75,6 +76,11 @@ void registerBuiltinRouteDefaults() {
     (_) => const QuickNotePage(),
   );
   // 影视「稍后看」：清单存远程存储 box-watchlist/watch-later.json。
+  // 动漫壁纸图库（自托管静态资源 + 清单 JSON）
+  HomePluginRouteRegistry.register(
+    'openWallpaperGallery',
+    (_) => const WallpaperGalleryPage(),
+  );
   HomePluginRouteRegistry.register(
     'openWatchLater',
     (_) => const WatchLaterPage(),

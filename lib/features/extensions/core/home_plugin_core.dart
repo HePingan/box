@@ -139,7 +139,10 @@ enum HomePluginActionType {
   ///
   /// 与便签同一套理由：片单是"跨设备还想接着看"的东西，存远程存储比本地库合适。
   /// payload 可以带一个要加入的地址（`registerPayload` 那条）。
-  openWatchLater;
+  openWatchLater,
+
+  /// 打开动漫壁纸图库（壁纸自托管在 box.hpa888.top，清单 JSON 下发）。
+  openWallpaperGallery;
 
   /// 中文标签（单一事实源）。此前散落在市场页与投稿页各一份且已漂移
   /// （toast：提示动作 vs 弹出提示）。
@@ -167,6 +170,8 @@ enum HomePluginActionType {
         return '打开便签';
       case HomePluginActionType.openWatchLater:
         return '打开稍后看';
+      case HomePluginActionType.openWallpaperGallery:
+        return '打开壁纸图库';
     }
   }
 
@@ -184,6 +189,7 @@ enum HomePluginActionType {
     HomePluginActionType.openMusic,
     HomePluginActionType.openQuickNote,
     HomePluginActionType.openWatchLater,
+    HomePluginActionType.openWallpaperGallery,
   ];
 }
 
@@ -478,6 +484,17 @@ class HomePluginActionRegistry {
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));
     });
+
+    register(
+      HomePluginActionType.openWallpaperGallery.name,
+      (context, actionContext) async {
+        if (context == null) return;
+        HomePluginRouteRegistry.registerDefaults();
+        final builder = HomePluginRouteRegistry.lookup('openWallpaperGallery');
+        if (builder == null) return;
+        await Navigator.push(context, MaterialPageRoute(builder: builder));
+      },
+    );
   }
 
   static bool contains(String actionCode) {

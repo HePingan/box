@@ -946,14 +946,17 @@ class MarketPluginTemplate {
       color: Color(0xFF4338CA),
       sort: 20,
     ),
-    const MarketPluginTemplate(
+    // 2026-10-30：动漫壁纸从 toast 占位变成真图库（自托管静态资源 + 清单 JSON）。
+    MarketPluginTemplate(
       id: 'market_comic_wallpaper',
       title: '动漫壁纸',
-      subtitle: '二次元壁纸入口',
+      subtitle: '竖屏二次元壁纸，一键存进相册',
       areaCode: 'comic',
-      actionCode: 'toast',
-      comingSoon: true,
-      payload: '动漫壁纸插件开发中...',
+      actionCode: 'openWallpaperGallery',
+      payload: '',
+      permissions: const ['network'],
+      tags: const ['漫画', '壁纸'],
+      changelog: '首版：12 张竖屏壁纸，按标签筛，可保存到相册',
       icon: Icons.wallpaper_outlined,
       color: Color(0xFF0D9488),
       sort: 10,

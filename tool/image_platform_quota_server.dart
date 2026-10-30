@@ -3751,6 +3751,8 @@ class PlatformQuotaServer {
     'openQuickNote',
     // 2026-10-30：影视稍后看（清单存远程存储 box-watchlist/）。
     'openWatchLater',
+    // 2026-10-30：动漫壁纸图库（自托管静态资源 + 清单 JSON）。
+    'openWallpaperGallery',
   };
 
   static const _allowedPluginAreas = {

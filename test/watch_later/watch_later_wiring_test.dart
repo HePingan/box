@@ -15,9 +15,10 @@ void main() {
   ).readAsStringSync();
 
   test('动作枚举里有 openWatchLater，且给了中文标签与展示顺序', () {
-    expect(core, contains('openWatchLater;'));
+    expect(core, contains('openWatchLater,'));
     expect(core, contains("return '打开稍后看'"));
-    expect(core, contains('HomePluginActionType.openWatchLater,\n  ];'));
+    // 只断言「在展示顺序列表里」，不断言它是最后一个 —— 后面还会加动作
+    expect(core, contains('HomePluginActionType.openWatchLater,'));
   });
 
   test('动作处理器：优先 payload 构造器，回落到普通路由', () {

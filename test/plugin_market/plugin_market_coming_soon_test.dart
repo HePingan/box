@@ -41,7 +41,6 @@ PluginMarketManifest _manifest(List<MarketPluginTemplate> templates) {
 
 /// 装了只会弹一句提示的条目（正文自述「开发中」）。
 const _mustBeComingSoon = <String>[
-  'market_comic_wallpaper',
   'market_comic_week_rank',
   'market_novel_checkin',
 ];
@@ -62,6 +61,8 @@ const _realActionIds = <String>[
   'market_quick_note',
   // 2026-10-30：影视稍后看接上 openWatchLater（box-watchlist/watch-later.json）。
   'market_video_watch_later',
+  // 2026-10-30：动漫壁纸接上 openWallpaperGallery（自托管图库 + 清单）。
+  'market_comic_wallpaper',
 ];
 
 void main() {
