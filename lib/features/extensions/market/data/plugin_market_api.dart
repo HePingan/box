@@ -511,12 +511,24 @@ class PluginMarketRemoteManifest {
     required this.channel,
     required this.plugins,
     required this.updatedAt,
+    this.permissionCatalog = const [],
   });
 
   final int version;
   final String channel;
   final List<Map<String, dynamic>> plugins;
   final DateTime? updatedAt;
+
+  /// 服务端下发的权限目录（code / label / risk / description）。
+  ///
+  /// 本地 [PluginPermission] 枚举是渲染用的单一事实源；这份目录是**同一份事实
+  /// 的服务端视角**，用来做两端一致性自查（live 测试直接比对两边 code 集合，
+  /// 任何一边加了权限而另一边没跟上，测试就会红）。
+  final List<Map<String, dynamic>> permissionCatalog;
+
+  /// 服务端声明的权限 code 列表。
+  List<String> get permissionCodes =>
+      permissionCatalog.map((e) => e['code']?.toString() ?? '').where((c) => c.isNotEmpty).toList();
 
   factory PluginMarketRemoteManifest.fromJson(Map<String, dynamic> json) {
     final raw = json['plugins'];
@@ -526,11 +538,19 @@ class PluginMarketRemoteManifest {
         if (item is Map) list.add(Map<String, dynamic>.from(item));
       }
     }
+    final rawCatalog = json['permissionCatalog'];
+    final catalog = <Map<String, dynamic>>[];
+    if (rawCatalog is List) {
+      for (final item in rawCatalog) {
+        if (item is Map) catalog.add(Map<String, dynamic>.from(item));
+      }
+    }
     return PluginMarketRemoteManifest(
       version: int.tryParse(json['version']?.toString() ?? '') ?? 1,
       channel: json['channel']?.toString() ?? 'stable',
       plugins: list,
       updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? ''),
+      permissionCatalog: catalog,
     );
   }
 }

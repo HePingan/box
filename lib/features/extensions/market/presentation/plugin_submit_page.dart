@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/extensions/market/data/plugin_market_api.dart';
+import 'package:box/features/extensions/market/domain/plugin_market_manifest.dart';
 import '../../../../design_system/app_tokens.dart';
 
 /// 用户投稿配置型插件（表单 / zip）。
@@ -27,6 +28,9 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
 
   String _actionCode = 'toast';
   String _areaCode = 'recommend';
+
+  /// 声明权限（多选）。空集合 = 不申请任何权限，提交时统一发 `none`。
+  final Set<String> _permissions = <String>{};
   bool _submitting = false;
   String? _error;
   List<PluginSubmissionDto> _mine = const [];
@@ -144,7 +148,7 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
             if (_changelogCtrl.text.trim().isNotEmpty)
               'changelog': _changelogCtrl.text.trim(),
             'tags': tags.join(','),
-            'permissions': 'none',
+            'permissions': _permissions.isEmpty ? 'none' : _permissions.join(','),
           },
         );
       } else {
@@ -167,7 +171,8 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
           'payload': _payloadCtrl.text.trim(),
           'changelog': _changelogCtrl.text.trim(),
           'tags': tags,
-          'permissions': const ['none'],
+          'permissions':
+              _permissions.isEmpty ? const ['none'] : _permissions.toList(),
         });
       }
       if (!mounted) return;
@@ -345,6 +350,85 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
             decoration: const InputDecoration(
               labelText: '标签（逗号分隔）',
               border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 10),
+          // 权限声明（如实披露）：不选 = 不申请任何权限。
+          // 之前这里写死 'none'，所有投稿都是「无权限」——连网络插件也一样。
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppTokens.surfaceMuted,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '声明权限（不选 = 不申请）',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppTokens.textSecondary,
+                        ),
+                      ),
+                    ),
+                    if (_permissions.isNotEmpty)
+                      Text(
+                        '最高 ${highestPermissionRiskOf(_permissions).label}',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppTokens.textTertiary,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final permission in PluginPermission.values)
+                      if (permission != PluginPermission.none)
+                        FilterChip(
+                          label: Text(
+                            permission.risk == PluginPermissionRisk.high
+                                ? '${permission.label} · 高'
+                                : permission.label,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          selected: _permissions.contains(permission.name),
+                          onSelected: (on) => setState(() {
+                            if (on) {
+                              _permissions.add(permission.name);
+                            } else {
+                              _permissions.remove(permission.name);
+                            }
+                          }),
+                        ),
+                  ],
+                ),
+                if (_permissions.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    _permissions
+                        .map((code) => permissionDetailsOf([code]).firstOrNull)
+                        .whereType<PluginPermissionDetail>()
+                        .map((d) => '${d.label}：${d.description}')
+                        .join('\n'),
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      height: 1.4,
+                      color: AppTokens.textTertiary,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
           const SizedBox(height: 10),

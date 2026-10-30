@@ -60,6 +60,25 @@ void main() {
 
     expect(remote.plugins, isNotEmpty, reason: '生产市场应至少有 1 个已上架插件');
 
+    // 权限目录两端一致 —— 服务端 kPluginPermissionCatalog vs 本地 PluginPermission。
+    // 这是「一边加了权限、另一边忘了跟」唯一会立刻变红的哨兵。
+    expect(remote.permissionCodes, isNotEmpty, reason: '服务端应下发 permissionCatalog');
+    for (final entry in remote.permissionCatalog) {
+      expect(entry['label']?.toString().trim(), isNotEmpty, reason: '目录项缺少中文标签：$entry');
+      expect(
+        ['low', 'medium', 'high', 'none'],
+        contains(entry['risk']?.toString()),
+        reason: '无法识别的风险等级：$entry',
+      );
+      expect(entry['description']?.toString().trim(), isNotEmpty, reason: '目录项缺少说明：$entry');
+    }
+    expect(
+      remote.permissionCodes.toSet(),
+      PluginPermission.values.map((p) => p.name).toSet(),
+      reason: '权限目录漂移：服务端=${remote.permissionCodes} '
+          '客户端=${PluginPermission.values.map((p) => p.name).toList()}',
+    );
+
     final templates = parseMarketPluginTemplates(remote.plugins);
     expect(templates, isNotEmpty, reason: '服务端清单解析后为空');
 

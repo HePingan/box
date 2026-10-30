@@ -372,26 +372,83 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
             ),
             // 如实披露插件声明的权限（只翻译给人看；不做运行时拦截，
             // 所以文案里不能出现「权限控制 / 沙箱」这类暗示）。
-            if (permissionLabelsOf(item.permissions).isNotEmpty) ...[
+            // 逐条带一句人话说明 + 风险徽标：光列「无障碍、悬浮窗」这种词，
+            // 用户并不知道自己答应的是什么。
+            if (permissionDetailsOf(item.permissions).isNotEmpty) ...[
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,
-                  vertical: 8,
+                  vertical: 10,
                 ),
                 decoration: BoxDecoration(
                   color: AppTokens.surfaceMuted,
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Text(
-                  '该插件声明将访问：'
-                  '${permissionLabelsOf(item.permissions).join('、')}'
-                  '\n（仅为作者声明，App 目前不做运行时权限拦截）',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    height: 1.5,
-                    color: AppTokens.textSecondary,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '该插件声明将访问（按敏感度标注）',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        color: AppTokens.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    for (final detail in permissionDetailsOf(item.permissions))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _permissionRiskColor(detail.risk)
+                                    .withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: _permissionRiskColor(detail.risk)
+                                      .withValues(alpha: 0.3),
+                                ),
+                              ),
+                              child: Text(
+                                detail.risk.label,
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: _permissionRiskColor(detail.risk),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '${detail.label} · ${detail.description}',
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  height: 1.45,
+                                  color: AppTokens.textSecondary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    Text(
+                      '（仅为作者声明，App 目前不做运行时权限拦截）',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        height: 1.4,
+                        color: AppTokens.textTertiary,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 10),
@@ -1011,8 +1068,18 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                 // 当前没有第三方代码在下游执行，没有可拦截的对象。
                 if (item.permissions.isNotEmpty)
                   MarketTagChip(
+                    text: highestPermissionRiskOf(item.permissions).rank >=
+                            PluginPermissionRisk.high.rank
+                        ? '⚠ 高权限：${permissionLabelsOf(item.permissions).join('、')}'
+                        : '声明：${permissionLabelsOf(item.permissions).join('、')}',
+                  ),
+                // 高风险插件在卡片上就给出「共 N 项权限 · 最高风险」的摘要，
+                // 不用点进详情才知道它要无障碍/悬浮窗。
+                if (permissionDetailsOf(item.permissions).length >= 2)
+                  MarketTagChip(
                     text:
-                        '声明：${permissionLabelsOf(item.permissions).join('、')}',
+                        '共 ${permissionDetailsOf(item.permissions).length} 项权限 · '
+                        '${highestPermissionRiskOf(item.permissions).label}',
                   ),
               ],
             ),
@@ -1408,3 +1475,11 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     );
   }
 }
+
+/// 权限风险 → 展示色（高风险一律用错误色，别让「无障碍」看起来和「网络」一样无害）。
+Color _permissionRiskColor(PluginPermissionRisk risk) => switch (risk) {
+      PluginPermissionRisk.high => AppTokens.rose,
+      PluginPermissionRisk.medium => AppTokens.warning,
+      PluginPermissionRisk.low => AppTokens.textSecondary,
+      PluginPermissionRisk.none => AppTokens.textTertiary,
+    };

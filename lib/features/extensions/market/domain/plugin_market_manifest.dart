@@ -180,7 +180,26 @@ List<MarketPluginTemplate> dedupMarketPluginTemplates(
   return list;
 }
 
-enum PluginPermission { network, storage, clipboard, camera, none }
+enum PluginPermission {
+  network,
+  storage,
+  clipboard,
+  notification,
+  background,
+  audio,
+  camera,
+  microphone,
+  overlay,
+  installPackage,
+  accessibility,
+  none,
+}
+
+/// 权限敏感度 —— 与服务端 `kPluginPermissionCatalog[].risk` 同口径（low/medium/high/none）。
+///
+/// 为什么需要它：插件不执行第三方代码，权限只是**声明式披露**，没有沙箱可拦；
+/// 那披露就得能分级，「网络」和「无障碍/悬浮窗/安装应用」不能是同一个语气。
+enum PluginPermissionRisk { low, medium, high, none }
 
 /// 权限的中文标签 —— **单一事实源**（同 area/action 的做法：写两份必然漂移）。
 ///
@@ -193,9 +212,135 @@ extension PluginPermissionLabel on PluginPermission {
         PluginPermission.network => '网络',
         PluginPermission.storage => '存储',
         PluginPermission.clipboard => '剪贴板',
+        PluginPermission.notification => '通知',
+        PluginPermission.background => '后台运行',
+        PluginPermission.audio => '音频',
         PluginPermission.camera => '相机',
+        PluginPermission.microphone => '麦克风',
+        PluginPermission.overlay => '悬浮窗',
+        PluginPermission.installPackage => '安装应用',
+        PluginPermission.accessibility => '无障碍',
         PluginPermission.none => '无',
       };
+
+  /// 一句话说明，摆进安装确认里让人看懂这个权限意味着什么。
+  String get description => switch (this) {
+        PluginPermission.network => '访问互联网，下载或上传数据',
+        PluginPermission.storage => '读写本机存储中的文件',
+        PluginPermission.clipboard => '读取或写入剪贴板内容',
+        PluginPermission.notification => '发送系统通知提醒',
+        PluginPermission.background => '退到后台后继续运行任务',
+        PluginPermission.audio => '调整音量与音频输出',
+        PluginPermission.camera => '调用相机拍照或取景',
+        PluginPermission.microphone => '录制声音（可能包含环境对话）',
+        PluginPermission.overlay => '显示在其他应用之上',
+        PluginPermission.installPackage => '触发安装 APK',
+        PluginPermission.accessibility => '读取屏幕内容或模拟操作',
+        PluginPermission.none => '不申请任何权限',
+      };
+
+  PluginPermissionRisk get risk => switch (this) {
+        PluginPermission.network => PluginPermissionRisk.low,
+        PluginPermission.notification => PluginPermissionRisk.low,
+        PluginPermission.audio => PluginPermissionRisk.low,
+        PluginPermission.storage => PluginPermissionRisk.medium,
+        PluginPermission.clipboard => PluginPermissionRisk.medium,
+        PluginPermission.background => PluginPermissionRisk.medium,
+        PluginPermission.camera => PluginPermissionRisk.high,
+        PluginPermission.microphone => PluginPermissionRisk.high,
+        PluginPermission.overlay => PluginPermissionRisk.high,
+        PluginPermission.installPackage => PluginPermissionRisk.high,
+        PluginPermission.accessibility => PluginPermissionRisk.high,
+        PluginPermission.none => PluginPermissionRisk.none,
+      };
+}
+
+extension PluginPermissionRiskLabel on PluginPermissionRisk {
+  String get label => switch (this) {
+        PluginPermissionRisk.low => '低风险',
+        PluginPermissionRisk.medium => '中风险',
+        PluginPermissionRisk.high => '高风险',
+        PluginPermissionRisk.none => '不申请权限',
+      };
+
+  /// 排序用：数值越大越敏感。
+  int get rank => switch (this) {
+        PluginPermissionRisk.high => 3,
+        PluginPermissionRisk.medium => 2,
+        PluginPermissionRisk.low => 1,
+        PluginPermissionRisk.none => 0,
+      };
+}
+
+/// 声明里最敏感的那一档（认不出的 code 不计入，但仍会原样出现在标签里）。
+PluginPermissionRisk highestPermissionRiskOf(Iterable<String> codes) {
+  var highest = PluginPermissionRisk.none;
+  for (final code in codes) {
+    final typed = _pluginPermissionFromCode(code.trim());
+    if (typed == null) continue;
+    if (typed.risk.rank > highest.rank) highest = typed.risk;
+  }
+  return highest;
+}
+
+/// 逐条展开成（标签 / 说明 / 风险），供安装确认与投稿页复用。
+List<PluginPermissionDetail> permissionDetailsOf(Iterable<String> codes) {
+  final out = <PluginPermissionDetail>[];
+  for (final code in codes) {
+    final trimmed = code.trim();
+    if (trimmed.isEmpty) continue;
+    final typed = _pluginPermissionFromCode(trimmed);
+    if (typed == null) {
+      // 认不出的 code 原样展示：宁可显示一个陌生词，也不要静默吞掉
+      out.add(
+        const PluginPermissionDetail(
+          code: '',
+          label: '',
+          description: '',
+          risk: PluginPermissionRisk.high,
+        ).copyWith(code: trimmed, label: trimmed, description: '当前版本不认识这个权限'),
+      );
+      continue;
+    }
+    if (typed == PluginPermission.none) continue;
+    if (out.any((d) => d.code == typed.name)) continue;
+    out.add(
+      PluginPermissionDetail(
+        code: typed.name,
+        label: typed.label,
+        description: typed.description,
+        risk: typed.risk,
+      ),
+    );
+  }
+  return out;
+}
+
+class PluginPermissionDetail {
+  final String code;
+  final String label;
+  final String description;
+  final PluginPermissionRisk risk;
+
+  const PluginPermissionDetail({
+    required this.code,
+    required this.label,
+    required this.description,
+    required this.risk,
+  });
+
+  PluginPermissionDetail copyWith({
+    String? code,
+    String? label,
+    String? description,
+    PluginPermissionRisk? risk,
+  }) =>
+      PluginPermissionDetail(
+        code: code ?? this.code,
+        label: label ?? this.label,
+        description: description ?? this.description,
+        risk: risk ?? this.risk,
+      );
 }
 
 /// 把声明的权限 code 列表翻成中文标签（认不出的 code 原样保留，不静默吞掉）。

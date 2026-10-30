@@ -328,11 +328,24 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
+    // 2026-10-30 权限目录化后：逐条给出「标签 · 一句说明」，并按敏感度打标，
+    // 不再是一行顿号罗列 —— 光说「无障碍、悬浮窗」，用户不知道答应了什么。
     expect(
-      find.textContaining('该插件声明将访问：网络、剪贴板'),
+      find.textContaining('该插件声明将访问'),
       findsOneWidget,
       reason: '装之前必须能看到它要什么',
     );
+    expect(
+      find.textContaining('网络 · 访问互联网'),
+      findsOneWidget,
+      reason: '每个权限要带一句人话说明',
+    );
+    expect(
+      find.textContaining('剪贴板 · 读取或写入剪贴板内容'),
+      findsOneWidget,
+    );
+    expect(find.text('低风险'), findsOneWidget, reason: '网络是低风险');
+    expect(find.text('中风险'), findsOneWidget, reason: '剪贴板是中风险');
     expect(
       find.textContaining('不做运行时权限拦截'),
       findsOneWidget,
