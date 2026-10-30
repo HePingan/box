@@ -535,6 +535,18 @@ class PlatformQuotaServer {
       await adminListReports(request);
       return;
     }
+    final reportResolveMatch = RegExp(
+      r'^/admin/plugins/reports/([^/]+)/(resolve|dismiss)$',
+    ).firstMatch(path);
+    if (request.method == 'POST' && reportResolveMatch != null) {
+      if (!await requireAdmin(request)) return;
+      await adminResolveReport(
+        request,
+        Uri.decodeComponent(reportResolveMatch.group(1)!),
+        reportResolveMatch.group(2)! == 'resolve',
+      );
+      return;
+    }
     final authorBanMatch = RegExp(
       r'^/admin/plugins/authors/([^/]+)/(ban|unban)$',
     ).firstMatch(path);
@@ -3719,6 +3731,10 @@ class PlatformQuotaServer {
 
   // ───────── Plugin market ─────────
 
+  /// 服务端白名单：必须覆盖 App 端 [HomePluginActionType] 的全部动作，
+  /// 否则投稿页能选、提交必 400（2026-10-30 之前 openGithubAccel /
+  /// openRemoteStorage / openMusic 三个就处于这个状态，等于「有真功能
+  /// 的插件一个都投不上去」）。加动作时两边同步。
   static const _allowedPluginActions = {
     'toast',
     'navigate',
@@ -3726,6 +3742,13 @@ class PlatformQuotaServer {
     'openNovelList',
     'openVideoList',
     'openImageGenerator',
+    'openGithubAccel',
+    'openRemoteStorage',
+    'openMusic',
+    // 2026-10-30：快速便签（便签存远程存储的 box-notes/）。
+    // 与 App 端 HomePluginActionType 必须一一对应 —— 少一个就等于
+    // 「投稿页能选、提交必 400」，那是伪功能。
+    'openQuickNote',
   };
 
   static const _allowedPluginAreas = {
@@ -3736,12 +3759,64 @@ class PlatformQuotaServer {
     'novel',
   };
 
-  static const _allowedPluginPermissions = {
-    'network',
-    'storage',
-    'clipboard',
-    'none',
-  };
+  /// 权限目录 —— **单一事实源**：code / 中文标签 / 风险等级 / 一句人话说明。
+  ///
+  /// 为什么要有 risk：插件本身不执行第三方代码，权限是**声明式披露**，没有沙箱
+  /// 可拦。那它唯一的价值就是「装之前让人看清要什么」——所以标签得能直接摆到
+  /// 安装确认里，风险等级得能区分「网络」和「悬浮窗/无障碍」这种明显更敏感的。
+  ///
+  /// 与 App 端 `PluginPermission` 枚举必须一一对应（App 用
+  /// `test/plugin_market/plugin_market_live_market_test.dart` 拉
+  /// `/api/plugin-market` 的 permissionCatalog 做自动比对，漂移会变红）。
+  /// 目录定义见文件末尾的 [kPluginPermissionCatalog]（模型层 toMarketJson 也要用）。
+  static const _pluginPermissionCatalog = kPluginPermissionCatalog;
+
+  static final Set<String> _allowedPluginPermissions =
+      _pluginPermissionCatalog.keys.toSet();
+
+  /// 风险等级排序（数值越大越敏感），用于取「本次声明的最高风险」。
+  static int _pluginRiskRank(String risk) => switch (risk) {
+        'high' => 3,
+        'medium' => 2,
+        'low' => 1,
+        _ => 0,
+      };
+
+  /// 归一化声明权限：**未知 code 一律报错**，不再静默丢弃。
+  ///
+  /// 之前是「认不出就跳过」——投稿方声明了 camera（App 枚举里有、白名单里没有）
+  /// 会被悄悄抹成「无权限」，插件带着假披露上架。现在与 actionCode 同口径：
+  /// 不认识就 400 并把可用列表晒出来。
+  static ({List<String> codes, List<String> unknown}) normalizePluginPermissions(
+    dynamic raw,
+  ) {
+    final codes = <String>[];
+    final unknown = <String>[];
+    if (raw is List) {
+      for (final p in raw) {
+        final code = p.toString().trim();
+        if (code.isEmpty) continue;
+        if (!_allowedPluginPermissions.contains(code)) {
+          if (!unknown.contains(code)) unknown.add(code);
+        } else if (!codes.contains(code)) {
+          codes.add(code);
+        }
+      }
+    }
+    if (codes.length > 1) codes.remove('none');
+    if (codes.isEmpty && unknown.isEmpty) codes.add('none');
+    return (codes: codes, unknown: unknown);
+  }
+
+  static List<Map<String, dynamic>> get _pluginPermissionCatalogJson =>
+      _pluginPermissionCatalog.entries
+          .map((e) => {
+                'code': e.key,
+                'label': e.value.label,
+                'risk': e.value.risk,
+                'description': e.value.description,
+              })
+          .toList(growable: false);
 
   Future<void> pluginMarketManifest(HttpRequest request) async {
     final qp = request.uri.queryParameters;
@@ -3832,6 +3907,8 @@ class PlatformQuotaServer {
       if (tag.isNotEmpty) 'tag': tag,
       if (area.isNotEmpty) 'area': area,
       'availableTags': tags,
+      // 权限目录：客户端拿它做本地枚举的一致性自查，也让投稿页不必写死一份清单
+      'permissionCatalog': _pluginPermissionCatalogJson,
     });
   }
 
@@ -3899,14 +3976,17 @@ class PlatformQuotaServer {
       return;
     }
 
-    final permissions = <String>[];
-    final rawPerms = body['permissions'];
-    if (rawPerms is List) {
-      for (final p in rawPerms) {
-        final code = p.toString().trim();
-        if (_allowedPluginPermissions.contains(code)) permissions.add(code);
-      }
+    final permResult = normalizePluginPermissions(body['permissions']);
+    if (permResult.unknown.isNotEmpty) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {
+          'message': '权限不在白名单：${permResult.unknown.join(', ')}',
+          'allowed': _allowedPluginPermissions.toList(),
+        },
+      });
+      return;
     }
+    final permissions = permResult.codes;
     final tags = <String>[];
     final rawTags = body['tags'];
     if (rawTags is List) {
@@ -4252,20 +4332,24 @@ class PlatformQuotaServer {
     final pluginId =
         slug.startsWith('user.') ? slug : 'user.${account.id}.$slug';
 
-    final permissions = <String>[];
-    final rawPerms = meta['permissions'];
-    if (rawPerms is List) {
-      for (final p in rawPerms) {
-        final code = p.toString().trim();
-        if (_allowedPluginPermissions.contains(code)) permissions.add(code);
-      }
-    }
+    // 权限：插件包 plugin.json 与表单字段合并后统一归一化，未知 code 直接 400
+    final rawPerms = <dynamic>[];
+    final metaPerms = meta['permissions'];
+    if (metaPerms is List) rawPerms.addAll(metaPerms);
     if (fields['permissions'] != null && fields['permissions']!.isNotEmpty) {
-      for (final p in fields['permissions']!.split(RegExp(r'[,，\s]+'))) {
-        final code = p.trim();
-        if (_allowedPluginPermissions.contains(code)) permissions.add(code);
-      }
+      rawPerms.addAll(fields['permissions']!.split(RegExp(r'[,，\s]+')));
     }
+    final permResult = normalizePluginPermissions(rawPerms);
+    if (permResult.unknown.isNotEmpty) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {
+          'message': '权限不在白名单：${permResult.unknown.join(', ')}',
+          'allowed': _allowedPluginPermissions.toList(),
+        },
+      });
+      return;
+    }
+    final permissions = permResult.codes;
     final tags = <String>['用户投稿', 'zip'];
     final rawTags = meta['tags'];
     if (rawTags is List) {
@@ -4864,11 +4948,16 @@ class PlatformQuotaServer {
         (body['note']?.toString() ?? body['reviewNote']?.toString() ?? '')
             .trim();
     final admin = await optionalUser(request);
+    // 发新版时若未显式给 featured，沿用上一版状态，避免「已加精插件升级后掉精选」
+    final bodyFeatured = body['featured'];
+    final featured = bodyFeatured is bool
+        ? bodyFeatured
+        : (store.pluginReleases[sub.pluginId]?.featured ?? false);
     final result = _applyReviewDecision(
       sub: sub,
       action: action,
       note: note,
-      featured: body['featured'] == true,
+      featured: featured,
       admin: admin,
     );
     await store.save();
@@ -5012,7 +5101,7 @@ class PlatformQuotaServer {
     final note =
         (body['note']?.toString() ?? body['reviewNote']?.toString() ?? '')
             .trim();
-    final featured = body['featured'] == true;
+    final bodyFeatured = body['featured'];
     final idsRaw = body['ids'];
     final ids = <String>[];
     if (idsRaw is List) {
@@ -5050,7 +5139,9 @@ class PlatformQuotaServer {
         sub: sub,
         action: action,
         note: note,
-        featured: featured,
+        featured: bodyFeatured is bool
+            ? bodyFeatured
+            : (store.pluginReleases[sub.pluginId]?.featured ?? false),
         admin: admin,
       );
       ok.add(id);
@@ -5087,6 +5178,20 @@ class PlatformQuotaServer {
     );
     store.pluginMarketVersion += 1;
     final admin = await optionalUser(request);
+    // 下架即结案：该插件的 open 举报一并置为 resolved，否则举报队列永久堆积
+    var autoClosed = 0;
+    for (var i = 0; i < store.pluginReports.length; i++) {
+      final report = store.pluginReports[i];
+      if (report.pluginId == pluginId && report.status == 'open') {
+        store.pluginReports[i] = report.copyWith(
+          status: 'resolved',
+          resolvedAt: DateTime.now(),
+          resolvedBy: admin?.username ?? 'admin',
+          resolveNote: '插件已下架',
+        );
+        autoClosed += 1;
+      }
+    }
     store.addPluginAudit(
       PluginAuditEvent(
         id: 'pa_${randomBase64(8)}',
@@ -5095,7 +5200,8 @@ class PlatformQuotaServer {
         actorName: admin?.username ?? 'admin',
         pluginId: pluginId,
         submissionId: release.submissionId,
-        note: note.isEmpty ? '管理员下架' : note,
+        note: (note.isEmpty ? '管理员下架' : note) +
+            (autoClosed > 0 ? ' · 结案 $autoClosed 条举报' : ''),
         createdAt: DateTime.now(),
       ),
     );
@@ -5103,6 +5209,7 @@ class PlatformQuotaServer {
     await jsonResponse(request.response, HttpStatus.ok, {
       'release': store.pluginReleases[pluginId]!.toAdminJson(),
       'marketVersion': store.pluginMarketVersion,
+      'autoClosedReports': autoClosed,
     });
   }
 
@@ -5115,6 +5222,12 @@ class PlatformQuotaServer {
     if (release == null || release.status != 'published') {
       await jsonResponse(request.response, HttpStatus.notFound, {
         'error': {'message': '插件不存在或未发布'},
+      });
+      return;
+    }
+    if (release.authorUserId.isNotEmpty && release.authorUserId == account.id) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '不能举报自己上架的插件'},
       });
       return;
     }
@@ -5180,6 +5293,57 @@ class PlatformQuotaServer {
     });
   }
 
+  /// 举报结案：resolve = 举报成立（已处理），dismiss = 不成立（驳回）。
+  /// 之前只有「提交」和「列出」，没有结案入口，status 永远是 open，
+  /// 管理端 openCount 只增不减、列表永久堆积。
+  Future<void> adminResolveReport(
+    HttpRequest request,
+    String reportId,
+    bool resolved,
+  ) async {
+    final index = store.pluginReports.indexWhere((r) => r.id == reportId);
+    if (index < 0) {
+      await jsonResponse(request.response, HttpStatus.notFound, {
+        'error': {'message': '举报不存在'},
+      });
+      return;
+    }
+    final report = store.pluginReports[index];
+    if (report.status != 'open') {
+      await jsonResponse(request.response, HttpStatus.conflict, {
+        'error': {'message': '该举报已结案：${report.status}'},
+      });
+      return;
+    }
+    final body = await readJsonObject(request) ?? <String, dynamic>{};
+    final note = (body['note']?.toString() ?? '').trim();
+    final admin = await optionalUser(request);
+    final nextStatus = resolved ? 'resolved' : 'dismissed';
+    store.pluginReports[index] = report.copyWith(
+      status: nextStatus,
+      resolvedAt: DateTime.now(),
+      resolvedBy: admin?.username ?? 'admin',
+      resolveNote: note,
+    );
+    store.addPluginAudit(
+      PluginAuditEvent(
+        id: 'pa_${randomBase64(8)}',
+        action: resolved ? 'report_resolve' : 'report_dismiss',
+        actorUserId: admin?.id ?? '',
+        actorName: admin?.username ?? 'admin',
+        pluginId: report.pluginId,
+        submissionId: '',
+        note: note.isEmpty ? nextStatus : note,
+        createdAt: DateTime.now(),
+      ),
+    );
+    await store.save();
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'report': store.pluginReports[index].toJson(),
+      'openCount': store.pluginReports.where((r) => r.status == 'open').length,
+    });
+  }
+
   Future<void> adminBanAuthor(
     HttpRequest request,
     String userId,
@@ -5227,6 +5391,32 @@ class PlatformQuotaServer {
       return;
     }
     final actionOk = _allowedPluginActions.contains(sub.actionCode);
+    // 权限披露：审核端要能一眼看到「这插件要什么、最高风险到哪」
+    final permCodes = sub.permissions.isEmpty
+        ? const ['none']
+        : sub.permissions;
+    final permUnknown = permCodes
+        .where((c) => !_allowedPluginPermissions.contains(c))
+        .toList(growable: false);
+    var highestRisk = 'none';
+    final permDetails = <Map<String, dynamic>>[];
+    for (final code in permCodes) {
+      final entry = _pluginPermissionCatalog[code];
+      if (entry == null) {
+        permDetails.add({'code': code, 'label': code, 'risk': 'unknown', 'known': false});
+        continue;
+      }
+      permDetails.add({
+        'code': code,
+        'label': entry.label,
+        'risk': entry.risk,
+        'description': entry.description,
+        'known': true,
+      });
+      if (_pluginRiskRank(entry.risk) > _pluginRiskRank(highestRisk)) {
+        highestRisk = entry.risk;
+      }
+    }
     final files = <Map<String, dynamic>>[];
     String? packageError;
     if (sub.packagePath.isNotEmpty) {
@@ -5323,12 +5513,17 @@ class PlatformQuotaServer {
         'packageSha256': sub.packageSha256,
       },
       'pluginJson': pluginJson,
+      'permissions': permCodes,
+      'permissionDetails': permDetails,
+      'permissionHighestRisk': highestRisk,
+      'permissionUnknown': permUnknown,
       'files': files,
       if (iconBase64 != null) 'iconBase64': iconBase64,
       if (iconBase64 != null) 'iconBytes': iconBytes,
       if (packageError != null) 'packageError': packageError,
       'checklist': {
         'actionWhitelist': actionOk,
+        'permissionWhitelist': permUnknown.isEmpty,
         'noReservedId': !sub.pluginId.startsWith('builtin_') &&
             !sub.pluginId.startsWith('market_'),
         'hasPackageOrPayload': sub.packagePath.isNotEmpty ||
@@ -5691,21 +5886,8 @@ class StateStore {
       await save();
       return;
     }
-    // 容错（2026-10-11）：原先 jsonDecode 无 try/catch，文件损坏会让服务
-    // 直接起不来，且没有任何降级路径。这里回退到最近的可用备份。
-    Map<String, dynamic>? decoded = _tryDecode(await _readOrNull(file));
-    if (decoded == null) {
-      final recovered = await _recoverFromBackup();
-      if (recovered == null) {
-        stderr.writeln(
-          '[state] 状态文件损坏且无可用备份，以空状态启动: $path',
-        );
-        quotas['demo'] = UserQuota.defaultFor(defaultQuota);
-        return;
-      }
-      decoded = recovered;
-      stderr.writeln('[state] 已从备份恢复状态: $path');
-    }
+    final decoded = jsonDecode(await file.readAsString());
+    if (decoded is! Map<String, dynamic>) return;
 
     final rawProvider = decoded['providerConfig'];
     if (rawProvider is Map) {
@@ -6209,115 +6391,16 @@ class StateStore {
     return false;
   }
 
-  // ---- 落盘串行化（2026-10-11 修复）----
-  // 请求由 unawaited 并发处理，而 save() 原先用固定 '$path.tmp' 且无锁：
-  // 两个请求会互相覆盖 tmp，后者 rename 报 ENOENT，前者数据丢失
-  // （状态全在内存，调用方以为已持久化）。
-  //
-  // 做法：严格串行队列。每次 save() 追加到链尾并等待自己那段完成，
-  // 从而保证 await 返回时"调用时刻的内存状态"已落盘。
-  // 刻意不做写入合并：合并会让后来的调用提前返回而丢失自己的改动
-  // （初版如此实现，实测并发 20 次提交只落盘 18 次）。
-  Future<void>? _saveChain;
-
-  Future<void> save() {
-    final prev = _saveChain;
-    final completer = Completer<void>();
-    _saveChain = completer.future;
-    // 用 Future 链排队；前一次失败不阻塞后续写入
-    return Future<void>(() async {
-      if (prev != null) {
-        try {
-          await prev;
-        } catch (_) {}
-      }
-      try {
-        await _saveNow();
-        completer.complete();
-      } catch (e, st) {
-        completer.complete();
-        Error.throwWithStackTrace(e, st);
-      }
-    });
-  }
-
-  Future<void> _saveNow() async {
+  Future<void> save() async {
     final file = File(path);
     await file.parent.create(recursive: true);
     const encoder = JsonEncoder.withIndent('  ');
     // 原子写：先写临时文件并 flush，再 rename 覆盖正式文件。
     // 避免进程在写入中途被 kill / 磁盘写满时，把状态文件截断成损坏的 JSON
     // （该文件是全部账号、题库、用量的唯一存储）。
-    // tmp 名带 PID，即使串行化失效也不会与其它进程互相覆盖。
-    final tmp = File('$path.tmp.$pid');
-    try {
-      await tmp.writeAsString(encoder.convert(toJson()), flush: true);
-      await tmp.rename(path);
-    } catch (_) {
-      // 失败时清理残留 tmp，避免下次启动被误认为有效文件
-      try {
-        if (await tmp.exists()) await tmp.delete();
-      } catch (_) {}
-      rethrow;
-    }
-  }
-
-  Future<String?> _readOrNull(File f) async {
-    try {
-      return await f.readAsString();
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Map<String, dynamic>? _tryDecode(String? raw) {
-    if (raw == null || raw.trim().isEmpty) return null;
-    try {
-      final d = jsonDecode(raw);
-      if (d is Map<String, dynamic>) return d;
-      if (d is Map) return Map<String, dynamic>.from(d);
-      return null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// 从备份目录按时间倒序找第一个可解析的快照。
-  /// 备份目录约定: <state_dir>/../../backups/state/{hourly,daily}
-  /// 由 /opt/box-backend/scripts/backup-state.sh 生成。
-  Future<Map<String, dynamic>?> _recoverFromBackup() async {
-    try {
-      final stateDir = File(path).parent;
-      final backupRoot = Directory('${stateDir.parent.path}/backups/state');
-      if (!await backupRoot.exists()) return null;
-
-      final candidates = <FileSystemEntity>[];
-      for (final sub in ['hourly', 'daily']) {
-        final d = Directory('${backupRoot.path}/$sub');
-        if (await d.exists()) {
-          candidates.addAll(await d
-              .list()
-              .where((e) => e is File && e.path.endsWith('.json'))
-              .toList());
-        }
-      }
-      // 按修改时间倒序
-      candidates.sort((a, b) =>
-          b.statSync().modified.compareTo(a.statSync().modified));
-
-      for (final e in candidates) {
-        final parsed = _tryDecode(await _readOrNull(File(e.path)));
-        if (parsed != null) {
-          // 先把损坏文件留档，便于事后排查
-          try {
-            final broken = File('${path}.corrupt.${DateTime.now().millisecondsSinceEpoch}');
-            await File(path).copy(broken.path);
-          } catch (_) {}
-          return parsed;
-        }
-      }
-    } catch (_) {}
-    return null;
+    final tmp = File('$path.tmp');
+    await tmp.writeAsString(encoder.convert(toJson()), flush: true);
+    await tmp.rename(path);
   }
 }
 
@@ -7317,6 +7400,13 @@ class PluginRelease {
         'authorUserId': authorUserId,
         'tags': tags.isEmpty ? ['用户投稿'] : tags,
         'permissions': permissions,
+        // 服务端补标签与风险：老客户端认不出新 code 时，至少能显示中文名和敏感度
+        'permissionLabels': permissions
+            .map((c) => kPluginPermissionCatalog[c]?.label ?? c)
+            .toList(growable: false),
+        'permissionRisks': permissions
+            .map((c) => kPluginPermissionCatalog[c]?.risk ?? 'unknown')
+            .toList(growable: false),
         'deprecated': false,
         'changelog': changelog,
         'sort': featured ? 0 : sort,
@@ -7446,6 +7536,9 @@ class PluginReport {
     required this.reason,
     required this.createdAt,
     required this.status,
+    this.resolvedAt,
+    this.resolvedBy = '',
+    this.resolveNote = '',
   });
 
   final String id;
@@ -7455,6 +7548,31 @@ class PluginReport {
   final String reason;
   final DateTime createdAt;
   final String status;
+  // 结案信息（status: open | resolved | dismissed）。旧 state 文件缺这三个键时
+  // 按「未结案」读入，不报错。
+  final DateTime? resolvedAt;
+  final String resolvedBy;
+  final String resolveNote;
+
+  PluginReport copyWith({
+    String? status,
+    DateTime? resolvedAt,
+    String? resolvedBy,
+    String? resolveNote,
+  }) {
+    return PluginReport(
+      id: id,
+      pluginId: pluginId,
+      reporterUserId: reporterUserId,
+      reporterName: reporterName,
+      reason: reason,
+      createdAt: createdAt,
+      status: status ?? this.status,
+      resolvedAt: resolvedAt ?? this.resolvedAt,
+      resolvedBy: resolvedBy ?? this.resolvedBy,
+      resolveNote: resolveNote ?? this.resolveNote,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -7464,6 +7582,9 @@ class PluginReport {
         'reason': reason,
         'createdAt': createdAt.toIso8601String(),
         'status': status,
+        if (resolvedAt != null) 'resolvedAt': resolvedAt!.toIso8601String(),
+        if (resolvedBy.isNotEmpty) 'resolvedBy': resolvedBy,
+        if (resolveNote.isNotEmpty) 'resolveNote': resolveNote,
       };
 
   factory PluginReport.fromJson(Map<String, dynamic> json) {
@@ -7476,6 +7597,9 @@ class PluginReport {
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
       status: json['status']?.toString() ?? 'open',
+      resolvedAt: DateTime.tryParse(json['resolvedAt']?.toString() ?? ''),
+      resolvedBy: json['resolvedBy']?.toString() ?? '',
+      resolveNote: json['resolveNote']?.toString() ?? '',
     );
   }
 }
@@ -8702,3 +8826,71 @@ Future<void> jsonText(
   response.add(bytes);
   await response.close();
 }
+
+/// 插件权限目录 —— **单一事实源**（code / 中文标签 / 风险等级 / 一句人话说明）。
+///
+/// 放在顶层是因为模型层的 `PluginRelease.toMarketJson` 也要用它补标签：
+/// 老客户端不认识新 code 时，至少还能显示服务端给的中文名和风险等级。
+const Map<String, ({String label, String risk, String description})>
+    kPluginPermissionCatalog = {
+    'network': (
+      label: '网络',
+      risk: 'low',
+      description: '访问互联网，下载或上传数据',
+    ),
+    'storage': (
+      label: '存储',
+      risk: 'medium',
+      description: '读写本机存储中的文件',
+    ),
+    'clipboard': (
+      label: '剪贴板',
+      risk: 'medium',
+      description: '读取或写入剪贴板内容',
+    ),
+    'notification': (
+      label: '通知',
+      risk: 'low',
+      description: '发送系统通知提醒',
+    ),
+    'background': (
+      label: '后台运行',
+      risk: 'medium',
+      description: '退到后台后继续运行任务',
+    ),
+    'audio': (
+      label: '音频',
+      risk: 'low',
+      description: '调整音量与音频输出',
+    ),
+    'camera': (
+      label: '相机',
+      risk: 'high',
+      description: '调用相机拍照或取景',
+    ),
+    'microphone': (
+      label: '麦克风',
+      risk: 'high',
+      description: '录制声音（可能包含环境对话）',
+    ),
+    'overlay': (
+      label: '悬浮窗',
+      risk: 'high',
+      description: '显示在其他应用之上',
+    ),
+    'installPackage': (
+      label: '安装应用',
+      risk: 'high',
+      description: '触发安装 APK',
+    ),
+    'accessibility': (
+      label: '无障碍',
+      risk: 'high',
+      description: '读取屏幕内容或模拟操作',
+    ),
+    'none': (
+      label: '无',
+      risk: 'none',
+      description: '不申请任何权限',
+    ),
+  };
