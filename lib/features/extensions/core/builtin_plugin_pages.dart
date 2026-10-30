@@ -17,6 +17,7 @@ import 'package:box/features/extensions/plugins/net_diag/presentation/net_diag_p
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_page.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_page.dart';
 import 'package:box/features/image_generator/presentation/image_generator_page.dart';
+import 'package:box/features/music/domain/music_launch_spec.dart';
 import 'package:box/features/music/presentation/music_placeholder_page.dart';
 import 'package:box/novel/pages/novel_list_page.dart';
 import 'package:box/video/video_compat_pages.dart';
@@ -64,6 +65,17 @@ void registerBuiltinRouteDefaults() {
   );
   // 音乐入口：在线音频 URL → 下载 → 复用 remote_storage 播放页。
   HomePluginRouteRegistry.register('openMusic', (_) => MusicPlaceholderPage());
+  // 带 payload 的版本：插件/市场条目把「播哪一条」写进 payload，
+  // 点一下就落下 URL 并按需自动播放（见 MusicLaunchSpec 支持的两种写法）。
+  HomePluginRouteRegistry.registerPayload('openMusic', (_, payload) {
+    final spec = MusicLaunchSpec.parse(payload);
+    return MusicPlaceholderPage(
+      initialAudioUrl: spec.url,
+      initialTitle: spec.title,
+      autoPlay: spec.autoPlay,
+      loop: spec.loop,
+    );
+  });
   HomePluginRouteRegistry.register(
     'service_monitor',
     (_) => ServiceMonitorPage(),

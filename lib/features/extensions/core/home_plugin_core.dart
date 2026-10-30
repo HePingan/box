@@ -203,15 +203,36 @@ typedef HomePluginActionHandler =
       HomePluginActionContext actionContext,
     );
 
+/// 带 payload 的路由构造器：动作把插件声明的 payload 原样交给页面。
+///
+/// 为什么单独一张表：`WidgetBuilder` 只吃 BuildContext，像 `openMusic` 这种
+/// 「要按 payload 决定播什么」的动作拿不到参数。以前的做法是把 payload 丢掉
+/// （于是市场里的音乐类插件只能是 toast 占位）。
+typedef HomePluginPayloadRouteBuilder = Widget Function(
+  BuildContext context,
+  String payload,
+);
+
 class HomePluginRouteRegistry {
   HomePluginRouteRegistry._();
 
   static final Map<String, WidgetBuilder> _routes = {};
+  static final Map<String, HomePluginPayloadRouteBuilder> _payloadRoutes = {};
 
   static void register(String routeCode, WidgetBuilder builder) {
     final code = routeCode.trim();
     if (code.isEmpty) return;
     _routes[code] = builder;
+  }
+
+  /// 注册「按 payload 构造页面」的路由。同一 code 可同时注册普通版（兜底）。
+  static void registerPayload(
+    String routeCode,
+    HomePluginPayloadRouteBuilder builder,
+  ) {
+    final code = routeCode.trim();
+    if (code.isEmpty) return;
+    _payloadRoutes[code] = builder;
   }
 
   static bool contains(String routeCode) {
@@ -220,6 +241,10 @@ class HomePluginRouteRegistry {
 
   static WidgetBuilder? lookup(String routeCode) {
     return _routes[routeCode.trim()];
+  }
+
+  static HomePluginPayloadRouteBuilder? lookupPayload(String routeCode) {
+    return _payloadRoutes[routeCode.trim()];
   }
 
   static void registerDefaults() {
@@ -392,6 +417,18 @@ class HomePluginActionRegistry {
     register(HomePluginActionType.openMusic.name, (context, actionContext) async {
       if (context == null) return;
       HomePluginRouteRegistry.registerDefaults();
+      // 优先走「带 payload」的构造器：市场插件可以声明播哪一条
+      // （payload 形如 https://... 或 {"url":...,"title":...,"autoplay":true,"loop":true}）。
+      final payloadBuilder = HomePluginRouteRegistry.lookupPayload('openMusic');
+      if (payloadBuilder != null) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (ctx) => payloadBuilder(ctx, actionContext.payload),
+          ),
+        );
+        return;
+      }
       final builder = HomePluginRouteRegistry.lookup('openMusic');
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));

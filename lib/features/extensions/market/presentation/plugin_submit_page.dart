@@ -340,7 +340,9 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
             minLines: 2,
             maxLines: 4,
             decoration: const InputDecoration(
-              labelText: 'payload（toast 文案 / navigate 路由码）',
+              labelText: 'payload（toast 文案 / navigate 路由码 / openMusic 音频地址）',
+              helperText: 'openMusic 支持纯 URL，或 '
+                  '{"url":"https://…","title":"名称","autoplay":true,"loop":true}',
               border: OutlineInputBorder(),
             ),
           ),

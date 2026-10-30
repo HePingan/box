@@ -42,8 +42,6 @@ PluginMarketManifest _manifest(List<MarketPluginTemplate> templates) {
 /// 装了只会弹一句提示的条目（正文自述「开发中」）。
 const _mustBeComingSoon = <String>[
   'market_quick_note',
-  'market_music_focus',
-  'market_music_sleep',
   'market_video_watch_later',
   'market_comic_wallpaper',
   'market_comic_week_rank',
@@ -58,6 +56,10 @@ const _realActionIds = <String>[
   'market_remote_storage',
   'market_video_archive_search',
   'market_novel_pick',
+  // 2026-10-30：openMusic 开始消费 payload（音频地址 + autoplay + loop），
+  // 这两条从「开发中」变成点开即播的真条目。
+  'market_music_focus',
+  'market_music_sleep',
 ];
 
 void main() {

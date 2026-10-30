@@ -837,26 +837,36 @@ class MarketPluginTemplate {
       color: Color(0xFF7F56D9),
       sort: 20,
     ),
-    const MarketPluginTemplate(
+    // 2026-10-30：白噪音/电台从「开发中」占位变成真能播的条目。
+    // 前提是 openMusic 开始消费 payload（见 MusicLaunchSpec）：以前这个动作
+    // 只打开音乐页、payload 被丢掉，所以这两条只能写 toast 占位。
+    // 音频托管在 box.hpa888.top 同域（5 分钟单曲循环，避免第三方源被墙/CORS）。
+    MarketPluginTemplate(
       id: 'market_music_focus',
       title: '专注白噪音',
-      subtitle: '工作学习沉浸模式',
+      subtitle: '粉噪 5 分钟循环 · 工作学习压环境噪音',
       areaCode: 'music',
-      actionCode: 'toast',
-      comingSoon: true,
-      payload: '白噪音插件开发中...',
+      actionCode: 'openMusic',
+      payload: '{"url":"https://box.hpa888.top/updates/box/media/music/white-noise-5min.mp3",'
+          '"title":"专注白噪音","autoplay":true,"loop":true}',
+      permissions: const ['network'],
+      tags: const ['音乐', '专注', '白噪音'],
+      changelog: '首版：点开即播粉噪（5 分钟循环）',
       icon: Icons.graphic_eq,
       color: Color(0xFFEC4899),
       sort: 10,
     ),
-    const MarketPluginTemplate(
+    MarketPluginTemplate(
       id: 'market_music_sleep',
       title: '睡眠电台',
-      subtitle: '夜间轻音乐播放入口',
+      subtitle: '布朗噪音 5 分钟循环 · 低频助眠',
       areaCode: 'music',
-      actionCode: 'toast',
-      comingSoon: true,
-      payload: '睡眠电台插件开发中...',
+      actionCode: 'openMusic',
+      payload: '{"url":"https://box.hpa888.top/updates/box/media/music/brown-noise-5min.mp3",'
+          '"title":"睡眠电台","autoplay":true,"loop":true}',
+      permissions: const ['network'],
+      tags: const ['音乐', '助眠', '电台'],
+      changelog: '首版：点开即播布朗噪音（5 分钟循环）',
       icon: Icons.nightlight_round,
       color: Color(0xFFDB2777),
       sort: 20,

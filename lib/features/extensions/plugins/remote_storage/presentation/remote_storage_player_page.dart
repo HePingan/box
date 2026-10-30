@@ -78,6 +78,7 @@ class RemoteStoragePlayerPage extends StatefulWidget {
     required this.account,
     required this.entry,
     this.localPath,
+    this.looping = false,
   });
 
   final RemoteStorageAccount account;
@@ -85,6 +86,9 @@ class RemoteStoragePlayerPage extends StatefulWidget {
 
   /// 非空时直接播放本地文件（下载后播放兜底路径）。
   final String? localPath;
+
+  /// 单曲循环：音乐区的白噪音/电台要它（默认 false，影视播放行为不变）。
+  final bool looping;
 
   @override
   State<RemoteStoragePlayerPage> createState() =>
@@ -155,7 +159,7 @@ class _RemoteStoragePlayerPageState extends State<RemoteStoragePlayerPage> {
       _chewie = ChewieController(
         videoPlayerController: controller,
         autoPlay: true,
-        looping: false,
+        looping: widget.looping,
         aspectRatio: ratio > 0 ? ratio : 16 / 9,
         errorBuilder: (context, message) => _PlayErrorView(
           message: message,

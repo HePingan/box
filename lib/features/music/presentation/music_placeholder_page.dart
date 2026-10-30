@@ -36,13 +36,35 @@ import 'package:box/features/extensions/plugins/remote_storage/presentation/remo
 /// 文件名与类名沿用 `MusicPlaceholderPage`：仓库里已有测试与入口按这个名字引用，
 /// 改名的收益（好看）小于它带来的全仓改动面。
 class MusicPlaceholderPage extends StatefulWidget {
-  const MusicPlaceholderPage({super.key, this.pickAudioPath});
+  const MusicPlaceholderPage({
+    super.key,
+    this.pickAudioPath,
+    this.initialAudioUrl = '',
+    this.initialTitle = '',
+    this.autoPlay = false,
+    this.loop = false,
+  });
 
   /// 本地音频选择口的注入点（测试用）。
   ///
   /// 生产不传即走系统文件选择器。widget 测试里真调 FilePicker 会碰平台通道
   /// （纯 test 环境没有插件 → MissingPluginException），所以留这个口子。
   final Future<String?> Function()? pickAudioPath;
+
+  /// 插件/market 条目预填的音频地址（`openMusic` 的 payload，见 MusicLaunchSpec）。
+  /// 非空时会覆盖输入框默认值。
+  final String initialAudioUrl;
+
+  /// 预填条目的显示名（白噪音、睡眠电台之类），只用于页面提示，不改元数据。
+  final String initialTitle;
+
+  /// 是否进来就自动下载并播放（插件声明的 `autoplay`）。
+  ///
+  /// 默认 false：普通入口是给人手动贴链接的，自动播会吓人。
+  final bool autoPlay;
+
+  /// 交给播放器的 `looping`（白噪音/电台需要单曲循环，否则 5 分钟就停）。
+  final bool loop;
 
   @override
   State<MusicPlaceholderPage> createState() => _MusicPlaceholderPageState();
@@ -82,8 +104,20 @@ class _MusicPlaceholderPageState extends State<MusicPlaceholderPage> {
   @override
   void initState() {
     super.initState();
+    final preset = widget.initialAudioUrl.trim();
+    if (preset.isNotEmpty) {
+      _urlController.text = preset;
+    }
     // 进来先看一眼默认 URL 是否已收藏，按钮上直接显示「已收藏」。
     unawaited(_refreshFavorited());
+    // 插件声明了 autoplay：等首帧之后再落 URL 下载播放，
+    // 避免在 build 期触发 setState / 弹页面。
+    if (preset.isNotEmpty && widget.autoPlay) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _busy) return;
+        unawaited(_downloadAndPlay());
+      });
+    }
   }
 
   @override
@@ -356,6 +390,7 @@ class _MusicPlaceholderPageState extends State<MusicPlaceholderPage> {
           account: account,
           entry: entry,
           localPath: localPath,
+          looping: widget.loop,
         ),
       ),
     );
