@@ -66,6 +66,10 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
   List<MarketPluginTemplate> _allTemplates = [];
   late Set<String> _installedIds;
 
+  /// 举报用客户端。只有服务端清单里的条目才有举报对象：
+  /// 内置条目在服务端没有发布记录，报也只会 404。
+  final PluginMarketApi _reportApi = PluginMarketApi();
+
   final Set<String> _loadingIds = {};
   final Map<String, double> _installProgress = {};
   late final TextEditingController _searchController;
@@ -417,6 +421,104 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       ),
     );
     return result ?? false;
+  }
+
+  /// 只有服务端清单里的条目才有举报对象。
+  bool get _reportableSource =>
+      _marketSource == 'remote' || _marketSource == 'cache';
+
+  /// 举报一个市场插件。此前 App 里根本没有举报入口（API 有 reportPlugin，
+  /// 但全仓零调用），管理端的举报队列因此永远是空的。
+  Future<void> _report(MarketPluginTemplate item) async {
+    const presets = <String>[
+      '内容与描述不符',
+      '疑似诱导输入账号/密码',
+      '含违规或不良内容',
+      '侵犯他人权益',
+    ];
+    var reason = presets.first;
+    final noteCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('举报插件'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                for (final p in presets)
+                  InkWell(
+                    onTap: () => setLocal(() => reason = p),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: Row(
+                        children: [
+                          Icon(
+                            reason == p
+                                ? Icons.radio_button_checked
+                                : Icons.radio_button_unchecked,
+                            size: 17,
+                            color: reason == p
+                                ? AppTokens.primaryBlue
+                                : AppTokens.textTertiary,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              p,
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: noteCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '补充说明（可选）',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('提交举报'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    final note = noteCtrl.text.trim();
+    try {
+      await _reportApi.reportPlugin(
+        item.id,
+        reason: note.isEmpty ? reason : '$reason：$note',
+      );
+      if (!mounted) return;
+      _showSnack('已提交举报，管理员会核查');
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack(_err(e));
+    }
   }
 
   Future<void> _install(MarketPluginTemplate item) async {
@@ -932,6 +1034,20 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                   )
                 else
                   const Spacer(),
+                if (_reportableSource)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: TextButton(
+                      onPressed: loading ? null : () => _report(item),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        minimumSize: const Size(0, 30),
+                        visualDensity: VisualDensity.compact,
+                        foregroundColor: AppTokens.textTertiary,
+                      ),
+                      child: const Text('举报', style: TextStyle(fontSize: 12)),
+                    ),
+                  ),
                 SizedBox(
                   height: 34,
                   child: loading

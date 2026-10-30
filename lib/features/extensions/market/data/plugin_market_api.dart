@@ -357,6 +357,28 @@ class PluginMarketApi {
         .toList(growable: false);
   }
 
+  /// 举报结案：resolve = 举报成立（已处理），dismiss = 不成立（驳回）。
+  /// 服务端此前只有「提交举报」和「列出举报」，没有结案入口，status 永远是
+  /// open —— 管理端 openCount 只增不减。
+  Future<Map<String, dynamic>> adminResolveReport(
+    String reportId, {
+    required bool resolve,
+    String note = '',
+  }) async {
+    final action = resolve ? 'resolve' : 'dismiss';
+    final uri = await _uri(
+      '/admin/plugins/reports/${Uri.encodeComponent(reportId)}/$action',
+    );
+    final resp = await _http
+        .post(
+          uri,
+          headers: await _headers(),
+          body: jsonEncode({'note': note}),
+        )
+        .timeout(const Duration(seconds: 15));
+    return _decode(resp);
+  }
+
   Future<Map<String, dynamic>> adminStats() async {
     final uri = await _uri('/admin/plugins/stats');
     final resp = await _http

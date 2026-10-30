@@ -522,6 +522,77 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
     }
   }
 
+  /// 举报结案：resolve = 成立（已处理），dismiss = 不成立（驳回）。
+  /// 在此之前举报只能提交、只能看，管理员无法结案，openCount 只增不减。
+  Future<void> _resolveReport(
+    Map<String, dynamic> report, {
+    required bool resolve,
+  }) async {
+    final id = report['id']?.toString() ?? '';
+    if (id.isEmpty) return;
+    final noteCtrl = TextEditingController(
+      text: resolve ? '举报成立，已处理' : '核查后未发现问题',
+    );
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(resolve ? '举报成立（结案）' : '举报不成立（驳回）'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              report['pluginId']?.toString() ?? '',
+              style: const TextStyle(fontSize: 12.5),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: noteCtrl,
+              decoration: const InputDecoration(
+                labelText: '处理说明',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(resolve ? '结案' : '驳回'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      final result = await _api.adminResolveReport(
+        id,
+        resolve: resolve,
+        note: noteCtrl.text.trim(),
+      );
+      final openCount = (result['openCount'] as num?)?.toInt();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${resolve ? '已结案' : '已驳回'}'
+            '${openCount != null ? '，剩余待处理 $openCount 条' : ''}',
+          ),
+        ),
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('结案失败：$e')));
+    }
+  }
+
   Future<void> _banAuthor(String userId, {required bool ban}) async {
     if (userId.isEmpty) return;
     final noteCtrl = TextEditingController(text: ban ? '违规投稿' : '');
@@ -849,9 +920,31 @@ class _PluginMarketAdminTabState extends State<PluginMarketAdminTab> {
                       '${r['reporterName'] ?? ''} · ${r['reason'] ?? ''}\n${r['createdAt'] ?? ''}',
                     ),
                     isThreeLine: true,
-                    trailing: TextButton(
-                      onPressed: () => _yank({'id': r['pluginId']}),
-                      child: const Text('下架'),
+                    trailing: PopupMenuButton<String>(
+                      tooltip: '处理举报',
+                      onSelected: (v) {
+                        if (v == 'resolve') {
+                          _resolveReport(r, resolve: true);
+                        } else if (v == 'dismiss') {
+                          _resolveReport(r, resolve: false);
+                        } else if (v == 'yank') {
+                          _yank({'id': r['pluginId']});
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(
+                          value: 'resolve',
+                          child: Text('举报成立（结案）'),
+                        ),
+                        PopupMenuItem(
+                          value: 'dismiss',
+                          child: Text('举报不成立（驳回）'),
+                        ),
+                        PopupMenuItem(
+                          value: 'yank',
+                          child: Text('下架插件（自动结案）'),
+                        ),
+                      ],
                     ),
                   ),
                 );
