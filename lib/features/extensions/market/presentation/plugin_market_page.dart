@@ -79,6 +79,9 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
   String _keyword = '';
   String _areaFilter = 'all';
   String _tagFilter = 'all';
+
+  /// 权限敏感度筛选（全部 / 不含高风险 / 不申请权限）。
+  PluginRiskFilter _riskFilter = PluginRiskFilter.all;
   // 排序：recommended(默认) | downloads | updated | title
   String _sortBy = 'recommended';
 
@@ -121,6 +124,7 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       _searchController.clear();
       _keyword = '';
       _areaFilter = 'all';
+      _riskFilter = PluginRiskFilter.all;
     });
   }
 
@@ -224,6 +228,8 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       final tagOk =
           _tagFilter == 'all' || item.tags.any((t) => t.toLowerCase() == tag);
       if (!tagOk) return false;
+
+      if (!_riskFilter.matches(item.permissions)) return false;
 
       if (keyword.isEmpty) return true;
 
@@ -1325,6 +1331,58 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     );
   }
 
+  // 权限敏感度筛选栏。
+  //
+  // 与「安装前披露」是一对：披露回答「它要什么」，这里回答「我不想看要这些东西的」。
+  // 高风险插件的数量也顺带报出来 —— 用户能看到筛选到底挡住了什么。
+  Widget _buildRiskFilterBar() {
+    final highRiskCount = _allTemplates
+        .where((t) => !PluginRiskFilter.noHigh.matches(t.permissions))
+        .length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final filter in PluginRiskFilter.values) ...[
+                  FilterChip(
+                    label: Text(
+                      filter == PluginRiskFilter.all
+                          ? filter.label
+                          : '${filter.label}'
+                              '${filter == PluginRiskFilter.noHigh && highRiskCount > 0 ? ' ($highRiskCount)' : ''}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    selected: _riskFilter == filter,
+                    visualDensity: VisualDensity.compact,
+                    onSelected: (_) =>
+                        setState(() => _riskFilter = filter),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+              ],
+            ),
+          ),
+          if (_riskFilter.hint.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                _riskFilter.hint,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppTokens.textTertiary,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   // A3: 标签筛选栏
   Widget _buildTagBar() {
     final tags = _availableTags;
@@ -1441,6 +1499,11 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                     ),
                   ),
                   SliverToBoxAdapter(child: _buildSortBar()),
+                  // 没有任何插件声明权限时不占位置（那排 chip 点了也不会有变化，
+                  // 白占一行的滚动高度）；一旦有筛选在生效则始终显示，方便取消。
+                  if (_riskFilter != PluginRiskFilter.all ||
+                      _allTemplates.any((t) => t.permissions.isNotEmpty))
+                    SliverToBoxAdapter(child: _buildRiskFilterBar()),
                   if (_availableTags.isNotEmpty)
                     SliverToBoxAdapter(child: _buildTagBar()),
                   SliverToBoxAdapter(child: _buildMetaCard()),

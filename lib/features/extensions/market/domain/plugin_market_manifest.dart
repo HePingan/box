@@ -272,6 +272,49 @@ extension PluginPermissionRiskLabel on PluginPermissionRisk {
       };
 }
 
+/// 市场「按权限敏感度筛选」。
+///
+/// 为什么要它：权限披露之后，用户真正想说的是「别给我看要无障碍/悬浮窗的插件」。
+/// 光在详情里标注风险还不够 —— 得能在列表层直接滤掉。
+///
+/// 未知 code 按**高风险**处理（与 [permissionDetailsOf] 的展示口径一致）：
+/// 当前版本读不懂的权限，对用户来说就是「不知道它要干什么」，不该被当成无害。
+enum PluginRiskFilter {
+  /// 不筛（默认）。
+  all,
+
+  /// 不含高风险（相机/麦克风/悬浮窗/安装应用/无障碍，以及任何未知 code）。
+  noHigh,
+
+  /// 只要「不申请权限」的条目。
+  noneOnly,
+}
+
+extension PluginRiskFilterLabel on PluginRiskFilter {
+  String get label => switch (this) {
+        PluginRiskFilter.all => '全部权限',
+        PluginRiskFilter.noHigh => '不含高风险',
+        PluginRiskFilter.noneOnly => '不申请权限',
+      };
+
+  String get hint => switch (this) {
+        PluginRiskFilter.all => '',
+        PluginRiskFilter.noHigh => '已滤掉需要相机/麦克风/悬浮窗/安装应用/无障碍的插件',
+        PluginRiskFilter.noneOnly => '只显示不申请任何权限的插件',
+      };
+
+  /// 这条插件的权限声明是否通过本筛选。
+  bool matches(Iterable<String> codes) {
+    final details = permissionDetailsOf(codes);
+    return switch (this) {
+      PluginRiskFilter.all => true,
+      PluginRiskFilter.noHigh =>
+        !details.any((d) => d.risk == PluginPermissionRisk.high),
+      PluginRiskFilter.noneOnly => details.isEmpty,
+    };
+  }
+}
+
 /// 声明里最敏感的那一档（认不出的 code 不计入，但仍会原样出现在标签里）。
 PluginPermissionRisk highestPermissionRiskOf(Iterable<String> codes) {
   var highest = PluginPermissionRisk.none;
