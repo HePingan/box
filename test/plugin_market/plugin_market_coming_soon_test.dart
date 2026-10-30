@@ -41,7 +41,6 @@ PluginMarketManifest _manifest(List<MarketPluginTemplate> templates) {
 
 /// 装了只会弹一句提示的条目（正文自述「开发中」）。
 const _mustBeComingSoon = <String>[
-  'market_quick_note',
   'market_video_watch_later',
   'market_comic_wallpaper',
   'market_comic_week_rank',
@@ -60,6 +59,8 @@ const _realActionIds = <String>[
   // 这两条从「开发中」变成点开即播的真条目。
   'market_music_focus',
   'market_music_sleep',
+  // 2026-10-30：快速便签落定「存远程存储」（box-notes/），接上 openQuickNote 动作。
+  'market_quick_note',
 ];
 
 void main() {

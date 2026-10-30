@@ -127,7 +127,13 @@ enum HomePluginActionType {
   ///
   /// 阶段 2 加的：music 分区此前是 0 插件的空区，占位条目只会 toast「开发中」。
   /// 现在它背后是**真能用的页面**，投稿页也能选到这个动作。
-  openMusic;
+  openMusic,
+
+  /// 打开快速便签（便签本体存在远程存储的 box-notes/ 目录）。
+  ///
+  /// 「快速便签」长期是 toast 占位，卡在「存哪」没定：本地 SQLite 换机就丢，
+  /// 走远程存储则天然多端同步、用户还能在文件管理器里备份。定了后者。
+  openQuickNote;
 
   /// 中文标签（单一事实源）。此前散落在市场页与投稿页各一份且已漂移
   /// （toast：提示动作 vs 弹出提示）。
@@ -151,6 +157,8 @@ enum HomePluginActionType {
         return '打开远程存储';
       case HomePluginActionType.openMusic:
         return '打开音乐';
+      case HomePluginActionType.openQuickNote:
+        return '打开便签';
     }
   }
 
@@ -166,6 +174,7 @@ enum HomePluginActionType {
     HomePluginActionType.openGithubAccel,
     HomePluginActionType.openRemoteStorage,
     HomePluginActionType.openMusic,
+    HomePluginActionType.openQuickNote,
   ];
 }
 
@@ -430,6 +439,14 @@ class HomePluginActionRegistry {
         return;
       }
       final builder = HomePluginRouteRegistry.lookup('openMusic');
+      if (builder == null) return;
+      await Navigator.push(context, MaterialPageRoute(builder: builder));
+    });
+
+    register(HomePluginActionType.openQuickNote.name, (context, actionContext) async {
+      if (context == null) return;
+      HomePluginRouteRegistry.registerDefaults();
+      final builder = HomePluginRouteRegistry.lookup('openQuickNote');
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));
     });

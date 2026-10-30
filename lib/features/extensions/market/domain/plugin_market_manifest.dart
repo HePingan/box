@@ -869,13 +869,18 @@ class MarketPluginTemplate {
       sort: 14,
     ),
     const MarketPluginTemplate(
+      // 2026-10-30：便签从 toast 占位变成真功能。存哪当初拍板为**远程存储**：
+      // 本地 SQLite 换机就丢，写进 WebDAV 的 box-notes/ 后多端同步、
+      // 用户还能在远程存储浏览器里直接备份/导出。
       id: 'market_quick_note',
       title: '快速便签',
-      subtitle: '首页快捷记录灵感',
+      subtitle: '随手记，存进远程存储的 box-notes/',
       areaCode: 'recommend',
-      actionCode: 'toast',
-      comingSoon: true,
-      payload: '快速便签：后续可接入本地记事模块',
+      actionCode: 'openQuickNote',
+      payload: '',
+      permissions: ['network', 'storage'],
+      tags: ['效率', '便签'],
+      changelog: '首版：新建/编辑/删除便签，写入远程存储',
       icon: Icons.edit_note_outlined,
       color: Color(0xFF7F56D9),
       sort: 20,

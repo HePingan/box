@@ -13,6 +13,7 @@ import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/extensions/plugins/github_accel/github_accel_sheet.dart';
 import 'package:box/features/comic/presentation/comic_library_page.dart';
 import 'package:box/features/extensions/plugins/monitor/monitor_page.dart';
+import 'package:box/features/extensions/plugins/quick_note/presentation/quick_note_page.dart';
 import 'package:box/features/extensions/plugins/net_diag/presentation/net_diag_page.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_page.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_page.dart';
@@ -67,6 +68,11 @@ void registerBuiltinRouteDefaults() {
   HomePluginRouteRegistry.register('openMusic', (_) => MusicPlaceholderPage());
   // 带 payload 的版本：插件/市场条目把「播哪一条」写进 payload，
   // 点一下就落下 URL 并按需自动播放（见 MusicLaunchSpec 支持的两种写法）。
+  // 快速便签：便签文件存在远程存储的 box-notes/ 目录（多端同步）。
+  HomePluginRouteRegistry.register(
+    'openQuickNote',
+    (_) => const QuickNotePage(),
+  );
   HomePluginRouteRegistry.registerPayload('openMusic', (_, payload) {
     final spec = MusicLaunchSpec.parse(payload);
     return MusicPlaceholderPage(
