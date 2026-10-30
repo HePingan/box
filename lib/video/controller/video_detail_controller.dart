@@ -646,9 +646,19 @@ class VideoDetailController extends ChangeNotifier {
     return 0;
   }
 
-  // 消费提示信息
+  /// 消费提示信息（用户点了卡内提示条上的 × ）。
+  ///
+  /// 必须 `notifyListeners()`：提示条的显隐直接读 `resumeMessage`，
+  /// 只清字段不通知的话界面不会重建 —— 点关闭没反应。
+  ///
+  /// 这个缺陷之前一直被 SnackBar 那条通道盖着：旧实现在 controller 的
+  /// 监听器里调用本方法，而监听器之后通常还会有别的 `notifyListeners`
+  /// 顺手把界面刷了，所以"点了没反应"没被注意到。第六轮去掉 SnackBar
+  /// 后，它立刻暴露成"× 点不动"。
   void consumeResumeMessage() {
+    if (resumeMessage == null) return;
     resumeMessage = null;
+    notifyListeners();
   }
 
   @override

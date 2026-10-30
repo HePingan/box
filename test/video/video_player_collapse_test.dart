@@ -74,9 +74,28 @@ void main() {
         page.contains('_playerCollapsed = false'),
         isTrue,
       );
+      // 第五轮（顶部重排）：展开入口从 `TextButton.icon(label: '展开')`
+      // 换成共用的 `_CollapsedPlayerToggle(collapsed: true, ...)` —— 文案由
+      // 该组件按 collapsed 给出（'展开' / '收起播放器'），不再散在调用点。
+      // 这里锁的是**语义**：收起态那个开关必须是「展开」方向，且点了改回 false。
       expect(
-        page.contains("label: const Text('展开')"),
+        page.contains('_CollapsedPlayerToggle('),
         isTrue,
+        reason: '收起态的展开入口应走共用开关组件',
+      );
+      expect(
+        RegExp(r'collapsed:\s*true').hasMatch(page),
+        isTrue,
+        reason: '收起态要传 collapsed: true（图标朝下、文案是「展开」）',
+      );
+      final toggle = page.substring(
+        page.indexOf('class _CollapsedPlayerToggle'),
+        page.indexOf('class _PlaybackChip'),
+      );
+      expect(
+        toggle.contains("collapsed ? '展开' : '收起播放器'"),
+        isTrue,
+        reason: '开关文案随状态切换，收起态显示「展开」',
       );
     });
 
@@ -85,9 +104,48 @@ void main() {
         page.contains('_playerCollapsed = true'),
         isTrue,
       );
+      // 同上：入口换成 _CollapsedPlayerToggle(collapsed: false, ...)。
       expect(
-        page.contains("label: const Text('收起播放器')"),
+        RegExp(r'collapsed:\s*false').hasMatch(page),
         isTrue,
+        reason: '展开态要传 collapsed: false（图标朝上、文案是「收起播放器」）',
+      );
+      final toggle = page.substring(
+        page.indexOf('class _CollapsedPlayerToggle'),
+        page.indexOf('class _PlaybackChip'),
+      );
+      expect(
+        toggle.contains("'收起播放器'"),
+        isTrue,
+        reason: '展开态的收起入口文案必须还在',
+      );
+    });
+
+    test('同一屏不许出现「展开」与「收起播放器」两个反向开关', () {
+      // 真机截到过：点「收起播放器」后，播放器位置换成迷你条（写「展开」），
+      // 而下方工具行**还画着一个「收起播放器」** —— 两个按钮方向相反，
+      // 且下面那个点了没反应（播放器已经收起了）。
+      //
+      // 判据：`_buildPlayerToolsRow` 里那个开关必须挂在 `!_playerCollapsed`
+      // 条件下。写成源码断言，是因为这段是私有 State 里的布局分支；用渲染
+      // 断言要拉起整个播放器（会去打真实 m3u8 并等 12s 超时）。
+      final start = page.indexOf('Widget _buildPlayerToolsRow(');
+      expect(start, greaterThan(0), reason: '没找到工具行定义');
+      final end = page.indexOf('Widget _buildLineStrip(');
+      expect(end, greaterThan(start), reason: '没找到线路条定义，区间取错');
+      final toolsRow = page.substring(start, end);
+
+      final guardIdx = toolsRow.indexOf('if (!_playerCollapsed)');
+      final toggleIdx = toolsRow.indexOf('_CollapsedPlayerToggle(');
+      expect(
+        guardIdx,
+        greaterThan(0),
+        reason: '收起态工具行里不能再画「收起播放器」',
+      );
+      expect(
+        toggleIdx,
+        greaterThan(guardIdx),
+        reason: '开关要落在 !_playerCollapsed 分支内部，否则收起后还会出现',
       );
     });
   });

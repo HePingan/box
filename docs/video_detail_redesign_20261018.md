@@ -205,3 +205,155 @@ physics: BouncingScrollPhysics())`。内容不超出时它**本来不该响应�
    我这次尝试从片源 API 取样失败（`cj.lzcaiji.com` 从服务器与本机都无响应），
    所以设计稿是按截图+代码推出来的，**样本只有这一部剧**。
    如果你能贴几条其他剧的选集截图，规则可以调得更准。
+
+---
+
+## 七、第五轮：顶部排版重排（2026-10-18 晚）
+
+> 触发：用户贴真机截图，问"播放页最上面布局能不能优化一下"。
+> 方法：把这一页按真机尺寸（392×850@3x）**渲染出 PNG 再量**，不是读代码猜。
+> 工具：`test/video/video_detail_top_capture_test.dart`（`DETAIL_TOP_CAPTURE=1` 开启）。
+
+### 改前实测（同一份 fixture）
+
+| 区块 | 位置（dp） |
+|---|---|
+| 片名 | top 27 |
+| 副标题 | **只有「量子资源」，无集数** |
+| 「收起播放器」 | top 330.5，**独占一行** |
+| 线路条 | top 374.5（在收起按钮**下面**一行） |
+| 选集 Tab | top 423.5 |
+
+### 三个具体问题
+
+1. **四个 46dp 浅灰方块并排**：返回、追剧、刷新、下载长得一模一样。
+   返回是"离开这一页"，另外三个是"操作这部片"，不该是同一块砖。
+2. **「收起播放器」独占一行**：一个辅助动作占掉约 40dp 行高 + 上下留白，
+   把选集又往下推了 40dp。
+3. **副标题信息量太低**：只有片源名，且靠 `EdgeInsets.only(left: 44)` 硬凑对齐，
+   改一次按钮尺寸就错位。
+
+### 改后
+
+| 区块 | 位置（dp） | 变化 |
+|---|---|---|
+| 片名 | top 15 | ↑ 12 |
+| 副标题 | 「量子资源 · 全 24 集」 | 加集数 |
+| 线路 + 收起 | **同一行**，中心线差 0.5dp | 省一整行 |
+| 选集 Tab | top 343.5 | ↑ 80 |
+
+具体做法：
+
+- 返回改成 [`AppBackButton`]（全站统一的**无底色箭头**），不再套方块；
+- 三个动作收进一个浅底胶囊 + 1px 细分隔线（`_HeaderActionBar` / `_HeaderAction`，
+  36dp/个），整组宽度从约 190dp 降到约 110dp，长片名不再一进去就截断；
+- 副标题改成 `片源 · 全 N 集 · 画质`（`_buildHeaderMeta`）。集数按**当前线路**算，
+  单片不写「全 1 集」，备注含"集"字则不重复；
+- 「收起播放器」并入线路条那一行（`_buildPlayerToolsRow` / `_CollapsedPlayerToggle`），
+  只有一条线路时它单独靠右，位置不随线路数跳动。
+
+### 本轮新增的护栏
+
+- `video_detail_top_capture_test.dart`：**渲染 + 量尺寸**，锁住
+  "线路与收起同一行（中心线差 < 2dp）"、"头部卡高度 < 110dp"、
+  "播放器贴着头部卡"、"单片不写全 1 集"；同时输出浅色/深色两张 PNG。
+- `video_player_collapse_test.dart` 两条断言从"源码里有没有 `TextButton(label:)`"
+  改为锁**语义**（收起态传 `collapsed: true`、文案随状态切换），
+  因为那个入口换成了共用组件。
+
+---
+
+## 八、第六轮（2026-10-19）：两个"上一轮引入/暴露"的缺陷
+
+> 触发：接续评估"下一步优化"时，用深色档截图与"收起后"截图**逐张复核**，
+> 抓到两个此前没人报的缺陷。都不是审美问题，是对比度/交互自相矛盾。
+
+### 缺陷 1：「收起播放器」与「展开」同屏并存（第五轮引入）
+
+- **现象**：点「收起播放器」后，播放器位置换成迷你条（右侧写「展开」），
+  但下方工具行**仍然画着「收起播放器」** —— 同一屏两个反向开关，
+  且下面那个点了没有反应（播放器已经收起了）。
+- **成因**：第五轮把收起入口并入 `_buildPlayerToolsRow` 时，
+  只处理了"展开态要显示"，没处理"收起态要隐藏"。
+- **修法**：`_buildPlayerToolsRow` 里的开关挂到 `if (!_playerCollapsed)` 下；
+  收起态该行只保留线路（线路在收起后仍要能换）。
+- **护栏**：`video_player_collapse_test.dart` 新增
+  「同一屏不许出现两个反向开关」，断言开关落在 `!_playerCollapsed` 分支内。
+
+### 缺陷 2：深色模式下「选集 / 影片资料」标题几乎看不见（既有缺陷，非本轮引入）
+
+- **现象**：深色档下「选集」标题几乎整块消失。
+- **实测**：`AppSectionTitle` 写死 `AppTokens.inkDark`（常量近黑 `0xFF111827`），
+  压在深色卡底 `#171B22` 上，WCAG 对比度 **1.03:1**（正文要求 ≥ 4.5）。
+  换成 `AppTokens.textPrimary` 后是 **14.6:1**。
+- **波及**：`AppSectionTitle`（选集 / 影片资料 / 剧情简介三处共用）+
+  `DetailInfoCard` 的资料值列，同一写法。
+- **修法**：两处改 `AppTokens.textPrimary`（跟随深浅）。
+- **为什么之前的测试没抓到**：`dark_theme_test.dart` 原有的对比度用例只检查
+  **token 两两搭配**（`textPrimary` vs `surface` 等），而这里是**组件把常量色
+  当正文色用** —— token 本身没错，错在取用方式。
+- **护栏**：新增用例「正文/标题色不许写死 inkDark」，并先断言
+  `inkDark` vs 深色 `surface` 的对比度确实 < 1.2（证明这条不是洁癖）。
+
+### 顺带确认
+
+`flutter analyze lib test/design_system test/video` 零告警；
+`test/design_system + 详情页三套护栏` 共 87 条通过。
+
+---
+
+## 九、第七轮（2026-10-19）：去重 + 已看标记（P1 / P2 / P3）
+
+> 承接上一节，按「先低风险去重、再上新能力」的顺序做完三档。
+> 每档都配了渲染截图与护栏，不靠肉眼判断。
+
+### P1 · 一屏三遍的同一集数
+
+实测：`全 24 集`（头部）、`当前线路 24 集`（选集卡标题下）、`共 24 集`（剧集行）
+三处取值完全相同（都是当前线路的 `episodes.length`）。
+
+- **改法**：删掉选集卡标题下那行副标题，只留 `共 N 集`
+  （它和"正序"同一行，是工具栏，位置最自然）。
+- **副作用**：卡片少了约 20dp，选集整体上移。
+- **护栏**：`video_detail_layout_test.dart` 两条断言改为锁"结果"
+  （标题下不许再出现 `正在播放 ·` 与 `当前线路`），而不是锁某个分支存在。
+
+### P2 · 同一句续播提示说两遍（并顺带修好"关闭点了没反应"）
+
+实测（渲染断言）：`initialPosition > 0` 时，同一句
+「已为你恢复到上次播放位置：00:43」同时出现在
+① SnackBar（2 秒后消失、盖住底部）② 选集卡内的黄色提示条。两者读同一个字段。
+
+- **改法**：删掉 SnackBar 那条通道，只留卡内提示条（可关闭、不遮挡、更持久）。
+  `_VideoDetailViewState` 里那个只负责弹 SnackBar 的 controller 监听器一并删除
+  （页面本来就 `watch` 着 controller，不需要手工订阅）。
+- **顺带发现的真 bug**：`consumeResumeMessage()` 只把字段置空、**没有
+  `notifyListeners()`**，所以点提示条上的 × 界面不刷新。
+  之前被 SnackBar 通道掩盖（那里随后常有别的 notify 顺手刷了界面）。
+  已补 `notifyListeners()`，并加了"点关闭后提示条消失"的用例。
+- **护栏**：新增 `video_detail_resume_notice_test.dart`（两条：
+  不弹 SnackBar 且 3 秒后仍在；点 × 后消失）。
+
+### P3 · 已看剧集标记
+
+追到第 18 集再进来时，24 个格子长得一样，只有橙色描边能认出"当前"。
+
+- **判定逻辑**：新增 `lib/video/pages/detail/watched_episodes.dart`（纯函数）。
+  三条判据：同一部片（`vodId`）、同一集（`episodeUrl` 归一化，去 query/fragment）、
+  真看过（进度 ≥ 1 分钟）。不按 `sourceId` 过滤 —— 换源续播是既有能力。
+- **视觉**：看过的格子 = 序号左侧一颗 4dp 圆点（`success` 色）+ 序号字重降一档；
+  **当前集优先**，既是当前集又看过时不加绿点，避免双强调。
+- **接线**：`_watchedKeysFor()` 用 `context.watch<HistoryController>()`，
+  从播放器返回、进度落库后会立即刷新标记。
+- **护栏**：
+  * `watched_episodes_test.dart` 14 条（归一化、三道判据、脏数据、空集合安全）；
+  * `video_detail_watched_marker_test.dart` 4 条（接线：8 条历史 → 7 个点、
+    当前集不重复标、< 1 分钟不标、无历史不标）。
+
+### 本轮验证
+
+- `flutter analyze lib test/video test/design_system`：零告警。
+- `flutter test test/video test/design_system`：**343 条通过**（2 条网络/标签跳过）。
+- `test/features/content` + `test/features/about`：159 条通过。
+- 截图：`build/visual/video_detail_top_{light,dark}.png`、
+  `watched_{light,dark}.png`、`detail_round6_compare.png`（三阶段对比）。

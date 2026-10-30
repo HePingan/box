@@ -152,12 +152,29 @@ void main() {
       );
     });
 
-    test('① 单片时不再显示「正在播放 · 」副标题', () {
+    test('① 选集卡标题下不挂任何副标题（单片/多集都不挂）', () {
+      // 这条的前身是「单片时不再显示『正在播放 · X』」—— 当时副标题挂在
+      // `if (!isSingleEpisode)` 分支下，所以断言那段分支存在。
+      //
+      // 第六轮（去重）把副标题整块删了（「当前线路 N 集」与「共 N 集」重复），
+      // 于是"分支存在"这个断言失去意义。现在锁的是**结果**：
+      // 选集卡标题后面既没有「正在播放 ·」，也没有「当前线路 N 集」。
       final page = readLib('video/pages/video_detail_page.dart');
+      final panelIdx = page.indexOf('Widget _buildPlaybackPanel(');
+      final panelEnd = page.indexOf('Widget _buildEpisodeSection(');
+      expect(panelIdx, greaterThan(0));
+      expect(panelEnd, greaterThan(panelIdx));
+      final panelSrc = page.substring(panelIdx, panelEnd);
+
       expect(
-        page.contains('if (!isSingleEpisode) ...['),
-        isTrue,
-        reason: '副标题必须挂在非单片分支下，单片时那个橙色胶囊本身就是「正在播放」',
+        panelSrc.contains("'正在播放 · "),
+        isFalse,
+        reason: '网格里当前集已橙色高亮，副标题再说一遍是重复',
+      );
+      expect(
+        panelSrc.contains("'当前线路 "),
+        isFalse,
+        reason: '集数只保留「共 N 集」一处',
       );
     });
 
@@ -297,7 +314,7 @@ void main() {
       );
     });
 
-    test('选集卡副标题不再重复「正在播放 · X」', () {
+    test('选集卡副标题不再重复「正在播放 · X」，也不再重复集数', () {
       // 范围要限定在**选集卡内部**：收起播放器后的迷你条也会写「正在播放 · X」，
       // 但那里没有橙色高亮的集数胶囊作视觉提示，不算重复 —— 全文件禁用这个词
       // 会把正常用法一起误杀。
@@ -313,10 +330,22 @@ void main() {
         isFalse,
         reason: '网格里当前集已高亮，同一件事说两遍',
       );
+
+      // 第六轮（去重）：第三轮把副标题换成「当前线路 N 集」，但那个 N 与
+      // 同一张卡下方的「共 N 集」、以及页面头部的「全 N 集」是同一个数
+      // （都取当前线路的 episodes.length）—— 一屏三遍。
+      // 现在标题下不再挂副标题，集数只留「共 N 集」一处。
       expect(
         panelSrc.contains('当前线路 \${episodes.length} 集'),
+        isFalse,
+        reason: '集数已经在「共 N 集」那里写过，标题下不该再说一遍',
+      );
+      // 「共 N 集」画在 _buildEpisodeSection 里（选集卡内部、正序按钮那一行），
+      // 不在这段 substring 的范围内 —— 要整文件找。
+      expect(
+        src.contains('共 \$total 集'),
         isTrue,
-        reason: '换成页面上没别处写、用户真的想知道的信息',
+        reason: '集数保留在「共 N 集」（与正序按钮同一行，是工具栏）',
       );
     });
 
