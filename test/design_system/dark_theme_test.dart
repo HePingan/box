@@ -355,6 +355,40 @@ void main() {
     }
   });
 
+  /// `inkDark` 是**常量近黑**（0xFF111827），不随深浅切换。
+  ///
+  /// 上面那条「token 两两搭配对比度」查不出它：token 本身没问题，是**组件
+  /// 把常量色当正文色**用，深色档下压在深色卡底上只有 1.03:1 —— 真机上
+  /// 「选集」标题几乎整块消失（详情页截图实测，肉眼能直接看出来）。
+  ///
+  /// 判据：正文/标题类文字不许用 inkDark（它只该用在**始终为亮底**的地方，
+  /// 例如 SnackBar 的图标、深色遮罩上的字）。
+  test('正文/标题色不许写死 inkDark（深色档下 = 隐形，实测 1.03:1）', () {
+    // 先证明这个色确实是"看不见"的量级，免得日后有人觉得这条是洁癖。
+    AppTokens.setDark(true);
+    final ratio = contrast(AppTokens.inkDark, AppTokens.surface);
+    AppTokens.setDark(false);
+    expect(
+      ratio,
+      lessThan(1.2),
+      reason: 'inkDark 压在深色卡底上的对比度应当极低（实测约 1.03），'
+          '这条用例的前提变了要重新评估',
+    );
+
+    const guarded = <String>[
+      'lib/design_system/widgets/app_section_title.dart',
+      'lib/video/pages/detail/detail_info_card.dart',
+    ];
+    for (final file in guarded) {
+      expect(
+        RegExp(r'color:\s*AppTokens\.inkDark').hasMatch(_read(file)),
+        isFalse,
+        reason: '$file 用 inkDark 当文字色 —— 深色档下会看不见，'
+            '正文/标题请用 AppTokens.textPrimary',
+      );
+    }
+  });
+
   test('「主题配色」仍如实标着暂不可用（换主色与深浅是两件事）', () {
     final source = _read('lib/features/settings/presentation/settings_page.dart');
     expect(

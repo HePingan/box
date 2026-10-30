@@ -41,8 +41,12 @@ class AppSectionTitle extends StatelessWidget {
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: AppTokens.inkDark,
+            // 必须走 textPrimary（跟随深浅），不能写死 inkDark：
+            // inkDark 是常量近黑，深色档下压在深色卡底上对比度只有 **1.03:1**，
+            // 实测「选集」标题几乎完全看不见（真机截图可复现）。
+            // 三处标题（选集 / 影片资料 / 剧情简介）共用这里，改一处全好。
+            style: TextStyle(
+              color: AppTokens.textPrimary,
               fontSize: 15,
               fontWeight: FontWeight.w900,
             ),

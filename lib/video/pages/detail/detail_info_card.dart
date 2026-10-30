@@ -104,8 +104,9 @@ class _DetailInfoCardState extends State<DetailInfoCard> {
               // 主演原来只能看到前两个名字。
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTokens.inkDark,
+              // 同 AppSectionTitle：写死 inkDark 在深色档等于隐形（1.03:1）。
+              style: TextStyle(
+                color: AppTokens.textPrimary,
                 fontSize: 12.5,
                 fontWeight: FontWeight.w600,
               ),
