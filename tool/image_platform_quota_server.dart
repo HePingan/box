@@ -3749,6 +3749,8 @@ class PlatformQuotaServer {
     // 与 App 端 HomePluginActionType 必须一一对应 —— 少一个就等于
     // 「投稿页能选、提交必 400」，那是伪功能。
     'openQuickNote',
+    // 2026-10-30：影视稍后看（清单存远程存储 box-watchlist/）。
+    'openWatchLater',
   };
 
   static const _allowedPluginAreas = {

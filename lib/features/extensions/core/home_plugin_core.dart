@@ -133,7 +133,13 @@ enum HomePluginActionType {
   ///
   /// 「快速便签」长期是 toast 占位，卡在「存哪」没定：本地 SQLite 换机就丢，
   /// 走远程存储则天然多端同步、用户还能在文件管理器里备份。定了后者。
-  openQuickNote;
+  openQuickNote,
+
+  /// 打开影视「稍后看」（清单存在远程存储的 box-watchlist/watch-later.json）。
+  ///
+  /// 与便签同一套理由：片单是"跨设备还想接着看"的东西，存远程存储比本地库合适。
+  /// payload 可以带一个要加入的地址（`registerPayload` 那条）。
+  openWatchLater;
 
   /// 中文标签（单一事实源）。此前散落在市场页与投稿页各一份且已漂移
   /// （toast：提示动作 vs 弹出提示）。
@@ -159,6 +165,8 @@ enum HomePluginActionType {
         return '打开音乐';
       case HomePluginActionType.openQuickNote:
         return '打开便签';
+      case HomePluginActionType.openWatchLater:
+        return '打开稍后看';
     }
   }
 
@@ -175,6 +183,7 @@ enum HomePluginActionType {
     HomePluginActionType.openRemoteStorage,
     HomePluginActionType.openMusic,
     HomePluginActionType.openQuickNote,
+    HomePluginActionType.openWatchLater,
   ];
 }
 
@@ -447,6 +456,25 @@ class HomePluginActionRegistry {
       if (context == null) return;
       HomePluginRouteRegistry.registerDefaults();
       final builder = HomePluginRouteRegistry.lookup('openQuickNote');
+      if (builder == null) return;
+      await Navigator.push(context, MaterialPageRoute(builder: builder));
+    });
+
+    register(HomePluginActionType.openWatchLater.name, (context, actionContext) async {
+      if (context == null) return;
+      HomePluginRouteRegistry.registerDefaults();
+      final payloadBuilder =
+          HomePluginRouteRegistry.lookupPayload('openWatchLater');
+      if (payloadBuilder != null) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (ctx) => payloadBuilder(ctx, actionContext.payload),
+          ),
+        );
+        return;
+      }
+      final builder = HomePluginRouteRegistry.lookup('openWatchLater');
       if (builder == null) return;
       await Navigator.push(context, MaterialPageRoute(builder: builder));
     });

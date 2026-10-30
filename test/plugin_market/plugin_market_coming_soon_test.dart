@@ -41,7 +41,6 @@ PluginMarketManifest _manifest(List<MarketPluginTemplate> templates) {
 
 /// 装了只会弹一句提示的条目（正文自述「开发中」）。
 const _mustBeComingSoon = <String>[
-  'market_video_watch_later',
   'market_comic_wallpaper',
   'market_comic_week_rank',
   'market_novel_checkin',
@@ -61,6 +60,8 @@ const _realActionIds = <String>[
   'market_music_sleep',
   // 2026-10-30：快速便签落定「存远程存储」（box-notes/），接上 openQuickNote 动作。
   'market_quick_note',
+  // 2026-10-30：影视稍后看接上 openWatchLater（box-watchlist/watch-later.json）。
+  'market_video_watch_later',
 ];
 
 void main() {

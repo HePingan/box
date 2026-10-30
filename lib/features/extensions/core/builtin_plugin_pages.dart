@@ -16,6 +16,7 @@ import 'package:box/features/extensions/plugins/monitor/monitor_page.dart';
 import 'package:box/features/extensions/plugins/quick_note/presentation/quick_note_page.dart';
 import 'package:box/features/extensions/plugins/net_diag/presentation/net_diag_page.dart';
 import 'package:box/features/extensions/plugins/remote_storage/presentation/remote_storage_page.dart';
+import 'package:box/features/extensions/plugins/watch_later/presentation/watch_later_page.dart';
 import 'package:box/features/extensions/plugins/server_ops/server_ops_page.dart';
 import 'package:box/features/image_generator/presentation/image_generator_page.dart';
 import 'package:box/features/music/domain/music_launch_spec.dart';
@@ -72,6 +73,16 @@ void registerBuiltinRouteDefaults() {
   HomePluginRouteRegistry.register(
     'openQuickNote',
     (_) => const QuickNotePage(),
+  );
+  // 影视「稍后看」：清单存远程存储 box-watchlist/watch-later.json。
+  HomePluginRouteRegistry.register(
+    'openWatchLater',
+    (_) => const WatchLaterPage(),
+  );
+  // 带 payload：插件可以把一个地址直接塞进添加弹层（不自动落库）。
+  HomePluginRouteRegistry.registerPayload(
+    'openWatchLater',
+    (_, payload) => WatchLaterPage(initialPayload: payload),
   );
   HomePluginRouteRegistry.registerPayload('openMusic', (_, payload) {
     final spec = MusicLaunchSpec.parse(payload);

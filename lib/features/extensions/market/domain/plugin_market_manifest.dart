@@ -930,14 +930,18 @@ class MarketPluginTemplate {
       color: Color(0xFF4F46E5),
       sort: 10,
     ),
-    const MarketPluginTemplate(
+    // 2026-10-30：稍后看从 toast 占位变成真功能，片单存远程存储
+    // （box-watchlist/watch-later.json），换手机还在、点开直接播。
+    MarketPluginTemplate(
       id: 'market_video_watch_later',
       title: '稍后再看',
-      subtitle: '收藏稍后观看片单',
+      subtitle: '把想看的存进远程存储，点开直接播',
       areaCode: 'video',
-      actionCode: 'toast',
-      comingSoon: true,
-      payload: '稍后再看功能开发中...',
+      actionCode: 'openWatchLater',
+      payload: '',
+      permissions: const ['network', 'storage'],
+      tags: const ['影视', '片单'],
+      changelog: '首版：加入/移除/点开播放，清单同步到远程存储',
       icon: Icons.watch_later_outlined,
       color: Color(0xFF4338CA),
       sort: 20,
