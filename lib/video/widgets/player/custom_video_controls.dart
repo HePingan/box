@@ -723,53 +723,87 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
   Widget _buildTopBar(bool compact) {
     // B1/A1：全屏顶栏视觉降噪——移除副标题、缩小返回键，改用渐变遮罩替代实色面板，
     // 减少遮挡画面积的同时提升文字可读性。
-    final gradient = _isFullScreen
-        ? BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                const Color(0xFF080A1F).withValues(alpha: 0.75),
-                Colors.transparent,
-              ],
-            ),
-          )
-        : BoxDecoration(color: const Color(0xFF080A1F).withValues(alpha: 0.66));
+    //
+    // 第七轮（全屏瑕疵修正）：渐变层必须**铺满整宽**。
+    // 原先 Container 带 `margin: fromLTRB(10, 8, 10, 0)`，渐变只铺在那块带 margin
+    // 的容器上 —— 真机截图上左右各留一条纯黑（RGB 0,0,0），中间一块深色矩形
+    // 贴在画面上，边缘是一条竖直硬边（y=28 那行从 x=133 的 0 突跳到 x=140 的 9.3）。
+    // 现在改成：外层铺满、渐变拉满，**内层 padding** 只管控件位置。
+    // 全屏的渐变本来就该由自己把边缘过渡掉，而不是靠留黑边。
+    if (!_isFullScreen) {
+      // 内嵌态维持原样：一块实色条，跟着播放器圆角走，不做整宽拉伸。
+      return Container(
+        margin: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+        decoration: BoxDecoration(
+          color: const Color(0xFF080A1F).withValues(alpha: 0.66),
+        ),
+        child: _buildTopBarContent(),
+      );
+    }
+
     return Container(
-      margin: const EdgeInsets.fromLTRB(10, 8, 10, 0),
-      decoration: gradient,
-      child: SafeArea(
-        bottom: false,
-        child: Row(
-          children: [
-            _glassButton(
-              icon: Icons.arrow_back_ios_new_rounded,
-              onTap: _handleTopLeading,
-              compact: true,
-              size: 30,
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    widget.title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w900,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
+      width: double.infinity,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          // 起手更浓一点（0.78），保证白字在明亮画面上也读得清；
+          // 到 0.0 时完全透明，过渡区间拉长到整个顶栏高度，避免"一条硬边"。
+          colors: [
+            const Color(0xFF080A1F).withValues(alpha: 0.78),
+            const Color(0xFF080A1F).withValues(alpha: 0.30),
+            Colors.transparent,
           ],
+          stops: const <double>[0.0, 0.45, 1.0],
         ),
       ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          // 只有这一层管左右留白：渐变已经铺满，不会露黑边。
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 12),
+          child: _buildTopBarContent(),
+        ),
+      ),
+    );
+  }
+
+  /// 顶栏的内容行（返回 + 片名）。
+  ///
+  /// 抽出来是因为全屏/内嵌两种外壳（整宽渐变 vs 卡片实色条）共用同一套内容，
+  /// 之前这段 Row 是直接写在外壳里的，改成两种外壳后必须复用。
+  Widget _buildTopBarContent() {
+    return Row(
+      children: [
+        _glassButton(
+          icon: Icons.arrow_back_ios_new_rounded,
+          onTap: _handleTopLeading,
+          compact: true,
+          size: 30,
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                widget.title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  // 显式给行高：默认行高会让 14px 的字在 30px 按钮旁边
+                  // 看起来偏上（真机上标题顶点比按钮圆心高约 6dp）。
+                  height: 1.0,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -784,7 +818,9 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
         embedded ? 6 : (isFull ? 8 : 10),
         isFull ? 6 : 0,
         embedded ? 6 : (isFull ? 8 : 10),
-        embedded ? 4 : (isFull ? 6 : 10),
+        // 第七轮：全屏底部留白 6 → 14。真机上面板底边离屏幕只剩 21px（约 7dp），
+        // 最后一排按钮几乎贴着屏幕边；再往下一点手势条会压到按钮。
+        embedded ? 4 : (isFull ? 14 : 10),
       ),
       child: _glassSurface(
         radius: BorderRadius.circular(embedded ? 14 : (isFull ? 20 : 26)),
@@ -793,7 +829,7 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
           embedded ? 8 : (isFull ? 10 : 12),
           embedded ? 2 : (isFull ? 4 : 10),
           embedded ? 8 : (isFull ? 10 : 12),
-          embedded ? 3 : (isFull ? 4 : 10),
+          embedded ? 3 : (isFull ? 6 : 10),
         ),
         alpha: embedded ? 0.62 : 0.72,
         child: SafeArea(
@@ -806,8 +842,10 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
                   _timeLabel(_formatDuration(position), embedded),
                   Expanded(
                     child: Padding(
+                      // 第七轮：进度条两端各留 12dp（原 8dp）。
+                      // 原来时间胶囊和轨道几乎贴着，扫一眼像轨道顶到了胶囊里。
                       padding: EdgeInsets.symmetric(
-                        horizontal: embedded ? 7 : (isFull ? 8 : 10),
+                        horizontal: embedded ? 7 : (isFull ? 12 : 10),
                       ),
                       child: _buildSeekBar(compact: embedded),
                     ),
@@ -1184,14 +1222,22 @@ class _CustomVideoControlsState extends State<CustomVideoControls> {
     } else {
       bgColor = Colors.white.withValues(alpha: 0.14);
     }
-    final double w =
-        size ?? (emphasized ? (compact ? 38 : 52) : (compact ? 32 : 40));
-    final double h =
-        size ?? (emphasized ? (compact ? 38 : 44) : (compact ? 32 : 38));
+    // 第七轮（全屏瑕疵修正）：一排按钮的**形状语言**要一致。
+    //
+    // 原先播放键是 52×44、圆角 18（接近方形圆角），其余是 40×38、圆角 18，
+    // 一排六个按钮里播放键既大又是方角，视觉重量严重失衡。
+    // 现在：
+    //   * 非 compact：全部 40×40、圆角 20（正圆），播放键只靠**底色与图标大小**
+    //     做强调，不再靠尺寸和形状突变；
+    //   * compact（内嵌小窗）：全部 32×32、圆角 16（正圆），同样只靠颜色区分。
+    // 为什么用正圆：其余几个是圆形，播放键单独一个方角，看起来像没对齐。
+    final double side = size ?? (compact ? 32 : 40);
+    final double w = side;
+    final double h = side;
     final double iconSize = size != null
         ? size * 0.6
-        : (emphasized ? (compact ? 22 : 30) : (compact ? 18 : 22));
-    final double r = emphasized && compact ? 999 : (compact ? 12 : 18);
+        : (emphasized ? (compact ? 22 : 26) : (compact ? 18 : 22));
+    final double r = side / 2;
     return Opacity(
       opacity: enabled ? 1 : 0.38,
       child: Material(
