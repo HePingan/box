@@ -9,6 +9,7 @@ import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/extensions/market/data/plugin_market_api.dart';
 import 'package:box/features/extensions/market/data/plugin_market_manifest_repository.dart';
 import 'package:box/features/extensions/market/domain/plugin_market_manifest.dart';
+import 'package:box/features/extensions/market/domain/plugin_market_stats.dart';
 import 'package:box/plugin_market/models/plugin_market_security.dart';
 
 import 'widgets/plugin_market_widgets.dart';
@@ -989,6 +990,13 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     );
   }
 
+  /// 卡片统计行（下载量 · 更新时间 · 包体积）；无数据时为空串。
+  String _statsLineOf(MarketPluginTemplate item) => marketPluginStatsLine(
+        downloadCount: item.downloadCount,
+        publishedAt: item.publishedAt,
+        packageSize: item.packageSize,
+      );
+
   Widget _buildCard(MarketPluginTemplate item) {
     final installed = _installedIds.contains(item.id);
     final loading = _loadingIds.contains(item.id) || _bulkRunning;
@@ -1089,6 +1097,19 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                   ),
               ],
             ),
+            // 排序依据可见化：排序支持「按下载量/更新时间」，那这两个数就得在卡片上
+            // 看得到，否则排完序用户没法验证。没有数据的条目（内置占位等）不显示。
+            if (_statsLineOf(item).isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                _statsLineOf(item),
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: AppTokens.textTertiary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
             const SizedBox(height: 10),
             Row(
               children: [
