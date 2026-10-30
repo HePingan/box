@@ -14,11 +14,16 @@ import 'package:chewie/chewie.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
+import 'package:box/video/services/playback_background_policy.dart';
+import 'package:box/video/services/video_playback_settings.dart';
+import 'package:box/video/widgets/player/playback_notification_channel.dart';
+
 import '../application/playback_relay.dart';
 import '../application/remote_storage_service.dart';
 import '../application/transfer_queue.dart';
 import '../data/playback_progress_store.dart';
 import '../domain/playback_progress.dart';
+import '../domain/plugin_playback_notice.dart';
 import '../domain/remote_storage_models.dart';
 import '../domain/subtitle_support.dart';
 
@@ -120,10 +125,128 @@ class _RemoteStoragePlayerPageState extends State<RemoteStoragePlayerPage> {
 
   bool get _isLocal => (widget.localPath ?? '').isNotEmpty;
 
+  // ── ⑥B 后台播放 / 息屏播放 ──
+  //
+  // 影视播放器早就有这套保活（video_play_container），插件播放器一直没有：
+  // 白噪音/睡眠电台播到锁屏就被系统冻住断声 —— 而"整夜黑屏播"正是它唯一的
+  // 使用场景。这里复用同一套设置开关、同一套判定与同一条媒体通知。
+  final PlaybackNotificationChannel _playbackNotification =
+      PlaybackNotificationChannel.instance;
+  final VideoPlaybackSettings _playbackSettings = VideoPlaybackSettings();
+  StreamSubscription<String>? _playbackCommandSub;
+  bool _backgroundPlaybackEnabled = true;
+  bool _notificationSessionActive = false;
+  bool? _lastNotificationPlaying;
+  bool _isAudio = false;
+
   @override
   void initState() {
     super.initState();
+    // 通知栏按钮 / 音频焦点被抢都从这条流进来。
+    _playbackCommandSub = _playbackNotification.commands.listen(
+      _onPlaybackCommand,
+    );
+    unawaited(_loadPlaybackSettings());
     _start();
+  }
+
+  Future<void> _loadPlaybackSettings() async {
+    final enabled = await _playbackSettings.backgroundPlaybackEnabled();
+    if (!mounted) return;
+    setState(() => _backgroundPlaybackEnabled = enabled);
+    _maybeStartPlaybackNotification();
+  }
+
+  /// ⑥B：一开播就把前台服务挂起来。
+  ///
+  /// 时机不能等切后台（Android 12+ 会抛 ForegroundServiceStartNotAllowedException），
+  /// 必须在还看得见画面/控件的时候做完。
+  void _maybeStartPlaybackNotification() {
+    if (_notificationSessionActive) return;
+    final controller = _controller;
+    if (controller == null || !controller.value.isPlaying) return;
+    if (!PlaybackBackgroundPolicy.shouldRunService(
+      enabled: _backgroundPlaybackEnabled,
+      isPlaying: true,
+      isPip: false,
+    )) {
+      return;
+    }
+    _notificationSessionActive = true;
+    _lastNotificationPlaying = true;
+    unawaited(
+      _playbackNotification.start(
+        title: PluginPlaybackNotice.title(
+          entryName: widget.entry.name,
+          looping: widget.looping,
+        ),
+        text: PluginPlaybackNotice.text(playing: true, isAudio: _isAudio),
+        playing: true,
+      ),
+    );
+  }
+
+  Future<void> _stopPlaybackNotification() async {
+    if (!_notificationSessionActive) return;
+    _notificationSessionActive = false;
+    _lastNotificationPlaying = null;
+    await _playbackNotification.stop();
+  }
+
+  /// 播放器 tick：状态变了才刷通知（这里是每帧都会来的，不能无条件写通知）。
+  void _onPlaybackTick() {
+    _maybeStartPlaybackNotification();
+    _syncPlaybackNotification();
+  }
+
+  void _syncPlaybackNotification() {
+    if (!_notificationSessionActive) return;
+    final controller = _controller;
+    if (controller == null) return;
+    final now = controller.value.isPlaying;
+    if (_lastNotificationPlaying == now) return;
+    _lastNotificationPlaying = now;
+    unawaited(
+      _playbackNotification.update(
+        title: PluginPlaybackNotice.title(
+          entryName: widget.entry.name,
+          looping: widget.looping,
+        ),
+        text: PluginPlaybackNotice.text(playing: now, isAudio: _isAudio),
+        playing: now,
+      ),
+    );
+  }
+
+  /// 通知按钮与音频焦点事件。
+  void _onPlaybackCommand(String command) {
+    final controller = _controller;
+    if (controller == null) return;
+    switch (command) {
+      case PlaybackNotificationChannel.commandToggle:
+        if (controller.value.isPlaying) {
+          unawaited(controller.pause());
+        } else {
+          unawaited(controller.play());
+        }
+        break;
+      case PlaybackNotificationChannel.commandPrevious:
+      case PlaybackNotificationChannel.commandNext:
+        // 单曲循环没有"上一首/下一首"，映射成 ±15 秒。
+        final delta = PluginPlaybackNotice.seekDeltaFor(command);
+        if (delta == null) return;
+        final target = controller.value.position + delta;
+        final max = controller.value.duration;
+        final clamped = target < Duration.zero
+            ? Duration.zero
+            : (max > Duration.zero && target > max ? max : target);
+        unawaited(controller.seekTo(clamped));
+        break;
+      case PlaybackNotificationChannel.commandAudioFocusLost:
+        // 来电 / 别的 App 放音：先让路，不擅自恢复。
+        unawaited(controller.pause());
+        break;
+    }
   }
 
   Future<void> _start() async {
@@ -155,6 +278,7 @@ class _RemoteStoragePlayerPageState extends State<RemoteStoragePlayerPage> {
         unawaited(controller.dispose());
         return;
       }
+      _isAudio = remoteEntryKind(widget.entry) == RemoteEntryKind.audio;
       final ratio = controller.value.aspectRatio;
       _chewie = ChewieController(
         videoPlayerController: controller,
@@ -167,6 +291,9 @@ class _RemoteStoragePlayerPageState extends State<RemoteStoragePlayerPage> {
         ),
       );
       setState(() => _ready = true);
+      // ⑥B：挂 tick 监听（通知文案跟着播放状态走），并尝试起前台服务。
+      controller.addListener(_onPlaybackTick);
+      _maybeStartPlaybackNotification();
       // 倍速（284 P4）：先读偏好再应用，避免先按 1× 播一下再跳成 1.5×。
       _speed = await service.loadPlaybackSpeed();
       await _applySpeed();
@@ -454,6 +581,8 @@ class _RemoteStoragePlayerPageState extends State<RemoteStoragePlayerPage> {
   }
 
   Future<void> _disposePlayers() async {
+    _controller?.removeListener(_onPlaybackTick);
+    unawaited(_stopPlaybackNotification());
     _chewie?.dispose();
     _chewie = null;
     await _controller?.dispose();
@@ -467,6 +596,8 @@ class _RemoteStoragePlayerPageState extends State<RemoteStoragePlayerPage> {
 
   @override
   void dispose() {
+    _playbackCommandSub?.cancel();
+    unawaited(_stopPlaybackNotification());
     _progressTimer?.cancel();
     // 退出这一下要立刻落盘：等定时器可能已经来不及（用户直接返回或进程被杀）。
     unawaited(_saveProgress());
