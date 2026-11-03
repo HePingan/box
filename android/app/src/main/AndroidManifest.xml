@@ -110,6 +110,41 @@
             </intent-filter>
         </activity>
 
+        <!-- 伪装成计算器的桌面入口（activity-alias）。
+             应用运行时改不了 android:label / android:icon（都是编译期资源），
+             唯一可靠的运行期切换方式就是预置两枚 launcher 组件，由
+             DisguiseController 用 setComponentEnabledSetting 互斥启用：
+               伪装开 → 启用本别名 + 停用 MainActivity
+               伪装关 → 反之
+             代价（设置页已如实说明）：MainActivity 停用期间，上面那一串
+             「分享到极客匣」的 intent-filter 一并失效。
+
+             注意两点：
+             1. 别名只声明 MAIN/LAUNCHER/APP_CALCULATOR，不复用真身的分享 filter
+                —— 复用的话伪装期间分享面板里会出现一个叫「计算器」的落点，等于自曝；
+             2. android:enabled="false" 是**出厂默认**：新装用户看到的是「极客匣」。
+                覆盖安装会把这个状态重置回这里的默认值，所以 Dart 侧每次启动都要
+                与系统真实状态对齐一次（DisguisePlatform.heal）。 -->
+        <activity-alias
+            android:name=".CalculatorAlias"
+            android:targetActivity=".MainActivity"
+            android:exported="true"
+            android:enabled="false"
+            android:icon="@mipmap/ic_calculator"
+            android:roundIcon="@mipmap/ic_calculator"
+            android:label="计算器">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+                <!-- 真计算器（com.android.bbkcalculator 15.6.1.1）的主入口同时声明了
+                     APP_CALCULATOR，系统级「计算器」语义入口（语音“打开计算器”、
+                     系统快捷方式、跨应用 picker）靠这个类别找应用。别名不声明的话，
+                     这些入口仍指向「极客匣」的真身或干脆没有落点，属于只在特定操作下
+                     才暴露的破绽，补上零成本。 -->
+                <category android:name="android.intent.category.APP_CALCULATOR"/>
+            </intent-filter>
+        </activity-alias>
+
         <!-- 答题插件：无障碍服务 -->
         <service
             android:name=".QuizAccessibilityService"

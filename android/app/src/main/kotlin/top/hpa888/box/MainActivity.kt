@@ -187,6 +187,10 @@ class MainActivity : FlutterActivity() {
         // 网络类型上报（287 P1）：传输队列的"仅 Wi-Fi"闸门靠它拿当前网络。
         NetworkStatusProvider.attach(this, flutterEngine.dartExecutor.binaryMessenger)
 
+        // 伪装成计算器：桌面图标/名称切换（activity-alias 双入口互斥）、
+        // 最近任务缩略图遮挡（FLAG_SECURE）、分身检测。界面全在 Dart 侧。
+        DisguiseController.attach(this, flutterEngine.dartExecutor.binaryMessenger)
+
         // 播放器亮度 / 音量手势（④）：只改本窗口亮度与媒体音量，失败不抛。
         PlayerGestureChannel.attach(this, flutterEngine.dartExecutor.binaryMessenger)
 

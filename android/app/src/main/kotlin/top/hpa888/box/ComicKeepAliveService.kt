@@ -136,8 +136,8 @@ class ComicKeepAliveService : Service() {
         ): android.app.Notification =
             NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .setContentTitle(currentTitle)
-                .setContentText(currentText)
+                .setContentTitle(DisguiseNotifications.title(context, currentTitle))
+                .setContentText(DisguiseNotifications.text(context, currentText))
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setOngoing(ongoing)
                 .setAutoCancel(!ongoing)

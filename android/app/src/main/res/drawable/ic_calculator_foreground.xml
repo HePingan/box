@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 伪装图标的前景层（自适应图标用）。
+
+坐标不是随手画的：从被仿的 vivo 计算器（com.android.bbkcalculator 15.6.1.1）
+`res/drawable-hdpi/icon.png`（136×136）逐像素量出来，再按 108/136 折算到本画布，
+最后以 (54,54) 为心缩到 0.9 —— 自适应图标只有居中的 72dp 圆**一定**可见，
+不缩的话四角的笔画会被不同形状的 ROM 遮罩切掉。
+
+源图实测（136 画布）：+ 中心 (41,40) 臂长 23；× 包围盒 85..101 / 32..48；
+− y=94 x 30..52；= y=89 与 99、x 82..104；线宽 3（斜线约 2.6）；
+墨色 #646A6C（不是纯黑）、等号 #E9752A（不是鲜橙）。
+
+改这里记得同步 tool/gen_disguise_icon.py（旧系统 <API 26 的桌面用那份 PNG）
+与 drawable-v26/ic_calculator_background.xml（四象限底色）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 左上 + -->
+    <path
+        android:pathData="M34.7,26.1 L34.7,41.9"
+        android:strokeColor="#646A6C"
+        android:strokeWidth="2.14"
+        android:strokeLineCap="butt" />
+    <path
+        android:pathData="M26.8,34.0 L42.6,34.0"
+        android:strokeColor="#646A6C"
+        android:strokeWidth="2.14"
+        android:strokeLineCap="butt" />
+
+    <!-- 右上 × -->
+    <path
+        android:pathData="M66.2,28.3 L77.6,39.7"
+        android:strokeColor="#646A6C"
+        android:strokeWidth="1.86"
+        android:strokeLineCap="butt" />
+    <path
+        android:pathData="M77.6,28.3 L66.2,39.7"
+        android:strokeColor="#646A6C"
+        android:strokeWidth="1.86"
+        android:strokeLineCap="butt" />
+
+    <!-- 左下 − -->
+    <path
+        android:pathData="M26.8,72.6 L42.6,72.6"
+        android:strokeColor="#646A6C"
+        android:strokeWidth="2.14"
+        android:strokeLineCap="butt" />
+
+    <!-- 右下 =（唯一的强调色，与真图标一致） -->
+    <path
+        android:pathData="M64.0,69.0 L79.7,69.0"
+        android:strokeColor="#E9752A"
+        android:strokeWidth="2.14"
+        android:strokeLineCap="butt" />
+    <path
+        android:pathData="M64.0,76.2 L79.7,76.2"
+        android:strokeColor="#E9752A"
+        android:strokeWidth="2.14"
+        android:strokeLineCap="butt" />
+</vector>

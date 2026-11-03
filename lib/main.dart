@@ -13,6 +13,8 @@ import 'app/app_providers.dart';
 import 'features/about/domain/legal_consent_store.dart';
 import 'features/about/presentation/legal_consent_gate.dart';
 import 'features/account/data/account_store.dart';
+import 'features/disguise/domain/disguise_settings.dart';
+import 'features/disguise/presentation/disguise_gate.dart';
 import 'features/policy/plugin_policy.dart';
 import 'video/services/line_reachability_store.dart';
 
@@ -52,6 +54,9 @@ class _AppBootstrapperState extends State<_AppBootstrapper> {
   /// 协议闸门状态。null 表示还没判定（bootstrap 未完成）。
   LegalConsentStore? _consent;
 
+  /// 伪装设置。同样在 bootstrap 之后才有 prefs 可用。
+  DisguiseSettings? _disguise;
+
   /// 本次启动是否仍需展示闸门。同意成功后置 false 放行。
   bool _needsConsent = false;
 
@@ -69,6 +74,7 @@ class _AppBootstrapperState extends State<_AppBootstrapper> {
               _bootstrap = result;
               _consent = consent;
               _needsConsent = consent.needsConsent;
+              _disguise = DisguiseSettings(result.prefs);
             });
           }
         })
@@ -97,32 +103,48 @@ class _AppBootstrapperState extends State<_AppBootstrapper> {
     // 底栏切走绕过它，同意流程就形同虚设。这里直接不构建 BoxApp。
     if (_needsConsent) {
       final consent = _consent!;
-      return MaterialApp(
-        debugShowCheckedModeBanner: false,
-        // 首次启动也会看到这一页，所以深浅也要跟着走：控制器在
-        // `_bootstrap()` 里已经 load 过一次（那时 BoxApp 还没构建）。
-        theme: AppTheme.light(),
-        darkTheme: AppTheme.dark(),
-        themeMode: AppThemeController.instance.themeMode,
-        home: LegalConsentGate(
-          isReconsent: consent.isReconsent,
-          onAccept: () async {
-            final ok = await consent.accept();
-            // 写入失败不放行：假装成功的话用户下次启动会再被拦一次，
-            // 而且不知道为什么。闸门自己会提示重试。
-            if (ok && mounted) {
-              setState(() => _needsConsent = false);
-            }
-            return ok;
-          },
-          // 不同意只能退出：协议是使用前提，给"跳过"等于协议不成立。
-          onDecline: () => SystemNavigator.pop(),
+      // 协议闸门也包在伪装闸门里面：锁着的时候连「请阅读并同意协议」都不该出现，
+      // 因为那行字本身就暴露了这不是计算器。
+      return _withDisguise(
+        MaterialApp(
+          debugShowCheckedModeBanner: false,
+          // 首次启动也会看到这一页，所以深浅也要跟着走：控制器在
+          // `_bootstrap()` 里已经 load 过一次（那时 BoxApp 还没构建）。
+          theme: AppTheme.light(),
+          darkTheme: AppTheme.dark(),
+          themeMode: AppThemeController.instance.themeMode,
+          home: LegalConsentGate(
+            isReconsent: consent.isReconsent,
+            onAccept: () async {
+              final ok = await consent.accept();
+              // 写入失败不放行：假装成功的话用户下次启动会再被拦一次，
+              // 而且不知道为什么。闸门自己会提示重试。
+              if (ok && mounted) {
+                setState(() => _needsConsent = false);
+              }
+              return ok;
+            },
+            // 不同意只能退出：协议是使用前提，给"跳过"等于协议不成立。
+            onDecline: () => SystemNavigator.pop(),
+          ),
         ),
       );
     }
-    return AppProviders(
-      bootstrap: _bootstrap!,
-      child: BoxApp(bootstrap: _bootstrap!),
+    return _withDisguise(
+      AppProviders(
+        bootstrap: _bootstrap!,
+        child: BoxApp(bootstrap: _bootstrap!),
+      ),
     );
+  }
+
+  /// 用伪装闸门包住真界面。
+  ///
+  /// 闸门必须在**所有**真界面之外（协议闸门、BoxApp 都在它里面）：锁着的时候
+  /// 内存里只有一支计算器，任何深链、返回键、导航都到不了真应用。
+  Widget _withDisguise(Widget child) {
+    final settings = _disguise;
+    if (settings == null) return child;
+    return DisguiseGate(settings: settings, child: child);
   }
 }

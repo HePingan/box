@@ -132,6 +132,21 @@ class SettingsPage extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
+          // 伪装：单独一组而不是塞进「通用设置」。它改的是应用在桌面上的身份，
+          // 属于「别人看到的样子」，与主题/配色不是一类；混在一起用户找不到。
+          SettingsSection(
+            title: '隐私',
+            children: [
+              SettingsTile(
+                icon: Icons.calculate_outlined,
+                title: '伪装与隐私',
+                subtitle: '桌面图标与名称变成计算器，输口令才进得来',
+                onTap: () =>
+                    Navigator.of(context).pushNamed(AppRoutes.disguise),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           // 诊断：原先这里没有落点（扩展页那个假「诊断」入口 2026-10-03 已撤）。
           SettingsSection(
             title: '诊断',

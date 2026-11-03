@@ -7,6 +7,7 @@ import '../features/cloud_sync/presentation/announcement_page.dart';
 import '../novel/pages/source_manager/book_source_bootstrap.dart';
 import '../novel/pages/source_manager/book_source_manager_page.dart';
 import '../features/diagnostics/presentation/self_check_page.dart';
+import '../features/disguise/presentation/disguise_settings_page.dart';
 import '../features/settings/presentation/data_settings_page.dart';
 import '../features/settings/presentation/settings_page.dart';
 import '../pages/debug_log_page.dart';
@@ -35,6 +36,9 @@ class AppRoutes {
   /// 应用自检。扩展页那个「诊断」入口（拿假书源去开书源诊断页）撤掉后，
   /// "哪儿坏了"需要一个新的、如实的落点：片源健康 / 线路记忆 / 更新通道 / 网络诊断。
   static const selfCheck = '/settings/self-check';
+
+  /// 伪装与隐私（伪装成计算器）。
+  static const disguise = '/settings/disguise';
 
   /// 公告一级入口。原先只能从「抽屉 → 账号 → 个人中心」三层点进去，
   /// 线上出故障时等于没有触达手段。
@@ -76,6 +80,7 @@ class AppRoutes {
       settings: (_) => SettingsPage(),
       dataSettings: (_) => DataSettingsPage(),
       selfCheck: (_) => SelfCheckPage(),
+      disguise: (_) => DisguiseSettingsPage(),
       announcements: (_) => AnnouncementPage(),
       about: (_) => AboutPage(),
       aboutIntroduction: (_) => AboutContentPage.introduction(),

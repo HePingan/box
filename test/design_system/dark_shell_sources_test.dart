@@ -57,6 +57,11 @@ void main() {
     // 小说阅读器的目录/设置弹层：跟随阅读器自己的 warm/paper/dark 三档。
     'lib/novel/pages/reader/reader_directory_sheet.dart',
     'lib/novel/pages/reader/reader_settings_sheet.dart',
+    // 伪装用的计算器界面：**必须写死白底黑字**，而且必须与应用深浅无关 ——
+    // 这是它存在的意义（看起来就是一支系统计算器）。跟随主题反而会露馅：
+    // 深色档下一支"夜间模式的计算器"和被仿的那支 vivo 计算器对不上，
+    // 而这支界面锁着的时候就是用户看到的全部。
+    'lib/features/disguise/presentation/calculator_disguise_page.dart',
   };
 
   /// 只对"板岩色文字"那条规则例外：题库管理页的状态色板里 `#94A3B8`

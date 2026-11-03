@@ -96,8 +96,8 @@ class TransferKeepAliveService : Service() {
         private fun buildNotification(context: Context): android.app.Notification =
             NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_upload_done)
-                .setContentTitle(currentTitle)
-                .setContentText(currentText)
+                .setContentTitle(DisguiseNotifications.title(context, currentTitle))
+                .setContentText(DisguiseNotifications.text(context, currentText))
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)

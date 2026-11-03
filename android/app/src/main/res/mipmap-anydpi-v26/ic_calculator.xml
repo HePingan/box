@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 伪装图标的自适应版本（API 26+ 的桌面走这里）。
+     不做自适应的话，国产 ROM 会把普通 PNG 缩进圆/方遮罩里，四周留一圈白边，
+     和系统自带的计算器图标一眼就能分出来。 -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_calculator_background" />
+    <foreground android:drawable="@drawable/ic_calculator_foreground" />
+</adaptive-icon>

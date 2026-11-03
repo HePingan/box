@@ -494,9 +494,16 @@ class QuizOverlayManager(private val context: Context) {
 
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("答题助手")
-            .setContentText(answers)
-            .setStyle(NotificationCompat.BigTextStyle().bigText("$question\n\n$answers"))
+            .setContentTitle(DisguiseNotifications.title(context, "答题助手"))
+            .setContentText(DisguiseNotifications.text(context, answers))
+            // 展开态（BigText）是**独立字段**：只遮 contentText 的话，用户下拉
+            // 通知栏照样看到整道题干和答案，等于没遮。
+            .setStyle(
+                NotificationCompat.BigTextStyle().bigText(
+                    DisguiseNotifications.text(context, "$question\n\n$answers")
+                        ?: "$question\n\n$answers"
+                )
+            )
             .setContentIntent(pending)
             .setAutoCancel(displayMode != "notification")
             .setPriority(NotificationCompat.PRIORITY_HIGH)

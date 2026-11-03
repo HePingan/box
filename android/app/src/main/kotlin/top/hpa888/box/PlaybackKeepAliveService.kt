@@ -149,8 +149,8 @@ class PlaybackKeepAliveService : Service() {
 
             val builder = NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_media_play)
-                .setContentTitle(currentTitle)
-                .setContentText(currentText)
+                .setContentTitle(DisguiseNotifications.title(context, currentTitle))
+                .setContentText(DisguiseNotifications.text(context, currentText))
                 .setContentIntent(contentIntent)
                 .setOngoing(true)
                 .setSilent(true)

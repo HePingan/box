@@ -95,7 +95,8 @@ class VideoDownloadService : Service() {
         createNotificationChannel()
         notificationBuilder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("视频下载")
+            // 伪装开（桌面图标是「计算器」）时，通知里的业务字样会直接穿帮。
+            .setContentTitle(DisguiseNotifications.title(this, "视频下载"))
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
     }
@@ -119,7 +120,9 @@ class VideoDownloadService : Service() {
      */
     private fun ensureForeground() {
         if (foregroundStarted) return
-        val notification = notificationBuilder.setContentText("准备下载…").build()
+        val notification = notificationBuilder
+            .setContentText(DisguiseNotifications.text(this, "准备下载…"))
+            .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -769,7 +772,7 @@ class VideoDownloadService : Service() {
 
         val indeterminate = task.status == "downloading" && task.totalBytes <= 0
         notificationBuilder
-            .setContentText(contentText)
+            .setContentText(DisguiseNotifications.text(this, contentText))
             .setProgress(
                 if (task.totalBytes > 0) task.totalBytes.toInt() else 0,
                 task.downloadedBytes.toInt(),
