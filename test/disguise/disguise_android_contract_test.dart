@@ -104,6 +104,57 @@ void main() {
     });
   });
 
+  // 「设置 → 应用管理」里的名字与图标读的是 ApplicationInfo.label/icon，与启用的
+  // launcher 别名无关，运行时也改不了。用户在应用管理里搜「极」能搜到「极客匣」，
+  // 就是这一层没改。所以 application 静态写「计算器」+ 计算器图标，桌面那枚真身
+  // 靠 MainActivity 自己覆写回「极客匣」+ 盒子图标 —— 三层各写各的，是有意的。
+  group('AndroidManifest：应用管理里的名字（application 层）', () {
+    test('application 的 label/icon 是计算器，不是极客匣', () {
+      final app = RegExp(
+        '<application\\s[^>]*>',
+        dotAll: true,
+      ).firstMatch(manifestXml());
+      expect(app, isNotNull, reason: 'manifest 里没有 <application> 标签');
+      final block = app!.group(0)!;
+      expect(
+        block,
+        contains('android:label="计算器"'),
+        reason:
+            'application 的 label 决定「设置 → 应用管理」里的名字与搜索匹配。'
+            '写成「极客匣」的话，在应用管理里搜「极」照样能搜到，'
+            'C 档的隐蔽就漏在这一层',
+      );
+      expect(
+        block,
+        contains('android:icon="@mipmap/ic_calculator"'),
+        reason:
+            'application 的 icon 决定应用管理列表/详情里的图标。'
+            '留着盒子图标会出现「名字是计算器、图标是极客匣」的矛盾组合',
+      );
+    });
+
+    test('MainActivity 覆写回「极客匣」+ 盒子图标（关掉伪装时桌面那枚）', () {
+      final mainActivity = RegExp(
+        '<activity\\s+android:name="\\.MainActivity".*?</activity>',
+        dotAll: true,
+      ).firstMatch(manifestXml());
+      expect(mainActivity, isNotNull, reason: 'MainActivity 声明没了');
+      final block = mainActivity!.group(0)!;
+      expect(
+        block,
+        contains('android:label="极客匣"'),
+        reason:
+            'MainActivity 不覆写 label 就会继承 application 的「计算器」，'
+            '关闭伪装后桌面上那枚真身入口会显示成计算器',
+      );
+      expect(
+        block,
+        contains('android:icon="@mipmap/ic_launcher"'),
+        reason: 'MainActivity 不覆写 icon，关掉伪装后桌面图标会变成计算器',
+      );
+    });
+  });
+
   group('图标资源', () {
     // 被仿的 vivo 计算器在 APK 里带两张图标：drawable/icon（浅底深符号）与
     // drawable/app_icon（深底浅符号 + 橙色等号）。真机桌面显示的是 app_icon，

@@ -29,10 +29,21 @@
          多余声明既要在隐私政策里解释，也是应用商店审核的扣分项。
          若将来真要做「到点自动续传」，请改用 WorkManager，而不是恢复本权限。 -->
 
+    <!-- android:label / android:icon 分两层看，别混：
+           · **这一层（application）是「设置 → 应用管理」的脸** —— 那里的名字、图标、
+             搜索匹配（按名字搜「极」能搜到）读的全是 ApplicationInfo.label/icon，
+             与我们启用的 launcher 别名无关，运行时也改不了。
+           · **桌面那枚图标的脸来自具体组件**（MainActivity 或 CalculatorAlias），
+             两个组件各自声明 label/icon，互相覆盖。
+         所以这里故意写成「计算器」+ 计算器图标：伪装期间，连应用管理里都搜不到
+         「极客匣」。真身靠下面的 MainActivity 覆写回「极客匣」+ 盒子图标。
+         代价（已与用户确认）：系统里所有非桌面场景——卸载确认框、覆盖安装弹窗、
+         权限弹窗、无障碍列表里的服务名——都显示「计算器」。个别系统会在卸载框里
+         并列显示包名 top.hpa888.box，这个改不了。 -->
     <application
-        android:label="极客匣"
+        android:label="计算器"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@mipmap/ic_calculator"
         android:networkSecurityConfig="@xml/network_security_config"
         android:allowBackup="false"
         android:fullBackupContent="false"
@@ -53,6 +64,8 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
+            android:icon="@mipmap/ic_launcher"
+            android:label="极客匣"
             android:taskAffinity=""
             android:resizeableActivity="true"
             android:supportsPictureInPicture="true"
@@ -111,6 +124,9 @@
         </activity>
 
         <!-- 伪装成计算器的桌面入口（activity-alias）。
+             与 application 层的关系：application 的 label/icon 是「应用管理」的脸
+             （见文件开头注释，已静态改成计算器），MainActivity 与这里的别名则各写
+             一遍自己那枚桌面图标的脸。所以三个地方不用同一个值，是有意的。
              应用运行时改不了 android:label / android:icon（都是编译期资源），
              唯一可靠的运行期切换方式就是预置两枚 launcher 组件，由
              DisguiseController 用 setComponentEnabledSetting 互斥启用：
