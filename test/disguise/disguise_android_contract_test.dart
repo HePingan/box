@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// 「伪装成计算器」的**契约测试**：Dart 侧看不见的东西全部靠这里守。
@@ -9,7 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 ///
 /// 对应关系：
 /// - `android/app/src/main/AndroidManifest.xml` 的 activity-alias ←→ `DisguiseController`
-/// - `res/mipmap-*/ic_calculator.png` / `mipmap-anydpi-v26/ic_calculator.xml` ←→ manifest 里的 `@mipmap/ic_calculator`
+/// - `res/mipmap-*/ic_calculator.png`（真机 app_icon 的原样字节）←→ manifest 里的 `@mipmap/ic_calculator`
 /// - 原生通知的 `setContentTitle` ←→ `DisguiseNotifications`
 void main() {
   final manifest = File('android/app/src/main/AndroidManifest.xml');
@@ -103,52 +105,73 @@ void main() {
   });
 
   group('图标资源', () {
-    test('自适应图标存在且引用前景/背景两层', () {
-      final xml = readRes('mipmap-anydpi-v26/ic_calculator.xml');
-      expect(xml, contains('<adaptive-icon'));
-      expect(xml, contains('@drawable/ic_calculator_foreground'));
-      expect(xml, contains('@drawable/ic_calculator_background'));
-    });
+    // 被仿的 vivo 计算器在 APK 里带两张图标：drawable/icon（浅底深符号）与
+    // drawable/app_icon（深底浅符号 + 橙色等号）。真机桌面显示的是 app_icon，
+    // 所以 mipmap 里必须是 app_icon 的原样字节（sha256 前 16 位钉死），
+    // 而不是任何「照着重画」的产物 —— 重画再准也会画错那张脸。
+    const expectedIcon = {
+      // density: (sha256 前 16 位, 像素边长)
+      'hdpi': ('b1d3bac8753f5fca', 32),
+      'xhdpi': ('60d6c81847e8b846', 64),
+      'xxhdpi': ('54c9756b1b92513f', 96),
+      'xxxhdpi': ('3dfe400043bf84ed', 128),
+    };
 
-    test('前景矢量图存在且带笔画（不是空 path）', () {
-      final xml = readRes('drawable/ic_calculator_foreground.xml');
-      expect(xml, contains('<vector'));
-      expect(
-        RegExp('<path').allMatches(xml).length,
-        greaterThanOrEqualTo(7),
-        reason: '四组符号共 7 条笔画（+ 两条、× 两条、− 一条、= 两条）',
-      );
-    });
-
-    test('旧系统靠 PNG：5 个密度都有', () {
-      for (final density in ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi']) {
+    test('图标就是真机那 4 张 PNG（哈希与像素尺寸都对得上）', () {
+      expectedIcon.forEach((density, want) {
+        final (wantHash, wantPx) = want;
         final file = File('${resDir.path}/mipmap-$density/ic_calculator.png');
         expect(
           file.existsSync(),
           isTrue,
           reason:
-              'mipmap-$density/ic_calculator.png 缺失 —— '
-              'API 26 以下的桌面会显示成透明方块',
+              'mipmap-$density/ic_calculator.png 缺失。'
+              '真机只需这 4 档（无 mdpi），缺了桌面会显示成透明方块',
         );
-        expect(file.lengthSync(), greaterThan(200));
+        final bytes = file.readAsBytesSync();
+        final digest = sha256.convert(bytes).toString().substring(0, 16);
+        expect(
+          digest,
+          wantHash,
+          reason:
+              'mipmap-$density/ic_calculator.png 的内容不是源 APK 里'
+              'drawable/app_icon 的原样字节（期望 $wantHash，实际 $digest）。'
+              '要换图标请用 tool/gen_disguise_icon.py 从源 APK 重新抽取，'
+              '不要手绘或换用 drawable/icon 那张浅色图',
+        );
+        // PNG 头里的宽高：0x10 起 8 字节（宽 4、高 4，大端）
+        final px = ByteData.sublistView(bytes, 16, 20).getUint32(0);
+        expect(px, wantPx, reason: 'mipmap-$density 的像素边长应为 $wantPx，实际 $px');
+      });
+    });
+
+    test('不提供自适应图标（真机没有，给了会被裁切放大）', () {
+      for (final path in [
+        'mipmap-anydpi-v26/ic_calculator.xml',
+        'drawable/ic_calculator_foreground.xml',
+        'drawable/ic_calculator_background.xml',
+        'drawable-v26/ic_calculator_background.xml',
+      ]) {
+        expect(
+          File('${resDir.path}/$path').existsSync(),
+          isFalse,
+          reason:
+              '$path 不该存在。被仿的应用没有自适应图标，桌面走位图路径；'
+              '我们给 anydpi-v26 会让桌面把 108dp 裁到可见 72dp 再套蒙版，'
+              '相当于把图标放大约 1.5 倍并切边，这就是「变形」的来源',
+        );
       }
     });
 
-    test('背景色与四象限色都定义了', () {
+    test('旧的 ic_calculator_* 取色已清除（避免有人照着老方案加回来）', () {
       final colors = readRes('values/colors.xml');
-      for (final name in [
-        'ic_calculator_background',
-        'ic_calculator_quad_tl',
-        'ic_calculator_quad_tr',
-        'ic_calculator_quad_bl',
-        'ic_calculator_quad_br',
-      ]) {
-        expect(
-          RegExp('<color\\s+name="$name"').hasMatch(colors),
-          isTrue,
-          reason: '$name 没定义，自适应背景会解析失败',
-        );
-      }
+      expect(
+        RegExp(r'<color\s+name="ic_calculator').hasMatch(colors),
+        isFalse,
+        reason:
+            '图标颜色已全部烘进 mipmap PNG，colors.xml 里不该再有 '
+            'ic_calculator_* 取色；有的话说明有人正在恢复那套矢量/自适应方案',
+      );
     });
   });
 

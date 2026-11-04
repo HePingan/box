@@ -15,15 +15,7 @@
          test/android_window_background_test.dart 会校验两者一致。 -->
     <color name="window_background">#F4F7FB</color>
 
-    <!-- 伪装图标（计算器）的底色。被仿的那支 vivo 计算器用浅灰底 + 黑符号 +
-         橙色等号；矢量前景见 drawable/ic_calculator_foreground.xml。
-         旧系统（<API 26）的桌面用 mipmap-*/ic_calculator.png，由
-         tool/gen_disguise_icon.py 生成，改色值要两边一起改。 -->
-    <color name="ic_calculator_background">#F1F1F1</color>
-
-    <!-- 四象限底色（源图标实测值，差值都在 4% 以内；见 drawable-v26 里的用法）。 -->
-    <color name="ic_calculator_quad_tl">#F1F1F1</color>
-    <color name="ic_calculator_quad_tr">#FAFAFA</color>
-    <color name="ic_calculator_quad_bl">#FFFFFF</color>
-    <color name="ic_calculator_quad_br">#EFEFEF</color>
+    <!-- 伪装图标不再有矢量/自适应版本，全部颜色都已进 mipmap-*/ic_calculator.png
+         （真机那张 PNG 的原样拷贝，见 tool/gen_disguise_icon.py）。
+         所以这里原先那 5 个 ic_calculator_* 颜色已经删除，别再加回来。 -->
 </resources>
