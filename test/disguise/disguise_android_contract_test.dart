@@ -11,7 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 ///
 /// 对应关系：
 /// - `android/app/src/main/AndroidManifest.xml` 的 activity-alias ←→ `DisguiseController`
-/// - `res/mipmap-*/ic_calculator.png`（真机 app_icon 的原样字节）←→ manifest 里的 `@mipmap/ic_calculator`
+/// - `res/mipmap-*/ic_calculator.png`（真机 app_icon 拟合出的矢量，按 48dp 各密度重渲染）←→ manifest 里的 `@mipmap/ic_calculator`
 /// - 原生通知的 `setContentTitle` ←→ `DisguiseNotifications`
 void main() {
   final manifest = File('android/app/src/main/AndroidManifest.xml');
@@ -156,19 +156,26 @@ void main() {
   });
 
   group('图标资源', () {
-    // 被仿的 vivo 计算器在 APK 里带两张图标：drawable/icon（浅底深符号）与
-    // drawable/app_icon（深底浅符号 + 橙色等号）。真机桌面显示的是 app_icon，
-    // 所以 mipmap 里必须是 app_icon 的原样字节（sha256 前 16 位钉死），
-    // 而不是任何「照着重画」的产物 —— 重画再准也会画错那张脸。
+    // 被仿的 vivo 计算器在 APK 里带两张图标：drawable/icon（浅底深符号，只一档 136px）与
+    // drawable/app_icon（深底浅符号 + 橙色等号）。真机桌面显示的是 app_icon —— 这条
+    // 变体判断是第一位的，脸画错了比糊更致命。
+    //
+    // 但「只拷字节」有天花板：源 APK 里 app_icon 最大只到 128×128（vivo 是按 32dp 出
+    // 的图），而 Android 桌面槽位是 48dp（xxxhdpi 要 192px）。128px 被桌面放大就是
+    // 「图标还是糊」的直接原因。所以现在由 tool/gen_disguise_icon.py 从那张 128px
+    // 拟合出矢量、按 48dp 各密度重新栅格化，并把自身渲的 96/128px 与源 APK 位图逐像素
+    // 比对（当前 平均误差 2.2/255、95% 像素三通道差 ≤24、轮廓逐行一致）来保证
+    // 「还是同一张脸」。这里钉死 5 档的哈希与边长。
     const expectedIcon = {
-      // density: (sha256 前 16 位, 像素边长)
-      'hdpi': ('b1d3bac8753f5fca', 32),
-      'xhdpi': ('60d6c81847e8b846', 64),
-      'xxhdpi': ('54c9756b1b92513f', 96),
-      'xxxhdpi': ('3dfe400043bf84ed', 128),
+      // density: (sha256 前 16 位, 像素边长) —— 48dp 语义
+      'mdpi': ('a1d851b7aae129f2', 48),
+      'hdpi': ('e6ab504635715868', 72),
+      'xhdpi': ('df9ccb3465bb6fed', 96),
+      'xxhdpi': ('cfdea0cb0b8b62bf', 144),
+      'xxxhdpi': ('2ae1e5ec78d5cfae', 192),
     };
 
-    test('图标就是真机那 4 张 PNG（哈希与像素尺寸都对得上）', () {
+    test('伪装图标 5 档齐全，哈希与像素尺寸都对得上', () {
       expectedIcon.forEach((density, want) {
         final (wantHash, wantPx) = want;
         final file = File('${resDir.path}/mipmap-$density/ic_calculator.png');
@@ -177,7 +184,8 @@ void main() {
           isTrue,
           reason:
               'mipmap-$density/ic_calculator.png 缺失。'
-              '真机只需这 4 档（无 mdpi），缺了桌面会显示成透明方块',
+              'mdpi…xxxhdpi 五档都要有，缺了对应密度的桌面会去放大邻居、'
+              '或者干脆显示成透明方块',
         );
         final bytes = file.readAsBytesSync();
         final digest = sha256.convert(bytes).toString().substring(0, 16);
@@ -185,15 +193,30 @@ void main() {
           digest,
           wantHash,
           reason:
-              'mipmap-$density/ic_calculator.png 的内容不是源 APK 里'
-              'drawable/app_icon 的原样字节（期望 $wantHash，实际 $digest）。'
-              '要换图标请用 tool/gen_disguise_icon.py 从源 APK 重新抽取，'
-              '不要手绘或换用 drawable/icon 那张浅色图',
+              'mipmap-$density/ic_calculator.png 不是生成器产出的那张'
+              '（期望 $wantHash，实际 $digest）。要换图标请用 '
+              'tool/gen_disguise_icon.py --apk <vivo 计算器.apk> 重新生成，'
+              '不要手绘、也不要换用 drawable/icon 那张浅色图',
         );
         // PNG 头里的宽高：0x10 起 8 字节（宽 4、高 4，大端）
         final px = ByteData.sublistView(bytes, 16, 20).getUint32(0);
         expect(px, wantPx, reason: 'mipmap-$density 的像素边长应为 $wantPx，实际 $px');
       });
+    });
+
+    test('xxxhdpi 必须是 192px（48dp），退回 128px 就会糊', () {
+      final bytes = File(
+        '${resDir.path}/mipmap-xxxhdpi/ic_calculator.png',
+      ).readAsBytesSync();
+      final px = ByteData.sublistView(bytes, 16, 20).getUint32(0);
+      expect(
+        px,
+        greaterThanOrEqualTo(192),
+        reason:
+            '源 APK 里 app_icon 最大只有 128px（32dp），直接拷字节会让桌面自己放大到 '
+            '192px 以上、边缘和笔画全糊 —— 这就是「伪装计算器图标还是很糊」的成因。'
+            'xxxhdpi 请用生成器按 48dp 渲 192px',
+      );
     });
 
     test('不提供自适应图标（真机没有，给了会被裁切放大）', () {
