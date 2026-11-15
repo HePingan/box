@@ -163,16 +163,20 @@ void main() {
     // 但「只拷字节」有天花板：源 APK 里 app_icon 最大只到 128×128（vivo 是按 32dp 出
     // 的图），而 Android 桌面槽位是 48dp（xxxhdpi 要 192px）。128px 被桌面放大就是
     // 「图标还是糊」的直接原因。所以现在由 tool/gen_disguise_icon.py 从那张 128px
-    // 拟合出矢量、按 48dp 各密度重新栅格化，并把自身渲的 96/128px 与源 APK 位图逐像素
+    // 拟合出矢量、按目标密度重新栅格化，并把自身渲的 96/128px 与源 APK 位图逐像素
     // 比对（当前 平均误差 2.2/255、95% 像素三通道差 ≤24、轮廓逐行一致）来保证
-    // 「还是同一张脸」。这里钉死 5 档的哈希与边长。
+    // 「还是同一张脸」。
+    //
+    // 1.21.32+389 起走 64dp 实验档（每档 1.33 倍像素，xxxhdpi 256px）：48dp 的 192px
+    // 真机仍嫌糊，怀疑桌面槽位更大。副作用是 intrinsic 变 64dp —— 若某个桌面不强制
+    // setBounds 就会画大 1/3，真机反馈不行就回 TARGET_BUCKETS 的 48dp 那组数值。
     const expectedIcon = {
-      // density: (sha256 前 16 位, 像素边长) —— 48dp 语义
-      'mdpi': ('a1d851b7aae129f2', 48),
-      'hdpi': ('e6ab504635715868', 72),
-      'xhdpi': ('df9ccb3465bb6fed', 96),
-      'xxhdpi': ('cfdea0cb0b8b62bf', 144),
-      'xxxhdpi': ('2ae1e5ec78d5cfae', 192),
+      // density: (sha256 前 16 位, 像素边长) —— 64dp 实验档
+      'mdpi': ('719206de44630948', 64),
+      'hdpi': ('df9ccb3465bb6fed', 96),
+      'xhdpi': ('edf0425401ae8a16', 128),
+      'xxhdpi': ('2ae1e5ec78d5cfae', 192),
+      'xxxhdpi': ('33fcade6a79ebe0f', 256),
     };
 
     test('伪装图标 5 档齐全，哈希与像素尺寸都对得上', () {
@@ -204,18 +208,18 @@ void main() {
       });
     });
 
-    test('xxxhdpi 必须是 192px（48dp），退回 128px 就会糊', () {
+    test('xxxhdpi 必须是 256px（64dp 实验档），退回 128px 就会糊', () {
       final bytes = File(
         '${resDir.path}/mipmap-xxxhdpi/ic_calculator.png',
       ).readAsBytesSync();
       final px = ByteData.sublistView(bytes, 16, 20).getUint32(0);
       expect(
         px,
-        greaterThanOrEqualTo(192),
+        greaterThanOrEqualTo(256),
         reason:
-            '源 APK 里 app_icon 最大只有 128px（32dp），直接拷字节会让桌面自己放大到 '
-            '192px 以上、边缘和笔画全糊 —— 这就是「伪装计算器图标还是很糊」的成因。'
-            'xxxhdpi 请用生成器按 48dp 渲 192px',
+            '源 APK 里 app_icon 最大只有 128px（32dp），直接拷字节会让桌面自己放大、'
+            '边缘和笔画全糊；48dp 的 192px 真机仍嫌糊，所以 1.21.32+389 起按 64dp '
+            '出图（xxxhdpi 256px），让桌面降采样而不是放大',
       );
     });
 

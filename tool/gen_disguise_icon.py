@@ -29,10 +29,15 @@ xxhdpi 96 / xxxhdpi 128，即 vivo 是按 32dp 出的图）。Android 图标槽�
 - 形状语言跟着源图走：笔画是圆头（源图加号/等号末端是圆角，方头会显得「不是同一个设计」），
   外框是圆角矩形而非超椭圆 —— 按行扫 alpha 轮廓，圆角半径 31.6/128 与源图逐行一致（±1px AA）。
 
-密度的取舍：产出 mdpi 48 / hdpi 72 / xhdpi 96 / xxhdpi 144 / xxxhdpi 192（48dp 语义）。
-源 APK 里没有 mdpi，我们补上，省得 mdpi 设备去放大 hdpi。**不要**为了更清晰把 xxxhdpi
-塞成 256px：那会把 intrinsic 尺寸从 48dp 变成 64dp，个别不强制 bounds 的桌面会画得比真
-计算器大一截。桌面槽位比 192 更大时，靠矢量重渲染的 192 已经比原来 128 放大清楚一档。
+密度的取舍：默认产出 mdpi 48 / hdpi 72 / xhdpi 96 / xxhdpi 144 / xxxhdpi 192（48dp 语义）。
+源 APK 里没有 mdpi，我们补上，省得 mdpi 设备去放大 hdpi。
+
+**2026-11-15 起的 64dp 实验（1.21.32+389，用 TARGET_BUCKETS 一行切换）**：48dp 版（192px）
+在真机上仍被判「糊」，怀疑是 vivo 桌面槽位比 48dp 更大（56~64dp）。直接把每一档按 64dp
+出图（mdpi 64 / hdpi 96 / xhdpi 128 / xxhdpi 192 / xxxhdpi 256），桌面就有足够像素可以
+降采样而不是放大。代价：intrinsic 从 48dp 变 64dp，**如果某个桌面不强制 setBounds 而是按
+intrinsic 摆图，图标会画得比真计算器大 1/3** —— 这是这个实验唯一要盯的副作用，真机看着
+变大了就回到 48dp 那一组数值（改 TARGET_BUCKETS 与契约测试的边长/哈希即可）。
 
 注意：**不要给这个图标加自适应图标（anydpi-v26）**。被仿的应用没有，桌面走位图路径；
 给了 anydpi-v26 桌面会把 108dp 裁到可见 72dp 再套蒙版 = 内容放大约 1.5 倍并切边，
@@ -68,13 +73,15 @@ EXPECTED_SRC = {
     "xxxhdpi": ("3dfe400043bf84ed", 128),
 }
 
-# 要产出的密度档 —— 48dp 图标语义（mdpi 48 / hdpi 72 / xhdpi 96 / xxhdpi 144 / xxxhdpi 192）。
+# 要产出的密度档 —— 64dp 实验（1.21.32+389）：每档 1.33 倍像素，让桌面降采样而不是放大。
+# 回退 48dp 只用改这张表（mdpi 48 / hdpi 72 / xhdpi 96 / xxhdpi 144 / xxxhdpi 192），
+# 再把契约测试里的边长与哈希同步回去。
 TARGET_BUCKETS = {
-    "mdpi": 48,
-    "hdpi": 72,
-    "xhdpi": 96,
-    "xxhdpi": 144,
-    "xxxhdpi": 192,
+    "mdpi": 64,
+    "hdpi": 96,
+    "xhdpi": 128,
+    "xxhdpi": 192,
+    "xxxhdpi": 256,
 }
 
 PALETTE = {
@@ -247,7 +254,7 @@ def main() -> int:
     print("\n保真校验（矢量重渲染 vs 源位图）：")
     fid_ok = fidelity(source_pngs)
 
-    print("\n产出（48dp 语义）：")
+    print("\n产出（64dp 实验档，见 TARGET_BUCKETS 注释）：")
     hashes: dict[str, tuple[str, int]] = {}
     for density, px in TARGET_BUCKETS.items():
         img = render(px)

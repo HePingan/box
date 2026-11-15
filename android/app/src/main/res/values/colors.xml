@@ -16,7 +16,7 @@
     <color name="window_background">#F4F7FB</color>
 
     <!-- 伪装图标不再有矢量/自适应版本，全部颜色都已烘进 mipmap-*/ic_calculator.png
-         （由 tool/gen_disguise_icon.py 从真机 app_icon 的 128px 拟合出矢量、按 48dp
+         （由 tool/gen_disguise_icon.py 从真机 app_icon 的 128px 拟合出矢量、按目标dp
          各密度重新栅格化；128px 直接拷会被桌面放大到糊）。
          所以这里原先那 5 个 ic_calculator_* 颜色已经删除，别再加回来。 -->
 </resources>
