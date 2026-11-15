@@ -144,12 +144,144 @@ void main() {
       expect(engine.expression, '');
     });
 
+    test('退格整段删函数名，而不是一个字符一个字符地删', () {
+      final engine = CalculatorEngine();
+      engine.inputFunction('sin');
+      expect(engine.expression, 'sin(');
+      engine.backspace();
+      expect(engine.expression, '');
+      engine.inputConstant('π');
+      engine.backspace();
+      expect(engine.expression, '');
+    });
+
     test('单个数字有位数上限', () {
       final engine = CalculatorEngine();
       for (var i = 0; i < 40; i++) {
         engine.inputDigit('9');
       }
       expect(engine.trailingNumber.length, CalculatorEngine.maxNumberLength);
+    });
+  });
+
+  group('记忆键（mc / m+ / m− / mr）', () {
+    test('m+ 之后 mr 能取回来', () {
+      final engine = press('5');
+      expect(engine.hasMemory, isFalse);
+      expect(engine.memoryAdd(), isTrue);
+      engine.clear();
+      expect(engine.memoryRecall(), isTrue);
+      expect(engine.expression, '5');
+    });
+
+    test('m− 做减法', () {
+      final engine = press('10');
+      engine.memoryAdd();
+      engine.clear();
+      engine.debugSetExpression('3');
+      engine.memoryAdd(subtract: true);
+      expect(engine.memory, 7);
+    });
+
+    test('mc 清空后 mr 不插入任何东西', () {
+      final engine = press('5');
+      engine.memoryAdd();
+      engine.memoryClear();
+      engine.clear();
+      expect(engine.memoryRecall(), isFalse);
+      expect(engine.expression, '');
+    });
+
+    test('没有结果时 m+ 不动记忆体', () {
+      final engine = CalculatorEngine();
+      expect(engine.memoryAdd(), isFalse);
+      expect(engine.hasMemory, isFalse);
+    });
+  });
+
+  group('科学功能', () {
+    test('Deg 模式下 sin(30)=0.5、cos(60)=0.5', () {
+      final engine = CalculatorEngine();
+      engine.inputFunction('sin');
+      engine.inputDigit('3');
+      engine.inputDigit('0');
+      engine.inputParen();
+      expect(engine.preview, '0.5');
+
+      final cosine = CalculatorEngine();
+      cosine.inputFunction('cos');
+      cosine.inputDigit('6');
+      cosine.inputDigit('0');
+      cosine.inputParen();
+      expect(cosine.preview, '0.5');
+    });
+
+    test('切到 Rad 后 sin(π/2)=1', () {
+      final engine = CalculatorEngine();
+      engine.toggleAngleMode();
+      expect(engine.angleLabel, 'Rad');
+      engine.debugSetExpression('sin(π÷2)');
+      expect(engine.preview, '1');
+    });
+
+    test('ln(e)=1、log(100)=2、√(9)=3', () {
+      final e = CalculatorEngine();
+      e.debugSetExpression('ln(e)');
+      expect(e.preview, '1');
+
+      final log = CalculatorEngine();
+      log.debugSetExpression('log(100)');
+      expect(log.preview, '2');
+
+      final root = CalculatorEngine();
+      root.debugSetExpression('√(9)');
+      expect(root.preview, '3');
+    });
+
+    test('括号与优先级：2×(3+4)=14', () {
+      final engine = CalculatorEngine();
+      engine.debugSetExpression('2×(3+4)');
+      expect(engine.preview, '14');
+    });
+
+    test('乘方右结合：2^3^2 = 512', () {
+      final engine = CalculatorEngine();
+      engine.debugSetExpression('2^3^2');
+      expect(engine.preview, '512');
+    });
+
+    test('阶乘：5! = 120，小数与负数报错', () {
+      final engine = CalculatorEngine();
+      engine.debugSetExpression('5!');
+      expect(engine.preview, '120');
+      engine.debugSetExpression('2.5!');
+      expect(engine.evaluate().isError, isTrue);
+    });
+
+    test('x² 与 1/x 走乘方', () {
+      final square = press('5');
+      square.inputSquare();
+      expect(square.expression, '5^2');
+      expect(square.preview, '25');
+
+      final reciprocal = press('4');
+      reciprocal.inputReciprocal();
+      expect(reciprocal.expression, '4^(-1)');
+      expect(reciprocal.preview, '0.25');
+    });
+
+    test('括号没配平不给结果（不是报错）', () {
+      final engine = CalculatorEngine();
+      engine.inputFunction('sin');
+      engine.inputDigit('3');
+      expect(engine.preview, '');
+      expect(engine.evaluate().isError, isTrue);
+    });
+
+    test('√ 负数是格式错误而不是 NaN', () {
+      final engine = CalculatorEngine();
+      engine.debugSetExpression('√(0−4)');
+      expect(engine.evaluate().display, kMalformedMessage);
     });
   });
 }
