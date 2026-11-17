@@ -6,6 +6,7 @@ class QuizConfig {
     this.enabled = false,
     this.apiUrl = '',
     this.apiKey = '',
+    this.apiModel = '',
     this.autoSearch = true,
     this.displayMode = 'accessibility',
     this.filterNoise = true,
@@ -43,6 +44,19 @@ class QuizConfig {
   final bool enabled;
   final String apiUrl;
   final String apiKey;
+
+  /// 自定义通道的**模型名**（留空 = 用内置默认，见 `QuizEngine.defaultVisionModel`）。
+  ///
+  /// ## 为什么模型名必须可配（2026-11-17 修）
+  ///
+  /// 模型名原先**硬编码** `deepseek`，那是 NewAPI 渠道（`newapi.hpa888.top/v1`）
+  /// 时代的事 —— 该渠道只用渠道名掩盖真实上游，所以填 `deepseek` 能通。
+  /// 2026-10-10 换到 flr 之后，**代理档**没问题（服务端用后台配置的
+  /// `provider.model` 覆盖），可**手填 key 直连档**一直发着 `model: deepseek`：
+  /// flr 的模型清单里没有这个名字 ⇒ 直连用户每次都是「模型不存在」。
+  ///
+  /// 直连档的模型由用户自己的通道决定，写死任何一个名字都迟早再次过期。
+  final String apiModel;
   final bool autoSearch;
 
   /// 显示模式：accessibility=无障碍悬浮（默认，抗屏蔽），notification=通知栏，manual=手动。
@@ -103,6 +117,7 @@ class QuizConfig {
     bool? enabled,
     String? apiUrl,
     String? apiKey,
+    String? apiModel,
     bool? autoSearch,
     String? displayMode,
     bool? filterNoise,
@@ -130,6 +145,7 @@ class QuizConfig {
     return QuizConfig(
       enabled: enabled ?? this.enabled,
       apiUrl: apiUrl ?? this.apiUrl,
+      apiModel: apiModel ?? this.apiModel,
       apiKey: apiKey ?? this.apiKey,
       autoSearch: autoSearch ?? this.autoSearch,
       displayMode: displayMode ?? this.displayMode,
@@ -161,6 +177,7 @@ class QuizConfig {
     'enabled': enabled,
     'apiUrl': apiUrl,
     'apiKey': apiKey,
+    'apiModel': apiModel,
     'autoSearch': autoSearch,
     'displayMode': displayMode,
     'filterNoise': filterNoise,
@@ -199,6 +216,9 @@ class QuizConfig {
     return QuizConfig(
       enabled: (json['enabled'] as bool?) ?? false,
       apiUrl: (json['apiUrl'] as String?) ?? '',
+      // 旧配置没有这个键 ⇒ 空串 ⇒ 走内置默认（不做「把 deepseek 迁成新名字」
+      // 的猜测式迁移：用户可能真的在用某个自建通道里的 deepseek）
+      apiModel: (json['apiModel'] as String?) ?? '',
       apiKey: (json['apiKey'] as String?) ?? '',
       autoSearch: (json['autoSearch'] as bool?) ?? true,
       displayMode: _parseDisplayMode(json['displayMode'] as String?),

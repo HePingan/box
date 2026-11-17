@@ -173,6 +173,15 @@ class QuizAnswer {
   final String imageMatchHint;
 }
 
+/// AI 读屏**实际发送**的模型名：用户填了就用用户的，否则用内置默认。
+///
+/// 纯函数（无 IO），`test/quiz_vision_model_config_test.dart` 逐条锁定：
+/// 直连档的模型名由用户通道决定，客户端不许写死。
+String visionModelFor(QuizConfig config) {
+  final custom = config.apiModel.trim();
+  return custom.isEmpty ? QuizEngine.defaultVisionModel : custom;
+}
+
 class QuizEngine {
   QuizEngine({required this.config, http.Client? httpClient})
     : _http = httpClient ?? http.Client();
@@ -1146,14 +1155,27 @@ class QuizEngine {
     return previous[b.length];
   }
 
-  /// 外部「AI 读屏」搜题的模型名。
+  /// 外部「AI 读屏」的**默认**模型名（`config.apiModel` 为空时用它）。
   ///
-  /// 固定 `deepseek`：NewAPI 渠道（https://newapi.hpa888.top/v1）的 /models
-  /// 只暴露这一个 ID，真实上游模型被渠道名掩盖（实测返回 model 字段为
-  /// "Deepseek"，能力等价 deepseek-v4-vision）。
-  /// 2026-09-19 用户拍板：box 项目识图维持原 deepseek；gemini-3.8 仅用于
-  /// Hermes 辅助视觉（vision_analyze），不混入 box 客户端。
-  static const String visionModel = 'deepseek';
+  /// ## 为什么从 `deepseek` 改掉（2026-11-17）
+  ///
+  /// 旧值 `deepseek` 是 NewAPI 渠道（`newapi.hpa888.top/v1`）时代的产物 ——
+  /// 那个渠道用渠道名掩盖真实上游，所以写 `deepseek` 能通。
+  /// 2026-10-10 上游切到 flr 后：
+  ///   - **平台代理档**没事：服务端用后台配置的 `provider.model` 强制覆盖；
+  ///   - **手填 key 直连档一直坏着**：客户端发 `model: deepseek`，而 flr 的
+  ///     模型清单里没有这个名字 ⇒ 直连用户每次都是「模型不存在」。
+  ///
+  /// 现在默认填 flr 上实测可识图、又快又免费的那个（`qodercn/qfmodel`，
+  /// 2026-11-17 实测 1.7s 正确读出一道识别题）；用户自己的通道用别的模型
+  /// 时可在设置里改 `apiModel` —— 直连档的模型名不该由客户端写死。
+  static const String defaultVisionModel = 'qodercn/qfmodel';
+
+  /// 兼容旧引用（等同 [defaultVisionModel]）。
+  ///
+  /// ⚠️ 新代码不要再用它取「实际要发的模型」—— 请用 [visionModelFor]，
+  /// 那个会读用户在设置里填的值。
+  static const String visionModel = defaultVisionModel;
   /// 实测（2026-09-13，NewAPI 渠道 `deepseek`）模型输出形态不稳定，
   /// 三种都出现：纯 JSON / ```json 围栏 / Markdown 散文后跟 JSON，
   /// 解析器对全兼容；**提取不到一律返回 null**（不编造答案）。
@@ -1217,9 +1239,10 @@ class QuizEngine {
     // ── AI 搜题诊断日志（用户 2026-09-13 要求「把 AI 搜题过程写入调试日志，
     //    我分析一下」）。落在 LogChannel.quiz，可在 抽屉→更多→调试日志→题库 查。
     //    只记**尺寸/字节数/耗时/结论**，不记图片内容与 API Key，避免泄露。
+    final model = visionModelFor(config);
     final tag = 'VISION#${DateTime.now().millisecondsSinceEpoch % 100000}';
     _visionLog(
-      '$tag ▶ 开始 model=$visionModel '
+      '$tag ▶ 开始 model=$model '
       '原图=${imageBytes.length}B 压缩后=${compressed.length}B '
       'b64=${b64.length}B prompt=${visionPrompt.length}字',
     );
@@ -1233,7 +1256,7 @@ class QuizEngine {
 
     proc.add('① 读屏截图 ${imageBytes.length ~/ 1024}KB → 压缩至 '
         '${compressed.length ~/ 1024}KB');
-    proc.add('② 提交模型 $visionModel（禁工具直答）');
+    proc.add('② 提交模型 $model（禁工具直答）');
     pushProc();
 
     final base = config.apiUrl.trim().replaceAll(RegExp(r'/+$'), '');
@@ -1245,7 +1268,7 @@ class QuizEngine {
     // （session 过期 / 代理未开 / 日限额），文案走 visionHttpErrorText 代理分支。
     final viaProxy = base.contains(QuizVisionEndpoint.proxyPathSegment);
     final body = jsonEncode({
-      'model': visionModel,
+      'model': model,
       'messages': [
         {
           'role': 'user',

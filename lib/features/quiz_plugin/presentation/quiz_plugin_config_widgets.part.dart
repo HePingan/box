@@ -95,6 +95,7 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
   late final TextEditingController _ocrTokenController;
   late final TextEditingController _apiUrlController;
   late final TextEditingController _apiKeyController;
+  late final TextEditingController _apiModelController;
 
   @override
   void initState() {
@@ -103,6 +104,7 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
     _ocrEndpointController = TextEditingController(text: _cfg.ocrEndpoint);
     _ocrTokenController = TextEditingController(text: _cfg.ocrToken);
     _apiUrlController = TextEditingController(text: _cfg.apiUrl);
+    _apiModelController = TextEditingController(text: _cfg.apiModel);
     _apiKeyController = TextEditingController(text: _cfg.apiKey);
     _loadRemoteDenial();
   }
@@ -165,6 +167,7 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
     _ocrEndpointController.dispose();
     _ocrTokenController.dispose();
     _apiUrlController.dispose();
+    _apiModelController.dispose();
     _apiKeyController.dispose();
     super.dispose();
   }
@@ -378,6 +381,23 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                       obscureText: true,
                       controller: _apiKeyController,
                       onChanged: (v) => _cfg = _cfg.copyWith(apiKey: v),
+                    ),
+                    const SizedBox(height: AppTokens.spaceMd),
+                    // 模型名必须可填：直连档的模型由**用户自己的通道**决定。
+                    // 旧版本把它写死成 `deepseek`（NewAPI 时代），换到 flr 后
+                    // 直连用户每次都是「模型不存在」—— 2026-11-17 修。
+                    TextField(
+                      enabled: _cfg.allowExternalApi,
+                      decoration: const InputDecoration(
+                        labelText: '模型名（可选）',
+                        hintText: 'qodercn/qfmodel',
+                        helperText: '留空用默认 qodercn/qfmodel（需该模型支持识图）；'
+                            '走平台代理时此项被服务端覆盖',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      controller: _apiModelController,
+                      onChanged: (v) => _cfg = _cfg.copyWith(apiModel: v),
                     ),
                   ],
                 ),
