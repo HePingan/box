@@ -58,6 +58,16 @@ class QuizSearchPolicy {
     return s.replaceAll(RegExp(r'\s+'), '').toLowerCase();
   }
 
+  /// 两个指纹是不是**同一道题**（纯题干相等，忽略 `|image:<dHash>` 等切题后缀）。
+  ///
+  /// 这是「读屏答案被判过期」的唯一正确判据：题图 dHash 会随屏幕任何视觉变化
+  /// （包括我们自己刚画上去的答案）而变，把它当题目身份会让同题结果被反复丢弃。
+  static bool sameStemIdentity(String a, String b) {
+    final x = stemFingerprint(a);
+    if (x.isEmpty) return false;
+    return x == stemFingerprint(b);
+  }
+
   static List<String> normalizedOptions(List<String> options) =>
       options
           .map(QuizBankTextNormalizer.normalizeOption)

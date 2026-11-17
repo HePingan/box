@@ -16,6 +16,7 @@ import '../domain/quiz_answer_aligner.dart';
 import '../domain/quiz_diag.dart';
 import '../domain/quiz_vision_endpoint.dart';
 import '../domain/quiz_match_scoring.dart';
+import '../domain/quiz_proc_throttle.dart';
 import '../utils/ai_process_bridge.dart';
 
 class QuizResult {
@@ -1250,8 +1251,13 @@ class QuizEngine {
     // 只推送可核对的阶段事实（压缩比/尝试次数/耗时/结论），不推模型思维链原文：
     // 上游 reasoning 是英文且常夹带无关检索，直接展示会误导用户。
     final proc = <String>[];
-    void pushProc() {
-      AiProcessBridge.push(proc.join('\n'));
+    // 过程区块每行都会让原生悬浮窗整块重绘；连续推 4~6 次在真机上就是「闪」。
+    // 合并规则见 QuizProcThrottle（内容去重 + 250ms 窗口，终态 force 必推）。
+    final procThrottle = QuizProcThrottle();
+    void pushProc({bool force = false}) {
+      final text = proc.join('\n');
+      if (!procThrottle.shouldPush(text, force: force)) return;
+      AiProcessBridge.push(text);
     }
 
     // 端点与代理模式判定放在进度推送之前：进度文案要用到 viaProxy。
@@ -1380,7 +1386,7 @@ class QuizEngine {
                 '${stopwatch.elapsedMilliseconds}ms',
           );
           proc.add('④ 识别成功，用时 ${stopwatch.elapsedMilliseconds}ms');
-          pushProc();
+          pushProc(force: true);
           _visionLog(
             '$tag ✔ 成功 stem="${_truncate(result.question, 40)}" '
             'answer=${result.answers.first.correctAnswer} '
@@ -1468,7 +1474,7 @@ class QuizEngine {
     );
     proc.add('✖ 失败：${lastError?.toString() ?? '读屏失败'}'
         '（用时 ${stopwatch.elapsedMilliseconds}ms）');
-    pushProc();
+    pushProc(force: true);
     return QuizResult(
       question: question,
       error: lastError?.toString() ?? '读屏失败',

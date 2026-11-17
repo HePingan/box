@@ -646,6 +646,9 @@ class QuizPluginEntry {
   static int _searchGeneration = 0;
   static String _activeQuestionFingerprint = '';
 
+  /// 当前在飞的读屏请求所属题干（纯题干指纹）。空串 = 没有在飞。
+  static String _visionInFlightStem = '';
+
   /// 高质量命中才短路同题刷新；半题/低分命中允许选项补齐后纠错。
   static final QuizSearchPolicy _searchPolicy = QuizSearchPolicy();
   static Timer? _captureDebounce;
@@ -678,10 +681,41 @@ class QuizPluginEntry {
     return QuizBankTextNormalizer.cleanForMatch(q);
   }
 
-  static bool _isCurrentRequest(int generation, String fingerprint) =>
-      generation == _searchGeneration &&
-      fingerprint.isNotEmpty &&
-      fingerprint == _activeQuestionFingerprint;
+  /// 「这次请求还算不算当前这题」的唯一判据。
+  ///
+  /// ⚠️ 2026-11-17 真机报障「一直读屏闪烁不出答案」的根因就在这个函数里：
+  /// 以前是 `fingerprint == _activeQuestionFingerprint` 的**字面量**比较，而
+  /// 传进来的 requestFingerprint 带 `|image:<dHash>` 后缀（切题身份用）。dHash
+  /// 会随屏幕任何视觉变化而变，**包括我们自己的悬浮窗刚画出来的答案与进度**。
+  /// 于是读屏在飞行中（实测 1.5~10.5s；后端日志 `quiz-vision upstream=200
+  /// bytes≈560` 证明答案每次真的拿到了）时，自动捕获再抓一屏、dHash 变了 ⇒
+  /// 判成「换题」⇒ generation 自增 ⇒ 回来的答案被静默丢弃、悬浮窗重画成
+  /// 「检索中」⇒ 用户看到的就是**一直闪、始终没有答案**。
+  ///
+  /// 题目身份只能是**纯题干**（[QuizSearchPolicy.stemFingerprint] 就是为此存在），
+  /// 题图 dHash 只用于消歧，不参与「是否换题」。
+  static bool _isCurrentRequest(int generation, String fingerprint) {
+    if (generation != _searchGeneration) return false;
+    return QuizSearchPolicy.sameStemIdentity(fingerprint, _activeQuestionFingerprint);
+  }
+
+  /// 读屏结果是「同一道题」的结果吗？
+  ///
+  /// 与 [_isCurrentRequest] 只差一条：**不要求 generation 相等**。
+  /// 读屏是付费且慢的请求，只要问的还是同一道题，答案就该上屏；
+  /// 「期间又抓了一屏」不是否定它的理由（这正是上面那个 bug 的另一半）。
+  static bool _acceptVisionResult(int generation, String fingerprint) {
+    if (_isCurrentRequest(generation, fingerprint)) return true;
+    final same = QuizSearchPolicy.sameStemIdentity(
+        fingerprint, _activeQuestionFingerprint);
+    QuizDiag.log(
+      QuizDiagStage.result,
+      same ? '读屏结果救回：仍是同一道题（generation 漂移，答案照常上屏）' : '读屏结果丢弃：题干已变',
+      fields: {'gen': generation, 'curGen': _searchGeneration},
+      level: same ? LogLevel.info : LogLevel.warn,
+    );
+    return same;
+  }
 
   /// 新题第一时间废弃旧答案，考试模式会显示「新题 · 检索中」。
   static Future<void> _showNewQuestionSearching(
@@ -819,7 +853,10 @@ class QuizPluginEntry {
       // 回滑重绘：绕过节流，把这一题自己的答案重新渲染（内部仍走题库本地命中）。
       QuizDiag.log(QuizDiagStage.throttle, '回滑重绘：同题重复捕获，跳过检索但强制刷新画面');
     }
-    final isNewQuestion = requestFingerprint != _activeQuestionFingerprint;
+    // 换题判定用**纯题干**：悬浮窗自己重绘就会改变 dHash，字面量比较会把同一题
+    // 判成新题 —— 每画一次就清空一次、判一次过期，那就是「闪烁」。
+    final isNewQuestion = !QuizSearchPolicy.sameStemIdentity(
+        requestFingerprint, _activeQuestionFingerprint);
     if (isNewQuestion) {
       // 新题立即让旧答案失效；任何旧请求回来都会因 generation 不一致被丢弃。
       _activeQuestionFingerprint = requestFingerprint;
@@ -1183,8 +1220,9 @@ class QuizPluginEntry {
       requestGeneration: currentGeneration,
       requestFingerprint: fingerprint,
     );
-    if (!_isCurrentRequest(currentGeneration, fingerprint)) return;
     if (visionResult != null && visionResult.isSuccess) {
+      // 同一道题的读屏答案不允许被「期间又抓了一屏」否掉。
+      if (!_acceptVisionResult(currentGeneration, fingerprint)) return;
       final source = _sourceForResult(visionResult);
       if (!_searchPolicy.canReplaceWith(source, stem: fingerprint)) {
         QuizDiag.warn(QuizDiagStage.result, '丢弃：读屏结果被来源排名拦下',
@@ -1314,7 +1352,12 @@ class QuizPluginEntry {
       requestFingerprint: fingerprint,
       manual: true,
     );
-    if (!_isCurrentRequest(generation, fingerprint)) return;
+    if (result != null && result.isSuccess) {
+      // 手动读屏同理：同题就上屏，只在题干真的变了时才放弃。
+      if (!_acceptVisionResult(generation, fingerprint)) return;
+    } else if (!_isCurrentRequest(generation, fingerprint)) {
+      return;
+    }
 
     if (result == null) {
       await _pushOverlay(
@@ -1626,6 +1669,16 @@ class QuizPluginEntry {
     required String requestFingerprint,
     bool manual = false,
   }) async {
+    // 同一题同时只允许一条读屏请求在飞。
+    // 真机 2026-11-17：自动捕获与手动按钮各起一条时，悬浮窗会「检索中 → 答案 →
+    // 检索中」来回跳（看起来就是闪），而且白烧一次付费调用。
+    final stemKey = QuizSearchPolicy.stemFingerprint(requestFingerprint);
+    if (stemKey.isNotEmpty && _visionInFlightStem == stemKey) {
+      QuizDiag.log(QuizDiagStage.result, '读屏跳过：同题已有一条请求在飞',
+          fields: {'manual': manual});
+      return null;
+    }
+    if (stemKey.isNotEmpty) _visionInFlightStem = stemKey;
     try {
       return await _runVisionFallback(
         config,
@@ -1652,6 +1705,10 @@ class QuizPluginEntry {
             'AI 读屏无响应（卡在：$visionPhase）。可重试；若反复出现，'
             '请到「设置 → 无障碍」确认「答题助手」服务仍开启。',
       );
+    } finally {
+      if (stemKey.isEmpty || _visionInFlightStem == stemKey) {
+        _visionInFlightStem = '';
+      }
     }
   }
 
