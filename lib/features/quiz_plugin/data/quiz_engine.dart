@@ -1254,11 +1254,7 @@ class QuizEngine {
       AiProcessBridge.push(proc.join('\n'));
     }
 
-    proc.add('① 读屏截图 ${imageBytes.length ~/ 1024}KB → 压缩至 '
-        '${compressed.length ~/ 1024}KB');
-    proc.add('② 提交模型 $model（禁工具直答）');
-    pushProc();
-
+    // 端点与代理模式判定放在进度推送之前：进度文案要用到 viaProxy。
     final base = config.apiUrl.trim().replaceAll(RegExp(r'/+$'), '');
     var uri = Uri.parse('$base/chat/completions');
     // 可变 Bearer：登录档 401 降级到匿名档时会换掉（见循环内降级分支）。
@@ -1267,6 +1263,15 @@ class QuizEngine {
     // 代理模式判定：base 指向平台 /api/quiz/vision 时 401/403/429 语义不同
     // （session 过期 / 代理未开 / 日限额），文案走 visionHttpErrorText 代理分支。
     final viaProxy = base.contains(QuizVisionEndpoint.proxyPathSegment);
+
+    proc.add('① 读屏截图 ${imageBytes.length ~/ 1024}KB → 压缩至 '
+        '${compressed.length ~/ 1024}KB');
+    // 代理档的 model 会被**服务端**覆盖（后台 /admin/quiz-vision/model 决定），
+    // 这里如实说明，别让用户以为客户端说了算。
+    proc.add(viaProxy
+        ? '② 提交模型（代理档，实际由后台指定）'
+        : '② 提交模型 $model（禁工具直答）');
+    pushProc();
     final body = jsonEncode({
       'model': model,
       'messages': [

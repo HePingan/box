@@ -385,6 +385,19 @@ class PlatformQuotaServer {
       );
       return;
     }
+    if (request.method == 'GET' && path == '/api/quiz/vision/config') {
+      // 公开只读：客户端与自检页要知道「现在到底用哪个模型」。
+      // 只回模型名/开关/日限额，**不回 baseUrl、不回 key、不回 key 指纹**。
+      final provider = store.quizVisionProvider;
+      await jsonResponse(request.response, HttpStatus.ok, {
+        'enabled': provider?.enabled ?? false,
+        'model': provider?.model ?? '',
+        'thinkingOff': provider?.thinkingOff ?? true,
+        'dailyCapPerAccount': quizVisionDailyCap,
+        'updatedAt': provider?.updatedAt?.toIso8601String(),
+      });
+      return;
+    }
     if (request.method == 'GET' && path == '/admin/quiz-vision/provider') {
       if (!await requireAdmin(request)) return;
       await adminGetQuizVisionProvider(request);
@@ -393,6 +406,16 @@ class PlatformQuotaServer {
     if (request.method == 'POST' && path == '/admin/quiz-vision/provider') {
       if (!await requireAdmin(request)) return;
       await adminUpdateQuizVisionProvider(request);
+      return;
+    }
+    if (request.method == 'GET' && path == '/admin/quiz-vision/models') {
+      if (!await requireAdmin(request)) return;
+      await adminListQuizVisionModels(request);
+      return;
+    }
+    if (request.method == 'POST' && path == '/admin/quiz-vision/model') {
+      if (!await requireAdmin(request)) return;
+      await adminSwitchQuizVisionModel(request);
       return;
     }
     if (request.method == 'GET' && path == '/admin/quiz-vision/stats') {
@@ -1497,6 +1520,206 @@ class PlatformQuotaServer {
     await store.save();
     store.markQuizVisionPersisted();
     await jsonResponse(request.response, HttpStatus.ok, quizVisionPublicJson());
+  }
+
+  /// 上游模型目录缓存（60s）：后台点开「切换模型」不该每次都打一遍上游。
+  ///
+  /// 键 = baseUrl（换地址自然失效）；值 = 目录 + 抓取时刻。
+  static final Map<String, ({DateTime at, List<Map<String, Object>> models})>
+      _quizVisionModelCache = {};
+
+  /// 从当前上游拉 `/models`。
+  ///
+  /// ⚠️ 失败**如实抛出**，不返回空列表：空列表会让人误以为「上游没有任何模型」，
+  /// 而真实原因往往是 key 过期/地址写错 —— 后台需要看到原因才能改对。
+  Future<List<Map<String, Object>>> fetchQuizVisionUpstreamModels(
+    QuizVisionProviderConfig provider, {
+    bool forceRefresh = false,
+  }) async {
+    final cached = _quizVisionModelCache[provider.baseUrl];
+    if (!forceRefresh &&
+        cached != null &&
+        DateTime.now().difference(cached.at) < const Duration(seconds: 60)) {
+      return cached.models;
+    }
+    final client = HttpClient();
+    try {
+      final uri = Uri.parse('${provider.baseUrl}/models');
+      final req = await client
+          .getUrl(uri)
+          .timeout(const Duration(seconds: 10));
+      req.headers.set(
+        HttpHeaders.authorizationHeader,
+        'Bearer ${decodeProviderApiKey(provider.apiKeyCipher)}',
+      );
+      final resp = await req.close().timeout(const Duration(seconds: 20));
+      final text = await utf8.decoder.bind(resp).join();
+      if (resp.statusCode < 200 || resp.statusCode >= 300) {
+        throw StateError('上游 /models 回 ${resp.statusCode}：${compactPreview(text)}');
+      }
+      final decoded = jsonDecode(text);
+      final data = decoded is Map ? decoded['data'] : null;
+      if (data is! List) {
+        throw StateError('上游 /models 结构不认识：${compactPreview(text)}');
+      }
+      final models = <Map<String, Object>>[];
+      for (final item in data) {
+        if (item is! Map) continue;
+        final id = item['id']?.toString().trim() ?? '';
+        if (id.isEmpty) continue;
+        models.add({
+          'id': id,
+          if (item['name'] != null) 'name': item['name'].toString(),
+          'supportsImage': item['supportsImage'] == true,
+          'isFree': item['isFree'] == true,
+        });
+      }
+      models.sort((a, b) => (a['id'] as String).compareTo(b['id'] as String));
+      _quizVisionModelCache[provider.baseUrl] =
+          (at: DateTime.now(), models: models);
+      return models;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  /// `GET /admin/quiz-vision/models` —— 后台「切换读屏模型」的下拉数据源。
+  ///
+  /// 为什么要从上游现拉：模型名是**渠道方**的事（flr 上 97 个，且会变），
+  /// 后端写死一张表必然过期；写错一个名字的代价是整个读屏功能静默失败。
+  /// 这里顺带把「是否支持识图」也带出来 —— 不支持识图的模型选了等于白搭。
+  Future<void> adminListQuizVisionModels(HttpRequest request) async {
+    final provider = store.quizVisionProvider;
+    if (provider == null || provider.baseUrl.isEmpty) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '尚未配置读屏上游（baseUrl 为空），无法列出模型'},
+      });
+      return;
+    }
+    final imageOnly =
+        request.uri.queryParameters['imageOnly'] != '0'; // 默认只看能识图的
+    final force = request.uri.queryParameters['refresh'] == '1';
+    List<Map<String, Object>> models;
+    try {
+      models = await fetchQuizVisionUpstreamModels(provider, forceRefresh: force);
+    } catch (error) {
+      await jsonResponse(request.response, HttpStatus.badGateway, {
+        'error': {
+          'message': '拉取上游模型列表失败：${compactPreview('$error')}',
+          'hint': '检查后台配置的 baseUrl 与 API Key；上游不可达时无法校验模型名',
+        },
+      });
+      return;
+    }
+    final current = provider.model;
+    final filtered = imageOnly
+        ? models.where((m) => m['supportsImage'] == true).toList()
+        : models;
+    final known = models.any((m) => m['id'] == current);
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'current': current,
+      'currentKnown': known,
+      'baseUrl': provider.baseUrl,
+      'enabled': provider.enabled,
+      'thinkingOff': provider.thinkingOff,
+      'total': models.length,
+      'count': filtered.length,
+      'imageOnly': imageOnly,
+      'models': [
+        for (final m in filtered)
+          {...m, 'current': m['id'] == current}
+      ],
+      'fetchedAt': DateTime.now().toIso8601String(),
+    });
+  }
+
+  /// `POST /admin/quiz-vision/model` —— **只切模型**（不动 baseUrl/key/开关）。
+  ///
+  /// 默认要求模型名在**当前上游**存在：写错名字的症状是「读屏全挂但状态页一切正常」，
+  /// 是这一类后台功能最贵的错误。确需强写（上游目录暂时拉不到、自定义网关）
+  /// 时传 `force: true`，响应里会带 `modelKnown: false` 让人知道自己在做什么。
+  Future<void> adminSwitchQuizVisionModel(HttpRequest request) async {
+    final decoded = await readJsonObject(request);
+    if (decoded == null) return;
+    final provider = store.quizVisionProvider;
+    if (provider == null || provider.baseUrl.isEmpty) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '尚未配置读屏上游，无法切换模型'},
+      });
+      return;
+    }
+    final next = decoded['model']?.toString().trim() ?? '';
+    if (next.isEmpty) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': 'model 必填（可先 GET /admin/quiz-vision/models 取候选）'},
+      });
+      return;
+    }
+    final force = decoded['force'] == true;
+    var known = false;
+    var candidates = <Map<String, Object>>[];
+    String? verifyError;
+    try {
+      final models = await fetchQuizVisionUpstreamModels(provider,
+          forceRefresh: force);
+      known = models.any((m) => m['id'] == next);
+      if (!known) {
+        candidates = models.where((m) => m['supportsImage'] == true).toList();
+      }
+    } catch (error) {
+      verifyError = compactPreview('$error');
+      if (!force) {
+        await jsonResponse(request.response, HttpStatus.badGateway, {
+          'error': {
+            'message': '无法校验模型名（上游模型列表拉取失败）：$verifyError',
+            'hint': '确认无误可带 force:true 强写',
+          },
+        });
+        return;
+      }
+    }
+    if (!known && !force) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {
+          'message': '模型「$next」不在当前上游的模型列表里（未写入，避免读屏静默失效）',
+          'hint': '确需强写请带 force:true；下面是当前可识图的候选',
+          if (verifyError != null) 'verifyError': verifyError,
+        },
+        'candidates': [
+          for (final m in candidates.take(50))
+            {...m, 'id': m['id'], 'current': m['id'] == provider.model}
+        ],
+      });
+      return;
+    }
+    final previousModel = provider.model;
+    store.quizVisionProvider = QuizVisionProviderConfig(
+      baseUrl: provider.baseUrl,
+      apiKeyCipher: provider.apiKeyCipher,
+      model: next,
+      enabled: provider.enabled,
+      updatedAt: DateTime.now(),
+      thinkingOff: provider.thinkingOff,
+    );
+    store.recordQuizVisionModelSwitch(
+      from: previousModel,
+      to: next,
+      modelKnown: known,
+      forced: force,
+    );
+    await store.save();
+    store.markQuizVisionPersisted();
+    stdout.writeln(
+      '${DateTime.now().toIso8601String()} quiz-vision model $previousModel -> $next '
+      '(known=$known forced=$force)',
+    );
+    await jsonResponse(request.response, HttpStatus.ok, {
+      ...quizVisionPublicJson(),
+      'modelKnown': known,
+      'forced': force,
+      if (verifyError != null) 'verifyError': verifyError,
+      'history': store.quizVisionProviderHistoryJson(),
+    });
   }
 
   /// 读屏代理。subjectKey 是额度主体：账号 id 或 `device:` + deviceId。
@@ -5869,6 +6092,12 @@ class StateStore {
   // 不打印、不记审计。设备主体的额度键是 `device:` + deviceId，与账号共用
   // quizVisionUsage/quizVisionUpstreamFailures（同一张表、同一套 pruneDays/flush）。
   final quizVisionDevices = <String, QuizVisionDevice>{};
+
+  /// 读屏模型切换审计（最近 20 条，最新在前）。
+  ///
+  /// 为什么值得留痕：这个开关「切错 = 读屏全挂，但状态页一切正常」。
+  /// 出事后第一个问题永远是「什么时候换成这个模型的」，没有记录就只能靠猜。
+  final quizVisionProviderHistory = <Map<String, dynamic>>[];
   // 设备令牌按 IP 的每日签发计数（仅内存，重启清零，与突发限流同档）：
   // 这是防滥用的限流器、不是事实来源，重启丢失不影响客户端已有令牌。
   final quizVisionDeviceIssueHits = <String, Map<String, int>>{};
@@ -5905,6 +6134,17 @@ class StateStore {
       quizVisionProvider = QuizVisionProviderConfig.fromJson(
         Map<String, dynamic>.from(rawQuizVision),
       );
+    }
+    final rawQuizVisionHistory = decoded['quizVisionProviderHistory'];
+    if (rawQuizVisionHistory is List) {
+      for (final entry in rawQuizVisionHistory) {
+        if (entry is Map) {
+          quizVisionProviderHistory.add(Map<String, dynamic>.from(entry));
+        }
+      }
+      if (quizVisionProviderHistory.length > 20) {
+        quizVisionProviderHistory.removeRange(20, quizVisionProviderHistory.length);
+      }
     }
     final rawQuizVisionUsage = decoded['quizVisionUsage'];
     if (rawQuizVisionUsage is Map) {
@@ -6252,6 +6492,8 @@ class StateStore {
           'quizVisionUsage': quizVisionUsage,
         if (quizVisionUpstreamFailures.isNotEmpty)
           'quizVisionUpstreamFailures': quizVisionUpstreamFailures,
+        if (quizVisionProviderHistory.isNotEmpty)
+          'quizVisionProviderHistory': quizVisionProviderHistory,
         if (quizVisionDevices.isNotEmpty)
           'quizVisionDevices': quizVisionDevices.map(
             (key, value) => MapEntry(key, value.toJson()),
@@ -6330,6 +6572,31 @@ class StateStore {
   }
 
   // ── A1/A2：读屏用量落盘辅助 ──
+  /// 记一条模型切换（最多留 20 条，最新在前）。
+  void recordQuizVisionModelSwitch({
+    required String from,
+    required String to,
+    required bool modelKnown,
+    required bool forced,
+  }) {
+    quizVisionProviderHistory.insert(0, {
+      'at': DateTime.now().toIso8601String(),
+      'from': from,
+      'to': to,
+      'modelKnown': modelKnown,
+      'forced': forced,
+    });
+    if (quizVisionProviderHistory.length > 20) {
+      quizVisionProviderHistory.removeRange(20, quizVisionProviderHistory.length);
+    }
+  }
+
+  /// 只读副本（下发给后台；外部改不动内存里的审计表）。
+  List<Map<String, dynamic>> quizVisionProviderHistoryJson() =>
+      List<Map<String, dynamic>>.unmodifiable(
+        quizVisionProviderHistory.map((e) => Map<String, dynamic>.from(e)),
+      );
+
   void markQuizVisionPersisted() {
     quizVisionDirty = false;
     quizVisionLastPersistedAt = DateTime.now();
