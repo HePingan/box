@@ -72,6 +72,26 @@ static bool _isCurrentRequest(int generation, String fingerprint) =>
 阶段会连推 4~6 次。新增 `QuizProcThrottle`：内容去重 + 250ms 窗口，
 终态（`④ 识别成功` / `✖ 失败`）用 `force: true` 必推，不会丢掉最后一行。
 
+## 根因三：通用「未搜到答案」把刚拿到的答案盖掉（截图实锤）
+
+用户 21:05 的真机截图（判断题「驾驶机动车在一般道路上逆向行驶，一次记6分。」）：
+
+```
+④ 识别成功，用时 15108ms          ← 引擎真的解析出答案了
+结论区：未搜到答案。点右上角紫色 AI 按钮，用 AI 联网搜题。
+胶囊：未命中（不是「读屏中」）
+```
+
+胶囊显示「未命中」而**不是**「读屏中」，说明覆盖发生在读屏**结束之后**：读屏这条链要
+15 秒，期间/之后另一条搜索流程跑完，把**通用未命中**文案推了上去，把答案盖掉了。
+
+修法：`_missPaintBlocked(fingerprint)` 守卫，两种情况让路 ——
+1. 同题仍有读屏请求在飞（答案马上到，先别报未命中，否则会闪两次）；
+2. 同题刚刚读屏命中过（30s 窗口内）—— 不许把答案盖掉。
+
+命中用 `_markVisionHit` 记录；自动链路尾部的通用未命中、手动读屏的空结果与失败分支
+都先过守卫。
+
 ## 顺带补的一条：同题并发守卫
 
 `_visionInFlightStem`：同一道题同时只允许一条读屏请求在飞。以前自动捕获与手动按钮
@@ -85,12 +105,14 @@ static bool _isCurrentRequest(int generation, String fingerprint) =>
 | `domain/quiz_proc_throttle.dart` | 新增 `QuizProcThrottle`：过程推送合并器（可注入时钟，可单测） |
 | `data/quiz_engine.dart` | 过程推送改走 `QuizProcThrottle`；成功/失败终态 `force: true` |
 | `presentation/quiz_plugin_entry.dart` | `_isCurrentRequest` 改纯题干判据；`isNewQuestion` 同口径；新增 `_acceptVisionResult` 救回同题答案；新增 `_visionInFlightStem` 并发守卫 |
-| `test/quiz_vision_flicker_regression_test.dart` | 新增回归：dHash 变化不改身份、换题仍判新题、空指纹、空白/大小写、推送合并与终态必推 |
+| `presentation/quiz_plugin_entry.dart`（续） | `_missPaintBlocked` 守卫 + `_markVisionHit`：通用未命中不许盖掉同题读屏命中；三个 `@visibleForTesting` 接缝 |
+| `test/quiz_vision_flicker_regression_test.dart` | 回归 15 条：dHash 变化不改身份、换题仍判新题、空指纹、空白/大小写、推送合并与终态必推、未命中守卫 5 条 |
 
 ## 验证
 
 - 175 上 `flutter analyze lib/features/quiz_plugin` 干净
-- 新增回归测试全绿；`test/*quiz*.dart` 全量通过
+- 新增回归测试 15 条全绿；`test/*quiz*.dart` 全量 732 passed
+- 发版：391 → 392（根因一/二）→ 393（根因三），OTA / Foxel 本地盘 / 123 云盘 / GitHub 同步
 - 上游实测（代理链路）：同一 prompt + 真实截图，1.0~1.5s 返回可解析 JSON
 
 ## 没做（避免无据改动）
