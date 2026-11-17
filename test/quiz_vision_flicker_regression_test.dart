@@ -1,6 +1,9 @@
 import 'package:box/features/quiz_plugin/domain/quiz_proc_throttle.dart';
 import 'package:box/features/quiz_plugin/domain/quiz_search_policy.dart';
+import 'package:box/features/quiz_plugin/presentation/quiz_plugin_entry.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// 真机报障回归（2026-11-17）「一直读屏闪烁不出答案」。
 ///
@@ -12,6 +15,9 @@ import 'package:flutter_test/flutter_test.dart';
 ///      generation 自增，回来的答案被静默丢弃、悬浮窗重画成「检索中」→ 闪 + 没答案。
 ///   2. 过程区块连续推送导致原生悬浮窗反复整块重绘 → 肉眼可见的闪。
 void main() {
+  // 读屏守卫的用例要 mock 原生通道，先初始化测试 binding。
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('题目身份：dHash 后缀不得改变身份', () {
     const stem = '机动车驾驶人因服兵役、出国（境）等原因无法在规定时间内办理驾驶证审验时，可以向发证机关申请延期办理。';
     const fp1 = '$stem|image:0123456789abcdef';
@@ -99,6 +105,55 @@ void main() {
       expect(t.shouldPush('① 读屏截图 120KB → 压缩至 95KB'), isTrue);
       t.reset();
       expect(t.shouldPush('① 读屏截图 120KB → 压缩至 95KB'), isTrue);
+    });
+  });
+
+  // 真机截图实录（2026-11-17 21:05）：过程区写着「④ 识别成功，用时 15108ms」，
+  // 结论区却是「未搜到答案。点右上角紫色 AI 按钮」。读屏慢（15s），期间/之后
+  // 另一条搜索流程跑完并推送了**通用未命中**，把刚拿到的答案盖掉。
+  group('通用未命中不许盖掉同题的读屏命中', () {
+    const stemA = '驾驶机动车在一般道路上逆向行驶，一次记6分。';
+    const stemB = '驾驶机动车在高速公路上行驶，遇有雾天能见度小于100米时，最高车速不得超过多少？';
+
+    setUp(() {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('top.hpa888.box/quiz_plugin'),
+        (call) async => null,
+      );
+      QuizPluginEntry.debugResetVisionState();
+    });
+
+    test('刚命中过的同题：未命中重绘被拦', () {
+      QuizPluginEntry.debugMarkVisionHit('$stemA|image:0123456789abcdef');
+      expect(QuizPluginEntry.debugMissPaintBlocked(stemA), isTrue);
+      // 题干归一化后相同即可（dHash 后缀/空白不参与身份）
+      expect(
+        QuizPluginEntry.debugMissPaintBlocked('  ${stemA.toUpperCase()} |image:ffffffffffffffff'),
+        isTrue,
+      );
+    });
+
+    test('换了题就正常报未命中', () {
+      QuizPluginEntry.debugMarkVisionHit(stemA);
+      expect(QuizPluginEntry.debugMissPaintBlocked(stemB), isFalse);
+    });
+
+    test('没命中过也不拦', () {
+      expect(QuizPluginEntry.debugMissPaintBlocked(stemA), isFalse);
+    });
+
+    test('空指纹不拦（避免误封所有题）', () {
+      QuizPluginEntry.debugMarkVisionHit(stemA);
+      expect(QuizPluginEntry.debugMissPaintBlocked(''), isFalse);
+    });
+
+    test('reset 之后不再拦', () {
+      QuizPluginEntry.debugMarkVisionHit(stemA);
+      expect(QuizPluginEntry.debugMissPaintBlocked(stemA), isTrue);
+      QuizPluginEntry.debugResetVisionState();
+      expect(QuizPluginEntry.debugMissPaintBlocked(stemA), isFalse);
     });
   });
 }

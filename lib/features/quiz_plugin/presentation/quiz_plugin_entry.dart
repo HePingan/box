@@ -649,6 +649,66 @@ class QuizPluginEntry {
   /// 当前在飞的读屏请求所属题干（纯题干指纹）。空串 = 没有在飞。
   static String _visionInFlightStem = '';
 
+  /// 最近一次**读屏成功**的题干与时刻。
+  ///
+  /// 真机 2026-11-17 21:05 截图实录：过程区已经写着「④ 识别成功，用时 15108ms」，
+  /// 结论区却是「未搜到答案。点右上角紫色 AI 按钮，用 AI 联网搜题。」——
+  /// 因为读屏这条链慢（15s），期间/之后总有另一条搜索流程跑完并推送**通用未命中**，
+  /// 把刚拿到的答案盖掉。所以：同一道题刚命中过读屏，就不许再报「未搜到」。
+  static String _lastVisionHitStem = '';
+  static DateTime? _lastVisionHitAt;
+
+  /// 读屏命中后的「不许被通用未命中覆盖」保护窗口。
+  static const Duration visionHitPaintGuard = Duration(seconds: 30);
+
+  /// 记下「这道题读屏命中了」。
+  static void _markVisionHit(String fingerprint) {
+    final stem = QuizSearchPolicy.stemFingerprint(fingerprint);
+    if (stem.isEmpty) return;
+    _lastVisionHitStem = stem;
+    _lastVisionHitAt = DateTime.now();
+  }
+
+  /// 这次的「未搜到/未命中」文案该不该**不画**。
+  ///
+  /// 两种情况都让路：
+  ///   1. 同题还有一条读屏请求在飞 —— 答案马上就到，先别报未命中（文案会闪两次）；
+  ///   2. 同题刚刚读屏命中过（[visionHitPaintGuard] 内）—— 不许把答案盖掉。
+  static bool _missPaintBlocked(String fingerprint) {
+    final stem = QuizSearchPolicy.stemFingerprint(fingerprint);
+    if (stem.isEmpty) return false;
+    if (_visionInFlightStem.isNotEmpty && stem == _visionInFlightStem) {
+      QuizDiag.log(QuizDiagStage.result, '跳过未命中重绘：同题读屏仍在飞',
+          fields: {'fp': stem.length > 16 ? '${stem.substring(0, 16)}…' : stem});
+      return true;
+    }
+    final at = _lastVisionHitAt;
+    if (at != null &&
+        stem == _lastVisionHitStem &&
+        DateTime.now().difference(at) < visionHitPaintGuard) {
+      QuizDiag.log(QuizDiagStage.result, '跳过未命中重绘：同题刚读屏命中，别把答案盖掉',
+          fields: {'ageMs': DateTime.now().difference(at).inMilliseconds});
+      return true;
+    }
+    return false;
+  }
+
+  /// 单测接缝：直接问「这次未命中文案会不会被拦」。
+  @visibleForTesting
+  static bool debugMissPaintBlocked(String fingerprint) => _missPaintBlocked(fingerprint);
+
+  /// 单测接缝：模拟一次读屏命中。
+  @visibleForTesting
+  static void debugMarkVisionHit(String fingerprint) => _markVisionHit(fingerprint);
+
+  /// 单测接缝：清空命中/在飞状态。
+  @visibleForTesting
+  static void debugResetVisionState() {
+    _lastVisionHitStem = '';
+    _lastVisionHitAt = null;
+    _visionInFlightStem = '';
+  }
+
   /// 高质量命中才短路同题刷新；半题/低分命中允许选项补齐后纠错。
   static final QuizSearchPolicy _searchPolicy = QuizSearchPolicy();
   static Timer? _captureDebounce;
@@ -1235,6 +1295,7 @@ class QuizPluginEntry {
         result: visionResult,
         imageHash: imageHash,
       );
+      _markVisionHit(fingerprint);
       final list = _answersListForOverlay(visionResult);
       final ambiguity = overlayDecisionForResult(visionResult, list);
       final ambiguousText = ambiguity.status == 'ambiguous'
@@ -1267,6 +1328,7 @@ class QuizPluginEntry {
     }
 
     // 读屏也未产出：如实告知，绝不编造答案。
+    if (_missPaintBlocked(fingerprint)) return;
     await _pushOverlay(
       question: captured,
       answers: _visionFailureHint(visionResult),
@@ -1360,6 +1422,7 @@ class QuizPluginEntry {
     }
 
     if (result == null) {
+      if (_missPaintBlocked(fingerprint)) return;
       await _pushOverlay(
         question: captured,
         answers: _visionFailureHint(null),
@@ -1369,6 +1432,7 @@ class QuizPluginEntry {
       return;
     }
 
+    if (result.isSuccess) _markVisionHit(fingerprint);
     final source = _sourceForResult(result);
     if (result.isSuccess) {
       if (!_searchPolicy.canReplaceWith(source, stem: fingerprint)) {
@@ -1382,6 +1446,7 @@ class QuizPluginEntry {
         result: result,
       );
     }
+    if (!result.isSuccess && _missPaintBlocked(fingerprint)) return;
     final list = _answersListForOverlay(result);
     final ambiguity = overlayDecisionForResult(result, list);
     await _pushOverlay(
