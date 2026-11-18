@@ -353,11 +353,6 @@ class QuizPluginEntry {
     }
   }
 
-  /// 推送 AI 作答过程文本到答题悬浮窗（显示在答案下方）。
-  /// 传空串可清空并隐藏该区块。
-  static Future<void> pushAiProcess(String text) =>
-      AiProcessBridge.push(text);
-
   /// 设置答案悬浮窗透明度（0.3~1.0）。
   static Future<void> setOverlayOpacity(double opacity) async {
     try {
@@ -838,6 +833,63 @@ class QuizPluginEntry {
     );
   }
 
+  /// 把一次搜索结果组装成悬浮窗内容并推送 —— **成功结果的唯一出口**。
+  ///
+  /// 2026-11-18 审计 P1-1：这段组装原本在 5 处各写一遍，而且已经漂移：
+  ///   · 文本题库路径少了 `imageQuestion`（同题干爆炸）分支；
+  ///   · 手动读屏路径同样少了 `imageQuestion`，也没走平台超时预算；
+  ///   · 有一条分支在一次调用里把 `_answersListForOverlay` 算了 5 遍（每次都重算
+  ///     列表与去重，纯浪费）;
+  ///   · debugCapture 的拼接只有一处有，其余路径开了调试也看不见原文。
+  /// 漂移的后果不是"代码丑"，而是**同类 bug 改一处漏三条路径** ——
+  /// 11-17（dHash 污染题目身份）与 11-18（未命中盖掉答案）两次报障都是这个形状。
+  ///
+  /// 参数 [question] 是**要显示在悬浮窗上的题干**（调用方决定用捕获文本还是
+  /// 模型回填的题干）；[result] 须为 `isSuccess` 的结果，失败请走 `_pushMiss`。
+  static Future<void> pushResultOverlay(
+    QuizResult result, {
+    required String question,
+    required QuizConfig config,
+  }) async {
+    assert(result.isSuccess, 'pushResultOverlay 只用于成功结果；失败走 _pushMiss');
+    // 只算一次：下面所有分支共用（原实现在一处算了 5 遍）。
+    final list = _answersListForOverlay(result);
+    final ambiguity = overlayDecisionForResult(result, list);
+    // 歧义（多个同分候选）与同题干爆炸（标志图题）是两种**不同**的态：
+    // 前者端出候选让用户挑，后者任何候选都是随机误导 ⇒ 只提示「对照题图作答」。
+    final ambiguousText = ambiguity.status == 'ambiguous'
+        ? ambiguousCandidatesForOverlay(result)
+        : null;
+    final imageQuestionText = ambiguity.status == 'imageQuestion'
+        ? imageQuestionOverlayBody(result)
+        : null;
+    final overlayList = imageQuestionText != null
+        ? <String>[imageQuestionText]
+        : ambiguousText == null
+            ? list
+            : <String>[ambiguousText];
+    final overlayAnswers = imageQuestionText ??
+        ambiguousText ??
+        (overlayList.isNotEmpty
+            ? _withSimilarityMarker(overlayList.first, result)
+            : _withSimilarityMarker(_formatResultForOverlay(result), result));
+    await _pushOverlay(
+      question: question,
+      answers: config.debugCapture
+          ? '$overlayAnswers\n\n--- 调试捕获文本 ---\n${_formatDebugCapture(question)}'
+          : overlayAnswers,
+      displayMode: config.displayMode,
+      status: ambiguity.status,
+      answerKey: ambiguity.answerKey,
+      similarity: _similarityForResult(result),
+      matchIndex: 0,
+      matchCount: overlayList.isNotEmpty
+          ? overlayList.length
+          : result.answers.length.clamp(1, 9),
+      answersList: overlayList,
+    );
+  }
+
   static Future<void> _pushOverlay({
     required String question,
     required String answers,
@@ -1120,43 +1172,7 @@ class QuizPluginEntry {
             result: result,
             imageHash: imageHash,
           );
-          final list = _answersListForOverlay(result);
-          final ambiguity = overlayDecisionForResult(result, list);
-          final ambiguousText = ambiguity.status == 'ambiguous'
-              ? ambiguousCandidatesForOverlay(result)
-              : null;
-          // 同题干爆炸（标志图题）：不端任何候选，明确要求对照题图作答。
-          final imageQuestionText = ambiguity.status == 'imageQuestion'
-              ? imageQuestionOverlayBody(result)
-              : null;
-          final overlayList = imageQuestionText != null
-              ? <String>[imageQuestionText]
-              : ambiguousText == null
-                  ? list
-                  : <String>[ambiguousText];
-          final overlayAnswers = imageQuestionText ??
-              ambiguousText ??
-              (overlayList.isNotEmpty
-                  ? _withSimilarityMarker(overlayList.first, result)
-                  : _withSimilarityMarker(
-                      _formatResultForOverlay(result),
-                      result,
-                    ));
-          await _pushOverlay(
-            question: captured,
-            answers: config.debugCapture
-                ? '$overlayAnswers\n\n--- 调试捕获文本 ---\n${_formatDebugCapture(captured)}'
-                : overlayAnswers,
-            displayMode: config.displayMode,
-            status: ambiguity.status,
-            answerKey: ambiguity.answerKey,
-            similarity: _similarityForResult(result),
-            matchIndex: 0,
-            matchCount: overlayList.isNotEmpty
-                ? overlayList.length
-                : result.answers.length.clamp(1, 9),
-            answersList: overlayList,
-          );
+          await pushResultOverlay(result, question: captured, config: config);
           return;
         }
         // 文本未命中：若 OCR 开启则兜底，否则展示失败
@@ -1177,29 +1193,14 @@ class QuizPluginEntry {
             );
             if (!_isCurrentRequest(currentGeneration, fingerprint)) return;
             if (visionOnly != null && visionOnly.isSuccess) {
-              await _pushOverlay(
+              // 原来这里 `_answersListForOverlay` 算 5 遍、`overlayDecisionForResult`
+              // 算 2 遍，且**漏了**同题干爆炸分支 ⇒ 标志图题会端出随机候选。
+              await pushResultOverlay(
+                visionOnly,
                 question: visionOnly.question.isNotEmpty
                     ? visionOnly.question
                     : captured,
-                answers: _withSimilarityMarker(
-                  _answersListForOverlay(visionOnly).isNotEmpty
-                      ? _answersListForOverlay(visionOnly).first
-                      : _formatResultForOverlay(visionOnly),
-                  visionOnly,
-                ),
-                displayMode: config.displayMode,
-                status: overlayDecisionForResult(
-                  visionOnly,
-                  _answersListForOverlay(visionOnly),
-                ).status,
-                answerKey: overlayDecisionForResult(
-                  visionOnly,
-                  _answersListForOverlay(visionOnly),
-                ).answerKey,
-                similarity: _similarityForResult(visionOnly),
-                matchIndex: 0,
-                matchCount: _answersListForOverlay(visionOnly).length.clamp(1, 9),
-                answersList: _answersListForOverlay(visionOnly),
+                config: config,
               );
               return;
             }
@@ -1251,35 +1252,20 @@ class QuizPluginEntry {
             imageHash: imageHash,
           );
         }
-        final list = _answersListForOverlay(ocrResult);
-        final ambiguity = overlayDecisionForResult(ocrResult, list);
-        final ambiguousText =
-            ocrResult.isSuccess && ambiguity.status == 'ambiguous'
-            ? ambiguousCandidatesForOverlay(ocrResult)
-            : null;
-        final overlayList = ambiguousText == null
-            ? list
-            : <String>[ambiguousText];
-        final overlayAnswers =
-            ambiguousText ??
-            (overlayList.isNotEmpty
-                ? _withSimilarityMarker(overlayList.first, ocrResult)
-                : _withSimilarityMarker(
-                    _formatResultForOverlay(ocrResult),
-                    ocrResult,
-                  ));
-        await _pushOverlay(
-          question: ocrResult.question,
-          answers: overlayAnswers,
-          displayMode: config.displayMode,
-          status: ocrResult.isSuccess ? ambiguity.status : 'miss',
-          answerKey: ocrResult.isSuccess ? ambiguity.answerKey : null,
-          similarity: _similarityForResult(ocrResult),
-          matchIndex: 0,
-          matchCount: overlayList.isNotEmpty
-              ? overlayList.length
-              : ocrResult.answers.length.clamp(1, 9),
-          answersList: overlayList,
+        if (!ocrResult.isSuccess) {
+          // 失败不冒充「歧义/命中」：走未命中出口（守卫在 _pushMiss 里）。
+          await _pushMiss(
+            fingerprint: fingerprint,
+            question: ocrResult.question.isEmpty ? captured : ocrResult.question,
+            answers: _formatResultForOverlay(ocrResult),
+            config: config,
+          );
+          return;
+        }
+        await pushResultOverlay(
+          ocrResult,
+          question: ocrResult.question.isEmpty ? captured : ocrResult.question,
+          config: config,
         );
         return;
       }
@@ -1319,33 +1305,11 @@ class QuizPluginEntry {
         imageHash: imageHash,
       );
       _markVisionHit(fingerprint);
-      final list = _answersListForOverlay(visionResult);
-      final ambiguity = overlayDecisionForResult(visionResult, list);
-      final ambiguousText = ambiguity.status == 'ambiguous'
-          ? ambiguousCandidatesForOverlay(visionResult)
-          : null;
-      final overlayList = ambiguousText == null
-          ? list
-          : <String>[ambiguousText];
-      final overlayAnswers = ambiguousText ??
-          (overlayList.isNotEmpty
-              ? _withSimilarityMarker(overlayList.first, visionResult)
-              : _withSimilarityMarker(
-                  _formatResultForOverlay(visionResult),
-                  visionResult,
-                ));
-      await _pushOverlay(
-        question: visionResult.question.isNotEmpty ? visionResult.question : captured,
-        answers: overlayAnswers,
-        displayMode: config.displayMode,
-        status: ambiguity.status,
-        answerKey: ambiguity.answerKey,
-        similarity: _similarityForResult(visionResult),
-        matchIndex: 0,
-        matchCount: overlayList.isNotEmpty
-            ? overlayList.length
-            : visionResult.answers.length.clamp(1, 9),
-        answersList: overlayList,
+      await pushResultOverlay(
+        visionResult,
+        question:
+            visionResult.question.isNotEmpty ? visionResult.question : captured,
+        config: config,
       );
       return;
     }
@@ -1469,22 +1433,20 @@ class QuizPluginEntry {
         result: result,
       );
     }
-    if (!result.isSuccess && _missPaintBlocked(fingerprint)) return;
-    final list = _answersListForOverlay(result);
-    final ambiguity = overlayDecisionForResult(result, list);
-    await _pushOverlay(
+    // 失败：走未命中出口（它内部就带 `_missPaintBlocked` 守卫，不再重复判断）。
+    if (!result.isSuccess) {
+      await _pushMiss(
+        fingerprint: fingerprint,
+        question: result.question.isEmpty ? captured : result.question,
+        answers: _visionFailureHint(result),
+        config: config,
+      );
+      return;
+    }
+    await pushResultOverlay(
+      result,
       question: result.question.isEmpty ? captured : result.question,
-      answers: result.isSuccess
-          ? (ambiguity.status == 'ambiguous'
-              ? ambiguousCandidatesForOverlay(result)
-              : (list.isNotEmpty
-                  ? _withSimilarityMarker(list.first, result)
-                  : _withSimilarityMarker(_formatResultForOverlay(result), result)))
-          : _visionFailureHint(result),
-      displayMode: config.displayMode,
-      status: result.isSuccess ? ambiguity.status : 'miss',
-      answerKey: result.isSuccess ? ambiguity.answerKey : null,
-      answersList: result.isSuccess ? list : const [],
+      config: config,
     );
   }
 
@@ -1981,16 +1943,9 @@ class QuizPluginEntry {
           // 自动搜题失败不影响主流程
         }
       } else if (call.method == 'onRegionPreview') {
-        final a = call.arguments;
-        if (a is Map) {
-          final r = Rect.fromLTRB(
-            (a['left'] as num?)?.toDouble() ?? 0,
-            (a['top'] as num?)?.toDouble() ?? 0,
-            (a['right'] as num?)?.toDouble() ?? 0,
-            (a['bottom'] as num?)?.toDouble() ?? 0,
-          );
-          _regionPreviewNotifier.value = r;
-        }
+        // 原生框选拖动时回传实时区域。原先写进一个 `_regionPreviewNotifier`
+        // 但**没有任何读取方**（审计 P1-5：只写不读的状态），产物为零、还得
+        // 在各种排查里解释它是什么。这里保留分支但不再建状态（原生照旧能回调）。
       } else if (call.method == 'nativeDebugLog') {
         // 原生侧（悬浮窗尺寸/dp 计算/迁移）诊断日志汇入同一个调试日志库，
         // 用户报「悬浮窗大小没变化」时能在同一处看到原生真实 density 与取值。
@@ -1999,8 +1954,6 @@ class QuizPluginEntry {
         if (msg.trim().isNotEmpty) {
           AppLogger.instance.logTo(LogChannel.quiz, '[native] $msg');
         }
-      } else if (call.method == 'cycleMatch') {
-        // 原生多匹配切换：正文已由原生 answersList 切换，此处仅记录
       } else if (call.method == 'regionOcrProbe') {
         // 原生截图后携带本次字节，杜绝读取全局旧图。
         final args = call.arguments;
@@ -2382,10 +2335,6 @@ class QuizPluginEntry {
       }
     }
   }
-
-  /// 原生框选拖动时的实时区域回传（屏幕坐标），供应用内数字联动。
-  static final ValueNotifier<Rect?> _regionPreviewNotifier =
-      ValueNotifier<Rect?>(null);
 
   // 配置页
   static Future<void> showConfigSheet(BuildContext context) async {

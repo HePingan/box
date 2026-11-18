@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import '../../../utils/app_logger.dart';
 import '../domain/quiz_config.dart';
 import '../domain/quiz_bank.dart';
+import '../domain/quiz_text_metrics.dart';
 import '../domain/ocr_quiz_parser.dart';
 import '../domain/quiz_answer_aligner.dart';
 import '../domain/quiz_diag.dart';
@@ -975,15 +976,7 @@ class QuizEngine {
         RegExp(r'图\d').hasMatch(t);
   }
 
-  bool _isImageLikeOption(String raw) {
-    final n = QuizBankTextNormalizer.normalizeOption(raw);
-    if (n.isEmpty) return false;
-    return RegExp(r'^图\s*\d+$').hasMatch(n) ||
-        RegExp(r'^图[一二三四五六七八九十]+$').hasMatch(n) ||
-        RegExp(r'^图片\d*$').hasMatch(n) ||
-        n == '如图' ||
-        n == '见图';
-  }
+  bool _isImageLikeOption(String raw) => QuizTextMetrics.isImageLikeOption(raw);
 
   bool _isImageLikeAnswer(String raw) {
     final t = raw.trim();
@@ -995,12 +988,8 @@ class QuizEngine {
         RegExp(r'^[答案：:\s]*[A-Ha-h][.、．:：)\s]*图\s*\d+').hasMatch(t);
   }
 
-  bool _isImageLikeOptionSet(List<String> options) {
-    final cleaned = options.map((e) => e.trim()).where((e) => e.isNotEmpty);
-    if (cleaned.isEmpty) return false;
-    final imageCount = cleaned.where(_isImageLikeOption).length;
-    return imageCount >= max(1, (cleaned.length + 1) ~/ 2);
-  }
+  bool _isImageLikeOptionSet(List<String> options) =>
+      QuizTextMetrics.isImageLikeOptionSet(options);
 
   bool _isTextLikeOptionSet(List<String> options) {
     final cleaned = options
@@ -1126,35 +1115,16 @@ class QuizEngine {
     return item.correctAnswer.trim();
   }
 
-  int _similarityScore(String a, String b) {
-    if (a.isEmpty || b.isEmpty) return 0;
-    final lcs = _longestCommonSubsequenceLength(a, b);
-    final lcsScore = (lcs * 200 / (a.length + b.length)).round();
-    final setA = a.split('').toSet();
-    final setB = b.split('').toSet();
-    final union = setA.union(setB).length;
-    final inter = setA.intersection(setB).length;
-    final jaccard = union == 0 ? 0 : (inter * 100 / union).round();
-    // 字符集合重叠容易把“机动车/道路/正确/错误”等通用词误判，作为弱信号限幅。
-    return max(lcsScore, min(jaccard, 72));
-  }
+  /// 引擎相似度：字符集合限幅 72（比对齐器严 —— 这里没有选项对齐兜底，
+  /// 通用词重叠容易把不相关的题抬过阈值）。
+  /// 实现收到 [QuizTextMetrics]（审计 P1-4：原为两份逐字重复的实现）。
+  int _similarityScore(String a, String b) => QuizTextMetrics.similarityPercent(
+        a,
+        b,
+        jaccardCap: 72,
+        exactShortcut: false,
+      );
 
-  int _longestCommonSubsequenceLength(String a, String b) {
-    final previous = List<int>.filled(b.length + 1, 0);
-    final current = List<int>.filled(b.length + 1, 0);
-    for (var i = 1; i <= a.length; i++) {
-      for (var j = 1; j <= b.length; j++) {
-        current[j] = a.codeUnitAt(i - 1) == b.codeUnitAt(j - 1)
-            ? previous[j - 1] + 1
-            : max(previous[j], current[j - 1]);
-      }
-      for (var j = 0; j <= b.length; j++) {
-        previous[j] = current[j];
-        current[j] = 0;
-      }
-    }
-    return previous[b.length];
-  }
 
   /// 外部「AI 读屏」的**默认**模型名（`config.apiModel` 为空时用它）。
   ///
