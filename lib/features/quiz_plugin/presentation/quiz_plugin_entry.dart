@@ -719,6 +719,32 @@ class QuizPluginEntry {
     _lastMissAt = at ?? DateTime.now();
   }
 
+  /// 「本次读屏其实成功过，但结果因为换题被丢弃」的题干指纹。
+  ///
+  /// 用途只有一个：**别用「未搜到」骗人**。读屏成功、屏幕却出现未命中文案，
+  /// 会让用户以为 AI 白跑了一趟（用户 2026-11-18 截图实证）。
+  static String _discardedVisionStem = '';
+
+  /// 本题是否属于「读屏已成功、只是归属变了」—— 命中即消费掉标记。
+  static bool _consumeDiscardedVision(String fingerprint) {
+    if (_discardedVisionStem.isEmpty) return false;
+    if (_discardedVisionStem != QuizSearchPolicy.stemFingerprint(fingerprint)) {
+      return false;
+    }
+    _discardedVisionStem = '';
+    return true;
+  }
+
+  /// 单测接缝。
+  @visibleForTesting
+  static void debugSetDiscardedVisionStem(String stem) =>
+      _discardedVisionStem = stem;
+
+  /// 单测接缝。
+  @visibleForTesting
+  static bool debugConsumeDiscardedVision(String fingerprint) =>
+      _consumeDiscardedVision(fingerprint);
+
   /// 记下「这道题读屏命中了」。
   static void _markVisionHit(String fingerprint) {
     final stem = QuizSearchPolicy.stemFingerprint(fingerprint);
@@ -788,6 +814,7 @@ class QuizPluginEntry {
   /// 单测接缝：清空命中/在飞状态。
   @visibleForTesting
   static void debugResetVisionState() {
+    _discardedVisionStem = '';
     _lastMissFingerprint = '';
     _lastMissAnswers = '';
     _lastMissAt = null;
@@ -1409,6 +1436,17 @@ class QuizPluginEntry {
       return;
     }
 
+    // 读屏也没产出。但有一种情况**不许报未命中**：本题读屏其实成功了，
+    // 只是结果归属变了（换题）—— 那时屏幕该由新题自己的检索来画，
+    // 在这里补一句「未搜到」等于把成功说成失败（2026-11-18 真机报障）。
+    if (_consumeDiscardedVision(fingerprint)) {
+      QuizDiag.log(
+        QuizDiagStage.result,
+        '不报未命中：本题读屏已成功，结果因换题丢弃',
+        fields: {'fp': fingerprint.length > 24 ? fingerprint.substring(0, 24) : fingerprint},
+      );
+      return;
+    }
     // 读屏也未产出：如实告知，绝不编造答案（守卫在 _pushMiss 里）。
     await _pushMiss(
       fingerprint: fingerprint,
@@ -1981,7 +2019,20 @@ class QuizPluginEntry {
         return quizVisionCredentialResolver.resolveAnonymous(config);
       },
     );
-    if (!_isCurrentRequest(requestGeneration, requestFingerprint)) return null;
+    // ⚠️ 用户 2026-11-18 真机画面对证（截图 img_8093e789）：
+    //     过程区写着「④ 识别成功，用时 3276ms」，结论区却是「未搜到答案」。
+    //     真因就是这一行旧写法：读屏要跑 3~15 秒，跑完那一刻又抓了一屏，
+    //     generation 变了 ⇒ 这里把**已经拿到的答案**直接丢掉，调用方随即
+    //     走 `_pushMiss` 报未命中 —— 于是「识别成功」和「未搜到」同时出现在
+    //     同一块悬浮窗上。
+    //     判据与 `_acceptVisionResult` 一致：只认纯题干，同一道题的答案不许
+    //     被 generation 漂移否掉。真的换题了才丢，并且记下「本题读屏其实成功过」，
+    //     让调用方别用「未搜到」骗人。
+    if (!_acceptVisionResult(requestGeneration, requestFingerprint)) {
+      _discardedVisionStem =
+          QuizSearchPolicy.stemFingerprint(requestFingerprint);
+      return null;
+    }
     if (!result.isSuccess) {
       // 代理 401 走到这里 = 降级后仍被拒（或没有可降级的档）：
       //   * 设备档被拒 → 清本机令牌，下次自动重新签发（自愈）；
