@@ -1221,6 +1221,8 @@ class QuizPluginEntry {
     // （原始文本会带上 A./B. 选项行）会让节流判定恒不相等而彻底失效。
     _searchPolicy.recordAttempt(stem: fingerprint, options: probeOptions);
 
+    // 题库结果要跨出 if (preferText) 作用域，供读屏兜底判断「这题是不是标志图题」。
+    QuizResult? textPathResult;
     if (!fromOcr) {
       // 试捕 / 手动搜 / 无障碍捕获：有文本就先走题库（题干+选项）
       final preferText =
@@ -1259,6 +1261,7 @@ class QuizPluginEntry {
           imagePerceptualHash: imageHash,
         );
         sw.stop();
+        textPathResult = result;
         QuizDiag.log(
           QuizDiagStage.result,
           'engine.search 返回',
@@ -1410,6 +1413,9 @@ class QuizPluginEntry {
       hintQuestion: captured,
       requestGeneration: currentGeneration,
       requestFingerprint: fingerprint,
+      // 题库已判「同题干候选爆炸」（标志图题）⇒ 本地库永远无解，
+      // 唯一出路就是 AI 读屏，不许被「同一屏冷却」挡在外面。
+      bypassRepeatCooldown: textPathResult?.stemExplosion ?? false,
     );
     if (visionResult != null && visionResult.isSuccess) {
       // 同一道题的读屏答案不允许被「期间又抓了一屏」否掉。
@@ -1448,10 +1454,17 @@ class QuizPluginEntry {
       return;
     }
     // 读屏也未产出：如实告知，绝不编造答案（守卫在 _pushMiss 里）。
+    // 题库判了「同题干候选爆炸」时，原因必须说出来：用户看到「未搜到」会以为是
+    // 识别坏了，而真相是「题干在这套题库里没有区分度，只能看题图」。
+    final explosionCount = textPathResult?.stemExplosionCount ?? 0;
+    final explosionHint = (textPathResult?.stemExplosion ?? false)
+        ? '这道题在题库里有 $explosionCount 条同题干、答案互不相同，'
+            '仅凭文字无法区分，只能对照题图判断。\n'
+        : '';
     await _pushMiss(
       fingerprint: fingerprint,
       question: captured,
-      answers: _visionFailureHint(visionResult),
+      answers: '$explosionHint${_visionFailureHint(visionResult)}',
       config: config,
     );
   }
@@ -1786,8 +1799,21 @@ class QuizPluginEntry {
 
   /// 同一屏最短重复间隔（读屏是**付费**调用；手动点 AI 不受它限制）。
   static Duration visionRepeatCooldown = const Duration(seconds: 10);
+
+  /// 上次读屏**失败**后的冷却。
+  ///
+  /// 真机自检页证据（2026-11-18 21:14）：标志图题上
+  /// `engine.search 返回 ok=false` 之后连着两条「读屏跳过：同一屏冷却中 10000ms」
+  /// —— 本地题库对标志图题必然无解，AI 读屏是唯一出路，却被 10 秒冷却挡在门外，
+  /// 用户只能对着「未搜到」干等。失败后没有「已经得到答案」需要保护，冷却只为
+  /// 防止连环烧钱，3 秒足够。
+  static Duration visionRepeatCooldownAfterFailure = const Duration(seconds: 3);
   static String _lastVisionFingerprint = '';
   static DateTime? _lastVisionAt;
+
+  /// 上次读屏是否拿到了答案（null = 还没跑过）。
+  /// 用于区分冷却时长：成功 10s（答案已在屏上，别重复烧钱）；失败 3s（用户还在等）。
+  static bool? _lastVisionOk;
 
   /// 自动路径的「**明显不是题**」判据（纯函数，单测直接覆盖）。
   ///
@@ -1853,6 +1879,7 @@ class QuizPluginEntry {
     required int requestGeneration,
     required String requestFingerprint,
     bool manual = false,
+    bool bypassRepeatCooldown = false,
   }) async {
     // 同一题同时只允许一条读屏请求在飞。
     // 真机 2026-11-17：自动捕获与手动按钮各起一条时，悬浮窗会「检索中 → 答案 →
@@ -1872,6 +1899,7 @@ class QuizPluginEntry {
         requestGeneration: requestGeneration,
         requestFingerprint: requestFingerprint,
         manual: manual,
+        bypassRepeatCooldown: bypassRepeatCooldown,
       ).timeout(visionFlowTimeout);
     } on TimeoutException catch (_) {
       QuizDiag.warn(
@@ -1894,6 +1922,10 @@ class QuizPluginEntry {
       if (stemKey.isEmpty || _visionInFlightStem == stemKey) {
         _visionInFlightStem = '';
       }
+      // 阶段文案是「当前在干什么」的快照：流程一结束就该归位。
+      // 自检页曾显示「当前阶段：截图」而实际早已结束（2026-11-18 真机自检输出），
+      // 这种残留会让排查者以为卡在截图。
+      visionPhase = '空闲';
     }
   }
 
@@ -1905,6 +1937,7 @@ class QuizPluginEntry {
     required int requestGeneration,
     required String requestFingerprint,
     bool manual = false,
+    bool bypassRepeatCooldown = false,
   }) async {
     if (!visionFallbackEnabled(config)) return null;
     if (!_isCurrentRequest(requestGeneration, requestFingerprint)) return null;
@@ -1920,20 +1953,35 @@ class QuizPluginEntry {
         );
         return null;
       }
-      if (_lastVisionAt != null &&
+      // 题库已判定「同题干候选爆炸」（标志图题）：这类题本地库永远无解，
+      // 冷却只会让用户在唯一的出路（AI 读屏）前面干等 —— 直接放行。
+      final cooldown = bypassRepeatCooldown
+          ? Duration.zero
+          : (_lastVisionOk == false
+              ? visionRepeatCooldownAfterFailure
+              : visionRepeatCooldown);
+      if (cooldown > Duration.zero &&
+          _lastVisionAt != null &&
           requestFingerprint.isNotEmpty &&
           requestFingerprint == _lastVisionFingerprint &&
-          gateAt.difference(_lastVisionAt!) < visionRepeatCooldown) {
+          gateAt.difference(_lastVisionAt!) < cooldown) {
         QuizDiag.log(
           QuizDiagStage.result,
           '读屏跳过：同一屏冷却中',
-          fields: {'cooldownMs': visionRepeatCooldown.inMilliseconds},
+          fields: {
+            'cooldownMs': cooldown.inMilliseconds,
+            'lastOk': _lastVisionOk ?? '-',
+            'reason': _lastVisionOk == false ? '上次失败，短冷却' : '上次已出答案',
+          },
         );
         return null;
       }
     }
     _lastVisionFingerprint = requestFingerprint;
     _lastVisionAt = gateAt;
+    // 先按「没拿到答案」记账：本次任何非成功出口（截图为空/上游失败/被换题丢弃）
+    // 都不用再补写，只有真出答案时置 true。
+    _lastVisionOk = false;
 
     await _pushOverlay(
       question: '新题 · AI 读屏中…',
@@ -2034,6 +2082,7 @@ class QuizPluginEntry {
       return null;
     }
     if (!result.isSuccess) {
+      _lastVisionOk = false;
       // 代理 401 走到这里 = 降级后仍被拒（或没有可降级的档）：
       //   * 设备档被拒 → 清本机令牌，下次自动重新签发（自愈）；
       //   * 登录档被拒 → 全局标记「登录已失效」，让「我的」页面直接提示重新登录。
@@ -2066,6 +2115,7 @@ class QuizPluginEntry {
         screenshot: bytes,
       ));
     }
+    _lastVisionOk = true;
     return result;
   }
 
