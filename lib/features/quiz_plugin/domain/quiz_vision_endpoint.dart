@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'quiz_config.dart';
 
 /// AI 读屏凭证（方案 A：服务端代理；本轮扩展：未登录走匿名设备令牌）。
@@ -141,15 +143,54 @@ const String visionProxyCredentialExpiredText =
 /// 代理两种档共用代理分支：401/403/429 都是确定性结论（凭证失效 / 代理未开 /
 /// 日限额），必须给**可行动**文案；直连保留旧「渠道鉴权不稳」口径
 /// （同一 key 间歇 200/401 的历史实测结论）。
-String visionHttpErrorText(int statusCode, {required bool viaProxy}) {
+/// 从代理错误响应体里取 `error.code`（后端 2026-11-18 起会带）。
+///
+/// 为什么必须分：429 有两种（突发限流＝等几秒、日额度＝今天没了），
+/// 403 有三种（代理未开 / 设备被管理员撤销 / 账号停用）。
+/// 以前一律按状态码出文案，用户会被指向错误的排查方向
+/// （「等 60 秒就能继续」被说成「今天已用完」，「被拉黑」被说成「代理未开」）。
+String? visionErrorCodeFrom(String? body) {
+  final text = (body ?? '').trim();
+  if (text.isEmpty) return null;
+  try {
+    final decoded = jsonDecode(text);
+    if (decoded is Map) {
+      final err = decoded['error'];
+      if (err is Map && err['code'] is String) {
+        final code = (err['code'] as String).trim();
+        if (code.isNotEmpty) return code;
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+String visionHttpErrorText(
+  int statusCode, {
+  required bool viaProxy,
+  String? errorCode,
+}) {
   if (viaProxy) {
+    switch (errorCode) {
+      case 'burst_limited':
+        return '读屏请求过于频繁（每分钟上限），稍等几秒再试即可';
+      case 'daily_cap_exhausted':
+        return '今日 AI 读屏次数已用完（按 UTC 日界，北京时间每天 08:00 重置）';
+      case 'device_revoked':
+        return '本机读屏权限已被管理员停用，如需恢复请联系管理员';
+      case 'account_disabled':
+        return '账号不可用（可能已被停用），请重新登录或联系管理员';
+      case 'device_issue_rate_limited':
+        return '读屏设备令牌签发过于频繁，稍后再试';
+    }
     switch (statusCode) {
       case 401:
         return visionProxyCredentialExpiredText;
       case 403:
         return '读屏代理不可用（未开启或暂被限制）';
       case 429:
-        return '今日 AI 读屏次数已用完，明天再来吧';
+        // 没有 error.code 时的兜底（老后端）：两种 429 都可能，不要断言是哪种。
+        return '读屏请求过于频繁或今日次数已用完，稍后再试';
       case 503:
         return '读屏服务繁忙，稍后再试';
     }

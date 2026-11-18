@@ -31,6 +31,7 @@ class _AccessibilityStatusCardState extends State<_AccessibilityStatusCard> {
     if (mounted) setState(() => _checking = false);
   }
 
+
   @override
   Widget build(BuildContext context) {
     final label = _checking
@@ -92,6 +93,9 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
   bool _saving = false;
   String? _remoteDenial;
   late final TextEditingController _ocrEndpointController;
+
+  /// 正在探活 OCR 服务（开关旁边显示转圈）。
+  bool _ocrProbing = false;
   late final TextEditingController _ocrTokenController;
   late final TextEditingController _apiUrlController;
   late final TextEditingController _apiKeyController;
@@ -172,17 +176,50 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
     super.dispose();
   }
 
+  /// 打开 OCR 前先探活。
+  ///
+  /// 真事：默认端点 `ocr.hpa888.top` 是自签证书 + 本机 nginx 无 vhost，
+  /// 探活必然失败；以前默认开启 ⇒ 新用户每道题先跑一次必然失败的 OCR。
+  /// 现在默认关闭，只有探通了才允许打开——把「配了但不生效」变成「当场告诉你为什么」。
+  Future<void> _onToggleOcrSearch(bool v) async {
+    if (!v) {
+      setState(() => _cfg = _cfg.copyWith(
+            ocrSearch: false,
+            enabled: _cfg.accessibilityCapture,
+          ));
+      return;
+    }
+    final endpoint = _ocrEndpointController.text.trim().isEmpty
+        ? _cfg.ocrEndpoint
+        : _ocrEndpointController.text.trim();
+    setState(() => _ocrProbing = true);
+    final reason = await QuizOcrClient.probeHealth(
+      endpoint,
+      token: _cfg.ocrToken,
+    );
+    if (!mounted) return;
+    setState(() => _ocrProbing = false);
+    if (reason != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('OCR 服务不可用，未开启：$reason'),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+      return;
+    }
+    setState(() => _cfg = _cfg.copyWith(ocrSearch: true, enabled: true));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('OCR 服务可用，已开启')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    const themeColors = QuizConfig.themeColors;
-    final colorOptions = [
-      Colors.red,
-      Colors.purple,
-      Colors.blue,
-      Colors.teal,
-      Colors.orange,
-      Colors.green,
-    ];
+    // ⚠️ 这里必须**直接取色板**，不能另写一份硬编码颜色：
+    // 旧实现给了 6 个色块而 QuizConfig.themeColors 只有 5 色，导致点第 6 个
+    // 永不显示选中态、存进去的 index=5 又被渲染成第 1 个颜色（bug 已修）。
+    const colorOptions = QuizConfig.themeColors;
 
     return SafeArea(
       child: SingleChildScrollView(
@@ -278,16 +315,30 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                   contentPadding: EdgeInsets.zero,
                   title: const Text('OCR 截图搜题'),
                   subtitle: const Text(
-                    '截屏识别区域→OCR→搜题，不依赖读屏文本，有些人觉得更快。需 Android 11+，对加密/防截屏页面无效。',
+                    '截屏识别区域→OCR→搜题，不依赖读屏文本。需 Android 11+，对加密/防截屏页面无效。'
+                    '默认关闭：开启前会先探活 OCR 服务，探不通不让开（否则每题都会先白跑一次）。',
                   ),
                   value: _cfg.ocrSearch,
-                  onChanged: (v) => setState(
-                    () => _cfg = _cfg.copyWith(
-                      ocrSearch: v,
-                      enabled: v || _cfg.accessibilityCapture,
+                  onChanged: _ocrProbing ? null : _onToggleOcrSearch,
+                ),
+                if (_ocrProbing)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 4, bottom: 6),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        SizedBox(width: 8),
+                        Text(
+                          '正在探活 OCR 服务…',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ],
                     ),
                   ),
-                ),
                 if (_cfg.ocrSearch) ...[
                   const SizedBox(height: AppTokens.spaceSm),
                   TextField(
@@ -560,11 +611,8 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                     itemCount: colorOptions.length,
                     separatorBuilder: (_, _) => const SizedBox(width: 12),
                     itemBuilder: (_, i) {
-                      final selected =
-                          themeColors.isNotEmpty &&
-                          themeColors[_cfg.themeColorIndex % themeColors.length]
-                                  .toARGB32() ==
-                              colorOptions[i].toARGB32();
+                      // 顺序一致后直接比索引，不再取模（取模会把越界 index 伪装成已选中）。
+                      final selected = _cfg.themeColorIndex == i;
                       return GestureDetector(
                         onTap: () => setState(
                           () => _cfg = _cfg.copyWith(themeColorIndex: i),

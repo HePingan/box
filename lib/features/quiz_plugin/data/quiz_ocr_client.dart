@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -191,6 +192,58 @@ class QuizOcrClient {
       return OcrResult(fullText: fullText, lines: lines, scores: scores);
     } catch (e) {
       return OcrResult(error: 'OCR 解析失败：$e');
+    }
+  }
+
+  /// 探活 OCR 服务（`GET {endpoint}/api/ocr/health`）。
+  ///
+  /// 为什么必须有它：默认端点 `ocr.hpa888.top` 实测是**自签证书**（subject/issuer 全空）
+  /// 且本机 nginx 无对应 vhost（`/api/ocr/*` 一律 404），Dart 的 http 直接抛
+  /// `HandshakeException`。以前 OCR 默认开启 ⇒ 每个新用户每道题先跑一次必然失败的链路。
+  /// 现在默认关闭，且只有在**探活通过**时才允许在设置里打开。
+  ///
+  /// 返回 null 表示可用；否则返回一句人话原因（直接可以显示给用户）。
+  static Future<String?> probeHealth(
+    String endpoint, {
+    String token = '',
+    Duration timeout = const Duration(seconds: 6),
+    http.Client? httpClient,
+  }) async {
+    var base = endpoint.trim();
+    if (base.isEmpty) base = 'https://ocr.hpa888.top';
+    if (base.endsWith('/')) base = base.substring(0, base.length - 1);
+    final client = httpClient ?? http.Client();
+    final ownClient = httpClient == null;
+    try {
+      final resp = await client
+          .get(
+            Uri.parse('$base/api/ocr/health'),
+            headers: token.trim().isEmpty
+                ? const {}
+                : {'Authorization': 'Bearer ${token.trim()}'},
+          )
+          .timeout(timeout);
+      if (resp.statusCode >= 200 && resp.statusCode < 300) return null;
+      if (resp.statusCode == 404) {
+        return '该地址没有 OCR 服务（/api/ocr/health 返回 404）';
+      }
+      if (resp.statusCode == 401 || resp.statusCode == 403) {
+        return 'OCR 服务拒绝访问（HTTP ${resp.statusCode}），请检查 Token';
+      }
+      return 'OCR 服务异常（HTTP ${resp.statusCode}）';
+    } on TimeoutException {
+      return 'OCR 服务无响应（${timeout.inSeconds}s 超时）';
+    } catch (e) {
+      final text = '$e';
+      if (text.contains('HandshakeException') ||
+          text.contains('CERTIFICATE') ||
+          text.contains('certificate')) {
+        return 'OCR 服务证书无效（自签/不匹配），系统不信任该地址';
+      }
+      if (text.contains('SocketException')) return 'OCR 服务连不上（网络或域名解析失败）';
+      return 'OCR 服务不可用：$text';
+    } finally {
+      if (ownClient) client.close();
     }
   }
 }

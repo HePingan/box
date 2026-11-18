@@ -1429,7 +1429,8 @@ class QuizEngine {
             lastError = fallback.errorMessage;
             break;
           }
-          lastError = visionHttpErrorText(response.statusCode, viaProxy: true);
+          lastError = visionHttpErrorText(response.statusCode,
+              viaProxy: true, errorCode: visionErrorCodeFrom(response.body));
           _visionLog('$tag ✖ 代理 HTTP${response.statusCode} 确定性失败，不重试',
               warn: true);
           break;
@@ -1444,14 +1445,17 @@ class QuizEngine {
           warn: true,
         );
         if (!retryable) {
-          lastError = visionHttpErrorText(response.statusCode, viaProxy: viaProxy);
+          lastError = visionHttpErrorText(response.statusCode,
+              viaProxy: viaProxy,
+              errorCode: visionErrorCodeFrom(response.body));
           _visionLog('$tag ✖ HTTP${response.statusCode} 不可重试，直接失败', warn: true);
           break;
         }
         // 401/403 是「渠道鉴权不稳」而非「key 真无效」（同一 key 间歇 200/401）。
         // 全失败后给用户明确提示，避免误以为是题不会。
         lastAuthFlaky = response.statusCode == 401 || response.statusCode == 403;
-        lastError = visionHttpErrorText(response.statusCode, viaProxy: viaProxy);
+        lastError = visionHttpErrorText(response.statusCode,
+            viaProxy: viaProxy, errorCode: visionErrorCodeFrom(response.body));
         AppLogger.instance.logTo(
           LogChannel.quiz,
           'vision retry: status=${response.statusCode} attempt=$attempt',
@@ -1694,14 +1698,31 @@ class QuizEngine {
   }
 
   Future<QuizResult> _searchCustomApi(String question) async {
-    final uri = Uri.parse(config.apiUrl).replace(
-      queryParameters: {
-        'question': question,
-        if (config.apiKey.isNotEmpty) 'key': config.apiKey,
-      },
-    );
+    final base = Uri.parse(config.apiUrl);
+    final headers = <String, String>{
+      if (config.apiKey.isNotEmpty) 'Authorization': 'Bearer ${config.apiKey}',
+    };
 
-    final response = await _http.get(uri).timeout(QuizVisionTimeouts.httpRequest);
+    // key 不再默认拼进 query：URL 会进 nginx access log、也会出现在各类代理日志里。
+    // 兼容：老自建接口若是按 ?key= 校验的，会在 401/403 时回退一次带 key 的请求。
+    var usedKeyInQuery = false;
+    Future<http.Response> call({required bool withQueryKey}) {
+      final uri = base.replace(queryParameters: {
+        'question': question,
+        if (withQueryKey && config.apiKey.isNotEmpty) 'key': config.apiKey,
+      });
+      return _http.get(uri, headers: headers).timeout(QuizVisionTimeouts.httpRequest);
+    }
+
+    var response = await call(withQueryKey: false);
+    if ((response.statusCode == 401 || response.statusCode == 403) &&
+        config.apiKey.isNotEmpty) {
+      usedKeyInQuery = true;
+      response = await call(withQueryKey: true);
+    }
+    if (usedKeyInQuery) {
+      QuizDiag.warn(QuizDiagStage.source, '自定义搜题接口只认 ?key= 查询串（凭据会进访问日志，建议改成 Authorization 头）');
+    }
 
     if (response.statusCode != 200) {
       return QuizResult(
@@ -1710,7 +1731,8 @@ class QuizEngine {
       );
     }
 
-    final body = jsonDecode(response.body);
+    // ⚠️ 必须 utf8.decode(bodyBytes)：用 response.body 时中文答案会按 latin-1 解成乱码。
+    final body = jsonDecode(utf8.decode(response.bodyBytes));
     final answers = <QuizAnswer>[];
 
     if (body is Map) {
@@ -1756,7 +1778,8 @@ class QuizEngine {
         final uri = Uri.parse(
           api,
         ).replace(queryParameters: {'question': question, 'type': 'json'});
-        final response = await http
+        // 用注入的 _http（而不是全局 http）：这条路径之前无法单测。
+        final response = await _http
             .get(uri, headers: {'User-Agent': 'Mozilla/5.0'})
             .timeout(QuizVisionTimeouts.externalBankHttp);
 
@@ -1799,8 +1822,11 @@ class QuizEngine {
                 answers.add(
                   QuizAnswer(
                     text: trimmed,
-                    source: '内置',
-                    confidence: answers.isEmpty ? 0.9 : 0.5,
+                    source: '内置(未校验)',
+                    // ⚠️ 封顶 0.5：这里是**第三方公共 API 返回的任意文本行**，
+                    // 原来给第一条 0.9 的置信度，等于把「没校验的网页文本」当成
+                    // 与本地题库同等可信的答案。宁可少一个答案，也不出错答案。
+                    confidence: 0.5,
                   ),
                 );
               }
@@ -1813,7 +1839,7 @@ class QuizEngine {
           for (final key in ['answer', 'result', 'text']) {
             final val = data[key];
             if (val is String && val.isNotEmpty) {
-              answers.add(QuizAnswer(text: val, source: '内置', confidence: 0.8));
+              answers.add(QuizAnswer(text: val, source: '内置(未校验)', confidence: 0.5));
               break;
             }
           }
@@ -1821,13 +1847,13 @@ class QuizEngine {
       } else if (json is List) {
         for (final item in json) {
           if (item is String && item.isNotEmpty) {
-            answers.add(QuizAnswer(text: item, source: '内置'));
+            answers.add(QuizAnswer(text: item, source: '内置(未校验)'));
           } else if (item is Map) {
             final text =
                 (item['answer'] ?? item['text'] ?? item['content'] ?? '')
                     .toString();
             if (text.isNotEmpty) {
-              answers.add(QuizAnswer(text: text, source: '内置'));
+              answers.add(QuizAnswer(text: text, source: '内置(未校验)'));
             }
           }
         }
@@ -1839,7 +1865,7 @@ class QuizEngine {
           .where((l) => l.isNotEmpty && l.length > 2)
           .toList();
       if (lines.isNotEmpty) {
-        answers.addAll(lines.map((l) => QuizAnswer(text: l, source: '内置')));
+        answers.addAll(lines.map((l) => QuizAnswer(text: l, source: '内置(未校验)')));
       }
     }
     return answers;

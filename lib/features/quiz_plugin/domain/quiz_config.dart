@@ -1,4 +1,5 @@
-import 'dart:ui';
+import 'dart:ui' show Color;
+
 
 /// 答题插件配置模型
 class QuizConfig {
@@ -12,18 +13,18 @@ class QuizConfig {
     this.filterNoise = true,
     this.debugCapture = false,
     this.maxCaptureLines = 8,
-    this.overlayX = 0.0,
-    this.overlayY = 0.0,
     this.overlayWidth = 320.0,
     this.overlayHeight = 400.0,
     this.themeColorIndex = 0,
     this.bankEnabled = true,
-    this.bankPriority = true,
     this.bankMaxMatches = 3,
     this.allowExternalApi = false,
     // 搜题方式开关：无障碍读屏 / OCR 截图，二者独立，任一开启即可工作
     this.accessibilityCapture = true,
-    this.ocrSearch = true,
+    // 默认关闭：ocr.hpa888.top 目前无有效证书且无 vhost（实测 404），
+    // 默认开启等于让每个新用户每道题先跑一次必然失败的 OCR。
+    // 开启前会在配置页先探活 /api/ocr/health。
+    this.ocrSearch = false,
     this.ocrEndpoint = 'https://ocr.hpa888.top',
     this.ocrToken = '',
     this.overlayOpacity = 1.0,
@@ -38,7 +39,6 @@ class QuizConfig {
     this.examOverlaySize = 'standard',
 
     /// 题图比对区域（屏幕像素比例 0~1）；为空表示不启用图像消歧。
-    this.regionForImage,
   });
 
   final bool enabled;
@@ -66,8 +66,6 @@ class QuizConfig {
   /// 调试捕获：显示无障碍原始/清洗后的屏幕文本，便于定位捕获或匹配问题。
   final bool debugCapture;
   final int maxCaptureLines;
-  final double overlayX;
-  final double overlayY;
   final double overlayWidth;
   final double overlayHeight;
   final int themeColorIndex;
@@ -80,7 +78,6 @@ class QuizConfig {
   ];
 
   final bool bankEnabled;
-  final bool bankPriority;
   final int bankMaxMatches;
 
   /// 是否允许把题目发送到第三方/自定义网络 API；默认关闭，仅使用本地题库。
@@ -111,7 +108,6 @@ class QuizConfig {
   final String examOverlaySize;
 
   /// 题图比对区域（屏幕像素比例 0~1）；为空表示不启用图像消歧。
-  final Rect? regionForImage;
 
   QuizConfig copyWith({
     bool? enabled,
@@ -123,13 +119,10 @@ class QuizConfig {
     bool? filterNoise,
     bool? debugCapture,
     int? maxCaptureLines,
-    double? overlayX,
-    double? overlayY,
     double? overlayWidth,
     double? overlayHeight,
     int? themeColorIndex,
     bool? bankEnabled,
-    bool? bankPriority,
     int? bankMaxMatches,
     bool? allowExternalApi,
     bool? accessibilityCapture,
@@ -140,7 +133,6 @@ class QuizConfig {
     bool? autoExamOnLeaveApp,
     String? autoExamPackages,
     String? examOverlaySize,
-    Rect? regionForImage,
   }) {
     return QuizConfig(
       enabled: enabled ?? this.enabled,
@@ -152,13 +144,10 @@ class QuizConfig {
       filterNoise: filterNoise ?? this.filterNoise,
       debugCapture: debugCapture ?? this.debugCapture,
       maxCaptureLines: maxCaptureLines ?? this.maxCaptureLines,
-      overlayX: overlayX ?? this.overlayX,
-      overlayY: overlayY ?? this.overlayY,
       overlayWidth: overlayWidth ?? this.overlayWidth,
       overlayHeight: overlayHeight ?? this.overlayHeight,
       themeColorIndex: themeColorIndex ?? this.themeColorIndex,
       bankEnabled: bankEnabled ?? this.bankEnabled,
-      bankPriority: bankPriority ?? this.bankPriority,
       bankMaxMatches: bankMaxMatches ?? this.bankMaxMatches,
       allowExternalApi: allowExternalApi ?? this.allowExternalApi,
       accessibilityCapture: accessibilityCapture ?? this.accessibilityCapture,
@@ -169,7 +158,6 @@ class QuizConfig {
       autoExamOnLeaveApp: autoExamOnLeaveApp ?? this.autoExamOnLeaveApp,
       autoExamPackages: autoExamPackages ?? this.autoExamPackages,
       examOverlaySize: examOverlaySize ?? this.examOverlaySize,
-      regionForImage: regionForImage ?? this.regionForImage,
     );
   }
 
@@ -183,13 +171,10 @@ class QuizConfig {
     'filterNoise': filterNoise,
     'debugCapture': debugCapture,
     'maxCaptureLines': maxCaptureLines,
-    'overlayX': overlayX,
-    'overlayY': overlayY,
     'overlayWidth': overlayWidth,
     'overlayHeight': overlayHeight,
     'themeColorIndex': themeColorIndex,
     'bankEnabled': bankEnabled,
-    'bankPriority': bankPriority,
     'bankMaxMatches': bankMaxMatches,
     'allowExternalApi': allowExternalApi,
     'accessibilityCapture': accessibilityCapture,
@@ -200,19 +185,12 @@ class QuizConfig {
     'autoExamOnLeaveApp': autoExamOnLeaveApp,
     'autoExamPackages': autoExamPackages,
     'examOverlaySize': examOverlaySize,
-    if (regionForImage != null)
-      'regionForImage': {
-        'left': regionForImage!.left,
-        'top': regionForImage!.top,
-        'right': regionForImage!.right,
-        'bottom': regionForImage!.bottom,
-      },
   };
 
   factory QuizConfig.fromJson(Map<String, dynamic> json) {
     // 兼容旧字段：ocrEnabled -> ocrSearch
     final bool ocrSearch =
-        (json['ocrSearch'] as bool?) ?? (json['ocrEnabled'] as bool?) ?? true;
+        (json['ocrSearch'] as bool?) ?? (json['ocrEnabled'] as bool?) ?? false;
     return QuizConfig(
       enabled: (json['enabled'] as bool?) ?? false,
       apiUrl: (json['apiUrl'] as String?) ?? '',
@@ -225,13 +203,12 @@ class QuizConfig {
       filterNoise: (json['filterNoise'] as bool?) ?? true,
       debugCapture: (json['debugCapture'] as bool?) ?? false,
       maxCaptureLines: (json['maxCaptureLines'] as num?)?.toInt() ?? 8,
-      overlayX: (json['overlayX'] as num?)?.toDouble() ?? 0.0,
-      overlayY: (json['overlayY'] as num?)?.toDouble() ?? 0.0,
       overlayWidth: (json['overlayWidth'] as num?)?.toDouble() ?? 320.0,
       overlayHeight: (json['overlayHeight'] as num?)?.toDouble() ?? 400.0,
-      themeColorIndex: (json['themeColorIndex'] as num?)?.toInt() ?? 0,
+      // 旧版本主题色面板给过 6 个色块而色板只有 5 色，存量 index 可能是 5 ⇒ 收敛。
+      themeColorIndex: ((json['themeColorIndex'] as num?)?.toInt() ?? 0)
+          .clamp(0, themeColors.length - 1),
       bankEnabled: (json['bankEnabled'] as bool?) ?? true,
-      bankPriority: (json['bankPriority'] as bool?) ?? true,
       bankMaxMatches: (json['bankMaxMatches'] as num?)?.toInt() ?? 3,
       allowExternalApi: (json['allowExternalApi'] as bool?) ?? false,
       accessibilityCapture: (json['accessibilityCapture'] as bool?) ?? true,
@@ -247,7 +224,6 @@ class QuizConfig {
       examOverlaySize:
           _parseExamOverlaySize(json['examOverlaySize'] as String?) ??
           'standard',
-      regionForImage: _parseRegionForImage(json['regionForImage']),
     );
   }
 
@@ -260,20 +236,6 @@ class QuizConfig {
       default:
         return null;
     }
-  }
-
-  static Rect? _parseRegionForImage(Object? value) {
-    if (value is! Map) return null;
-    final raw = value as Map<String, dynamic>;
-    final left = (raw['left'] as num?)?.toDouble();
-    final top = (raw['top'] as num?)?.toDouble();
-    final right = (raw['right'] as num?)?.toDouble();
-    final bottom = (raw['bottom'] as num?)?.toDouble();
-    if (left == null || top == null || right == null || bottom == null) {
-      return null;
-    }
-    if (left < 0 || top < 0 || right <= left || bottom <= top) return null;
-    return Rect.fromLTWH(left, top, right - left, bottom - top);
   }
 
   static String _parseDisplayMode(String? value) {

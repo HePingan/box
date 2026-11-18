@@ -693,6 +693,27 @@ class QuizPluginEntry {
     return false;
   }
 
+  /// **所有**「未命中 / 失败」提示的唯一出口。
+  ///
+  /// 2026-11-18 审计：守卫原先只接在 2 条链路收尾处，其余 6 处 `status:'miss'` 推送
+  /// 全部裸奔（OCR 失败 / 未授权 / 低置信度 / 未开启搜题方式…）。11-17 那个
+  /// 「过程区写着识别成功、结论区却是未搜到」的故障在这些路径上还能复发。
+  /// 收成一个出口之后，新增任何 miss 分支都不可能再绕过守卫。
+  static Future<void> _pushMiss({
+    required String fingerprint,
+    required String question,
+    required String answers,
+    required QuizConfig config,
+  }) async {
+    if (_missPaintBlocked(fingerprint)) return;
+    await _pushOverlay(
+      question: question,
+      answers: answers,
+      displayMode: config.displayMode,
+      status: 'miss',
+    );
+  }
+
   /// 单测接缝：直接问「这次未命中文案会不会被拦」。
   @visibleForTesting
   static bool debugMissPaintBlocked(String fingerprint) => _missPaintBlocked(fingerprint);
@@ -1181,22 +1202,22 @@ class QuizPluginEntry {
               return;
             }
           }
-          await _pushOverlay(
+          await _pushMiss(
             question: captured,
             // 读屏发起过就带上它的失败原因（凭证拿不到 / 代理 401 / 模型没答出），
             // 只有压根没发起（开关关着）才是空原因 —— 不吞错，也不编造。
             answers: _visionFailureHint(visionOnly),
-            displayMode: config.displayMode,
-            status: 'miss',
+            config: config,
+            fingerprint: fingerprint,
           );
           return;
         }
       } else if (!config.ocrSearch) {
-        await _pushOverlay(
+        await _pushMiss(
           question: captured,
           answers: '未开启任何搜题方式',
-          displayMode: config.displayMode,
-          status: 'miss',
+          config: config,
+          fingerprint: fingerprint,
         );
         return;
       }
@@ -1261,11 +1282,11 @@ class QuizPluginEntry {
         return;
       }
       if (!config.accessibilityCapture) {
-        await _pushOverlay(
+        await _pushMiss(
           question: captured,
           answers: 'OCR 识别失败，且未开启无障碍读屏搜题',
-          displayMode: config.displayMode,
-          status: 'miss',
+          config: config,
+          fingerprint: fingerprint,
         );
         return;
       }
@@ -1327,13 +1348,12 @@ class QuizPluginEntry {
       return;
     }
 
-    // 读屏也未产出：如实告知，绝不编造答案。
-    if (_missPaintBlocked(fingerprint)) return;
-    await _pushOverlay(
+    // 读屏也未产出：如实告知，绝不编造答案（守卫在 _pushMiss 里）。
+    await _pushMiss(
+      fingerprint: fingerprint,
       question: captured,
       answers: _visionFailureHint(visionResult),
-      displayMode: config.displayMode,
-      status: 'miss',
+      config: config,
     );
   }
 
@@ -1385,11 +1405,13 @@ class QuizPluginEntry {
     if (captured.isEmpty) return;
     final config = await loadConfig();
     if (!visionFallbackEnabled(config)) {
-      await _pushOverlay(
+      // 此处 `fingerprint` 还没算（在下面的版本控制段），用本次题干即时算一个：
+      // 守卫只关心「是不是同一道题」，这里本来就还没上屏任何答案，算出来也不会误拦。
+      await _pushMiss(
         question: captured,
         answers: '请在「设置 → 答题插件 → 允许外部网络搜题」中开启后重试。',
-        displayMode: config.displayMode,
-        status: 'miss',
+        config: config,
+        fingerprint: _questionFingerprint(captured),
       );
       return;
     }
@@ -1422,12 +1444,11 @@ class QuizPluginEntry {
     }
 
     if (result == null) {
-      if (_missPaintBlocked(fingerprint)) return;
-      await _pushOverlay(
+      await _pushMiss(
+        fingerprint: fingerprint,
         question: captured,
         answers: _visionFailureHint(null),
-        displayMode: config.displayMode,
-        status: 'miss',
+        config: config,
       );
       return;
     }
@@ -1592,20 +1613,20 @@ class QuizPluginEntry {
     final ocr = await client.recognizeBytes(bytes);
     if (!_isCurrentRequest(requestGeneration, requestFingerprint)) return null;
     if (!ocr.isSuccess) {
-      await _pushOverlay(
+      await _pushMiss(
         question: 'OCR 识别失败',
         answers: ocr.error ?? 'OCR 未识别到文本',
-        displayMode: config.displayMode,
-        status: 'miss',
+        config: config,
+        fingerprint: requestFingerprint,
       );
       return null;
     }
     if (!ocr.meetsAutoSearchConfidence()) {
-      await _pushOverlay(
+      await _pushMiss(
         question: 'OCR 置信度不足',
         answers: '${ocr.confidenceDiagnostic()}；请调整识别区域后试捕，或手动确认后搜题。',
-        displayMode: config.displayMode,
-        status: 'miss',
+        config: config,
+        fingerprint: requestFingerprint,
       );
       return null;
     }

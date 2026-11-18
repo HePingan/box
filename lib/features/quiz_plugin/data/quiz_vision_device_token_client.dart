@@ -14,6 +14,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:http/http.dart' as http;
+import '../domain/quiz_vision_endpoint.dart';
 
 /// 签发结果：要么有 token，要么有可读原因，不会两个都空。
 class QuizVisionDeviceTokenResult {
@@ -81,16 +82,33 @@ class QuizVisionDeviceTokenClient {
 
     final status = response.statusCode;
     if (status != 200) {
+      final code = visionErrorCodeFrom(response.body);
       switch (status) {
         case 400:
           return const QuizVisionDeviceTokenResult.failure(
             '读屏设备令牌签发被拒（HTTP 400：设备标识不合法）',
           );
         case 403:
+          // 设备被管理员撤销 ≠ 代理没开：前者重试/重装都没用。
+          if (code == 'device_revoked') {
+            return const QuizVisionDeviceTokenResult.failure(
+              '本机读屏权限已被管理员停用，如需恢复请联系管理员',
+            );
+          }
+          if (code == 'account_disabled') {
+            return const QuizVisionDeviceTokenResult.failure(
+              '账号不可用（可能已被停用），请重新登录或联系管理员',
+            );
+          }
           return const QuizVisionDeviceTokenResult.failure(
             '读屏设备令牌签发被拒（HTTP 403：代理未开放）',
           );
         case 429:
+          if (code == 'device_issue_rate_limited') {
+            return const QuizVisionDeviceTokenResult.failure(
+              '读屏设备令牌签发过于频繁（每 IP 每日限额），请稍后再试',
+            );
+          }
           return const QuizVisionDeviceTokenResult.failure(
             '读屏设备令牌签发过于频繁（HTTP 429），请稍后再试',
           );
