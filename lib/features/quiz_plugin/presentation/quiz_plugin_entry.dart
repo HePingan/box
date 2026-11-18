@@ -20,9 +20,11 @@ import '../data/quiz_engine.dart';
 import '../data/quiz_vision_credentials.dart';
 import '../data/quiz_ocr_client.dart';
 import '../data/quiz_vision_reporter.dart';
+import '../data/quiz_vision_server_config.dart';
 import '../domain/quiz_diag.dart';
 import '../domain/quiz_search_policy.dart';
 import '../domain/quiz_vision_endpoint.dart';
+import '../domain/quiz_vision_usage.dart';
 import '../utils/ai_process_bridge.dart';
 
 import 'quiz_plugin_self_check_page.dart';

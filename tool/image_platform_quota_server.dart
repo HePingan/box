@@ -389,12 +389,34 @@ class PlatformQuotaServer {
       // 公开只读：客户端与自检页要知道「现在到底用哪个模型」。
       // 只回模型名/开关/日限额，**不回 baseUrl、不回 key、不回 key 指纹**。
       final provider = store.quizVisionProvider;
+      final dayKey = quizVisionDayKey();
+      // 额度可见（2026-11-18）：有身份就带回**调用方自己**的今日用量。
+      // 匿名（没带令牌/会话）时不回用量 —— 那会变成免费探测别人额度的手段。
+      String? subjectKey;
+      try {
+        subjectKey = await peekQuizVisionSubject(request);
+      } catch (_) {
+        subjectKey = null;
+      }
+      final used = subjectKey == null
+          ? null
+          : (store.quizVisionUsage[subjectKey]?[dayKey] ?? 0);
+      final failed = subjectKey == null
+          ? null
+          : (store.quizVisionUpstreamFailures[subjectKey]?[dayKey] ?? 0);
       await jsonResponse(request.response, HttpStatus.ok, {
         'enabled': provider?.enabled ?? false,
         'model': provider?.model ?? '',
         'thinkingOff': provider?.thinkingOff ?? true,
         'dailyCapPerAccount': quizVisionDailyCap,
+        'upstreamBudgetSeconds': quizVisionUpstreamBudgetSeconds,
         'updatedAt': provider?.updatedAt?.toIso8601String(),
+        if (used != null) 'usedToday': used,
+        if (used != null) 'remainingToday': quizVisionDailyCap - used,
+        // 失败不计额度，但要如实告诉用户「今天已经因为上游故障白试了几次」。
+        if (failed != null) 'failedToday': failed,
+        if (used != null)
+          'resetsAt': quizVisionDayKeyResetsAt().toIso8601String(),
       });
       return;
     }
@@ -1742,7 +1764,12 @@ class PlatformQuotaServer {
     // 防客户端死循环打爆上游渠道。
     if (store.quizVisionBurstRejected(subjectKey, DateTime.now())) {
       await jsonResponse(request.response, HttpStatus.tooManyRequests, {
-        'error': {'message': 'AI 读屏请求过于频繁，请稍等几秒再试。'},
+        'error': {
+          // code 让客户端能区分「等几秒」与「今天没了」——两者都是 429，
+          // 以前客户端一律显示「今日已用完」，正常连做几题就被误导。
+          'code': 'burst_limited',
+          'message': 'AI 读屏请求过于频繁，请稍等几秒再试。',
+        },
       });
       return;
     }
@@ -1754,7 +1781,11 @@ class PlatformQuotaServer {
       setQuizVisionUsageHeaders(request.response, subjectKey, dayKey);
       await jsonResponse(request.response, HttpStatus.tooManyRequests, {
         'error': {
-          'message': '今日 AI 读屏次数已用完（$quizVisionDailyCap 次/日），明天再试。',
+          'code': 'daily_cap_exhausted',
+          // 日键是 UTC，文案不能只说「明天」——北京时间 0:00~08:00 仍算前一天。
+          'message':
+              '今日 AI 读屏次数已用完（$quizVisionDailyCap 次/日），'
+              '按 UTC 日界重置（北京时间每天 08:00）。',
         },
       });
       return;
@@ -1781,17 +1812,33 @@ class PlatformQuotaServer {
     } catch (error) {
       store.quizVisionRecordUpstreamFailure(subjectKey, dayKey);
       setQuizVisionUsageHeaders(request.response, subjectKey, dayKey);
-      await jsonResponse(request.response, HttpStatus.serviceUnavailable, {
-        'error': {'message': 'AI 读屏上游请求失败：${compactPreview('$error')}'},
-      });
+      final isTimeout = error is TimeoutException;
+      await jsonResponse(
+        request.response,
+        isTimeout ? HttpStatus.gatewayTimeout : HttpStatus.serviceUnavailable,
+        {
+          'error': {
+            'code': isTimeout ? 'upstream_timeout' : 'upstream_failed',
+            'message': isTimeout
+                ? 'AI 读屏上游超时（后端预算 ${quizVisionUpstreamBudgetSeconds}s），本次不计额度，请重试。'
+                : 'AI 读屏上游请求失败：${compactPreview('$error')}',
+          },
+        },
+      );
       return;
     }
-    if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
+    final upstreamOk = upstream.statusCode >= 200 && upstream.statusCode < 300;
+    if (!upstreamOk) {
       store.quizVisionRecordUpstreamFailure(subjectKey, dayKey);
     }
-    userCounts[dayKey] = usedToday + 1;
-    store.quizVisionDirty = true;
-    store.scheduleQuizVisionFlush();
+    // ⚠️ 只有**真拿到答案**才计额度。
+    // 审计（2026-11-18）发现这里原本无条件 +1：上游 502/503/超时同样烧掉一次日额度，
+    // 用户当天的额度被上游故障吃掉。现在失败不计。
+    if (upstreamOk) {
+      userCounts[dayKey] = usedToday + 1;
+      store.quizVisionDirty = true;
+      store.scheduleQuizVisionFlush();
+    }
     // 只记主体/状态/字节数，不记请求与响应内容，不记令牌。
     stdout.writeln(
       '${DateTime.now().toIso8601String()} quiz-vision subject=$subjectKey '
@@ -1839,7 +1886,10 @@ class PlatformQuotaServer {
     // 放在形状校验之后、写库之前：非法请求不计数，真实签发也抢不到配额。
     if (!store.noteQuizVisionDeviceIssue(clientIp(request), dayKey)) {
       await jsonResponse(request.response, HttpStatus.tooManyRequests, {
-        'error': {'message': '签发过于频繁，请稍后再试。'},
+        'error': {
+          'code': 'device_issue_rate_limited',
+          'message': '签发过于频繁，请稍后再试。',
+        },
       });
       return;
     }
@@ -1847,7 +1897,10 @@ class PlatformQuotaServer {
     if (existing != null && existing.revoked) {
       // 撤销是粘性的：否则被撤销的设备重签一次就复活，DELETE 形同虚设。
       await jsonResponse(request.response, HttpStatus.forbidden, {
-        'error': {'message': '该设备已被停用，无法重新签发令牌。'},
+        'error': {
+          'code': 'device_revoked',
+          'message': '该设备已被停用（管理员撤销），无法重新签发令牌。',
+        },
       });
       return;
     }
@@ -1916,7 +1969,12 @@ class PlatformQuotaServer {
       req.headers.contentType = ContentType.json;
       req.write(jsonEncode(body));
       // 读屏截图 base64 较大，上游整链放宽到 90s。
-      final resp = await req.close().timeout(const Duration(seconds: 90));
+      // ⚠️ 必须**小于客户端硬顶**（QuizVisionTimeouts.engineHard = 45s）。
+      // 原来 90s：客户端 45s 就放弃，后端继续跑到 90s，然后照旧记 200 + 扣额度
+      // ⇒ 用户被扣额度、没拿到答案，运维日志里还没有失败。35s 留 10s 给网络与序列化。
+      final resp = await req.close().timeout(
+        const Duration(seconds: quizVisionUpstreamBudgetSeconds),
+      );
       final text = await utf8.decoder.bind(resp).join();
       return UpstreamResponse(resp.statusCode, text);
     } finally {
@@ -3825,7 +3883,7 @@ class PlatformQuotaServer {
         store.sessions.remove(token);
         await store.save();
         await jsonResponse(request.response, HttpStatus.forbidden, {
-          'error': {'message': '账号不可用。'},
+          'error': {'code': 'account_disabled', 'message': '账号不可用。'},
         });
         return null;
       }
@@ -3840,6 +3898,25 @@ class PlatformQuotaServer {
         'message': '登录已失效或设备令牌无效，请重新登录或重新获取设备令牌。',
       },
     });
+    return null;
+  }
+
+  /// 只**看**调用方身份，不写任何响应、不报错（额度查询用）。
+  ///
+  /// 与 requireQuizVisionSubject 的区别：那个会往响应里写 401/403 并返回 null，
+  /// 而额度查询是公开只读端点 —— 匿名调用应当照常 200 返回模型信息，只是**不带**用量。
+  Future<String?> peekQuizVisionSubject(HttpRequest request) async {
+    final token = bearerToken(request);
+    if (token == null || token.isEmpty) return null;
+    final session = store.sessions[token];
+    if (session != null) {
+      if (session.expiresAt.isBefore(DateTime.now())) return null;
+      final account = store.accounts[session.userId];
+      if (account == null || account.status != 'normal') return null;
+      return account.id;
+    }
+    final device = store.quizVisionDeviceByToken(token);
+    if (device != null) return '$quizVisionDeviceUsagePrefix${device.deviceId}';
     return null;
   }
 
@@ -8491,6 +8568,20 @@ class ProviderConfig {
 
 /// 每账号每日读屏代理请求上限（防滥用；内存计数重启清零，作启发式足够）。
 /// 调小=更防白嫖但易误伤；调大=更宽松。
+/// AI 读屏上游超时预算（秒）。必须 < 客户端硬顶 45s（QuizVisionTimeouts.engineHard），
+/// 否则客户端先放弃、后端还在跑，最后仍按「上游 200」计额度（已修）。
+const int quizVisionUpstreamBudgetSeconds = 35;
+
+/// 额度日键（UTC yyyy-MM-dd）。**全后端只此一处**，避免各处 `substring(0,10)` 漂移。
+String quizVisionDayKey([DateTime? now]) =>
+    (now ?? DateTime.now()).toUtc().toIso8601String().substring(0, 10);
+
+/// 下一次额度重置时刻（UTC 次日 00:00）。客户端据此显示「北京时间每天 08:00 恢复」。
+DateTime quizVisionDayKeyResetsAt([DateTime? now]) {
+  final utc = (now ?? DateTime.now()).toUtc();
+  return DateTime.utc(utc.year, utc.month, utc.day).add(const Duration(days: 1));
+}
+
 const int quizVisionDailyCap = 100;
 
 /// A3 突发限流：每账号每分钟允许的读屏请求数（滑动窗口）。

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <solid android:color="#FFFFFF" />
+    <solid android:color="@color/quiz_overlay_surface" />
     <corners android:radius="14dp" />
     <stroke
         android:width="0.5dp"
-        android:color="#D0D5DD" />
+        android:color="@color/quiz_overlay_stroke" />
 </shape>

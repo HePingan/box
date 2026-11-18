@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 答题悬浮窗深色配色（系统深色模式生效）。
+         原则：底色只压到「深灰蓝」，不用纯黑 —— 悬浮在半透明窗口上，纯黑会像一块洞。
+         文字对比度按 WCAG AA（≥4.5:1）取，最小的 11sp 过程区文字也够看。 -->
+    <color name="quiz_overlay_surface">#1E2430</color>
+    <color name="quiz_overlay_surface_alt">#171C26</color>
+    <color name="quiz_overlay_surface_soft">#10141C</color>
+    <color name="quiz_overlay_text_primary">#E6EAF2</color>
+    <color name="quiz_overlay_text_secondary">#B6C2D2</color>
+    <color name="quiz_overlay_text_muted">#93A2B5</color>
+    <color name="quiz_overlay_divider">#2A3241</color>
+    <color name="quiz_overlay_stroke">#35405A</color>
+    <color name="quiz_overlay_icon_tint">#E6EAF2</color>
+</resources>

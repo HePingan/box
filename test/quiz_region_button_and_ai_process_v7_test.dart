@@ -162,10 +162,14 @@ void main() {
 
     test('框选按钮不参与让位（恒可见）；方案 A 后不再计入宽度预算', () {
       final body = funBody(kt, 'private fun applyTitleBarAdaptive');
+      // 2026-11-18（审计 P2-3）：改为 `show(R.id.btn_region_entry)` ——
+      // 语义仍是「恒可见」，但排除考试模式显式隐藏的情况（此前裸 VISIBLE 会让
+      // applyExamChrome 刚隐藏的入口立刻复活，考试模式极简失效）。
       expect(
-        RegExp(r'region\?\.visibility\s*=\s*View\.VISIBLE').hasMatch(body),
+        RegExp(r'region\?\.visibility\s*=\s*(show\(R\.id\.btn_region_entry\)|View\.VISIBLE)')
+            .hasMatch(body),
         isTrue,
-        reason: '框选按钮必须恒可见，否则用户又找不到',
+        reason: '框选按钮必须恒可见（考试模式受控例外除外），否则用户又找不到',
       );
       // 方案 A（用户 2026-09-15 拍板）：按钮区改为横向可滑动后，
       // 不再存在「宽度预算」概念 —— 放不下就滑动取用，而不是靠隐藏别的按钮腾位。

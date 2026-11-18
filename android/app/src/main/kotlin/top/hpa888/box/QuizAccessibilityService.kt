@@ -513,6 +513,15 @@ class QuizAccessibilityService : AccessibilityService() {
     private var deferredCaptureAfterDotDrag: Runnable? = null
     private var overlayExpandedHeight = 0 // 展开时的窗口高度（px），折叠时暂存
     private var examMode = false
+
+    /**
+     * 上次应用考试模式 chrome 时的考试态。
+     *
+     * P2-2（2026-11-18）：答案区的 weight/height 只在**模式切换时**改一次。
+     * 原实现每次渲染都写回 weight=1，等于每帧都把用户 2026-09-14 报障的
+     * 「答案区把过程框顶出窗外」重新做一遍。null = 还没应用过（首帧必应用）。
+     */
+    private var lastExamChromeApplied: Boolean? = null
     private var clickThroughWhenCollapsed = false
     private var themeColor = THEME_COLORS[0]
     private var lastForegroundPkg = ""
@@ -1420,6 +1429,12 @@ class QuizAccessibilityService : AccessibilityService() {
             root.findViewById<TextView>(R.id.tv_ai_process)?.text = body
             root.findViewById<TextView>(R.id.tv_ai_process_title)?.text = "AI 作答过程"
             box.visibility = View.VISIBLE
+            // P2-1：把 XML 里那个**从未生效**的 android:maxHeight 变成真正的代码限高
+            // （ScrollView 不认该属性）。数值仍 200dp —— 用户 2026-09-14 报障过
+            // 「过程框只看得到一半」，这一条优先于「少占地方」。
+            root.findViewById<View>(R.id.scroll_ai_process)?.let {
+                clampScrollMaxHeight(it, AI_PROCESS_MAX_HEIGHT_DP)
+            }
             // 首次出现过程内容时**自动展开**（决策 1.B：默认展开）。
             // 用户 2026-09-14 反馈「显示只有一半，我看不完全」——默认收起时
             // 用户只能看到一个标题条，以为内容丢了。用户一旦手动点过「收起」，
@@ -1628,7 +1643,9 @@ class QuizAccessibilityService : AccessibilityService() {
         if (label != null) {
             label.text = if (running) "AI…" else "AI"
         }
-        root.findViewById<View>(R.id.status_bar)?.setBackgroundColor(0xFFF59E0B.toInt())
+        // 2026-11-18（审计 P2-5）：status_bar 是 1dp 且恒 GONE 的死节点
+        // （状态早已由标题栏胶囊承担）。原来这里每次渲染都给它染色 —— 白花一次
+        // invalidate，还得在排查时解释「为什么有个看不见的橙色条」。已删除。
         if (running) {
             visionStartedAt = System.currentTimeMillis()
             startVisionTicker(root)
@@ -1725,10 +1742,8 @@ class QuizAccessibilityService : AccessibilityService() {
     private fun applyThemeToView(view: View) {
         view.findViewById<View>(R.id.title_bar)?.setBackgroundColor(themeColor)
         view.findViewById<View>(R.id.collapsed_pill)?.setBackgroundColor(themeColor)
-        // status 待命色也用主题色
-        if (overlayStatus == "idle") {
-            view.findViewById<View>(R.id.status_bar)?.setBackgroundColor(themeColor)
-        }
+        // 2026-11-18（P2-5）：status_bar 恒 GONE（1dp），点击后给它染色毫无意义，
+        // 已删。待命态用标题栏胶囊描边表达（见 updateAccessibilityOverlayView）。
     }
 
     /**
@@ -1930,14 +1945,22 @@ class QuizAccessibilityService : AccessibilityService() {
         view.findViewById<View>(R.id.btn_hide_overlay)?.visibility = View.VISIBLE
         view.findViewById<View>(R.id.btn_quiz_entry)?.visibility = View.VISIBLE
         // 考试态答案区保持紧凑内容高度；避免 weight=1 把卡片拉成空白长条。
-        val scrollA = view.findViewById<View>(R.id.scroll_answer)
-        if (scrollA != null) {
-            val lp = scrollA.layoutParams
-            if (lp is android.widget.LinearLayout.LayoutParams) {
-                lp.height = if (exam) android.widget.LinearLayout.LayoutParams.WRAP_CONTENT else 0
-                lp.weight = if (exam) 0f else 1f
-                scrollA.layoutParams = lp
+        //
+        // ⚠️ 2026-11-18（审计 P2-2）：这段**只在考试模式真正切换时**执行一次。
+        // 原实现每次渲染都写回 weight/height，把布局 XML 里那段
+        // 「不要 weight，否则把过程框顶出窗外（用户 2026-09-14 报障真因）」
+        // 的结论又推翻掉 —— 答案区每次渲染都重新变成 weight=1。
+        if (lastExamChromeApplied != exam) {
+            val scrollA = view.findViewById<View>(R.id.scroll_answer)
+            if (scrollA != null) {
+                val lp = scrollA.layoutParams
+                if (lp is android.widget.LinearLayout.LayoutParams) {
+                    lp.height = if (exam) android.widget.LinearLayout.LayoutParams.WRAP_CONTENT else 0
+                    lp.weight = if (exam) 0f else 1f
+                    scrollA.layoutParams = lp
+                }
             }
+            lastExamChromeApplied = exam
         }
         // 标题栏统一 36dp（与布局一致）
         view.findViewById<View>(R.id.title_bar)?.let { bar ->
@@ -1946,7 +1969,13 @@ class QuizAccessibilityService : AccessibilityService() {
         }
         // 按可用宽度重排标题栏（窄窗让位，AI 优先保位）。放在 chrome 之后，
         // 保证模式切换完成后按最终可见集合重新分配宽度。
-        applyTitleBarAdaptive(view)
+        //
+        // ⚠️ 2026-11-18（审计 P2-3）：必须把「考试模式刚隐藏的 id」传下去。
+        // 原实现在末尾无条件 applyTitleBarAdaptive(view)，而它对 ai/眼睛/题库/框选/⋯
+        // 一律 `visibility = VISIBLE` —— 前面 GONE 掉的 ⋯ 立刻被自己拉回来，
+        // 考试模式的「极简 chrome」等于没做。
+        val suppressed = if (exam) hideIds.toSet() else emptySet()
+        applyTitleBarAdaptive(view, suppressed)
     }
 
     /**
@@ -1965,7 +1994,12 @@ class QuizAccessibilityService : AccessibilityService() {
      * 因此这里不再有 close、也不再让眼睛/录入参与让位：三键恒可见。
      * 只有「相似度胶囊」和低频「更多」按剩余宽度伸缩。
      */
-    private fun applyTitleBarAdaptive(view: View) {
+    private fun applyTitleBarAdaptive(
+        view: View,
+        suppressed: Set<Int> = emptySet(),
+    ) {
+        // 被考试模式/etc 隐藏的入口不再被本函数「救活」。
+        fun show(id: Int): Int = if (id in suppressed) View.GONE else View.VISIBLE
         val badge = view.findViewById<View>(R.id.tv_similarity_badge)
         val more = view.findViewById<View>(R.id.btn_more)
         val ai = view.findViewById<View>(R.id.btn_ai_vision)
@@ -1974,12 +2008,12 @@ class QuizAccessibilityService : AccessibilityService() {
         val region = view.findViewById<View>(R.id.btn_region_entry)
 
         // 用户指定的三键 + 低频更多：全部常驻，不因宽度让位。
-        ai?.visibility = View.VISIBLE
-        eye?.visibility = View.VISIBLE
-        entry?.visibility = View.VISIBLE
+        ai?.visibility = show(R.id.btn_ai_vision)
+        eye?.visibility = show(R.id.btn_hide_overlay)
+        entry?.visibility = show(R.id.btn_quiz_entry)
         // 框选识别范围：用户第 5 次反馈要求「加回来」→ 也常驻。
         // （窗口已按新下限放大到约 94% 屏宽，容纳得住第六个按钮。）
-        region?.visibility = View.VISIBLE
+        region?.visibility = show(R.id.btn_region_entry)
 
         // 相似度胶囊在左侧拖动区常驻，不参与让位。
         view.findViewById<View>(R.id.tv_similarity_badge)?.visibility = View.VISIBLE
@@ -1990,7 +2024,7 @@ class QuizAccessibilityService : AccessibilityService() {
         //   - 按钮滑得动，就不该因为「一屏放不下」而隐藏；
         //   - 隐藏反而让用户以为功能没了（用户第 5 次反馈「框选按钮找不到」即此因）。
         // 故此处不再按宽度隐藏任何按钮，溢出部分交给横向滑动。
-        more?.visibility = View.VISIBLE
+        more?.visibility = show(R.id.btn_more)
 
         // ===== 方案 B（用户 2026-09-16 拍板）：空间不足时收拢低频按钮 =====
         // 滑动能解决「按钮被裁」，但**滑动手势是隐式的** —— 用户不知道右边还有东西，
@@ -2002,7 +2036,7 @@ class QuizAccessibilityService : AccessibilityService() {
         //
         // 阈值走 policy（单一事实源），不在 service 里写死。
         if (TITLE_ACTIONS_SCROLL_ENABLED) {
-            applyTitleBarCollapseIfNeeded(view, more, region, entry, ai, eye)
+            applyTitleBarCollapseIfNeeded(view, more, region, entry, ai, eye, suppressed)
         } else {
             applyTitleBarBudgetLegacy(view, more, badge)
         }
@@ -2025,7 +2059,9 @@ class QuizAccessibilityService : AccessibilityService() {
         entry: View?,
         ai: View?,
         eye: View?,
+        suppressed: Set<Int> = emptySet(),
     ) {
+        fun show(id: Int): Int = if (id in suppressed) View.GONE else View.VISIBLE
         val dm = resources.displayMetrics
         val d = if (dm.density > 0f) dm.density else 1f
 
@@ -2048,9 +2084,9 @@ class QuizAccessibilityService : AccessibilityService() {
             // 收拢：低频两键进 ⋯ 菜单（菜单项已存在：识别区域 / 一键录入）。
             region?.visibility = View.GONE
             entry?.visibility = View.GONE
-            ai?.visibility = View.VISIBLE
-            eye?.visibility = View.VISIBLE
-            more?.visibility = View.VISIBLE
+            ai?.visibility = show(R.id.btn_ai_vision)
+            eye?.visibility = show(R.id.btn_hide_overlay)
+            more?.visibility = show(R.id.btn_more)
             logDebug(
                 "titlebar.collapse low-freq→more avail=${availPx}px(${availPx / d}dp) " +
                     "need=${OverlayGeometryPolicy.TITLE_BAR_REQUIRED_DP}dp",
@@ -2061,7 +2097,7 @@ class QuizAccessibilityService : AccessibilityService() {
             entry?.visibility = View.GONE
             ai?.visibility = View.GONE
             eye?.visibility = View.GONE
-            more?.visibility = View.VISIBLE
+            more?.visibility = show(R.id.btn_more)
             logDebug("titlebar.collapse all→more avail=${availPx}px (extremely narrow)")
         } else {
             // 放得下：全部平铺，零学习成本。
@@ -2721,11 +2757,23 @@ class QuizAccessibilityService : AccessibilityService() {
      * 这里用颜色把该状态暴露在悬浮窗上，避免用户不知道自己漏配了。
      */
     private fun refreshRegionButtonState(root: View? = accessibilityOverlayView) {
-        val btn = root?.findViewById<View>(R.id.btn_area) ?: return
+        // 2026-11-18（审计 P2-5）：原来把「区域未配置」的状态色打在 btn_area 上，
+        // 而 btn_area 是 1dp 且恒 GONE —— 等于把提示画在看不见的地方。
+        // 现在打到标题栏真正可见的「框选」按钮（btn_region_entry），并保持
+        // 对旧 id 的兼容（老布局里两者都在时两边都染色）。
+        val visibleBtn = root?.findViewById<View>(R.id.btn_region_entry)
+        val btn = visibleBtn ?: root?.findViewById<View>(R.id.btn_area) ?: return
         val hasOcrRegion = loadSavedRegionOnly() != null || screenRegion != null
         btn.alpha = if (hasOcrRegion) 0.95f else 0.62f
 
         val hasImageRegion = loadImageRegion() != null
+        // 旧 id 也同步染色（若布局里存在），保证两条路径口径一致。
+        if (visibleBtn != null) {
+            root?.findViewById<View>(R.id.btn_area)?.let { legacy ->
+                legacy.alpha = btn.alpha
+                legacy.contentDescription = btn.contentDescription
+            }
+        }
         (btn as? ImageButton)?.setColorFilter(
             if (hasImageRegion) 0xFFFBBF24.toInt() else 0xFFF8FAFC.toInt()
         )
@@ -3653,9 +3701,15 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
                 return p[0].coerceIn(0, maxX) to p[1].coerceIn(0, maxY)
             }
         }
-        // 默认靠右上，少挡左侧题干
+        // 默认靠右上，少挡左侧题干。
+        //
+        // 2026-11-18（审计 P2-8）：y 从 10% 改到 52%。
+        // 窗口高度 ≥ 0.42 屏高、宽度 0.8 屏宽，贴 y=10% 时正好盖住屏幕上半部分 ——
+        // 而默认识别区是「屏幕上 55%（题干区）」，等于**默认就把题干挡住**。
+        // 放到 52% 之后，上半屏（题干）露出来，卡片压在题干下方的空白/选项区。
+        // ⚠️ 只影响 `raw == null`（首次安装/无记忆位置）分支，老用户的位置记忆不变。
         val x = (dm.widthPixels - width - dm.widthPixels * 0.04f).toInt().coerceIn(0, maxX)
-        val y = (dm.heightPixels * 0.10f).toInt().coerceIn(0, maxY)
+        val y = (dm.heightPixels * 0.52f).toInt().coerceIn(0, maxY)
         return x to y
     }
 
@@ -4173,15 +4227,57 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
     }
 
     /** 题目区限高：长题干区内自滚，避免挤掉答案/相似度首屏。 */
+    /** 题干区限高（dp）。XML 里的 maxHeight 对 ScrollView 无效，见 clampScrollMaxHeight。 */
+    private val QUESTION_MAX_HEIGHT_DP = 96f
+
+    /**
+     * AI 作答过程区限高（dp）。**保持 200dp，不要再往下压**。
+     *
+     * 2026-11-18 审计曾建议压到 120dp（理由：与读屏进度横幅重复）。实际看下来
+     * 横幅只有「一行文案 + 3dp 进度条」，过程区是分阶段记录，两者并非同一份内容；
+     * 而用户 2026-09-14 明确报障过「AI 作答过程显示咋只有一半，我看不完全」。
+     * ⇒ 限高只从「XML 里那个从未生效的 maxHeight」搬进代码（单一事实源），
+     * 数值保持 200dp 不变。
+     */
+    private val AI_PROCESS_MAX_HEIGHT_DP = 200f
+
     private fun clampQuestionScrollMaxHeight(view: View) {
-        val scrollQ = view.findViewById<View>(R.id.scroll_question) ?: return
         if (examMode || answerOnlyMode) return
-        val maxH = (96f * resources.displayMetrics.density).toInt()
-        scrollQ.post {
-            if (scrollQ.height > maxH) {
-                val lp = scrollQ.layoutParams
-                lp.height = maxH
-                scrollQ.layoutParams = lp
+        val scrollQ = view.findViewById<View>(R.id.scroll_question) ?: return
+        clampScrollMaxHeight(scrollQ, QUESTION_MAX_HEIGHT_DP)
+    }
+
+    /**
+     * 通用「区内自滚」限高。
+     *
+     * ⚠️ 为什么必须有这一段（2026-11-18 审计 P2-1 / P2-6）：
+     *  - **`android:maxHeight` 对 ScrollView 是 no-op**（只有 ImageView 一类认这个属性），
+     *    布局里写的 80dp/200dp 从来没生效过，真实限高一直靠改 `lp.height`；
+     *  - 旧实现**只涨不落**：内容变短后高度不回退，窗口一直停在历史上最长的尺寸；
+     *  - 同一件事有「XML 80dp」与「代码 96dp」两套值，改一处不生效。
+     * 现在：先复位成 WRAP_CONTENT 再量再钳，限高值集中在 [QUESTION_MAX_HEIGHT_DP] /
+     * [AI_PROCESS_MAX_HEIGHT_DP] 两个常量（单一事实源）。
+     */
+    private fun clampScrollMaxHeight(target: View, maxDp: Float) {
+        val d = resources.displayMetrics.density.let { if (it > 0f) it else 1f }
+        val maxH = (maxDp * d).toInt()
+        target.post {
+            val lp = target.layoutParams ?: return@post
+            // 先复位，才能感知「内容变短」——否则一旦被钳过就永远回不去。
+            if (lp.height != ViewGroup.LayoutParams.WRAP_CONTENT) {
+                lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                target.layoutParams = lp
+            }
+            target.post {
+                val cur = target.layoutParams ?: return@post
+                if (target.height > maxH) {
+                    val next = target.layoutParams
+                    next.height = maxH
+                    target.layoutParams = next
+                } else if (cur.height != ViewGroup.LayoutParams.WRAP_CONTENT) {
+                    cur.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                    target.layoutParams = cur
+                }
             }
         }
     }

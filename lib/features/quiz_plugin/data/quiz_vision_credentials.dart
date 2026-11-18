@@ -52,6 +52,42 @@ class QuizVisionCredentialResolver {
   Future<QuizVisionEndpoint> resolve(QuizConfig config) =>
       _bounded(() => _resolveInner(config), what: '读屏凭证解析');
 
+  /// 只看「本机**已有**的凭证」，**不签发**设备令牌。
+  ///
+  /// 用途：自检页/设置页拉服务端配置与额度。签发是每 IP 每天 5 次的限额，
+  /// 光打开页面就签发会把它烧掉、把读屏自己顶成 429（2026-10-01 踩过）。
+  /// 没有可用凭证时返回 unavailable，调用方据此显示「未知」，而不是报错。
+  Future<QuizVisionEndpoint> peek(QuizConfig config) =>
+      _bounded(() => _peekInner(config), what: '读屏凭证查看');
+
+  Future<QuizVisionEndpoint> _peekInner(QuizConfig config) async {
+    final userConfigured =
+        config.apiUrl.trim().isNotEmpty || config.apiKey.trim().isNotEmpty;
+    final serverUrl = await _loadServerUrl();
+    if (userConfigured) {
+      return resolveQuizVisionEndpoint(config, serverUrl: serverUrl);
+    }
+    final session = await _loadSession();
+    final sessionToken = session?.token.trim() ?? '';
+    if (sessionToken.isNotEmpty) {
+      final saved = session!.serverUrl.trim();
+      return resolveQuizVisionEndpoint(
+        config,
+        serverUrl: saved.isEmpty ? serverUrl : saved,
+        sessionToken: sessionToken,
+      );
+    }
+    final cached = await _readDeviceToken();
+    if (cached.isNotEmpty) {
+      return resolveQuizVisionEndpoint(
+        config,
+        serverUrl: serverUrl,
+        deviceToken: cached,
+      );
+    }
+    return QuizVisionEndpoint.unavailable('未登录且本机无设备令牌（查看配置不会签发）');
+  }
+
   /// 超时兜底：把任意解析流程收敛成「有终点的结果」。
   Future<QuizVisionEndpoint> _bounded(
     Future<QuizVisionEndpoint> Function() task, {

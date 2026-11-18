@@ -102,7 +102,7 @@
                 android:background="@drawable/quiz_title_action_bg"
                 android:foreground="@drawable/quiz_btn_ripple"
                 android:scaleType="fitCenter"
-                android:tint="#F8FAFC"
+                android:tint="@color/quiz_overlay_icon_tint"
                 android:alpha="0.95"
                 android:contentDescription="更多功能（识别区域 / 一键录入）" />
             <!-- AI 读屏：唯一「联网搜题」入口。
@@ -150,7 +150,7 @@
                 android:background="@drawable/quiz_title_action_bg"
                 android:foreground="@drawable/quiz_btn_ripple"
                 android:scaleType="fitCenter"
-                android:tint="#F8FAFC"
+                android:tint="@color/quiz_overlay_icon_tint"
                 android:alpha="0.95"
                 android:contentDescription="框选识别范围" />
 
@@ -164,7 +164,7 @@
                 android:background="@drawable/quiz_title_action_bg"
                 android:foreground="@drawable/quiz_btn_ripple"
                 android:scaleType="fitCenter"
-                android:tint="#F8FAFC"
+                android:tint="@color/quiz_overlay_icon_tint"
                 android:alpha="0.95"
                 android:contentDescription="隐藏为小圆点" />
 
@@ -180,7 +180,7 @@
                 android:background="@drawable/quiz_title_action_bg"
                 android:foreground="@drawable/quiz_btn_ripple"
                 android:scaleType="fitCenter"
-                android:tint="#F8FAFC"
+                android:tint="@color/quiz_overlay_icon_tint"
                 android:alpha="0.95"
                 android:contentDescription="录入题目" />
 
@@ -228,10 +228,11 @@
             android:id="@+id/scroll_question"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:maxHeight="80dp"
             android:fillViewport="false"
             android:overScrollMode="ifContentScrolls"
             android:scrollbars="vertical">
+            <!-- ⚠️ 不要写 android:maxHeight（ScrollView 不认，写了是 no-op）：
+                 真实限高在 QuizAccessibilityService.QUESTION_MAX_HEIGHT_DP（96dp）。 -->
 
             <TextView
                 android:id="@+id/tv_question"
@@ -241,9 +242,9 @@
                 android:paddingEnd="12dp"
                 android:paddingTop="10dp"
                 android:paddingBottom="8dp"
-                android:background="#FFFFFF"
+                android:background="@color/quiz_overlay_surface"
                 android:text="等待捕获题目…"
-                android:textColor="#101828"
+                android:textColor="@color/quiz_overlay_text_primary"
                 android:textSize="14sp"
                 android:lineSpacingExtra="3dp"
                 android:textIsSelectable="false" />
@@ -253,7 +254,7 @@
             android:id="@+id/answer_divider"
             android:layout_width="match_parent"
             android:layout_height="0.5dp"
-            android:background="#E6EAF2" />
+            android:background="@color/quiz_overlay_divider" />
 
         <!-- 读屏进度区：仅 AI 读屏期间可见。
              用户 2026-09-13 第三次反馈「ai搜索时没有看到提示与进度」——
@@ -316,9 +317,9 @@
                 android:paddingEnd="12dp"
                 android:paddingTop="8dp"
                 android:paddingBottom="12dp"
-                android:background="#F8FAFC"
+                android:background="@color/quiz_overlay_surface_alt"
                 android:text="等待搜题结果…"
-                android:textColor="#344054"
+                android:textColor="@color/quiz_overlay_text_secondary"
                 android:textSize="13sp"
                 android:lineSpacingExtra="3dp"
                 android:textIsSelectable="false" />
@@ -334,7 +335,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:background="#F1F5F9"
+            android:background="@color/quiz_overlay_surface_soft"
             android:visibility="gone">
 
             <LinearLayout
@@ -347,7 +348,7 @@
                 android:paddingEnd="8dp"
                 android:paddingTop="5dp"
                 android:paddingBottom="5dp"
-                android:background="#E2E8F0">
+                android:background="@color/quiz_overlay_divider">
 
                 <TextView
                     android:id="@+id/tv_ai_process_title"
@@ -355,7 +356,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:text="AI 作答过程"
-                    android:textColor="#334155"
+                    android:textColor="@color/quiz_overlay_text_secondary"
                     android:textSize="11sp"
                     android:textStyle="bold"
                     android:maxLines="1"
@@ -373,11 +374,12 @@
                     android:maxLines="1" />
             </LinearLayout>
 
+            <!-- ⚠️ 不要写 android:maxHeight：ScrollView 不支持该属性（no-op）。
+                 真实限高在 QuizAccessibilityService.AI_PROCESS_MAX_HEIGHT_DP（120dp）。 -->
             <ScrollView
                 android:id="@+id/scroll_ai_process"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:maxHeight="200dp"
                 android:minHeight="40dp"
                 android:visibility="gone"
                 android:scrollbars="vertical">
@@ -391,7 +393,7 @@
                     android:paddingTop="6dp"
                     android:paddingBottom="8dp"
                     android:text=""
-                    android:textColor="#475569"
+                    android:textColor="@color/quiz_overlay_text_muted"
                     android:textSize="12sp"
                     android:lineSpacingExtra="3dp"
                     android:textIsSelectable="true" />

@@ -15,6 +15,12 @@ class QuizVisionUsage {
   static int? dailyCap;
   static DateTime? updatedAt;
 
+  /// 上游失败次数（2026-11-18 起失败不计额度，但要如实告诉用户"白试了几次"）。
+  static int? failedToday;
+
+  /// 额度重置时刻（服务端按 UTC 日界 ⇒ 北京时间每天 08:00）。
+  static DateTime? resetsAt;
+
   /// 从响应头里取用量（**大小写不敏感**：Dart http 会把键名转小写，服务端发的是
   /// `X-Quiz-Vision-Used`，两边都要认）。老服务端没有这两个头时保持原值不动。
   static void record(Map<String, String> headers) {
@@ -38,8 +44,18 @@ class QuizVisionUsage {
 
   /// 给自检页与「复制结论」用的一行文字。
   static String describe() {
-    if (usedToday == null) return '未知（还没发过读屏请求）';
-    return '今日 $usedToday/${dailyCap ?? '?'} 次（服务端回报）';
+    if (usedToday == null) {
+      return '未知（还没发过读屏请求，也未能从服务端查询）';
+    }
+    final reset = resetsAt == null ? '' : '，${_resetText(resetsAt!)}重置';
+    final failed = (failedToday ?? 0) > 0 ? '；上游失败 $failedToday 次（不计额度）' : '';
+    return '今日 $usedToday/${dailyCap ?? '?'} 次（服务端回报）$reset$failed';
+  }
+
+  static String _resetText(DateTime utc) {
+    final local = utc.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(local.hour)}:${two(local.minute)}';
   }
 
   @visibleForTesting
@@ -47,5 +63,7 @@ class QuizVisionUsage {
     usedToday = null;
     dailyCap = null;
     updatedAt = null;
+    failedToday = null;
+    resetsAt = null;
   }
 }

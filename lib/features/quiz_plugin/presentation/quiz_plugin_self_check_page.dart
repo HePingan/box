@@ -16,7 +16,9 @@ import 'package:flutter/services.dart';
 
 import '../../../design_system/app_tokens.dart';
 import '../data/quiz_vision_credentials.dart';
+import '../data/quiz_vision_server_config.dart';
 import '../domain/quiz_diag.dart';
+import '../domain/quiz_vision_timeouts.dart';
 import '../domain/quiz_vision_usage.dart';
 import 'quiz_plugin_entry.dart';
 
@@ -76,6 +78,11 @@ class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
   static String? _lastCredentialMode;
 
   bool _loading = true;
+
+  /// 只看凭证（不签发）—— 用于拉后台配置。
+  final QuizVisionCredentialResolver _resolver = QuizVisionCredentialResolver();
+  final QuizVisionServerConfigClient _serverConfigClient =
+      QuizVisionServerConfigClient();
   Map<String, String> _status = const {};
   List<String> _recent = const [];
   List<String> _important = const [];
@@ -124,8 +131,26 @@ class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
     status['凭证模式'] =
         _lastCredentialMode ?? '未检测（点下面的「检测凭证」，会真实取用一次）';
     status['当前阶段'] = QuizPluginEntry.visionPhase;
-    // B1（2026-10-01）：服务端在响应头回报的额度用量（没有就显示「未知」）。
-    status['读屏用量'] = QuizVisionUsage.describe();
+    // P3-7（2026-11-18）：主动拉后台**生效**配置 —— 后台换过模型后，本地配置页
+    // 仍然显示旧值，排查时会被自己的界面骗。
+    // ⚠️ 只用本机已有凭证（peek），不签发设备令牌：签发是每 IP 每天 5 次，
+    // 反复打开自检页会把它烧完、把读屏自己顶成 429。
+    QuizVisionServerConfig? serverConfig;
+    try {
+      final config = await QuizPluginEntry.loadConfig();
+      final endpoint = await _resolver.peek(config);
+      serverConfig = await _serverConfigClient.fetch(endpoint);
+      status['后台生效模型'] = serverConfig?.describeModel() ?? '查不到（未登录/无设备令牌/网络不通）';
+      if (serverConfig?.upstreamBudgetSeconds != null) {
+        status['后台超时预算'] = '${serverConfig!.upstreamBudgetSeconds}s'
+            '（客户端硬顶 ${QuizVisionTimeouts.engineHard.inSeconds}s）';
+      }
+    } catch (_) {
+      status['后台生效模型'] = '查询失败';
+    }
+    // B1（2026-10-01）+ P3-4（2026-11-18）：额度。服务端主动查询优先，
+    // 查不到再看响应头里捡到的值。
+    status['读屏额度'] = serverConfig?.describeQuota() ?? QuizVisionUsage.describe();
 
     final recent = QuizDiag.recent(limit: 20);
     final important = await QuizDiag.important(limit: 20);

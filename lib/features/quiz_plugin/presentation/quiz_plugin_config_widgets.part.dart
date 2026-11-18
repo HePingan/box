@@ -96,6 +96,32 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
 
   /// 正在探活 OCR 服务（开关旁边显示转圈）。
   bool _ocrProbing = false;
+
+  /// 额度行（P3-4）：默认显示上次从响应头/服务端拿到的值，点刷新主动查。
+  bool _quotaLoading = false;
+  String _quotaText = QuizVisionUsage.describe();
+
+  /// 主动查服务端额度。
+  ///
+  /// ⚠️ 用 `peek` 而不是 `resolve`：签发设备令牌是每 IP 每天 5 次的限额，
+  /// 光打开设置页就签发会把读屏自己顶成 429（2026-10-01 踩过）。
+  Future<void> _refreshQuota() async {
+    setState(() => _quotaLoading = true);
+    String text;
+    try {
+      final endpoint = await QuizVisionCredentialResolver().peek(_cfg);
+      final config =
+          await QuizVisionServerConfigClient().fetch(endpoint);
+      text = config?.describeQuota() ?? QuizVisionUsage.describe();
+    } catch (_) {
+      text = QuizVisionUsage.describe();
+    }
+    if (!mounted) return;
+    setState(() {
+      _quotaText = text;
+      _quotaLoading = false;
+    });
+  }
   late final TextEditingController _ocrTokenController;
   late final TextEditingController _apiUrlController;
   late final TextEditingController _apiKeyController;
@@ -392,6 +418,42 @@ class _QuizConfigSheetState extends State<_QuizConfigSheet> {
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                         ),
+                      ],
+                    ),
+                  ),
+                // P3-4（2026-11-18）：额度可见 —— 让用户在设置页就能看到「今天还能读几次」，
+                // 不必等额度用完才从 429 里猜，也不用进自检页。
+                // 数据来自 `GET /api/quiz/vision/config`（有身份才回用量）。
+                if (_cfg.allowExternalApi)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: AppTokens.spaceXs),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.data_usage_rounded,
+                          size: 16,
+                          color: Theme.of(context).colorScheme.outline,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            _quotaText,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                        if (_quotaLoading)
+                          const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        else
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            tooltip: '刷新额度',
+                            icon: const Icon(Icons.refresh_rounded, size: 18),
+                            onPressed: _refreshQuota,
+                          ),
                       ],
                     ),
                   ),

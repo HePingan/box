@@ -19,4 +19,19 @@
          （由 tool/gen_disguise_icon.py 从真机 app_icon 的 128px 拟合出矢量、按目标dp
          各密度重新栅格化；128px 直接拷会被桌面放大到糊）。
          所以这里原先那 5 个 ic_calculator_* 颜色已经删除，别再加回来。 -->
+
+    <!-- ===== 答题悬浮窗配色（2026-11-18 审计 P2-7：暗色适配） =====
+         这些颜色原先全部硬编码在 quiz_overlay.xml / drawable/quiz_overlay_bg.xml 里，
+         夜间（系统深色）依然是纯白卡片 + 深灰字 ⇒ 深色题库 App 上白得刺眼。
+         现在抽成资源，values-night/colors.xml 给深色版本；纯资源改动，代码零改动。
+         ⚠️ 新增颜色必须同时在 values-night 里给一份，否则夜间会回落到白色。 -->
+    <color name="quiz_overlay_surface">#FFFFFF</color>
+    <color name="quiz_overlay_surface_alt">#F8FAFC</color>
+    <color name="quiz_overlay_surface_soft">#F1F5F9</color>
+    <color name="quiz_overlay_text_primary">#101828</color>
+    <color name="quiz_overlay_text_secondary">#344054</color>
+    <color name="quiz_overlay_text_muted">#475569</color>
+    <color name="quiz_overlay_divider">#E2E8F0</color>
+    <color name="quiz_overlay_stroke">#D0D5DD</color>
+    <color name="quiz_overlay_icon_tint">#F8FAFC</color>
 </resources>

@@ -167,7 +167,9 @@ void main() {
     );
     expect((deviceCall['choices'] as List), isNotEmpty);
 
-    // 设备上游失败 → deviceFailed +1，deviceTotal 同步 +1。
+    // 设备上游失败 → deviceFailed +1，但 **deviceTotal 不变**。
+    // 2026-11-18（审计 P0-3）：额度只在真拿到答案时 +1。原实现无条件 +1，
+    // 上游 502/超时同样烧掉一次日额度 ⇒ 用户当天额度被上游故障吃掉。
     // 走别名路径，顺带验「两条路径共用一个主体解析」没有漏掉别名。
     final failed = await fixture.send(
       'POST',
@@ -191,7 +193,7 @@ void main() {
       token: adminToken,
     );
     expect(stats['deviceCount'], greaterThanOrEqualTo(1));
-    expect(stats['deviceTotal'], 2);
+    expect(stats['deviceTotal'], 1, reason: '上游失败不计额度（deviceTotal 只数成功）');
     expect(stats['deviceFailed'], 1);
     expect(stats['deviceDailyCap'], 100);
     expect((stats['perDevice'] as Map).keys, contains('device:$deviceId'));
@@ -226,7 +228,7 @@ void main() {
     expect(stats['total'], 1);
     expect(stats['accounts'], 1);
     expect((stats['perAccount'] as Map).keys, contains('u_admin'));
-    expect(stats['deviceTotal'], 2, reason: '账号调用不该改动设备口径');
+    expect(stats['deviceTotal'], 1, reason: '账号调用不该改动设备口径');
     expect(stats['deviceCount'], greaterThanOrEqualTo(1));
   });
 

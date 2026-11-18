@@ -113,11 +113,19 @@ void main() {
       final tagEnd = xml.indexOf('>', start);
       final tag = xml.substring(tagStart, tagEnd);
       expect(tag.contains('ScrollView'), isTrue, reason: '内容超长时可滚动看全');
-      final m = RegExp(r'android:maxHeight="(\d+)dp"').firstMatch(tag);
-      expect(m, isNotNull, reason: '应有明确的 maxHeight');
+      // 2026-11-18：`android:maxHeight` 对 ScrollView 是 **no-op**（从未生效过），
+      // 限高的真实来源已搬到 QuizAccessibilityService.AI_PROCESS_MAX_HEIGHT_DP。
+      final kt = File(
+        'android/app/src/main/kotlin/top/hpa888/box/QuizAccessibilityService.kt',
+      ).readAsStringSync();
+      final m = RegExp(r'AI_PROCESS_MAX_HEIGHT_DP\s*=\s*(\d+)f').firstMatch(kt);
+      expect(m, isNotNull, reason: '限高必须有一个明确的代码常量');
       final maxH = int.parse(m!.group(1)!);
       expect(maxH, greaterThanOrEqualTo(150),
           reason: '过程框高度上限应≥150dp，否则一屏看不全几行（原 120dp 偏窄）');
+      // 且必须真的接到视图上，否则常量就是摆设
+      expect(kt.contains('clampScrollMaxHeight(it, AI_PROCESS_MAX_HEIGHT_DP)'), isTrue,
+          reason: '常量必须被应用到 scroll_ai_process');
     });
 
     test('过程框在结构上位于窗口容器内、紧跟答案区之后', () {
