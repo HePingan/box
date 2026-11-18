@@ -4264,8 +4264,8 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         target.post {
             val lp = target.layoutParams ?: return@post
             // 先复位，才能感知「内容变短」——否则一旦被钳过就永远回不去。
-            if (lp.height != ViewGroup.LayoutParams.WRAP_CONTENT) {
-                lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+            if (lp.height != android.view.ViewGroup.LayoutParams.WRAP_CONTENT) {
+                lp.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
                 target.layoutParams = lp
             }
             target.post {
@@ -4274,8 +4274,8 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
                     val next = target.layoutParams
                     next.height = maxH
                     target.layoutParams = next
-                } else if (cur.height != ViewGroup.LayoutParams.WRAP_CONTENT) {
-                    cur.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                } else if (cur.height != android.view.ViewGroup.LayoutParams.WRAP_CONTENT) {
+                    cur.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
                     target.layoutParams = cur
                 }
             }
