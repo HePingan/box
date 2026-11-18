@@ -937,19 +937,41 @@ class QuizPluginEntry {
         : ambiguousText == null
             ? list
             : <String>[ambiguousText];
-    final overlayAnswers = imageQuestionText ??
+    var overlayAnswers = imageQuestionText ??
         ambiguousText ??
         (overlayList.isNotEmpty
             ? _withSimilarityMarker(overlayList.first, result)
             : _withSimilarityMarker(_formatResultForOverlay(result), result));
+    // 「识别成功、没出答案」（用户 2026-11-18 报障）的兜底：
+    // 过程区已经写了「④ 识别成功」，结论区却可能是空白 —— 只要正文去掉隐藏
+    // 相似度 marker 后为空，用户看到的就是**没有任何文字**，屏幕上只剩一个
+    // 状态徽章。**命中态绝不允许渲染空白**，宁可明说「没解析出答案」。
+    final visibleText = overlayAnswers
+        .replaceAll(RegExp(r'\s*\[\[SIM:\d{1,3}]]'), '')
+        .trim();
+    var resultStatus = ambiguity.status;
+    if (visibleText.isEmpty) {
+      QuizDiag.warn(
+        QuizDiagStage.result,
+        '命中但正文为空：改为可读提示（不渲染空白）',
+        fields: {
+          'answers': result.answers.length,
+          'list': overlayList.length,
+          'firstAnswer': result.answers.first.correctAnswer,
+          'firstTextLen': result.answers.first.text.length,
+        },
+      );
+      overlayAnswers = 'AI 已识别这道题，但没解析出可读答案。点右上角 AI 重试，或手动录入。';
+      resultStatus = 'miss';
+    }
     await _pushOverlay(
       question: question,
       answers: config.debugCapture
           ? '$overlayAnswers\n\n--- 调试捕获文本 ---\n${_formatDebugCapture(question)}'
           : overlayAnswers,
       displayMode: config.displayMode,
-      status: ambiguity.status,
-      answerKey: ambiguity.answerKey,
+      status: resultStatus,
+      answerKey: resultStatus == 'miss' ? null : ambiguity.answerKey,
       similarity: _similarityForResult(result),
       matchIndex: 0,
       matchCount: overlayList.isNotEmpty

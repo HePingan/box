@@ -4190,7 +4190,16 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         if (isSearchingNow) {
             aTv?.text = ""
         } else {
-            applyAnswerStyle(aTv, displayAnswer)
+            // 兜底（用户 2026-11-18 报障「识别成功，没出答案」）：命中/歧义/重试任何
+            // 非检索态都**不许**把正文留空。空白正文会让画面只剩一个状态徽章，
+            // 用户无法区分「还没好」和「好了但没内容」。
+            val shown = if (displayAnswer.isBlank()) {
+                logDebug("answer text blank at render (status=$overlayStatus raw=${a.length})")
+                "没解析出可读答案，点 AI 重试或手动录入"
+            } else {
+                displayAnswer
+            }
+            applyAnswerStyle(aTv, shown)
         }
         ensureAnswerOverlayFitsContent(view)
         applyAnswerOnlyVisibility(view)
