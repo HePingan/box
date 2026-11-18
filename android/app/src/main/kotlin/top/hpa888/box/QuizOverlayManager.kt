@@ -832,6 +832,12 @@ class QuizOverlayManager(private val context: Context) {
         val a = raw.replace(Regex("\\s*\\[\\[SIM:\\d{1,3}]]"), "").trim()
         val displayAnswer = when {
             currentStatus == "searching" -> ""
+            // retrying：正文保留上一条失败提示（Dart 侧的保底停留态），不清空也不
+            // 走「答案：xxx」提取（那是给命中态用的，会把提示改写成假的答案）。
+            currentStatus == "retrying" -> a.lineSequence()
+                .map { it.trim() }
+                .firstOrNull { it.isNotEmpty() && !it.contains("相似度") }
+                ?: a.ifBlank { "未命中，正在重试…" }
             currentStatus == "miss" -> a.lineSequence()
                 .map { it.trim() }
                 .firstOrNull { it.isNotEmpty() && !it.contains("相似度") }
@@ -865,6 +871,7 @@ class QuizOverlayManager(private val context: Context) {
         val status = view.findViewById<View>(R.id.status_bar)
         val color = when (currentStatus) {
             "searching" -> 0xFFF59E0B.toInt()
+            "retrying" -> 0xFFF59E0B.toInt()
             "miss" -> 0xFFEF4444.toInt()
             "ambiguous" -> 0xFFF59E0B.toInt()
             "hit" -> 0xFF22C55E.toInt()

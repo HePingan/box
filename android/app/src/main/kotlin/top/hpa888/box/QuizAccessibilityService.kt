@@ -1109,7 +1109,9 @@ class QuizAccessibilityService : AccessibilityService() {
     private fun isAnswerReadyStatus(status: String): Boolean {
         val s = status.trim().lowercase()
         if (s.isEmpty()) return false
-        return s != "searching" && s != "ambiguous" && s != "idle"
+        // `retrying`（失败后同题自动重试）同样是过程态：正文里留的是上一条失败
+        // 提示，用户正在等下一次结果 ⇒ 不能当成「答案已就绪」把过程框收掉。
+        return s != "searching" && s != "retrying" && s != "ambiguous" && s != "idle"
     }
 
     /**
@@ -4166,8 +4168,13 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         val isSearchingNow = overlayStatus == "searching"
         // 标题/摘要条已展示状态与相似度；内容区命中时只显示答案本身。
         // 检索中：标题已有「新题 · 检索中」，正文与摘要条不再重复。
+        // `retrying`：Dart 侧把「失败提示」原样带回来的重试态（2026-11-18 用户报障
+        // 「AI 读屏不成功时提示闪烁一下就没了」）。它**不是** searching —— 正文
+        // 必须保留上一条提示，只让徽章变成「重试中」，否则提示又是一闪而过。
+        val isRetryingNow = overlayStatus == "retrying"
         val displayAnswer = when {
             isSearchingNow -> ""
+            isRetryingNow -> buildMissDisplayAnswer(a)
             overlayStatus == "miss" -> buildMissDisplayAnswer(a)
             overlayStatus == "ambiguous" -> a.ifBlank { "存在多个候选，请手动确认" }
             else -> compactAnswerForExam(a, includeSimilarity = false)
@@ -4193,6 +4200,7 @@ private fun probeFromSavedRegionForAnswer(attempt: Int = 0) {
         // 结构化状态色（优先 status 字段）
         val color = when (overlayStatus) {
             "searching" -> 0xFFF59E0B.toInt()
+            "retrying" -> 0xFFF59E0B.toInt()
             "miss" -> 0xFFEF4444.toInt()
             "ambiguous" -> 0xFFF59E0B.toInt()
             "hit" -> 0xFF22C55E.toInt()
@@ -4912,6 +4920,8 @@ internal fun badgeState(
     sim: Int?,
 ): OverlayBadge = when {
     isSearchingNow -> OverlayBadge("读屏中", 0xFFF59E0B.toInt())
+    // 失败后同题的自动重试：徽章说「重试中」，正文仍保留上一条失败提示（不清空）。
+    status == "retrying" -> OverlayBadge("重试中", 0xFFF59E0B.toInt())
     status == "ambiguous" && matchCount > 1 ->
         OverlayBadge("确认 ${matchIndex + 1}/$matchCount", 0xFFF59E0B.toInt())
     status == "ambiguous" -> OverlayBadge("请确认", 0xFFF59E0B.toInt())

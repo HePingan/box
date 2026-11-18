@@ -1807,6 +1807,8 @@ class PlatformQuotaServer {
       decoded['reasoning_effort'] = 'none';
     }
     final UpstreamResponse upstream;
+    // 计时：日报要回答「读屏是慢还是挂了」，没有耗时就只能靠猜。
+    final visionUpstreamStartedAt = DateTime.now();
     try {
       upstream = await postChatCompletionUpstream(provider, decoded);
     } catch (error) {
@@ -1842,7 +1844,9 @@ class PlatformQuotaServer {
     // 只记主体/状态/字节数，不记请求与响应内容，不记令牌。
     stdout.writeln(
       '${DateTime.now().toIso8601String()} quiz-vision subject=$subjectKey '
-      'upstream=${upstream.statusCode} bytes=${upstream.text.length}',
+      'upstream=${upstream.statusCode} bytes=${upstream.text.length} '
+      'ms=${DateTime.now().difference(visionUpstreamStartedAt).inMilliseconds} '
+      'model=${provider.model.isEmpty ? '-' : provider.model}',
     );
     setQuizVisionUsageHeaders(request.response, subjectKey, dayKey);
     await jsonText(request.response, upstream.statusCode, upstream.text);

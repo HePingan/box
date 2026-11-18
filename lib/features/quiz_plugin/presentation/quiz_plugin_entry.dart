@@ -658,6 +658,67 @@ class QuizPluginEntry {
   /// 读屏命中后的「不许被通用未命中覆盖」保护窗口。
   static const Duration visionHitPaintGuard = Duration(seconds: 30);
 
+  /// 未命中/失败提示的**保底停留**窗口。
+  ///
+  /// 用户 2026-11-18 报障：「AI 读屏不成功时提示闪烁一下就没了，太快了看不清」。
+  /// 真因不是提示没画出来，而是**画完立刻被下一轮 `searching` 推送清空**：
+  /// 原生渲染遇到 `status=searching` 会无条件把正文置空（历史写法，为的是
+  /// 「检索中不与标题三重复」），而失败后同一道题还留在屏幕上 ⇒ 下一拍扫描
+  /// 又推一次 searching ⇒ 结论区被清空，用户看到的就是「闪一下」。
+  ///
+  /// 规则：同题的失败提示在 [missStickyWindow] 内不许被 searching 抹掉 ——
+  /// 该次 searching 降级为 `retrying`（进度照常显示，正文保留上一条提示）。
+  /// 换题（指纹不同）或窗口过期则一切照旧。
+  static const Duration missStickyWindow = Duration(seconds: 6);
+  static String _lastMissFingerprint = '';
+  static String _lastMissAnswers = '';
+  static DateTime? _lastMissAt;
+
+  /// `_pushOverlay` 的漏斗变换：要不要把这次 searching 降级成 retrying。
+  ///
+  /// 纯函数（只读上面三个状态字段），便于单测直接钉行为。
+  static ({String status, String answers}) _applyMissSticky(
+    String status,
+    String answers,
+    String? fingerprint,
+  ) {
+    if (status != 'searching') return (status: status, answers: answers);
+    final at = _lastMissAt;
+    if (at == null || _lastMissAnswers.isEmpty) {
+      return (status: status, answers: answers);
+    }
+    if (fingerprint == null || fingerprint.isEmpty) {
+      return (status: status, answers: answers);
+    }
+    if (fingerprint != _lastMissFingerprint) {
+      return (status: status, answers: answers);
+    }
+    if (DateTime.now().difference(at) >= missStickyWindow) {
+      return (status: status, answers: answers);
+    }
+    // 正文换成上一条失败提示：原生对 retrying **不清空**正文，提示就留住了。
+    return (status: 'retrying', answers: _lastMissAnswers);
+  }
+
+  /// 单测接缝：直接观察漏斗变换的结果。
+  @visibleForTesting
+  static Map<String, String> debugApplyMissSticky(
+    String status,
+    String answers,
+    String? fingerprint,
+  ) {
+    final r = _applyMissSticky(status, answers, fingerprint);
+    return {'status': r.status, 'answers': r.answers};
+  }
+
+  /// 单测接缝：登记一条「刚展示过的失败提示」。
+  @visibleForTesting
+  static void debugRecordMiss(String fingerprint, String answers, {DateTime? at}) {
+    _lastMissFingerprint = fingerprint;
+    _lastMissAnswers = answers;
+    _lastMissAt = at ?? DateTime.now();
+  }
+
   /// 记下「这道题读屏命中了」。
   static void _markVisionHit(String fingerprint) {
     final stem = QuizSearchPolicy.stemFingerprint(fingerprint);
@@ -703,11 +764,16 @@ class QuizPluginEntry {
     required QuizConfig config,
   }) async {
     if (_missPaintBlocked(fingerprint)) return;
+    // 记下来：这条提示接下来 6 秒内不许被同题的 searching 清空（见 _applyMissSticky）。
+    _lastMissFingerprint = fingerprint;
+    _lastMissAnswers = answers;
+    _lastMissAt = DateTime.now();
     await _pushOverlay(
       question: question,
       answers: answers,
       displayMode: config.displayMode,
       status: 'miss',
+      fingerprint: fingerprint,
     );
   }
 
@@ -722,6 +788,9 @@ class QuizPluginEntry {
   /// 单测接缝：清空命中/在飞状态。
   @visibleForTesting
   static void debugResetVisionState() {
+    _lastMissFingerprint = '';
+    _lastMissAnswers = '';
+    _lastMissAt = null;
     _lastVisionHitStem = '';
     _lastVisionHitAt = null;
     _visionInFlightStem = '';
@@ -901,13 +970,16 @@ class QuizPluginEntry {
     int matchCount = 1,
     bool isSearching = false,
     List<String>? answersList,
+    String? fingerprint,
   }) {
+    // 失败提示保底停留：同题 6 秒内的 searching 降级成 retrying（正文不置空）。
+    final sticky = _applyMissSticky(status, answers, fingerprint);
     return updateOverlayContent(
       question: question,
-      answers: answers,
+      answers: sticky.answers,
       isSearching: isSearching,
       displayMode: displayMode,
-      status: status,
+      status: sticky.status,
       answerKey: answerKey,
       similarity: similarity,
       matchIndex: matchIndex,
@@ -1121,6 +1193,7 @@ class QuizPluginEntry {
             displayMode: config.displayMode,
             status: 'searching',
             isSearching: true,
+            fingerprint: requestFingerprint,
           );
         }
         final engine = _engineForAutoSearch ??= QuizEngine(config: config);
@@ -1562,6 +1635,7 @@ class QuizPluginEntry {
       isSearching: true,
       answerKey: '',
       answersList: const [],
+      fingerprint: requestFingerprint,
     );
 
     final bytes = await captureRegionScreenshot();
@@ -1610,6 +1684,7 @@ class QuizPluginEntry {
       isSearching: true,
       answerKey: '',
       answersList: const [],
+      fingerprint: requestFingerprint,
     );
 
     engine.config = config;
@@ -1808,6 +1883,7 @@ class QuizPluginEntry {
       isSearching: true,
       answerKey: '',
       answersList: const [],
+      fingerprint: requestFingerprint,
     );
 
     visionPhase = '截图';
