@@ -1846,7 +1846,8 @@ class PlatformQuotaServer {
       '${DateTime.now().toIso8601String()} quiz-vision subject=$subjectKey '
       'upstream=${upstream.statusCode} bytes=${upstream.text.length} '
       'ms=${DateTime.now().difference(visionUpstreamStartedAt).inMilliseconds} '
-      'model=${provider.model.isEmpty ? '-' : provider.model}',
+      'model=${provider.model.isEmpty ? '-' : provider.model} '
+      'ver=${request.headers.value('x-box-version') ?? '-'}',
     );
     setQuizVisionUsageHeaders(request.response, subjectKey, dayKey);
     await jsonText(request.response, upstream.statusCode, upstream.text);

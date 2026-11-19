@@ -185,6 +185,10 @@ String visionModelFor(QuizConfig config) {
 }
 
 class QuizEngine {
+  /// 客户端版本标签（形如 `1.21.44+401`），由 App 启动时写入。
+  /// 只用于读屏请求头 `X-Box-Version`，便于后台日志确认用户跑的版本。
+  static String clientVersionTag = '';
+
   QuizEngine({required this.config, http.Client? httpClient})
     : _http = httpClient ?? http.Client();
 
@@ -1302,6 +1306,11 @@ class QuizEngine {
               headers: {
                 'Content-Type': 'application/json; charset=utf-8',
                 if (bearer.isNotEmpty) 'Authorization': 'Bearer $bearer',
+                // 让后台读屏日志带上客户端版本：报障时「他装的是哪一版」以前只能猜
+                // （2026-11-19 真实教训：用户三次读屏全 200，却无法确认他跑的是不是
+                // 已修好 generation 丢弃的那一版）。
+                if (QuizEngine.clientVersionTag.isNotEmpty)
+                  'X-Box-Version': QuizEngine.clientVersionTag,
               },
               body: body,
             )

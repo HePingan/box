@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -2143,7 +2144,21 @@ class QuizPluginEntry {
   }
 
   /// 初始化自动搜题监听（接收无障碍服务捕获的题目）
+  /// 把 App 版本写进 `QuizEngine.clientVersionTag`（读屏请求头要用）。
+  /// 失败静默：拿不到版本号不该影响任何功能。
+  static Future<void> _recordClientVersion() async {
+    if (QuizEngine.clientVersionTag.isNotEmpty) return;
+    try {
+      final info = await PackageInfo.fromPlatform()
+          .timeout(const Duration(seconds: 2));
+      QuizEngine.clientVersionTag = '${info.version}+${info.buildNumber}';
+    } catch (_) {
+      // MissingPluginException / TimeoutException：保持空，请求就不带这个头。
+    }
+  }
+
   static Future<void> initAutoSearch() async {
+    unawaited(_recordClientVersion());
     // 允许重复设置 handler，避免 FlutterEngine 重建后因旧标记导致通道失效。
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'onQuestionCaptured' ||

@@ -11,6 +11,7 @@
 //   3) 显示最近日志（内存全量 + 落本机的重要事件），并「复制结论」。
 //
 // 口径：**绝不显示任何令牌/口令**，只显示凭证"模式"；报告文本同样如此（有单测锁）。
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -102,6 +103,15 @@ class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
     final status = <String, String>{};
 
     try {
+      // App 版本放第一行：报障时「他装的是哪一版」是最关键的一条，以前只能猜
+      // （2026-11-19 教训：用户贴了完整自检结论，仍无法确认是否已装上修复版）。
+      try {
+        final info = await PackageInfo.fromPlatform()
+            .timeout(const Duration(seconds: 2));
+        status['App 版本'] = '${info.version}+${info.buildNumber}';
+      } catch (_) {
+        status['App 版本'] = '读取失败';
+      }
       status['无障碍服务'] = await QuizPluginEntry.isAccessibilityEnabled()
           ? '已启用'
           : '未启用 —— 读屏拿不到截图，请到「设置 → 无障碍」开启「答题助手」';
