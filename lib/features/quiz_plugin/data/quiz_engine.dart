@@ -1464,6 +1464,15 @@ class QuizEngine {
       message,
       level: warn ? LogLevel.warn : LogLevel.info,
     );
+    // 同时进 QuizDiag：自检页「复制结论」只带 QuizDiag 的环形缓冲。
+    // 2026-11-19 真机教训：用户三次读屏（12:23:56 / 12:24:45 / 12:24:55）后端全都
+    // 200 且返回了带 answer 的 JSON，但自检页里**一行答案侧证据都没有**
+    // （那些日志只进了 AppLogger），只能靠猜 —— 定位成本极高。
+    QuizDiag.log(
+      QuizDiagStage.result,
+      '读屏 $message',
+      level: warn ? LogLevel.warn : LogLevel.info,
+    );
   }
 
   /// 摘要模型回复，便于日志分析时一眼看出「答空 / 走了工具 / 输出形态」。

@@ -392,17 +392,31 @@ class QuizPluginEntry {
   /// [retryIfQuickNull]：手动点 AI 读屏时传 true（见 [_captureRegionScreenshotOnce]）。
   static Future<Uint8List?> captureRegionScreenshot({
     bool retryIfQuickNull = false,
+    int extraAttempts = 1,
   }) async {
     final first = await _captureRegionScreenshotOnce();
     if (first != null || !retryIfQuickNull || _lastCaptureTimedOut) return first;
     // 真机 2026-10-01：翻题时自动流程会不停发起截图，与手动这一次抢同一个
     // `currentRequestId`，原生把旧请求的回包丢弃 ⇒ 手动这一次只拿到 null。
-    // 补一次（此刻我们是最新请求），把这种「偶发被顶掉」变成可用。
-    QuizDiag.warn(QuizDiagStage.result, '截图快速回空，补一次（疑似被顶掉）', fields: {
-      'cmd': 'captureRegionScreenshot',
-    });
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-    return _captureRegionScreenshotOnce();
+    // 补试（此刻我们是最新请求），把这种「偶发被顶掉」变成可用。
+    //
+    // 2026-11-19 真机教训：手动点 AI 时**只补 1 次**、250ms 后就放弃，紧接着
+    // 「读屏跳过：未拿到截图 manual=true」—— 用户点了按钮什么也没发生。
+    // 手动档补 3 次并逐次加长间隔（250/600/1200ms）：翻题冲突通常一瞬间，
+    // 一次 250ms 的重试根本撞不过去。
+    const delays = [250, 600, 1200];
+    for (var i = 0; i < extraAttempts && i < delays.length; i++) {
+      QuizDiag.warn(
+        QuizDiagStage.result,
+        '截图快速回空，补第 ${i + 1} 次（疑似被顶掉）',
+        fields: {'cmd': 'captureRegionScreenshot', 'delayMs': delays[i]},
+      );
+      await Future<void>.delayed(Duration(milliseconds: delays[i]));
+      final again = await _captureRegionScreenshotOnce();
+      if (again != null) return again;
+      if (_lastCaptureTimedOut) return null;
+    }
+    return null;
   }
 
   /// 单次截图（不做任何重试）：原生在同一个 MethodChannel 调用完成时回传本次字节；
@@ -1995,13 +2009,22 @@ class QuizPluginEntry {
     );
 
     visionPhase = '截图';
-    final bytes = await captureRegionScreenshot(retryIfQuickNull: manual);
+    // 手动档多补几次（用户点了按钮，宁可多等 2 秒也别「什么也没发生」）。
+    final bytes = await captureRegionScreenshot(
+      retryIfQuickNull: manual,
+      extraAttempts: manual ? 3 : 1,
+    );
     if (!_isCurrentRequest(requestGeneration, requestFingerprint)) return null;
     if (bytes == null || bytes.isEmpty) {
       QuizDiag.warn(
         QuizDiagStage.result,
         '读屏跳过：未拿到截图',
-        fields: {'manual': manual},
+        fields: {
+          'manual': manual,
+          'timedOut': _lastCaptureTimedOut,
+          // 手动档已补试 3 次仍空 ⇒ 不是偶发竞争，需要看原生 takeScreenshot 日志。
+          'retried': manual ? 3 : 1,
+        },
       );
       // 手动点 AI 读屏时不能悄悄退化成「未搜到答案，点右上角紫色 AI 按钮」——
       // 那会引导用户去点一个必然再次失败的按钮（真机就是这么坏掉的）。
