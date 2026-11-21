@@ -5,10 +5,9 @@
 // 插件可以整包导进来，装上点一下毫无反应；未知动作更隐蔽，`_actionFromName` 会静默
 // 回落 toast，用户以为装了个真插件。
 //
-// 本测试锁三件事：
-//   1) 未知动作被挡下并给出原因（不是静默变 toast）；
-//   2) navigate 指向不存在的页面被挡下；
-//   3) 合法的 navigate / 普通动作照常导入；全部非法时整体报错而不是导入 0 个。
+// 语义（两段都要有）：
+//   - 部分非法：非法的不导入，合法的照常进，剔除了谁要能报出来（PluginImportResult）；
+//   - 全部非法：整体抛 FormatException —— 不能报「导入成功 0 个」，那读起来像成功。
 
 import 'dart:convert';
 
@@ -21,10 +20,10 @@ HomePluginHost _host(String ns) => HomePluginHost(
   persistence: HomePluginPersistence(cache: CacheStore.inMemory(ns)),
 );
 
-HomeCustomPluginConfig _navigatePlugin({
+HomeCustomPluginConfig _plugin({
   required String id,
-  required String payload,
   String actionCode = 'navigate',
+  String payload = '{"route":"openMusic"}',
 }) => HomeCustomPluginConfig(
   id: id,
   title: id,
@@ -41,84 +40,79 @@ HomeCustomPluginConfig _navigatePlugin({
   origin: 'user_market',
 );
 
-/// 用 host 自己导出一个真实形状的快照，再改字段 —— 手写 JSON 容易和
-/// `fromJson` 的 key 对不上，测出来的红是假的。
+/// 用 host 自己导出真实形状的快照 —— 手写 JSON 容易和 `fromJson` 的 key 对不上，
+/// 那样测出来的红是假的。
 Future<String> _snapshotOf(
   HomePluginHost host,
-  HomeCustomPluginConfig plugin,
+  List<HomeCustomPluginConfig> plugins,
 ) async {
   await host.bootstrap();
-  await host.addCustomPlugin(plugin);
-  final json = await host.exportSinglePluginJson(plugin.id, pretty: false);
-  await host.unregister(plugin.id);
+  for (final p in plugins) {
+    await host.addCustomPlugin(p);
+  }
+  final json = await host.exportSnapshotJson(pretty: false);
+  for (final p in plugins) {
+    await host.unregister(p.id);
+  }
   return json;
-}
-
-String _patchField(String json, String field, String value) {
-  final map = jsonDecode(json) as Map<String, dynamic>;
-  final list = (map['customPlugins'] as List).cast<Map<String, dynamic>>();
-  list.first[field] = value;
-  map['customPlugins'] = list;
-  return jsonEncode(map);
 }
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('导入校验（与投稿同口径）', () {
-    test('未知动作被挡下并说明原因', () async {
+    test('未知动作被挡下，同批合法插件照常导入', () async {
       final host = _host('import_validation_unknown_action');
-      final good = await _snapshotOf(
-        host,
-        _navigatePlugin(id: 'imp_unknown', payload: '{"route":"openMusic"}'),
-      );
-      final bad = _patchField(good, 'actionCode', 'bogusAction');
+      final json = await _snapshotOf(host, [
+        _plugin(id: 'imp_good_a'),
+        _plugin(id: 'imp_bad_action', actionCode: 'bogusAction'),
+      ]);
 
-      final result = await host.importSnapshotJson(bad, merge: true);
+      final result = await host.importSnapshotJson(json, merge: true);
       final ids = host.snapshot().customPlugins.map((p) => p.id).toList();
 
+      expect(result.imported, 1, reason: '合法的那条要进来');
       expect(result.rejected.length, 1, reason: '未知动作必须被挡下');
+      expect(result.rejected.first.id, 'imp_bad_action');
       expect(result.rejected.first.reason, contains('未知动作'));
-      expect(ids.contains('imp_unknown'), isFalse, reason: '被挡下的插件不该进配置');
+      expect(ids.contains('imp_good_a'), isTrue);
+      expect(ids.contains('imp_bad_action'), isFalse, reason: '被挡下的不该进配置');
     });
 
     test('navigate 指向不存在的页面被挡下', () async {
       final host = _host('import_validation_bad_route');
-      final good = await _snapshotOf(
-        host,
-        _navigatePlugin(id: 'imp_badroute', payload: '{"route":"openMusic"}'),
-      );
-      final bad = _patchField(good, 'payload', '{"route":"no_such_page"}');
+      final json = await _snapshotOf(host, [
+        _plugin(id: 'imp_good_b'),
+        _plugin(id: 'imp_bad_route', payload: '{"route":"no_such_page"}'),
+      ]);
 
-      final result = await host.importSnapshotJson(bad, merge: true);
+      final result = await host.importSnapshotJson(json, merge: true);
 
+      expect(result.imported, 1);
       expect(result.rejected.length, 1);
       expect(result.rejected.first.reason, contains('目标页面不存在'));
       expect(
-        host.snapshot().customPlugins.any((p) => p.id == 'imp_badroute'),
+        host.snapshot().customPlugins.any((p) => p.id == 'imp_bad_route'),
         isFalse,
       );
     });
 
     test('navigate 未指定页面被挡下', () async {
       final host = _host('import_validation_empty_route');
-      final good = await _snapshotOf(
-        host,
-        _navigatePlugin(id: 'imp_emptyr', payload: '{"route":"openMusic"}'),
-      );
-      final bad = _patchField(good, 'payload', '');
+      final json = await _snapshotOf(host, [
+        _plugin(id: 'imp_good_c'),
+        _plugin(id: 'imp_empty_route', payload: ''),
+      ]);
 
-      final result = await host.importSnapshotJson(bad, merge: true);
+      final result = await host.importSnapshotJson(json, merge: true);
+      expect(result.imported, 1);
       expect(result.rejected.length, 1);
       expect(result.rejected.first.reason, contains('未指定'));
     });
 
     test('合法 navigate 照常导入', () async {
       final host = _host('import_validation_ok');
-      final json = await _snapshotOf(
-        host,
-        _navigatePlugin(id: 'imp_ok', payload: '{"route":"openMusic"}'),
-      );
+      final json = await _snapshotOf(host, [_plugin(id: 'imp_ok')]);
 
       final result = await host.importSnapshotJson(json, merge: true);
       expect(result.imported, 1);
@@ -128,16 +122,34 @@ void main() {
 
     test('全部非法时整体报错，不静默导入 0 个', () async {
       final host = _host('import_validation_all_bad');
-      final good = await _snapshotOf(
-        host,
-        _navigatePlugin(id: 'imp_allbad', payload: '{"route":"openMusic"}'),
-      );
-      final bad = _patchField(good, 'actionCode', 'nope');
+      final json = await _snapshotOf(host, [
+        _plugin(id: 'imp_all_bad', actionCode: 'nope'),
+      ]);
 
       await expectLater(
-        host.importSnapshotJson(bad, merge: true),
-        throwsA(isA<FormatException>()),
+        host.importSnapshotJson(json, merge: true),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('不可用'),
+          ),
+        ),
       );
+    });
+
+    test('被挡下的插件不留下启用状态残留', () async {
+      final host = _host('import_validation_enabled_map');
+      final json = await _snapshotOf(host, [
+        _plugin(id: 'imp_good_d'),
+        _plugin(id: 'imp_bad_d', actionCode: 'nope'),
+      ]);
+
+      await host.importSnapshotJson(json, merge: true);
+      final enabled = host.snapshot().enabledMap.keys.toList();
+
+      expect(enabled.contains('imp_bad_d'), isFalse, reason: 'enabledMap 也要清掉');
+      expect(enabled.contains('imp_good_d'), isTrue);
     });
   });
 
@@ -145,11 +157,9 @@ void main() {
     test('只带目标插件本身', () async {
       final host = _host('export_single_plugin');
       await host.bootstrap();
+      await host.addCustomPlugin(_plugin(id: 'share_a'));
       await host.addCustomPlugin(
-        _navigatePlugin(id: 'share_a', payload: '{"route":"openMusic"}'),
-      );
-      await host.addCustomPlugin(
-        _navigatePlugin(id: 'share_b', payload: '{"route":"daily_news"}'),
+        _plugin(id: 'share_b', payload: '{"route":"daily_news"}'),
       );
 
       final json = await host.exportSinglePluginJson('share_a', pretty: false);
@@ -161,12 +171,10 @@ void main() {
       expect((map['enabledMap'] as Map).keys, ['share_a']);
     });
 
-    test('导出结果能被自己导入（闭环）', () async {
+    test('导出结果能被另一台设备导入（闭环）', () async {
       final host = _host('export_single_roundtrip');
       await host.bootstrap();
-      await host.addCustomPlugin(
-        _navigatePlugin(id: 'rt_a', payload: '{"route":"openMusic"}'),
-      );
+      await host.addCustomPlugin(_plugin(id: 'rt_a'));
       final json = await host.exportSinglePluginJson('rt_a', pretty: false);
 
       final other = _host('export_single_roundtrip_2');
