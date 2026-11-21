@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:box/features/extensions/core/builtin_plugin_pages.dart';
 import 'package:box/features/extensions/core/home_plugin_core.dart';
 
 /// navigate 动作的路由码是**两端共享的契约**：
@@ -76,6 +77,22 @@ void main() {
       source.contains('registeredCodes()'),
       isTrue,
       reason: '路由码选项必须来自注册表（单一事实源）',
+    );
+    expect(
+      source.contains('kHomePluginRouteLabels'),
+      isTrue,
+      reason: '下拉要给中文页面名，裸 code 对作者没有意义',
+    );
+  });
+
+  test('路由中文名表与注册表逐条对齐（下拉不会出现空标签）', () {
+    final codes = HomePluginRouteRegistry.registeredCodes().toSet();
+    final labels = kHomePluginRouteLabels.keys.toSet();
+    expect(
+      labels,
+      codes,
+      reason: '标签表漂移：缺 ${codes.difference(labels)}，'
+          '多 ${labels.difference(codes)}',
     );
   });
 }

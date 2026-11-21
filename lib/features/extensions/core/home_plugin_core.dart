@@ -291,21 +291,35 @@ class HomePluginRouteRegistry {
 }
 
 String _payloadRouteCode(HomePluginActionContext actionContext) {
-  final payload = actionContext.payload.trim();
-  if (payload.isEmpty) {
-    return actionContext.extra['route']?.toString().trim() ?? '';
+  return _routeCodeFromPayload(
+    actionContext.payload,
+    extra: actionContext.extra,
+  );
+}
+
+/// 从 payload 文本里取路由码。
+///
+/// 抽出来是因为**投稿校验、导入校验、运行时跳转**三处必须是同一口径：
+/// 服务端 `pluginPayloadRoute` 也照这个形状实现（裸串 / `route` / `routeCode` / `page`）。
+String _routeCodeFromPayload(
+  String payload, {
+  Map<String, dynamic> extra = const {},
+}) {
+  final text = payload.trim();
+  if (text.isEmpty) {
+    return extra['route']?.toString().trim() ?? '';
   }
 
   try {
-    final decoded = jsonDecode(payload);
+    final decoded = jsonDecode(text);
     if (decoded is Map) {
       final route = decoded['route'] ?? decoded['routeCode'] ?? decoded['page'];
-      final text = route?.toString().trim() ?? '';
-      if (text.isNotEmpty) return text;
+      final routeText = route?.toString().trim() ?? '';
+      if (routeText.isNotEmpty) return routeText;
     }
   } catch (_) {}
 
-  return payload;
+  return text;
 }
 
 /// 加速动作只接受 http/https 且带 host 的绝对 URL。
@@ -822,6 +836,62 @@ const int kPluginSnapshotVersion = 2;
 
 /// 兼容读取的历史版本：v1 没有 orderMap，读出来内置顺序回落默认值。
 const Set<int> kSupportedPluginSnapshotVersions = {1, 2};
+
+/// 一条被挡下的导入插件。
+class PluginImportReject {
+  const PluginImportReject({
+    required this.id,
+    required this.title,
+    required this.reason,
+  });
+
+  final String id;
+  final String title;
+  final String reason;
+
+  @override
+  String toString() => '${title.isEmpty ? id : title}（$reason）';
+}
+
+/// 导入结果：导进来了几个、挡下了哪些及原因。
+///
+/// 以前 `importSnapshotJson` 返回 void，UI 只能报「导入成功 N 个」——被静默
+/// 剔掉的插件（未知动作、指向不存在的页面）用户永远不知道。
+class PluginImportResult {
+  const PluginImportResult({
+    this.imported = 0,
+    this.rejected = const [],
+  });
+
+  final int imported;
+  final List<PluginImportReject> rejected;
+
+  bool get hasRejects => rejected.isNotEmpty;
+}
+
+/// 导入期的插件校验 —— **与投稿入口同口径**。
+///
+/// 导入是投稿之外的第二条入口：不校验的话，一个 `navigate` + 不存在的路由码的
+/// 插件能直接进来，装上点一下毫无反应（投稿那边后端会 400 拒掉，导入这边没人管）。
+/// 未知动作更隐蔽：`_actionFromName` 会**静默回落 toast**，用户以为装了个真插件。
+///
+/// 返回 null 表示通过，否则是给人看的原因。
+String? pluginImportRejectReason(HomeCustomPluginConfig config) {
+  final known = HomePluginActionType.values.any(
+    (a) => a.name == config.actionCode,
+  );
+  if (!known) {
+    return '未知动作 ${config.actionCode}';
+  }
+  if (config.actionCode == HomePluginActionType.navigate.name) {
+    final route = _routeCodeFromPayload(config.payload);
+    if (route.isEmpty) return 'navigate 未指定要打开的页面';
+    if (!HomePluginRouteRegistry.registeredCodes().contains(route)) {
+      return '目标页面不存在（$route）';
+    }
+  }
+  return null;
+}
 
 class HomePluginSnapshot {
   final Map<String, bool> enabledMap;
@@ -1456,6 +1526,32 @@ class HomePluginHost {
     return jsonEncode(snapshot.toJson());
   }
 
+  /// 只导出一个自定义插件（分享给别人的最小载荷）。
+  ///
+  /// 整包导出会把「我装的全部插件 + 启用状态 + 排序」一起交出去，为了分享一个
+  /// 音乐源把整个配置送人既不必要也不安全。这里只带目标插件本身。
+  Future<String> exportSinglePluginJson(
+    String pluginId, {
+    bool pretty = true,
+  }) async {
+    await bootstrap();
+    final plugin = _notifier.value
+        .where((p) => p.id == pluginId && !p.builtIn)
+        .map((p) => p.customConfig)
+        .firstOrNull;
+    if (plugin == null) {
+      throw const FormatException('找不到该自定义插件（内置插件无需分享）');
+    }
+    final snapshot = HomePluginSnapshot(
+      enabledMap: {plugin.id: plugin.enabled},
+      orderMap: {plugin.id: plugin.sort},
+      customPlugins: [plugin],
+    );
+    return pretty
+        ? const JsonEncoder.withIndent('  ').convert(snapshot.toJson())
+        : jsonEncode(snapshot.toJson());
+  }
+
   /// 由 JSON 文本导入快照。
   ///
   /// 护栏（防止一次误粘/误拉远程内容静默清空用户配置）：
@@ -1463,7 +1559,7 @@ class HomePluginHost {
   ///  - 必须至少含 `enabledMap`(Map) 或 `customPlugins`(List) 之一；
   ///  - 覆盖模式（merge=false）下若解析结果「两表皆空」而当前快照非空，
   ///    除非显式 allowEmpty（清空即重置），否则拒绝。
-  Future<void> importSnapshotJson(
+  Future<PluginImportResult> importSnapshotJson(
     String jsonText, {
     bool merge = false,
     bool allowEmpty = false,
@@ -1522,12 +1618,41 @@ class HomePluginHost {
       }
     }
 
+    // 4) 逐条校验（与投稿入口同口径）：未知动作、navigate 指向不存在的页面一律挡下。
+    //    挡下的**不导入**，但要把明细回给调用方 —— 静默剔除过一次就够。
+    final accepted = <HomeCustomPluginConfig>[];
+    final rejected = <PluginImportReject>[];
+    for (final item in incoming.customPlugins) {
+      final reason = pluginImportRejectReason(item);
+      if (reason == null) {
+        accepted.add(item);
+      } else {
+        rejected.add(
+          PluginImportReject(id: item.id, title: item.title, reason: reason),
+        );
+      }
+    }
+    if (rejected.isNotEmpty && accepted.isEmpty) {
+      throw FormatException(
+        '导入的插件都不可用：${rejected.map((r) => r.toString()).take(3).join('；')}',
+      );
+    }
+    final checked = HomePluginSnapshot(
+      enabledMap: {
+        for (final entry in incoming.enabledMap.entries)
+          if (!rejected.any((r) => r.id == entry.key)) entry.key: entry.value,
+      },
+      orderMap: incoming.orderMap,
+      customPlugins: accepted,
+    );
+
     final finalSnapshot = merge
-        ? _mergeSnapshot(_buildCurrentSnapshot(), incoming)
-        : incoming;
+        ? _mergeSnapshot(_buildCurrentSnapshot(), checked)
+        : checked;
 
     _applySnapshot(finalSnapshot);
     await _persist();
+    return PluginImportResult(imported: accepted.length, rejected: rejected);
   }
 
   HomePluginSnapshot _mergeSnapshot(

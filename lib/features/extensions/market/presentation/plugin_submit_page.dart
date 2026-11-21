@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import 'package:box/features/extensions/core/builtin_plugin_pages.dart';
 import 'package:box/features/extensions/core/home_plugin_core.dart';
 import 'package:box/features/extensions/market/data/plugin_market_api.dart';
 import 'package:box/features/extensions/market/domain/plugin_market_manifest.dart';
@@ -62,6 +63,28 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
   void initState() {
     super.initState();
     _reloadMine();
+  }
+
+  /// 填一份能直接提交通过的示例。
+  ///
+  /// 投稿页原先只有一堆空字段和一个「payload 填什么」的说明——第一次投稿的人
+  /// 既不知道该填什么动作、也不知道 payload 长什么样，于是要么放弃、要么
+  /// 提交一个必然 400 的配置。示例选 `navigate → openMusic`：不依赖任何外部
+  /// URL，装上点开就是音乐页，能立刻验证整条链路。
+  void _fillExample() {
+    setState(() {
+      _titleCtrl.text = '音乐入口（示例）';
+      _subtitleCtrl.text = '点开直达音乐播放页';
+      _slugCtrl.text = 'music-entry';
+      _actionCode = 'navigate';
+      _areaCode = 'music';
+      _navigateRouteCode = 'openMusic';
+      _payloadCtrl.text = jsonEncode({'route': 'openMusic'});
+      _tagsCtrl.text = '示例,音乐';
+      _permissions
+        ..clear()
+        ..add('none');
+    });
   }
 
   @override
@@ -360,7 +383,11 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
                     .registeredCodes()))
                   DropdownMenuItem(
                     value: code,
-                    child: Text(code, overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      // 裸 code 对作者没有意义：中文页面名 + code，一眼能选对。
+                      '${kHomePluginRouteLabels[code] ?? code}（$code）',
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
               ],
               onChanged: (v) {
@@ -382,6 +409,14 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
                 border: OutlineInputBorder(),
               ),
             ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _fillExample,
+              icon: const Icon(Icons.auto_fix_high, size: 16),
+              label: const Text('填入一个可用的示例'),
+            ),
+          ),
           const SizedBox(height: 10),
           TextField(
             controller: _tagsCtrl,

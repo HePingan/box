@@ -17,6 +17,7 @@ import 'package:box/plugin_market_page.dart';
 import 'package:box/utils/app_logger.dart';
 import 'package:box/utils/log_channels.dart';
 import 'package:http/http.dart' as http;
+import 'package:share_plus/share_plus.dart';
 
 import 'package:box/features/policy/plugin_policy.dart';
 import 'widgets/extension_management_widgets.dart';
@@ -498,62 +499,115 @@ class _PluginTabState extends State<PluginTab>
   // ── Export / Import ──
 
   Future<void> _showExportJsonDialog() async {
-    final jsonText = await _pluginHost.exportSnapshotJson(pretty: true);
+    final custom = _pluginHost.snapshot().customPlugins;
+    var selectedId = '';
+    var jsonText = await _pluginHost.exportSnapshotJson(pretty: true);
     if (!mounted) return;
+
+    Future<String> genText(String id) => id.isEmpty
+        ? _pluginHost.exportSnapshotJson(pretty: true)
+        : _pluginHost.exportSinglePluginJson(id, pretty: true);
+
     await showDialog<void>(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        title: const Text('导出插件 JSON'),
-        content: SizedBox(
-          width: 560,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '可复制保存，或用于导入到其它设备。',
-                style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-              ),
-              const SizedBox(height: 10),
-              Container(
-                height: 320,
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: AppTokens.surfaceMuted,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppTokens.cardBorder),
-                ),
-                child: SingleChildScrollView(
-                  child: SelectableText(
-                    jsonText,
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      height: 1.3,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('导出 / 分享插件配置'),
+          content: SizedBox(
+            width: 560,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (custom.isNotEmpty)
+                  DropdownButtonFormField<String>(
+                    key: ValueKey('export-scope-$selectedId'),
+                    initialValue: selectedId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: '导出范围',
+                      helperText: '选单个插件就是一份可直接发给别人的最小配置',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem(
+                        value: '',
+                        child: Text('全部插件（含启用状态与排序）'),
+                      ),
+                      for (final p in custom)
+                        DropdownMenuItem(
+                          value: p.id,
+                          child: Text(
+                            p.title.isEmpty ? p.id : p.title,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: (v) async {
+                      if (v == null) return;
+                      try {
+                        final text = await genText(v);
+                        if (!ctx.mounted) return;
+                        setLocal(() {
+                          selectedId = v;
+                          jsonText = text;
+                        });
+                      } catch (e) {
+                        if (!ctx.mounted) return;
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                          SnackBar(content: Text('$e')),
+                        );
+                      }
+                    },
+                  ),
+                if (custom.isNotEmpty) const SizedBox(height: 10),
+                Container(
+                  height: 300,
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppTokens.surfaceMuted,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppTokens.cardBorder),
+                  ),
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      jsonText,
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                        height: 1.3,
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: const Text('关闭'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () async {
+                await SharePlus.instance.share(ShareParams(text: jsonText));
+              },
+              icon: const Icon(Icons.ios_share),
+              label: const Text('分享'),
+            ),
+            FilledButton.icon(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: jsonText));
+                if (!dialogCtx.mounted) return;
+                ScaffoldMessenger.of(
+                  dialogCtx,
+                ).showSnackBar(const SnackBar(content: Text('已复制到剪贴板')));
+              },
+              icon: const Icon(Icons.copy),
+              label: const Text('复制'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogCtx),
-            child: const Text('关闭'),
-          ),
-          FilledButton.icon(
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: jsonText));
-              if (!dialogCtx.mounted) return;
-              ScaffoldMessenger.of(
-                dialogCtx,
-              ).showSnackBar(const SnackBar(content: Text('已复制到剪贴板')));
-            },
-            icon: const Icon(Icons.copy),
-            label: const Text('复制'),
-          ),
-        ],
       ),
     );
   }
@@ -701,16 +755,25 @@ class _PluginTabState extends State<PluginTab>
                           return;
                         }
                       }
-                      await _pluginHost.importSnapshotJson(raw, merge: merge);
+                      final result = await _pluginHost.importSnapshotJson(
+                        raw,
+                        merge: merge,
+                      );
                       navigator.pop();
                       // 显示真实导入条目数，避免「静默成功」——用户须能判断是否真导入了东西。
+                      // 被挡下的插件也要点名：未知动作/指向不存在的页面在导入期就被剔除，
+                      // 不说出来用户会以为「装上了但点了没反应」。
                       final snap = _pluginHost.snapshot();
+                      final rejectText = result.hasRejects
+                          ? '；已跳过 ${result.rejected.length} 个'
+                                '（${result.rejected.take(2).join('；')}）'
+                          : '';
                       messenger.showSnackBar(
                         SnackBar(
                           content: Text(
                             '${merge ? '导入成功（已合并）' : '导入成功（已覆盖）'}'
                             '：启用状态 ${snap.enabledMap.length} 项，'
-                            '自定义插件 ${snap.customPlugins.length} 个',
+                            '自定义插件 ${snap.customPlugins.length} 个$rejectText',
                           ),
                         ),
                       );

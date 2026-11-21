@@ -25,6 +25,36 @@ import 'package:box/features/music/presentation/music_placeholder_page.dart';
 import 'package:box/novel/pages/novel_list_page.dart';
 import 'package:box/video/video_compat_pages.dart';
 
+/// 路由 code → 中文页面名（投稿页的 navigate 下拉、以及排错时的可读性）。
+///
+/// 之前投稿页只让作者填裸 code（`openMusic` / `daily_news`），既不知道对应哪个
+/// 页面、也不知道有哪些可选 —— 填错后端 400、装上点了没反应。这张表是**给作者看的**，
+/// 与 `registerBuiltinRouteDefaults` 里的 code 一一对应（契约测试会比对 key 集合）。
+const Map<String, String> kHomePluginRouteLabels = {
+  'daily_news': '每日资讯',
+  'openDailyNews': '每日资讯',
+  'novel_list': '小说列表',
+  'openNovelList': '小说列表',
+  'video_list': '影视列表',
+  'openVideoList': '影视列表',
+  'image_generator': 'AI 绘图',
+  'openImageGenerator': 'AI 绘图',
+  'remote_storage': '远程存储',
+  'openRemoteStorage': '远程存储',
+  'openMusic': '音乐播放',
+  'openQuickNote': '快速便签',
+  'openWallpaperGallery': '动漫壁纸',
+  'openWatchLater': '影视稍后看',
+  'service_monitor': '服务监控',
+  'openServiceMonitor': '服务监控',
+  'comic_library': '漫画库',
+  'openComicLibrary': '漫画库',
+  'net_diag': '网络诊断',
+  'openNetDiag': '网络诊断',
+  'server_ops': '服务器运维',
+  'openServerOps': '服务器运维',
+};
+
 /// 注册内置路由默认绑定（P2-2 从 HomePluginRouteRegistry.registerDefaults 拆出）。
 ///
 /// 保持与拆分前逐条一致：同一页面绑定两个 code（短码 + open 前缀码）。
