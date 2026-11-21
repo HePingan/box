@@ -707,6 +707,20 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
           continue;
         }
 
+        // 权限披露同样不能替用户点头：单装路径
+        // （_confirmInstallCompatibility）对「声明了权限」的插件一定弹确认框，
+        // 批量路径原先只看兼容性告警，于是声明了无障碍/安装应用这类高权限的
+        // 插件会被**静默装上**。这里与单装同口径：需要知情的一律跳过并记名，
+        // 让用户逐个点开看清楚再装。
+        final bulkDeclaredPermissions = permissionLabelsOf(item.permissions);
+        if (bulkDeclaredPermissions.isNotEmpty) {
+          skipped++;
+          skippedNames.add(
+            '${item.title}（声明权限：${bulkDeclaredPermissions.join('、')}，需单独确认）',
+          );
+          continue;
+        }
+
         try {
           await widget.onInstall(item);
           _installedIds.add(item.id);

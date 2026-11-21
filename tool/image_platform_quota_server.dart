@@ -1807,8 +1807,6 @@ class PlatformQuotaServer {
       decoded['reasoning_effort'] = 'none';
     }
     final UpstreamResponse upstream;
-    // 计时：日报要回答「读屏是慢还是挂了」，没有耗时就只能靠猜。
-    final visionUpstreamStartedAt = DateTime.now();
     try {
       upstream = await postChatCompletionUpstream(provider, decoded);
     } catch (error) {
@@ -1844,10 +1842,7 @@ class PlatformQuotaServer {
     // 只记主体/状态/字节数，不记请求与响应内容，不记令牌。
     stdout.writeln(
       '${DateTime.now().toIso8601String()} quiz-vision subject=$subjectKey '
-      'upstream=${upstream.statusCode} bytes=${upstream.text.length} '
-      'ms=${DateTime.now().difference(visionUpstreamStartedAt).inMilliseconds} '
-      'model=${provider.model.isEmpty ? '-' : provider.model} '
-      'ver=${request.headers.value('x-box-version') ?? '-'}',
+      'upstream=${upstream.statusCode} bytes=${upstream.text.length}',
     );
     setQuizVisionUsageHeaders(request.response, subjectKey, dayKey);
     await jsonText(request.response, upstream.statusCode, upstream.text);
@@ -4060,6 +4055,65 @@ class PlatformQuotaServer {
     'openWallpaperGallery',
   };
 
+  /// `navigate` 动作可打开的内置页面 code。
+  ///
+  /// 事实源是 App 的 `lib/features/extensions/core/builtin_plugin_pages.dart`
+  /// （`registerBuiltinRouteDefaults` 里逐条 register 的字符串）——这里是一份镜像，
+  /// `test/plugin_market/plugin_market_route_catalog_test.dart` 会比对两边。
+  ///
+  /// 为什么后端要管：navigate 的 payload 是自由文本，作者填一个不存在的路由码时
+  /// 旧链路全程无人拦截（后端只校验动作名、App 查不到就静默 return），
+  /// 结果「能提交、能过审、装了点了没反应」。投稿期就拒掉才是治本。
+  static const _allowedPluginRoutes = {
+    'daily_news',
+    'openDailyNews',
+    'novel_list',
+    'openNovelList',
+    'video_list',
+    'openVideoList',
+    'image_generator',
+    'openImageGenerator',
+    'remote_storage',
+    'openRemoteStorage',
+    'openMusic',
+    'openQuickNote',
+    'openWallpaperGallery',
+    'openWatchLater',
+    'service_monitor',
+    'openServiceMonitor',
+    'comic_library',
+    'openComicLibrary',
+    'net_diag',
+    'openNetDiag',
+    'server_ops',
+    'openServerOps',
+  };
+
+  /// 从 payload 里取 navigate 的目标路由码。
+  ///
+  /// 必须与 App 侧 `_payloadRouteCode`（home_plugin_core.dart）同口径，否则
+  /// 「服务端放行、客户端解析不出」又会静默：支持裸串、`{"route"}`、
+  /// `{"routeCode"}`、`{"page"}`；坏 JSON 按裸串处理。
+  static String pluginPayloadRoute(String payload) {
+    final text = payload.trim();
+    if (text.isEmpty) return '';
+    if (text.startsWith('{')) {
+      try {
+        final decoded = jsonDecode(text);
+        if (decoded is Map) {
+          for (final key in const ['route', 'routeCode', 'page']) {
+            final value = decoded[key]?.toString().trim() ?? '';
+            if (value.isNotEmpty) return value;
+          }
+        }
+        return '';
+      } catch (_) {
+        return text;
+      }
+    }
+    return text;
+  }
+
   static const _allowedPluginAreas = {
     'recommend',
     'music',
@@ -4283,6 +4337,36 @@ class PlatformQuotaServer {
         },
       });
       return;
+    }
+
+    // navigate 的目标必须是真实存在的内置页面。
+    // 不校验的后果是「作者填错 → 审核 checklist 全绿 → 用户装完点了没反应」，
+    // 而且 App 侧那个静默 return 让排查者以为是 App 坏了。
+    if (actionCode == 'navigate') {
+      final routeSource = payloadText.isNotEmpty
+          ? payloadText
+          : (payloadData.isEmpty ? '' : jsonEncode(payloadData));
+      final routeCode = pluginPayloadRoute(routeSource);
+      final sortedRoutes = _allowedPluginRoutes.toList()..sort();
+      if (routeCode.isEmpty) {
+        await jsonResponse(request.response, HttpStatus.badRequest, {
+          'error': {
+            'message':
+                'navigate 动作必须指定要打开的内置页面（payload 形如 {"route":"openMusic"}）',
+            'allowed': sortedRoutes,
+          },
+        });
+        return;
+      }
+      if (!_allowedPluginRoutes.contains(routeCode)) {
+        await jsonResponse(request.response, HttpStatus.badRequest, {
+          'error': {
+            'message': 'payload 里的路由码不在白名单：$routeCode',
+            'allowed': sortedRoutes,
+          },
+        });
+        return;
+      }
     }
 
     final permResult = normalizePluginPermissions(body['permissions']);
@@ -4619,6 +4703,29 @@ class PlatformQuotaServer {
         },
       });
       return;
+    }
+
+    // 与表单投稿同口径：navigate 必须指向真实内置页面。
+    // 这一条 payload 来自 plugin.json / 表单字段，此处的 payloadData/payloadText
+    // 还没解析出来，所以直接读原始值。
+    if (actionCode == 'navigate') {
+      final rawNavigatePayload = fields['payload'] ?? meta['payload'];
+      final routeSource = rawNavigatePayload is Map
+          ? jsonEncode(rawNavigatePayload)
+          : (rawNavigatePayload?.toString() ?? '');
+      final routeCode = pluginPayloadRoute(routeSource);
+      final sortedRoutes = _allowedPluginRoutes.toList()..sort();
+      if (routeCode.isEmpty || !_allowedPluginRoutes.contains(routeCode)) {
+        await jsonResponse(request.response, HttpStatus.badRequest, {
+          'error': {
+            'message': routeCode.isEmpty
+                ? 'navigate 动作必须指定要打开的内置页面（plugin.json 里 payload 填 {"route":"openMusic"}）'
+                : 'payload 里的路由码不在白名单：$routeCode',
+            'allowed': sortedRoutes,
+          },
+        });
+        return;
+      }
     }
 
     var slug =
@@ -5700,6 +5807,17 @@ class PlatformQuotaServer {
       return;
     }
     final actionOk = _allowedPluginActions.contains(sub.actionCode);
+    // navigate 的路由码必须真能落到一个内置页面上；非 navigate 动作不适用（记 true）。
+    // 这一项存在的理由：actionWhitelist 只验「动作名对不对」，
+    // 一个 navigate + 错路由码的插件在旧 checklist 里是六项全绿的。
+    final subRouteSource = sub.payload.isNotEmpty
+        ? sub.payload
+        : (sub.payloadData.isEmpty ? '' : jsonEncode(sub.payloadData));
+    final subRouteCode = sub.actionCode == 'navigate'
+        ? pluginPayloadRoute(subRouteSource)
+        : '';
+    final routeOk = sub.actionCode != 'navigate' ||
+        _allowedPluginRoutes.contains(subRouteCode);
     // 权限披露：审核端要能一眼看到「这插件要什么、最高风险到哪」
     final permCodes = sub.permissions.isEmpty
         ? const ['none']
@@ -5832,6 +5950,7 @@ class PlatformQuotaServer {
       if (packageError != null) 'packageError': packageError,
       'checklist': {
         'actionWhitelist': actionOk,
+        'routeResolvable': routeOk,
         'permissionWhitelist': permUnknown.isEmpty,
         'noReservedId': !sub.pluginId.startsWith('builtin_') &&
             !sub.pluginId.startsWith('market_'),

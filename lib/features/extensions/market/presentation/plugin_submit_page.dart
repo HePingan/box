@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -28,6 +29,14 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
 
   String _actionCode = 'toast';
   String _areaCode = 'recommend';
+
+  /// navigate 动作要打开的路由码。
+  ///
+  /// 路由码是 App 内部实现细节（`daily_news` / `openMusic` / `server_ops`…），
+  /// 以前只让作者在自由文本框里手填 —— 填错后端不校验、点下去 App 静默 return，
+  /// 等于「能提交、能过审、装了没反应」。现在改成下拉，选项直接从路由注册表取。
+  String _navigateRouteCode = '';
+  List<String>? _routeCodes;
 
   /// 声明权限（多选）。空集合 = 不申请任何权限，提交时统一发 `none`。
   final Set<String> _permissions = <String>{};
@@ -335,17 +344,44 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
             ],
           ),
           const SizedBox(height: 10),
-          TextField(
-            controller: _payloadCtrl,
-            minLines: 2,
-            maxLines: 4,
-            decoration: const InputDecoration(
-              labelText: 'payload（toast 文案 / navigate 路由码 / openMusic 音频地址）',
-              helperText: 'openMusic 支持纯 URL，或 '
-                  '{"url":"https://…","title":"名称","autoplay":true,"loop":true}',
-              border: OutlineInputBorder(),
+          if (_actionCode == 'navigate')
+            DropdownButtonFormField<String>(
+              key: ValueKey('nav-route-$_navigateRouteCode'),
+              initialValue: _navigateRouteCode.isEmpty ? null : _navigateRouteCode,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'payload（要打开的页面）',
+                helperText: '只能选 App 内置页面。提交时写成 {"route":"…"}，'
+                    '指向不存在的页面会被服务端拒绝。',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                for (final code in (_routeCodes ??= HomePluginRouteRegistry
+                    .registeredCodes()))
+                  DropdownMenuItem(
+                    value: code,
+                    child: Text(code, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: (v) {
+                if (v == null) return;
+                setState(() => _navigateRouteCode = v);
+                // 单一写入口：payload 文本由路由码派生，作者不用手拼 JSON。
+                _payloadCtrl.text = jsonEncode({'route': v});
+              },
+            )
+          else
+            TextField(
+              controller: _payloadCtrl,
+              minLines: 2,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: 'payload（toast 文案 / openMusic 音频地址）',
+                helperText: 'openMusic 支持纯 URL，或 '
+                    '{"url":"https://…","title":"名称","autoplay":true,"loop":true}',
+                border: OutlineInputBorder(),
+              ),
             ),
-          ),
           const SizedBox(height: 10),
           TextField(
             controller: _tagsCtrl,

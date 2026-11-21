@@ -263,6 +263,18 @@ class HomePluginRouteRegistry {
     return _routes.containsKey(routeCode.trim());
   }
 
+  /// 已注册的全部路由 code（排序后）。
+  ///
+  /// 投稿页的 `navigate` 下拉从这里取选项：路由码是 App 内部实现细节，
+  /// 不暴露出来作者就只能瞎填，而后端校验不了、点下去也不会报错。
+  /// 调用前先 `registerDefaults()`，否则拿到空表。
+  static List<String> registeredCodes() {
+    registerDefaults();
+    final codes = _routes.keys.where((c) => c.trim().isNotEmpty).toList();
+    codes.sort();
+    return List<String>.unmodifiable(codes);
+  }
+
   static WidgetBuilder? lookup(String routeCode) {
     return _routes[routeCode.trim()];
   }
@@ -376,7 +388,18 @@ class HomePluginActionRegistry {
       HomePluginRouteRegistry.registerDefaults();
       final routeCode = _payloadRouteCode(actionContext);
       final builder = HomePluginRouteRegistry.lookup(routeCode);
-      if (builder == null) return;
+      if (builder == null) {
+        // 以前这里直接 return：插件指向一个不存在的路由码时，用户点了毫无反应，
+        // 连「动作未注册」的兜底提示都触发不到（handler 是存在的，ran=true）。
+        // 必须说出来，否则「点了没反应」会被当成 App 坏了。
+        await _showSnack(
+          context,
+          routeCode.isEmpty
+              ? '插件没有指定要打开的页面'
+              : '插件指向的页面不存在：$routeCode',
+        );
+        return;
+      }
       await Navigator.push(context, MaterialPageRoute(builder: builder));
     });
     register(HomePluginActionType.openDailyNews.name, (
