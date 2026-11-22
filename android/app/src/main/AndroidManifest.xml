@@ -121,6 +121,20 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:mimeType="video/*"/>
             </intent-filter>
+            <!-- 插件分享码深链（boxapp://plugin?c=CODE）。
+                 为什么要它：分享码只能手输 6 位，扫一次码就直接进 App 才叫「扩散」。
+                 为什么不用 https 链接：普通 http(s) 链接要把域名声明成 App Link
+                 （需要 .well-known/assetlinks.json + 数字资产校验），
+                 自建 scheme 一步到位，且不影响浏览器打开同域名的落地页。
+                 为什么没加到 CalculatorAlias 上：伪装开启时 MainActivity 被停用，
+                 深链随之失效 —— 与「分享到极客匣」同一套心智，伪装期间不该有
+                 外部入口把真应用拉起来。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="boxapp" android:host="plugin"/>
+            </intent-filter>
         </activity>
 
         <!-- 伪装成计算器的桌面入口（activity-alias）。

@@ -488,6 +488,11 @@ class MainActivity : FlutterActivity() {
         ShareInboxReceiver.register(flutterEngine.dartExecutor.binaryMessenger)
         ShareInboxReceiver.handleIntent(intent, this)
 
+        // ── 插件分享码深链（boxapp://plugin?c=CODE）──
+        // 与分享同一条"冷启动攒着 / 热启动直接推"的路子，见 DeepLinkReceiver。
+        DeepLinkReceiver.register(flutterEngine.dartExecutor.binaryMessenger)
+        DeepLinkReceiver.handleIntent(intent)
+
         // ── 远程存储：视频首帧抽取（284 D8）──
         // 为什么在原生：Flutter 没有视频解码器，video_player 只能播不能抽帧；
         // MediaMetadataRetriever 能对 http(s) URL 直接取关键帧（按需 Range），
@@ -696,11 +701,15 @@ class MainActivity : FlutterActivity() {
         // 分享进来的文件直接推给 Dart 侧弹面板。
         setIntent(intent)
         ShareInboxReceiver.handleIntent(intent, this)
+        // 点分享码链接时 App 可能正在别的页面：这里把码推给 Dart 弹导入确认。
+        DeepLinkReceiver.handleIntent(intent)
     }
 
     override fun onDestroy() {
         // 分享接收通道绑在本次 engine 上，随 Activity 解绑（同 FlutterWindowDiagnostics）。
         ShareInboxReceiver.detach()
+        // 深链通道同理：不解绑的话重建后码会投向失效 channel。
+        DeepLinkReceiver.detach()
         // 关键：只清掉 Activity 持有的普通悬浮窗/区域选择器。
         // 无障碍答案窗（TYPE_ACCESSIBILITY_OVERLAY）必须跨 Activity 存活——
         // 用户切到驾考/考试 App 时 MainActivity 常被 destroy，若这里 hide 全部，

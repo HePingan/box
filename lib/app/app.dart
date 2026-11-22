@@ -10,6 +10,7 @@ import '../update/update_bootstrap_page.dart';
 import 'app_bootstrap.dart';
 import 'app_routes.dart';
 import '../features/extensions/plugins/remote_storage/presentation/share_inbox_gate.dart';
+import '../features/extensions/market/presentation/plugin_share_link_gate.dart';
 import 'app_shell.dart';
 import '../design_system/app_theme_scope.dart';
 
@@ -82,14 +83,18 @@ class _BoxAppState extends State<BoxApp> with WidgetsBindingObserver {
         // 放在 BoxApp 之外又会被用户切页绕过。
         home: AppThemeRebuild(
           builder: (context) => ShareInboxGate(
-            child: UpdateBootstrapPage(
-              nextPage: MainAppShell(novelBootstrap: bootstrap.novelBootstrap),
-              appId: AppConfig.appId,
-              checkUrl: AppConfig.updateCheckUrl,
-              platform: AppConfig.updatePlatform,
-              channel: AppConfig.appChannel,
-              allowProceedOnCheckFailure: AppConfig.allowProceedOnCheckFailure,
-              updateSecurity: AppConfig.updateSecurityConfig,
+            // 深链闸门与分享闸门同一位置（home 之下、Navigator 之上）：
+            // 扫码进来的分享码要能在任何页面之上弹「是否导入」。
+            child: PluginShareLinkGate(
+              child: UpdateBootstrapPage(
+                nextPage: MainAppShell(novelBootstrap: bootstrap.novelBootstrap),
+                appId: AppConfig.appId,
+                checkUrl: AppConfig.updateCheckUrl,
+                platform: AppConfig.updatePlatform,
+                channel: AppConfig.appChannel,
+                allowProceedOnCheckFailure: AppConfig.allowProceedOnCheckFailure,
+                updateSecurity: AppConfig.updateSecurityConfig,
+              ),
             ),
           ),
         ),

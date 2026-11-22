@@ -8,6 +8,7 @@ import 'package:box/design_system/app_tokens.dart';
 import 'package:box/design_system/widgets/app_cards.dart';
 import 'package:box/design_system/widgets/app_page_scaffold.dart';
 import 'package:box/features/extensions/market/data/plugin_market_api.dart';
+import 'package:box/features/extensions/market/data/plugin_share_link_channel.dart';
 import 'package:box/features/extensions/market/data/plugin_market_local_sync.dart';
 import 'package:box/features/extensions/market/data/plugin_market_manifest_repository.dart';
 import 'package:box/features/extensions/market/presentation/plugin_submit_page.dart';
@@ -17,6 +18,7 @@ import 'package:box/plugin_market_page.dart';
 import 'package:box/utils/app_logger.dart';
 import 'package:box/utils/log_channels.dart';
 import 'package:http/http.dart' as http;
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:box/features/policy/plugin_policy.dart';
@@ -657,6 +659,15 @@ class _PluginTabState extends State<PluginTab>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // 二维码内容是深链：手机相机扫 → 直接唤起 App 弹「是否导入」。
+              QrImageView(
+                data: PluginShareLinkChannel.buildLink(code),
+                version: QrVersions.auto,
+                size: 168,
+                backgroundColor: Colors.white,
+                padding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 10),
               SelectableText(
                 code,
                 style: const TextStyle(
@@ -668,7 +679,9 @@ class _PluginTabState extends State<PluginTab>
               ),
               const SizedBox(height: 14),
               Text(
-                '让对方在「插件 → 导入 → 分享码」里输入这 6 位。\n'
+                '手机相机扫上面的码可直接打开 App 导入。\n'
+                '微信/QQ 里点不开这个链接 —— 那就把这 6 位发给对方，\n'
+                '让对方在「插件 → 导入 → 分享码」里输入。\n'
                 '码里已含「$title」的完整配置，对方不需要登录。',
                 textAlign: TextAlign.center,
                 style: TextStyle(
