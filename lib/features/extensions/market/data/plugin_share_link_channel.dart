@@ -83,7 +83,7 @@ class PluginShareLinkChannel {
   /// App Links 校验通过时系统直接进 App，没通过就落到落地页，页面里有
   /// 「在 App 里打开」按钮和 6 位码可以手输。
   static String buildLink(String code) =>
-      'https://$webHost${webPath}${_normalize(code)}';
+      'https://$webHost$webPath${_normalize(code)}';
 
   /// 自建 scheme 形式，落地页的「在 App 里打开」按钮用它。
   static String schemeLink(String code) =>
@@ -153,7 +153,7 @@ class PluginShareLinkChannel {
     try {
       final raw = await ch.invokeMethod<Map<Object?, Object?>>('diagnose');
       if (raw == null) return const <String, Object?>{};
-      return raw.map((k, v) => MapEntry(k.toString(), v as Object?));
+      return raw.map((k, v) => MapEntry(k.toString(), v));
     } on MissingPluginException {
       return const <String, Object?>{};
     } catch (e) {
