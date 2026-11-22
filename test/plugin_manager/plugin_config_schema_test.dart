@@ -129,15 +129,15 @@ void main() {
       expect(decoded['label'], '我的机器');
     });
 
-    test('用户填了 http 时导入校验仍按 default 放行，但执行时用用户值', () {
-      // 导入期校验的是「装上就能用」的 default 形态；运行时如果用户改成 http，
-      // openUrl 的确认框会显示完整 URL 让用户自己负责 —— 这是他本机的选择。
+    test('用户填 http 时解析出用户值，导入校验也会挡住（https-only 一致）', () {
+      // 表单保存时另有 https 校验（plugin_tab._configurePlugin），两道都挡 ——
+      // 作者写死时挡住的 http 明文，不能从用户表单这条缝漏回来。
       final cfg = _config(
         good,
         user: const <String, String>{'url': 'http://intranet.local'},
       );
-      expect(pluginImportRejectReason(cfg), isNull);
       expect(resolvePluginPayload(cfg), contains('http://intranet.local'));
+      expect(pluginImportRejectReason(cfg), contains('https'));
     });
   });
 

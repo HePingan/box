@@ -1088,6 +1088,18 @@ class _PluginTabState extends State<PluginTab>
               for (final e in controllers.entries) {
                 values[e.key] = e.value.text.trim();
               }
+              // 用户填的值也要过 https 这一关 —— 否则作者写死时挡住的
+              // intent:/tel:/http 明文，从表单这里又漏进来了。
+              for (final entry in cfg.configSchema.entries) {
+                if ((entry.value as Map)['type'] != 'url') continue;
+                final v = values[entry.key] ?? '';
+                if (!v.startsWith('https://') || Uri.tryParse(v)?.host.isEmpty != false) {
+                  ScaffoldMessenger.maybeOf(ctx)?.showSnackBar(
+                    const SnackBar(content: Text('上网地址必须填 https 网址')),
+                  );
+                  return;
+                }
+              }
               _pluginHost.addCustomPlugin(cfg.copyWith(userConfig: values));
               Navigator.pop(ctx, true);
             },
