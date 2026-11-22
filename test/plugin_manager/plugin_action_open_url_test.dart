@@ -124,7 +124,7 @@ void main() {
       final names = HomePluginActionType.values.map((a) => a.name).toList();
       expect(names, contains('openMusic'));
       expect(names, contains('openWallpaperGallery'));
-      expect(names, contains('openServerOps'));
+      expect(names, contains('openQuickNote'));
     });
 
     test('每个动作都有非空中文标签（下拉里不出现英文 key）', () {
