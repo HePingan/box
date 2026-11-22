@@ -94,27 +94,9 @@ object DeepLinkReceiver {
             return out
         }
         val pm = ctx.packageManager
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            try {
-                // getDomainVerificationUserState 是 API 31+；更低的系统只能靠行为观察。
-                val state = pm.getDomainVerificationUserState(ctx.packageName)
-                val st = state?.hostToStateMap?.get(WEB_HOST)
-                out["webLinkState"] = when (st) {
-                    android.content.pm.PackageManager.DOMAIN_STATE_VERIFIED -> "verified"
-                    android.content.pm.PackageManager.DOMAIN_STATE_SELECTED -> "selected"
-                    android.content.pm.PackageManager.DOMAIN_STATE_NONE -> "none"
-                    null -> "unlisted"
-                    else -> "unknown"
-                }
-                out["webLinkVerified"] =
-                    st == android.content.pm.PackageManager.DOMAIN_STATE_VERIFIED
-            } catch (e: Throwable) {
-                out["webLinkState"] = "error"
-                out["error"] = e.message
-            }
-        } else {
-            out["webLinkState"] = "apiBelow31"
-        }
+        val (stateLabel, verified) = domainVerificationState(pm, ctx.packageName)
+        out["webLinkState"] = stateLabel
+        out["webLinkVerified"] = verified
         // 查自己包的 scheme 能否解析：限定 packageName，不涉及其它应用的可见性。
         try {
             val probe = android.content.Intent(
@@ -127,6 +109,39 @@ object DeepLinkReceiver {
             out["error"] = (out["error"] as? String ?: "") + " scheme:${e.message}"
         }
         return out
+    }
+
+    /**
+     * 读系统的域名验证状态（App Links 是否已认领该域名）。
+     *
+     * 为什么用反射：`getDomainVerificationUserState` 与 `DOMAIN_STATE_*` 是 API 31
+     * 的符号，当前 compileSdk 下 Kotlin 解析不到 —— 直接写会 Unresolved reference
+     * 让整个构建失败（踩过一次）。反射只在运行时 API 31+ 才成功，低版本
+     * getMethod 抛 NoSuchMethodException → 返回 unsupported，不必抬 compileSdk。
+     */
+    private fun domainVerificationState(
+        pm: android.content.pm.PackageManager,
+        pkg: String,
+    ): Pair<String, Boolean> {
+        return try {
+            val raw = pm.javaClass
+                .getMethod("getDomainVerificationUserState", String::class.java)
+                .invoke(pm, pkg) ?: return "unlisted" to false
+            val map = raw.javaClass.getMethod("getHostToStateMap").invoke(raw) as? Map<*, *>
+                ?: return "unlisted" to false
+            when (val v = map[WEB_HOST]) {
+                // PackageManager.DOMAIN_STATE_NONE = 0, SELECTED = 1, VERIFIED = 2
+                2 -> "verified" to true
+                1 -> "selected" to false
+                0 -> "none" to false
+                null -> "unlisted" to false
+                else -> "unknown($v)" to false
+            }
+        } catch (_: NoSuchMethodException) {
+            "unsupported" to false
+        } catch (_: Throwable) {
+            "error" to false
+        }
     }
 
     /** Activity 销毁时解绑：否则重建后事件会投向失效 channel。 */
