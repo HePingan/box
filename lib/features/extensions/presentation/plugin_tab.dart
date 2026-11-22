@@ -17,7 +17,6 @@ import 'package:box/plugin_market_page.dart';
 import 'package:box/utils/app_logger.dart';
 import 'package:box/utils/log_channels.dart';
 import 'package:http/http.dart' as http;
-import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:box/features/policy/plugin_policy.dart';
@@ -658,23 +657,16 @@ class _PluginTabState extends State<PluginTab>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              QrImageView(
-                data: code,
-                version: QrVersions.auto,
-                size: 180,
-                backgroundColor: Colors.white,
-              ),
-              const SizedBox(height: 12),
               SelectableText(
                 code,
                 style: const TextStyle(
-                  fontSize: 30,
-                  letterSpacing: 6,
+                  fontSize: 34,
+                  letterSpacing: 8,
                   fontWeight: FontWeight.w700,
                   fontFamily: 'monospace',
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 14),
               Text(
                 '让对方在「插件 → 导入 → 分享码」里输入这 6 位。\n'
                 '码里已含「$title」的完整配置，对方不需要登录。',
