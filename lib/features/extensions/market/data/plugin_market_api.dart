@@ -100,6 +100,49 @@ class PluginMarketApi {
     return PluginSubmissionDto.fromJson(body);
   }
 
+  /// 把一份插件快照换成 6 位分享码。
+  ///
+  /// 分享码存在的唯一理由：一段 2KB 的 JSON 在聊天窗口里会被折行、被截断、
+  /// 被表情符插进去，现实中没人成功粘贴过。发 6 个字符才真能传出去。
+  Future<String> createShareCode({
+    required String payload,
+    String title = '',
+  }) async {
+    final uri = await _uri('/api/plugins/share');
+    final resp = await _http
+        .post(
+          uri,
+          headers: await _headers(),
+          body: jsonEncode({'payload': payload, 'title': title}),
+        )
+        .timeout(const Duration(seconds: 20));
+    final body = await _decode(resp);
+    final code = (body['code'] ?? '').toString().trim();
+    if (code.isEmpty) {
+      throw const PluginMarketApiException('服务端没有返回分享码');
+    }
+    return code;
+  }
+
+  /// 用分享码取回快照 JSON。码本身就是凭据，**不需要登录** ——
+  /// 接收的人可能刚装 App，要求先登录才能导入等于把人挡在门外。
+  Future<String> fetchSharePayload(String code) async {
+    final trimmed = code.trim().toUpperCase();
+    if (trimmed.isEmpty) {
+      throw const PluginMarketApiException('请输入分享码');
+    }
+    final uri = await _uri('/api/plugins/share/${Uri.encodeComponent(trimmed)}');
+    final resp = await _http
+        .get(uri, headers: await _headers(auth: false, json: false))
+        .timeout(const Duration(seconds: 20));
+    final body = await _decode(resp);
+    final payload = (body['payload'] ?? '').toString();
+    if (payload.trim().isEmpty) {
+      throw const PluginMarketApiException('分享码里没有内容');
+    }
+    return payload;
+  }
+
   /// 上传 zip 包投稿（multipart，失败回退 packageBase64）。
   Future<PluginSubmissionDto> submitZip({
     required List<int> zipBytes,

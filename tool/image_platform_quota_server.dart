@@ -610,6 +610,20 @@ class PlatformQuotaServer {
       await listMyPlugins(request, account);
       return;
     }
+    // 插件分享码：把「一整段 JSON」变成「6 位码」，人之间才真传得动。
+    if (request.method == 'POST' && path == '/api/plugins/share') {
+      final account = await requireUser(request);
+      if (account == null) return;
+      await createPluginShare(request, account);
+      return;
+    }
+    final pluginShareGetMatch =
+        RegExp(r'^/api/plugins/share/([0-9A-Za-z]{4,12})$').firstMatch(path);
+    if (request.method == 'GET' && pluginShareGetMatch != null) {
+      // 码本身就是凭据，不要求登录：对方可能还没登录/刚装 App。
+      await getPluginShare(request, pluginShareGetMatch.group(1)!);
+      return;
+    }
     if (request.method == 'GET' && path == '/admin/plugins/submissions') {
       if (!await requireAdmin(request)) return;
       await adminListPluginSubmissions(request);
@@ -5237,6 +5251,203 @@ class PlatformQuotaServer {
     await jsonResponse(request.response, HttpStatus.ok, {
       'items': list.map((e) => e.toJson()).toList(),
       'count': list.length,
+    });
+  }
+
+  // ── 插件分享码 ───────────────────────────────────────────────────────────
+  //
+  // 为什么不是「导出 JSON 让对方粘贴」：一段 2KB 的 JSON 在聊天窗口里会被
+  // 折行、被表情符插入、被截断，现实中没人成功过 —— 所以远程市场一直只有 1 个
+  // 插件。分享码把这件事压成「发 6 个字符」。
+  //
+  // 存储**不写主 state**：主 state 3.1MB、55 个 save 点、每次全量序列化，
+  // 一个分享码不值得拖着它重写。独立小文件，原子写。
+
+  /// 码表去掉 0/O/1/I/L —— 手抄、口述、OCR 都会把它们认混。
+  static const _pluginShareAlphabet = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+  static const _pluginShareMaxPerAccount = 100;
+  static const _pluginShareMaxPayloadBytes = 64 * 1024;
+
+  String get _pluginShareFilePath {
+    final idx = store.path.lastIndexOf(Platform.pathSeparator);
+    final dir = idx > 0 ? store.path.substring(0, idx) : '.';
+    return '$dir${Platform.pathSeparator}plugin-shares.json';
+  }
+
+  Future<Map<String, dynamic>> _loadPluginShares() async {
+    final file = File(_pluginShareFilePath);
+    if (!await file.exists()) return {'shares': <String, dynamic>{}};
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is Map<String, dynamic>) {
+        decoded.putIfAbsent('shares', () => <String, dynamic>{});
+        return decoded;
+      }
+    } catch (e) {
+      // 分享码丢了不影响主业务，坏文件直接重建（不能让 500 传染到插件市场）。
+      stdout.writeln('[WARN] plugin-shares.json 解析失败，按空表重建：$e');
+    }
+    return {'shares': <String, dynamic>{}};
+  }
+
+  Future<void> _savePluginShares(Map<String, dynamic> data) async {
+    final file = File(_pluginShareFilePath);
+    await file.parent.create(recursive: true);
+    final tmp = File('${file.path}.tmp');
+    await tmp.writeAsString(
+      const JsonEncoder.withIndent('  ').convert(data),
+      flush: true,
+    );
+    await tmp.rename(file.path);
+  }
+
+  String _newPluginShareCode(Set<String> taken) {
+    final random = Random.secure();
+    for (var attempt = 0; attempt < 16; attempt++) {
+      final code = List.generate(
+        6,
+        (_) => _pluginShareAlphabet[random.nextInt(_pluginShareAlphabet.length)],
+      ).join();
+      if (!taken.contains(code)) return code;
+    }
+    // 8.9 亿空间里连撞 16 次，只可能是码表被写坏了。
+    throw StateError('分享码生成失败');
+  }
+
+  /// 逐条校验分享内容 —— 与投稿入口同口径。
+  ///
+  /// 少这一步就等于开了个免审核下发放通道：任何能生成分享码的人都能把
+  /// 「未知动作」或「指向不存在页面」的插件塞给别人，而对方装完点了没反应。
+  String? _pluginShareRejectReason(Map<String, dynamic> snapshot) {
+    final plugins = snapshot['customPlugins'];
+    if (plugins is! List || plugins.isEmpty) {
+      return '快照里没有插件';
+    }
+    if (plugins.length > 20) {
+      return '一次最多分享 20 个插件';
+    }
+    for (final item in plugins) {
+      if (item is! Map) return '插件条目格式不对';
+      final actionCode = (item['actionCode'] ?? '').toString();
+      if (!_allowedPluginActions.contains(actionCode)) {
+        return '未知动作 $actionCode';
+      }
+      if (actionCode == 'navigate') {
+        final routeCode = pluginPayloadRoute((item['payload'] ?? '').toString());
+        if (routeCode.isEmpty) return 'navigate 未指定要打开的页面';
+        if (!_allowedPluginRoutes.contains(routeCode)) {
+          return '目标页面不存在（$routeCode）';
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<void> createPluginShare(HttpRequest request, Account account) async {
+    final body = await readJsonObject(request);
+    if (body == null) return;
+    final payload = (body['payload'] ?? '').toString();
+    if (payload.isEmpty) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': 'payload 不能为空'},
+      });
+      return;
+    }
+    if (utf8.encode(payload).length > _pluginShareMaxPayloadBytes) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': '插件配置过大（上限 64KB）'},
+      });
+      return;
+    }
+    Map<String, dynamic> snapshot;
+    try {
+      final decoded = jsonDecode(payload);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('不是 JSON 对象');
+      }
+      snapshot = decoded;
+    } catch (_) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': 'payload 不是合法的插件快照 JSON'},
+      });
+      return;
+    }
+    final rejectReason = _pluginShareRejectReason(snapshot);
+    if (rejectReason != null) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': rejectReason},
+      });
+      return;
+    }
+
+    final payloadHash = sha256.convert(utf8.encode(payload)).toString();
+    final data = await _loadPluginShares();
+    final shares = (data['shares'] as Map).cast<String, dynamic>();
+
+    // 同一份内容重复分享返回同一个码 —— 否则用户点两次就得到两个码，
+    // 发出去的到底是哪个谁也说不清。
+    String? code;
+    for (final entry in shares.entries) {
+      final value = entry.value;
+      if (value is Map &&
+          value['payloadHash'] == payloadHash &&
+          value['authorUserId'] == account.id &&
+          value['revoked'] != true) {
+        code = entry.key;
+        break;
+      }
+    }
+
+    if (code == null) {
+      code = _newPluginShareCode(shares.keys.toSet());
+      // 每账号限额，超了按时间淘汰最旧的（不是删别人的）。
+      final mine = shares.entries
+          .where((e) => e.value is Map && e.value['authorUserId'] == account.id)
+          .toList()
+        ..sort(
+          (a, b) => ((a.value['createdAt'] ?? 0) as num).compareTo(
+            (b.value['createdAt'] ?? 0) as num,
+          ),
+        );
+      while (mine.length >= _pluginShareMaxPerAccount) {
+        final oldest = mine.removeAt(0);
+        shares.remove(oldest.key);
+      }
+      shares[code] = {
+        'code': code,
+        'authorUserId': account.id,
+        'authorName': account.username,
+        'title': (body['title'] ?? '').toString().trim(),
+        'payload': payload,
+        'payloadHash': payloadHash,
+        'createdAt': DateTime.now().millisecondsSinceEpoch,
+      };
+      await _savePluginShares(data);
+    }
+
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'code': code,
+      'title': shares[code] is Map ? (shares[code]['title'] ?? '') : '',
+    });
+  }
+
+  Future<void> getPluginShare(HttpRequest request, String rawCode) async {
+    final code = rawCode.toUpperCase();
+    final data = await _loadPluginShares();
+    final shares = (data['shares'] as Map).cast<String, dynamic>();
+    final item = shares[code];
+    if (item is! Map || item['revoked'] == true) {
+      await jsonResponse(request.response, HttpStatus.notFound, {
+        'error': {'message': '分享码不存在或已失效'},
+      });
+      return;
+    }
+    await jsonResponse(request.response, HttpStatus.ok, {
+      'code': code,
+      'title': item['title'] ?? '',
+      'authorName': item['authorName'] ?? '',
+      'payload': item['payload'] ?? '',
+      'createdAt': item['createdAt'] ?? 0,
     });
   }
 

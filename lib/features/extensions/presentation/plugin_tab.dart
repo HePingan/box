@@ -17,6 +17,7 @@ import 'package:box/plugin_market_page.dart';
 import 'package:box/utils/app_logger.dart';
 import 'package:box/utils/log_channels.dart';
 import 'package:http/http.dart' as http;
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:box/features/policy/plugin_policy.dart';
@@ -35,6 +36,9 @@ class PluginTab extends StatefulWidget {
 class _PluginTabState extends State<PluginTab>
     with AutomaticKeepAliveClientMixin {
   final HomePluginHost _pluginHost = HomePluginHost.instance;
+
+  /// 分享码只走一个接口，单独持一个实例即可。
+  final PluginMarketApi _shareApi = PluginMarketApi();
 
   // 资源计数
 
@@ -589,6 +593,21 @@ class _PluginTabState extends State<PluginTab>
               child: const Text('关闭'),
             ),
             OutlinedButton.icon(
+              onPressed: () {
+                final picked = selectedId.isEmpty
+                    ? null
+                    : custom.where((p) => p.id == selectedId).toList();
+                final shareTitle = picked != null && picked.isNotEmpty
+                    ? (picked.first.title.isEmpty
+                          ? picked.first.id
+                          : picked.first.title)
+                    : 'Box 插件配置';
+                _showShareCodeDialog(jsonText, shareTitle);
+              },
+              icon: const Icon(Icons.qr_code_2),
+              label: const Text('分享码'),
+            ),
+            OutlinedButton.icon(
               onPressed: () async {
                 await SharePlus.instance.share(ShareParams(text: jsonText));
               },
@@ -612,11 +631,90 @@ class _PluginTabState extends State<PluginTab>
     );
   }
 
+  /// 生成并展示分享码：6 个字符 + 二维码。
+  ///
+  /// 为什么不是「让对方粘贴 JSON」：2KB 文本在聊天窗口里会被折行、插表情、截断，
+  /// 实际没人成功过 —— 所以远程市场一直只有 1 个插件。
+  Future<void> _showShareCodeDialog(String payload, String title) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('正在生成分享码…'), duration: Duration(seconds: 2)),
+    );
+    String code;
+    try {
+      code = await _shareApi.createShareCode(payload: payload, title: title);
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('生成失败：$e')));
+      return;
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('分享码'),
+        content: SizedBox(
+          width: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              QrImageView(
+                data: code,
+                version: QrVersions.auto,
+                size: 180,
+                backgroundColor: Colors.white,
+              ),
+              const SizedBox(height: 12),
+              SelectableText(
+                code,
+                style: const TextStyle(
+                  fontSize: 30,
+                  letterSpacing: 6,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'monospace',
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                '让对方在「插件 → 导入 → 分享码」里输入这 6 位。\n'
+                '码里已含「$title」的完整配置，对方不需要登录。',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(dialogCtx).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('关闭'),
+          ),
+          FilledButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: code));
+              if (!dialogCtx.mounted) return;
+              ScaffoldMessenger.of(
+                dialogCtx,
+              ).showSnackBar(const SnackBar(content: Text('分享码已复制')));
+            },
+            icon: const Icon(Icons.copy),
+            label: const Text('复制码'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _showImportJsonDialog() async {
     final controller = TextEditingController();
     final urlController = TextEditingController();
+    final codeController = TextEditingController();
     bool merge = false;
     bool useUrl = false;
+    bool useCode = false;
 
     await showDialog<void>(
       context: context,
@@ -624,7 +722,11 @@ class _PluginTabState extends State<PluginTab>
         return StatefulBuilder(
           builder: (ctx, setDialogState) {
             return AlertDialog(
-              title: Text(useUrl ? '从 URL 导入' : '导入插件 JSON'),
+              title: Text(
+                useCode
+                    ? '用分享码导入'
+                    : (useUrl ? '从 URL 导入' : '导入插件 JSON'),
+              ),
               content: SizedBox(
                 width: 560,
                 child: SingleChildScrollView(
@@ -636,8 +738,11 @@ class _PluginTabState extends State<PluginTab>
                           Expanded(
                             child: _buildSegmentedButton(
                               '粘贴 JSON',
-                              !useUrl,
-                              () => setDialogState(() => useUrl = false),
+                              !useUrl && !useCode,
+                              () => setDialogState(() {
+                                useUrl = false;
+                                useCode = false;
+                              }),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -645,13 +750,44 @@ class _PluginTabState extends State<PluginTab>
                             child: _buildSegmentedButton(
                               '从 URL 获取',
                               useUrl,
-                              () => setDialogState(() => useUrl = true),
+                              () => setDialogState(() {
+                                useUrl = true;
+                                useCode = false;
+                              }),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildSegmentedButton(
+                              '分享码',
+                              useCode,
+                              () => setDialogState(() {
+                                useUrl = false;
+                                useCode = true;
+                              }),
                             ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 12),
-                      if (useUrl)
+                      if (useCode)
+                        TextField(
+                          controller: codeController,
+                          textCapitalization: TextCapitalization.characters,
+                          maxLength: 6,
+                          style: const TextStyle(
+                            fontSize: 22,
+                            letterSpacing: 6,
+                            fontFamily: 'monospace',
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: '6 位分享码',
+                            hintText: '7K2M9Q',
+                            helperText: '对方在导出页点「分享码」就能拿到，不需要登录',
+                            border: OutlineInputBorder(),
+                          ),
+                        )
+                      else if (useUrl)
                         TextField(
                           controller: urlController,
                           decoration: const InputDecoration(
@@ -726,7 +862,16 @@ class _PluginTabState extends State<PluginTab>
                     final navigator = Navigator.of(dialogCtx);
                     try {
                       String raw;
-                      if (useUrl) {
+                      if (useCode) {
+                        final code = codeController.text.trim();
+                        if (code.isEmpty) {
+                          messenger.showSnackBar(
+                            const SnackBar(content: Text('请输入分享码')),
+                          );
+                          return;
+                        }
+                        raw = await _shareApi.fetchSharePayload(code);
+                      } else if (useUrl) {
                         final url = urlController.text.trim();
                         if (url.isEmpty) {
                           messenger.showSnackBar(
