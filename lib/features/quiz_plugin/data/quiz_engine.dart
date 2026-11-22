@@ -316,8 +316,8 @@ class QuizEngine {
         _stemLooksLikeImageQuestion(searchQuestion) ||
         _stemLooksLikeImageQuestion(question);
 
-    final candidates = QuizBankCache.instance.candidatesFor(hay);
-    if (candidates.isEmpty) {
+    final rawCandidates = QuizBankCache.instance.candidatesFor(hay);
+    if (rawCandidates.isEmpty) {
       // 诊断：区分「本地库为空/未同步完」与「库里有但召回为空」。
       // 前者是同步问题（题库页看覆盖率），后者是分词/归一化问题。
       //
@@ -333,6 +333,18 @@ class QuizEngine {
       );
       debugPrint('[QuizEngine] no candidate: bankSize=$bankSize hay="$stem"');
       return null;
+    }
+
+    // 新规题：同一题干在库里可能同时存着旧规与新规答案（货车超限 6分 vs 1分）。
+    // 卷面带「新规题」标签且库里有已标记的新规条目时，只在新规条目里选；
+    // 存量库尚未标记时保持原行为，不误伤。
+    var candidates = rawCandidates;
+    final probeIsNewRule =
+        question.contains('新规题') || parsed.rawText.contains('新规题');
+    if (probeIsNewRule) {
+      final newRuleOnly =
+          rawCandidates.where((c) => c.isNewRule).toList();
+      if (newRuleOnly.isNotEmpty) candidates = newRuleOnly;
     }
 
     final probeOptNorm = effectiveOptions
@@ -831,7 +843,14 @@ class QuizEngine {
               _isImageLikeAnswer(alignment.displayAnswer)) {
             return null;
           }
-          var adjustedScore = useOptions
+          // 选项集完整且唯一命中：4 个选项全被 OCR 抓到、并与题库 100% 一致，
+          // 这是比题干相似度更强的确定性证据。此前仍走 55/45 加权 × 对齐折扣，
+          // 题干只要被 OCR 噪声污染一点就跌破 0.70，唯一正确答案也被打回
+          // 「请人工确认」（真机：匝道开什么灯，唯一候选「左转向灯」仍要人工确认）。
+          final exactUniqueMatch = hasExactCompleteVariant && selected.length == 1;
+          var adjustedScore = exactUniqueMatch
+              ? 95
+              : useOptions
               ? (entry.score * alignment.confidenceFactor).round().clamp(0, 100)
               : entry.score;
           // 答案仍是「图N」且卷面是文字题：强制降置信

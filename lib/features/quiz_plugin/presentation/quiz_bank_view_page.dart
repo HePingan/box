@@ -509,12 +509,17 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
       ),
     );
     if (confirmed != true) return;
-    await QuizBankStorage.deleteById(item.id);
+    final before = await QuizBankStorage.loadAll();
+    final after = await QuizBankStorage.deleteById(item.id);
     await _load();
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('已删除')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          after.length < before.length ? '已删除' : '题目已不存在，未做改动',
+        ),
+      ),
+    );
   }
 
   Future<void> _edit(QuizBankItem item) async {
@@ -563,6 +568,14 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
           ),
         ),
       );
+    } catch (e) {
+      // 写库失败必须让用户看见，否则「try/finally 无 catch」会把异常
+      // 直接抛到 Flutter error screen，用户只觉得 App 闪了一下。
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('保存失败：$e')));
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

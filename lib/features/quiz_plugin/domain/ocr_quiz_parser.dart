@@ -15,6 +15,7 @@ class OcrQuizParseResult {
     this.analysis = '',
     this.rawText = '',
     this.questionType = 'single_choice',
+    this.isNewRule = false,
   });
 
   final String question;
@@ -25,6 +26,9 @@ class OcrQuizParseResult {
 
   /// single_choice | true_false
   final String questionType;
+
+  /// 卷面带「新规题」标签：同题干新旧答案并存时据此消歧。
+  final bool isNewRule;
 }
 
 class _QaSplit {
@@ -312,6 +316,7 @@ class OcrQuizParser {
       analysis: analysis.trim(),
       rawText: text,
       questionType: isTrueFalse ? 'true_false' : 'single_choice',
+      isNewRule: text.contains('新规题'),
     );
   }
 

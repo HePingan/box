@@ -547,7 +547,10 @@ class QuizCloudSyncService {
         if (await file.exists() && await file.length() > 0) {
           // 已缓存：把本地路径回写到 item，便于 UI 优先读本地
           // QuizBankItem 是 immutable，这里仅更新 DB 中的 image 字段。
-          await _rewriteLocalImagePath(item, file.path);
+          if (!await _rewriteLocalImagePath(item, file.path)) {
+            failed++;
+            continue;
+          }
           cached++;
           continue;
         }
@@ -579,7 +582,10 @@ class QuizCloudSyncService {
           continue;
         }
         await file.writeAsBytes(bytes, flush: true);
-        await _rewriteLocalImagePath(item, file.path);
+        if (!await _rewriteLocalImagePath(item, file.path)) {
+          failed++;
+          continue;
+        }
         cached++;
       } catch (_) {
         // 单图失败不影响其它题
@@ -624,13 +630,18 @@ class QuizCloudSyncService {
         mime == 'image/gif';
   }
 
-  static Future<void> _rewriteLocalImagePath(
+  /// 返回是否写回成功。调用方据此把「图下了但路径没落库」计入失败，
+  /// 否则云同步报告 cached 而 UI 仍显示裂图。
+  static Future<bool> _rewriteLocalImagePath(
     QuizBankItem item,
     String localPath,
   ) async {
     try {
       await QuizBankStorage.updateImagePath(item.id, localPath);
-    } catch (_) {}
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<int> _importIntoBank(List<QuizBankItem> items) async {

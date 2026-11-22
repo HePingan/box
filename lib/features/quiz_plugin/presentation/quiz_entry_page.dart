@@ -31,6 +31,7 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
   bool _ocrBusy = false;
   QuizQuestionImage? _questionImage;
   bool _imageBusy = false;
+  bool _isNewRule = false;
 
   @override
   void dispose() {
@@ -80,6 +81,15 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
       return;
     }
 
+    // 过滤空选项会改变下标：如果正确答案所在那一格是空的，
+    // 直接存会把「标 C」变成「存 D」。宁可拒绝保存，也不静默存错答案。
+    if (_optionControllers[_correctIndex].text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('正确答案所在的选项为空，请填写或重新选择')),
+      );
+      return;
+    }
+
     final options = _optionControllers
         .map((e) => e.text.trim())
         .where((e) => e.isNotEmpty)
@@ -112,6 +122,7 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
       imageSha256: _questionImage?.sha256,
       imagePerceptualHash: _questionImage?.perceptualHash,
       imageRegionHash: _questionImage?.regionHash,
+      isNewRule: _isNewRule,
     );
 
     final status = await QuizBankStorage.insertIfAbsent(item);
@@ -162,6 +173,7 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
     } else {
       _type = QuizQuestionType.singleChoice;
     }
+    _isNewRule = parsed.isNewRule;
     final ans = parsed.correctAnswer;
     var idx = parsed.options.indexOf(ans);
     if (idx < 0 && ans.isNotEmpty) {
@@ -307,6 +319,18 @@ class _QuizEntryPageState extends State<QuizEntryPage> {
                   }
                 });
               },
+            ),
+
+            CheckboxListTile(
+              value: _isNewRule,
+              onChanged: (v) => setState(() => _isNewRule = v ?? false),
+              title: const Text('新规题'),
+              subtitle: const Text(
+                '同题干新旧答案并存时（如货车超限 1分/6分），只按新规答案匹配',
+              ),
+              controlAffinity: ListTileControlAffinity.leading,
+              dense: true,
+              contentPadding: EdgeInsets.zero,
             ),
 
             const SizedBox(height: 12),

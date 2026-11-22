@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -66,6 +67,7 @@ class QuizBankItem {
     this.lastSubmitAt,
     this.lastSubmitError,
     this.remoteSubmissionId,
+    this.isNewRule = false,
   });
 
   final String id;
@@ -104,6 +106,9 @@ class QuizBankItem {
   final DateTime? lastSubmitAt;
   final String? lastSubmitError;
   final String? remoteSubmissionId;
+
+  /// 卷面标记「新规题」：同题干新旧答案并存时据此消歧（如货车超限 1分 vs 6分）。
+  final bool isNewRule;
 
   bool get isCloud => origin == 'cloud';
 
@@ -170,6 +175,7 @@ class QuizBankItem {
     DateTime? lastSubmitAt,
     String? lastSubmitError,
     String? remoteSubmissionId,
+    bool? isNewRule,
     bool clearLastSubmitError = false,
     bool clearRemoteSubmissionId = false,
   }) {
@@ -199,6 +205,7 @@ class QuizBankItem {
       remoteSubmissionId: clearRemoteSubmissionId
           ? null
           : (remoteSubmissionId ?? this.remoteSubmissionId),
+      isNewRule: isNewRule ?? this.isNewRule,
     );
   }
 
@@ -272,6 +279,12 @@ class QuizBankItem {
         (json['remoteSubmissionId'] ?? json['submissionId'] ?? '')
             .toString()
             .trim();
+    final rawNewRule = json['isNewRule'] ?? json['newRule'];
+    final isNewRule = rawNewRule is bool
+        ? rawNewRule
+        : const ['true', '1', 'yes'].contains(
+              rawNewRule.toString().toLowerCase().trim(),
+            );
 
     final rawId = (json['id'] ?? '').toString().trim();
     return QuizBankItem(
@@ -319,6 +332,7 @@ class QuizBankItem {
       remoteSubmissionId: remoteSubmissionId.isEmpty
           ? null
           : remoteSubmissionId,
+      isNewRule: isNewRule,
     );
   }
 
@@ -379,6 +393,7 @@ class QuizBankItem {
       remoteSubmissionId: remoteSubmissionId.isEmpty
           ? null
           : remoteSubmissionId,
+      isNewRule: row['isNewRule'] == 1 || row['isNewRule'] == true,
     );
   }
 
@@ -432,6 +447,7 @@ class QuizBankItem {
       'lastSubmitError': lastSubmitError,
     if (remoteSubmissionId != null && remoteSubmissionId!.isNotEmpty)
       'remoteSubmissionId': remoteSubmissionId,
+    'isNewRule': isNewRule,
   };
 
   Map<String, Object?> toDb() => {
@@ -460,6 +476,7 @@ class QuizBankItem {
     'lastSubmitAt': lastSubmitAt?.toIso8601String(),
     'lastSubmitError': lastSubmitError,
     'remoteSubmissionId': remoteSubmissionId,
+    'isNewRule': isNewRule ? 1 : 0,
   };
 }
 
@@ -1096,7 +1113,7 @@ class QuizBankStorage {
     final dbPath = p.join(await getDatabasesPath(), 'quiz_bank.db');
     final db = await openDatabase(
       dbPath,
-      version: 9,
+      version: 10,
       onCreate: (database, _) async {
         await database.execute('''
 CREATE TABLE $_table (
@@ -1201,10 +1218,15 @@ CREATE TABLE $_table (
             'ALTER TABLE $_table ADD COLUMN imageEmbedding TEXT',
           );
         }
+        if (oldVersion < 10) {
+          await database.execute(
+            'ALTER TABLE $_table ADD COLUMN isNewRule INTEGER NOT NULL DEFAULT 0',
+          );
+        }
         if (oldVersion < 7) {
           // 重新计算所有题目的ID（答案现在参与唯一性判断）
           final rows = await database.rawQuery(
-            'SELECT rowid, id, question, type, options, correctAnswer, analysis, source, createdAt, updatedAt, image, imageSha256, imagePerceptualHash, imageRegionHash, category, origin, syncStatus, lastSubmitAt, lastSubmitError, remoteSubmissionId FROM $_table',
+            'SELECT rowid, id, question, type, options, correctAnswer, analysis, source, createdAt, updatedAt, image, imageSha256, imagePerceptualHash, imageRegionHash, imageVisualFingerprint, imageEmbedding, isNewRule, category, origin, syncStatus, lastSubmitAt, lastSubmitError, remoteSubmissionId FROM $_table',
           );
           for (final row in rows) {
             final item = QuizBankItem.fromDb(row.cast<String, Object?>());
@@ -1233,28 +1255,44 @@ CREATE TABLE $_table (
     if (raw != null && raw.isNotEmpty) {
       try {
         final decoded = jsonDecode(raw);
-        if (decoded is List) {
-          final batch = db.batch();
-          for (final entry in decoded) {
-            if (entry is Map) {
-              final parsed = QuizBankItem.fromJson(
-                Map<String, dynamic>.from(entry),
+        if (decoded is! List) {
+          // 格式不对也不能算迁移成功：写标记会把旧数据永久锁在 prefs 里。
+          developer.log(
+            '题库迁移：旧数据不是列表，保留原始值待下次重试',
+            name: 'quiz_bank',
+          );
+          return;
+        }
+        final batch = db.batch();
+        for (final entry in decoded) {
+          if (entry is Map) {
+            final parsed = QuizBankItem.fromJson(
+              Map<String, dynamic>.from(entry),
+            );
+            final item = parsed.copyWith(
+              id: UniqueQuizKeyGenerator.keyFromItem(parsed),
+            );
+            if (item.question.trim().isNotEmpty) {
+              batch.insert(
+                _table,
+                item.toDb(),
+                conflictAlgorithm: ConflictAlgorithm.replace,
               );
-              final item = parsed.copyWith(
-                id: UniqueQuizKeyGenerator.keyFromItem(parsed),
-              );
-              if (item.question.trim().isNotEmpty) {
-                batch.insert(
-                  _table,
-                  item.toDb(),
-                  conflictAlgorithm: ConflictAlgorithm.replace,
-                );
-              }
             }
           }
-          await batch.commit(noResult: true);
         }
-      } catch (_) {}
+        await batch.commit(noResult: true);
+      } catch (e, st) {
+        // 迁移失败：保留 prefs 原始数据且不写标记，下次启动重试。
+        // 不能吞掉后照样标完成 —— 那等于把旧题库永久锁死在 prefs 里。
+        developer.log(
+          '题库迁移失败，保留原始数据待下次重试',
+          name: 'quiz_bank',
+          error: e,
+          stackTrace: st,
+        );
+        return;
+      }
     }
     await prefs.setBool(_migrationKey, true);
   }

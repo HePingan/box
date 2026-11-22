@@ -1474,7 +1474,8 @@ class QuizPluginEntry {
     final explosionCount = textPathResult?.stemExplosionCount ?? 0;
     final explosionHint = (textPathResult?.stemExplosion ?? false)
         ? '这道题在题库里有 $explosionCount 条同题干、答案互不相同，'
-            '仅凭文字无法区分，只能对照题图判断。\n'
+            '仅凭文字无法区分。这是图形题，请直接看考试界面的题图作答；'
+            '右上角 AI 按钮走的是联网搜题干，对图形题同样无效。\n'
         : '';
     await _pushMiss(
       fingerprint: fingerprint,
@@ -2211,7 +2212,9 @@ class QuizPluginEntry {
             autoSearch: autoSearch,
             bytes: _bytesFromChannelArgs(args is Map ? args : null),
           );
-        } catch (_) {}
+        } catch (e) {
+          await _showProbeError('OCR 试识失败', e);
+        }
       } else if (call.method == 'searchWithProbeText') {
         final args = call.arguments;
         final text = args is Map ? (args['text']?.toString() ?? '') : '';
@@ -2223,7 +2226,9 @@ class QuizPluginEntry {
                 ? parsed.question.trim()
                 : text.trim();
             await manualSearch(q, probeOptions: parsed.options);
-          } catch (_) {}
+          } catch (e) {
+            await _showProbeError('用试识文本搜索失败', e);
+          }
         }
       } else if (call.method == 'examQuickEntry') {
         // 考试模式悬浮窗入口：打开可编辑录入窗并立即 OCR 当前题。
@@ -2324,7 +2329,7 @@ class QuizPluginEntry {
     } catch (_) {}
   }
 
-  static Future<void> _ocrEntryFill({
+  static Future<bool> _ocrEntryFill({
     required String question,
     required String options,
     required String correctAnswer,
@@ -2333,7 +2338,7 @@ class QuizPluginEntry {
     required String status,
   }) async {
     try {
-      await _channel.invokeMethod('ocrEntryFill', {
+      final ok = await _channel.invokeMethod('ocrEntryFill', {
         'question': question,
         'options': options,
         'correctAnswer': correctAnswer,
@@ -2341,7 +2346,10 @@ class QuizPluginEntry {
         'raw': raw,
         'status': status,
       }).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
-    } catch (_) {}
+      return ok != false;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<void> _fillOcrEntryFromRaw(
@@ -2360,7 +2368,7 @@ class QuizPluginEntry {
         optionLines.add('$label. $o');
       }
     }
-    await _ocrEntryFill(
+    final filled = await _ocrEntryFill(
       question: parsed.question,
       options: optionLines.join('\n'),
       correctAnswer: parsed.correctAnswer,
@@ -2368,6 +2376,10 @@ class QuizPluginEntry {
       raw: parsed.rawText.isNotEmpty ? parsed.rawText : raw,
       status: status,
     );
+    if (!filled) {
+      // 填充失败时原生窗会是空白的 —— 必须告诉用户，不能让他对着空框猜。
+      await _ocrEntrySetStatus('填充失败：请确认无障碍服务仍开启，或改用手工录入');
+    }
   }
 
   static Uint8List? _bytesFromChannelArgs(Map? args) {
@@ -2529,6 +2541,19 @@ class QuizPluginEntry {
     );
   }
 
+  /// 悬浮窗里的失败必须让人看见 —— 静默 catch 的表现就是「点了没反应」。
+  static Future<void> _showProbeError(String title, Object error) async {
+    try {
+      await _channel.invokeMethod('setRegionProbeResult', {
+        'title': title,
+        'body': error.toString(),
+      }).timeout(QuizVisionTimeouts.channel, onTimeout: () => null);
+    } catch (_) {
+      // 连错误提示都送不到原生时，至少留一条诊断日志。
+      QuizDiag.warn(QuizDiagStage.result, '$title: $error');
+    }
+  }
+
   /// 区域调节 OCR 试识：使用原生本次携带的截图字节，缺失时单次截图。
   static Future<void> _handleRegionOcrProbe({
     bool autoSearch = false,
@@ -2579,7 +2604,9 @@ class QuizPluginEntry {
       if (q.isNotEmpty) {
         try {
           await manualSearch(q, probeOptions: parsed.options);
-        } catch (_) {}
+        } catch (e) {
+          await _showProbeError('自动搜索失败', e);
+        }
       }
     }
   }
