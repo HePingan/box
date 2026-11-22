@@ -2143,10 +2143,21 @@ class QuizPluginEntry {
     return result;
   }
 
+  /// 版本号探测开关。
+  ///
+  /// widget 测试里没有 `package_info` 的平台通道，`PackageInfo.fromPlatform()`
+  /// 永不完成，下面那个 `.timeout(2s)` 就会在 fake_async 里留下一个 pending timer
+  /// —— 结果是**任何**调到 `buildDefaultPlugins` 的用例都报
+  /// "A Timer is still pending even after the widget tree was disposed"，
+  /// 跟被测内容毫无关系。测试里关掉即可，生产默认开启。
+  @visibleForTesting
+  static bool versionProbeEnabled = true;
+
   /// 初始化自动搜题监听（接收无障碍服务捕获的题目）
   /// 把 App 版本写进 `QuizEngine.clientVersionTag`（读屏请求头要用）。
   /// 失败静默：拿不到版本号不该影响任何功能。
   static Future<void> _recordClientVersion() async {
+    if (!versionProbeEnabled) return;
     if (QuizEngine.clientVersionTag.isNotEmpty) return;
     try {
       final info = await PackageInfo.fromPlatform()
