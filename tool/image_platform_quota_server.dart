@@ -4158,6 +4158,66 @@ class PlatformQuotaServer {
     return candidate;
   }
 
+  /// 从 payload JSON（或外层条目）取可配置字段。
+  /// 投稿把 configSchema 嵌在 payload 里；快照/分享码则放在插件条目的顶层。
+  static Map<String, dynamic> pluginPayloadSchema(
+    String payload, {
+    Map? outer,
+  }) {
+    try {
+      final decoded = jsonDecode(payload.trim());
+      if (decoded is Map && decoded['configSchema'] is Map) {
+        return Map<String, dynamic>.from(decoded['configSchema'] as Map);
+      }
+    } catch (_) {}
+    final outerSchema = outer?['configSchema'];
+    if (outerSchema is Map) return Map<String, dynamic>.from(outerSchema);
+    return const <String, dynamic>{};
+  }
+
+  /// 用 schema 的 default 把 `{{key}}` 填回去再校验 —— 作者给的默认值
+  /// 必须保证插件装上就能用，不能是个等着用户填的空壳。
+  static String pluginPayloadWithDefaults(
+    String payload,
+    Map<String, dynamic> schema,
+  ) {
+    var result = payload;
+    for (final entry in schema.entries) {
+      final def = entry.value is Map ? (entry.value as Map)['default'] : null;
+      if (def is String && def.isNotEmpty) {
+        result = result.replaceAll('{{${entry.key}}}', def);
+      }
+    }
+    return result;
+  }
+
+  /// 可配置字段契约 —— 与 App 端 pluginConfigSchemaRejectReason 同口径。
+  static String? pluginConfigSchemaRejectReason(Map<String, dynamic> schema) {
+    if (schema.isEmpty) return null;
+    if (schema.length > 8) return '可配置字段最多 8 个';
+    for (final entry in schema.entries) {
+      final key = entry.key;
+      if (!RegExp(r'^[a-zA-Z][a-zA-Z0-9_]{0,23}$').hasMatch(key)) {
+        return '字段名只能用字母/数字/下划线且以字母开头：$key';
+      }
+      final def = entry.value;
+      if (def is! Map) return '字段 $key 的定义必须是对象';
+      final label = def['label'];
+      if (label is! String || label.trim().isEmpty || label.length > 40) {
+        return '字段 $key 需要一个不超过 40 字的 label';
+      }
+      final type = def['type'] ?? 'text';
+      if (type != 'text' && type != 'url') {
+        return '字段 $key 的 type 只支持 text / url';
+      }
+      final fallback = def['default'];
+      if (fallback is! String || fallback.isEmpty || fallback.length > 512) {
+        return '字段 $key 需要一个字符串 default（保证装上就能用）';
+      }
+    }
+    return null;
+  }
+
   static const _allowedPluginAreas = {
     'recommend',
     'music',
@@ -4383,14 +4443,25 @@ class PlatformQuotaServer {
       return;
     }
 
+    // 可配置字段：投稿把它嵌在 payload JSON 里，先校验契约再用 default 还原模板。
+    final payloadSource = payloadText.isNotEmpty
+        ? payloadText
+        : (payloadData.isEmpty ? '' : jsonEncode(payloadData));
+    final schema = pluginPayloadSchema(payloadSource);
+    final schemaReject = pluginConfigSchemaRejectReason(schema);
+    if (schemaReject != null) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': schemaReject},
+      });
+      return;
+    }
+    final effectivePayload = pluginPayloadWithDefaults(payloadSource, schema);
+
     // navigate 的目标必须是真实存在的内置页面。
     // 不校验的后果是「作者填错 → 审核 checklist 全绿 → 用户装完点了没反应」，
     // 而且 App 侧那个静默 return 让排查者以为是 App 坏了。
     if (actionCode == 'navigate') {
-      final routeSource = payloadText.isNotEmpty
-          ? payloadText
-          : (payloadData.isEmpty ? '' : jsonEncode(payloadData));
-      final routeCode = pluginPayloadRoute(routeSource);
+      final routeCode = pluginPayloadRoute(effectivePayload);
       final sortedRoutes = _allowedPluginRoutes.toList()..sort();
       if (routeCode.isEmpty) {
         await jsonResponse(request.response, HttpStatus.badRequest, {
@@ -4416,10 +4487,7 @@ class PlatformQuotaServer {
     // 会真的让用户跳出 App / 对外发请求的动作：payload 必须是 https 网址。
     // 不校验的话，装上去点一下只会弹「网址无效」—— 等于把作者的错误推给用户。
     if (actionCode == 'openUrl' || actionCode == 'httpProbe') {
-      final urlSource = payloadText.isNotEmpty
-          ? payloadText
-          : (payloadData.isEmpty ? '' : jsonEncode(payloadData));
-      if (pluginPayloadHttpsUrl(urlSource).isEmpty) {
+      if (pluginPayloadHttpsUrl(effectivePayload).isEmpty) {
         await jsonResponse(request.response, HttpStatus.badRequest, {
           'error': {
             'message': '$actionCode 需要一个 https 网址'
@@ -4766,15 +4834,39 @@ class PlatformQuotaServer {
       return;
     }
 
+    // 与表单投稿同口径：可配置字段契约 + 对外请求动作的 https 校验。
+    // 这里读的是 plugin.json / 表单字段的原始值 —— 此处的 payloadData/payloadText
+    // 还没解析出来。
+    final rawPayloadValue = fields['payload'] ?? meta['payload'];
+    final zipPayloadSource = rawPayloadValue is Map
+        ? jsonEncode(rawPayloadValue)
+        : (rawPayloadValue?.toString() ?? '');
+    final zipSchema = pluginPayloadSchema(zipPayloadSource);
+    final zipSchemaReject = pluginConfigSchemaRejectReason(zipSchema);
+    if (zipSchemaReject != null) {
+      await jsonResponse(request.response, HttpStatus.badRequest, {
+        'error': {'message': zipSchemaReject},
+      });
+      return;
+    }
+    final zipEffective = pluginPayloadWithDefaults(zipPayloadSource, zipSchema);
+    if (actionCode == 'openUrl' || actionCode == 'httpProbe') {
+      if (pluginPayloadHttpsUrl(zipEffective).isEmpty) {
+        await jsonResponse(request.response, HttpStatus.badRequest, {
+          'error': {
+            'message': '$actionCode 需要一个 https 网址'
+                '（payload 形如 {"url":"https://…"}）',
+          },
+        });
+        return;
+      }
+    }
+
     // 与表单投稿同口径：navigate 必须指向真实内置页面。
     // 这一条 payload 来自 plugin.json / 表单字段，此处的 payloadData/payloadText
     // 还没解析出来，所以直接读原始值。
     if (actionCode == 'navigate') {
-      final rawNavigatePayload = fields['payload'] ?? meta['payload'];
-      final routeSource = rawNavigatePayload is Map
-          ? jsonEncode(rawNavigatePayload)
-          : (rawNavigatePayload?.toString() ?? '');
-      final routeCode = pluginPayloadRoute(routeSource);
+      final routeCode = pluginPayloadRoute(zipEffective);
       final sortedRoutes = _allowedPluginRoutes.toList()..sort();
       if (routeCode.isEmpty || !_allowedPluginRoutes.contains(routeCode)) {
         await jsonResponse(request.response, HttpStatus.badRequest, {
@@ -5375,12 +5467,18 @@ class PlatformQuotaServer {
     }
     for (final item in plugins) {
       if (item is! Map) return '插件条目格式不对';
+      final payloadSource = (item['payload'] ?? '').toString();
+      final schema = pluginPayloadSchema(payloadSource, outer: item);
+      final schemaReject = pluginConfigSchemaRejectReason(schema);
+      if (schemaReject != null) return schemaReject;
+      // 用 default 填模板后再校验，跟 App 端「装上就能用」的形态一致。
+      final effectivePayload = pluginPayloadWithDefaults(payloadSource, schema);
       final actionCode = (item['actionCode'] ?? '').toString();
       if (!_allowedPluginActions.contains(actionCode)) {
         return '未知动作 $actionCode';
       }
       if (actionCode == 'navigate') {
-        final routeCode = pluginPayloadRoute((item['payload'] ?? '').toString());
+        final routeCode = pluginPayloadRoute(effectivePayload);
         if (routeCode.isEmpty) return 'navigate 未指定要打开的页面';
         if (!_allowedPluginRoutes.contains(routeCode)) {
           return '目标页面不存在（$routeCode）';
@@ -5388,7 +5486,7 @@ class PlatformQuotaServer {
       }
       // 与投稿入口同口径：会对外发请求的动作必须有可用 https 网址。
       if (actionCode == 'openUrl' || actionCode == 'httpProbe') {
-        if (pluginPayloadHttpsUrl((item['payload'] ?? '').toString()).isEmpty) {
+        if (pluginPayloadHttpsUrl(effectivePayload).isEmpty) {
           return '$actionCode 需要一个 https 网址';
         }
       }

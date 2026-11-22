@@ -25,6 +25,7 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
   final _slugCtrl = TextEditingController();
   final _versionCtrl = TextEditingController(text: '1.0.0');
   final _payloadCtrl = TextEditingController();
+  final _schemaCtrl = TextEditingController();
   final _changelogCtrl = TextEditingController();
   final _tagsCtrl = TextEditingController(text: '用户投稿');
 
@@ -85,14 +86,29 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
           break;
         case 'httpProbe':
           _titleCtrl.text = '我的服务器（示例）';
-          _subtitleCtrl.text = '点一下看能不能连上';
+          _subtitleCtrl.text = '点一下看能不能连上，装上后填自己的地址';
           _slugCtrl.text = 'my-server';
           _areaCode = 'recommend';
+          // 模板 + 可配置字段：别人装了会弹表单填自己的地址，
+          // 这才是「别人也想装」的插件形态（payload 写死只对作者有用）。
           _payloadCtrl.text = jsonEncode({
-            'url': 'https://box.hpa888.top/updates/box/android/release/version.json',
-            'label': '我的服务器',
+            'url': '{{url}}',
+            'label': '{{label}}',
           });
-          _tagsCtrl.text = '示例,监控';
+          _schemaCtrl.text = jsonEncode({
+            'url': {
+              'label': '探测地址',
+              'type': 'url',
+              'default':
+                  'https://box.hpa888.top/updates/box/android/release/version.json',
+            },
+            'label': {
+              'label': '按钮名称',
+              'type': 'text',
+              'default': '我的服务器',
+            },
+          });
+          _tagsCtrl.text = '示例,监控,可配置';
           break;
         default:
           _titleCtrl.text = '音乐入口（示例）';
@@ -116,6 +132,7 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
     _slugCtrl.dispose();
     _versionCtrl.dispose();
     _payloadCtrl.dispose();
+    _schemaCtrl.dispose();
     _changelogCtrl.dispose();
     _tagsCtrl.dispose();
     super.dispose();
@@ -174,6 +191,29 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
     });
   }
 
+  /// 把可配置字段塞进 payload JSON —— 市场模板、后端校验只认 payload 一处。
+  /// 原始 payload 不是 JSON 对象（比如 toast 文案）时不硬塞，后端按原文校验。
+  String _payloadWithSchema() {
+    final raw = _payloadCtrl.text.trim();
+    final schemaText = _schemaCtrl.text.trim();
+    if (schemaText.isEmpty) return raw;
+    final schema = jsonDecode(schemaText);
+    if (schema is! Map) {
+      throw const FormatException('可配置字段必须是一个 JSON 对象');
+    }
+    Map<String, dynamic> base;
+    try {
+      final decoded = jsonDecode(raw);
+      base = decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : <String, dynamic>{};
+    } catch (_) {
+      base = <String, dynamic>{};
+    }
+    base['configSchema'] = schema;
+    return jsonEncode(base);
+  }
+
   Future<void> _submit() async {
     setState(() => _submitting = true);
     try {
@@ -197,8 +237,9 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
                 : _versionCtrl.text.trim(),
             'actionCode': _actionCode,
             'areaCode': _areaCode,
-            if (_payloadCtrl.text.trim().isNotEmpty)
-              'payload': _payloadCtrl.text.trim(),
+            if (_payloadCtrl.text.trim().isNotEmpty ||
+                _schemaCtrl.text.trim().isNotEmpty)
+              'payload': _payloadWithSchema(),
             if (_changelogCtrl.text.trim().isNotEmpty)
               'changelog': _changelogCtrl.text.trim(),
             'tags': tags.join(','),
@@ -222,7 +263,7 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
               : _versionCtrl.text.trim(),
           'actionCode': _actionCode,
           'areaCode': _areaCode,
-          'payload': _payloadCtrl.text.trim(),
+          'payload': _payloadWithSchema(),
           'changelog': _changelogCtrl.text.trim(),
           'tags': tags,
           'permissions':
@@ -243,6 +284,7 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
       _subtitleCtrl.clear();
       _slugCtrl.clear();
       _payloadCtrl.clear();
+      _schemaCtrl.clear();
       _changelogCtrl.clear();
       setState(() {
         _zipBytes = null;
@@ -443,6 +485,21 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
                 border: const OutlineInputBorder(),
               ),
             ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _schemaCtrl,
+            minLines: 2,
+            maxLines: 4,
+            decoration: const InputDecoration(
+              labelText: '可配置字段（JSON，可选）',
+              helperText:
+                  '装上后弹表单让每个人填自己的值；每个字段必须有 default，'
+                  '否则装上还得改配置，等于没解决扩散。'
+                  '格式 {"url":{"label":"探测地址","type":"url","default":"https://…"}}，'
+                  'payload 里用 {{url}} 引用。',
+              border: OutlineInputBorder(),
+            ),
+          ),
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(

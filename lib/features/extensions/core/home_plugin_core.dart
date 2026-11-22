@@ -25,6 +25,24 @@ String _asString(dynamic value, [String fallback = '']) {
   return v.isEmpty ? fallback : v;
 }
 
+/// 用户可配置字段 / 用户填的值：历史快照没有这两项，读到空表即可。
+/// 类型不符时丢弃脏数据而不是抛异常 —— 一个字段写坏不能让整个快照起不来。
+Map<String, dynamic> _asStringDynamicMap(dynamic value) {
+  if (value is! Map) return const <String, dynamic>{};
+  return Map<String, dynamic>.from(
+    value.map((k, v) => MapEntry(k.toString(), v)),
+  );
+}
+
+Map<String, String> _asStringStringMap(dynamic value) {
+  if (value is! Map) return const <String, String>{};
+  final out = <String, String>{};
+  value.forEach((k, v) {
+    if (v is String) out[k.toString()] = v;
+  });
+  return Map.unmodifiable(out);
+}
+
 int _asInt(dynamic value, [int fallback = 0]) {
   if (value == null) return fallback;
   if (value is int) return value;
@@ -761,6 +779,14 @@ class HomeCustomPluginConfig {
   /// published | yanked | local_cache | ''
   final String marketStatus;
 
+  /// 插件声明的可配置字段：payload 模板里的 `{{key}}` 会被用户填的值替换。
+  /// 形如 {"url":{"label":"服务器地址","type":"url","default":"https://…"}}
+  /// 每个字段必须有 default —— 保证任何人装上就能用，不是半成品。
+  final Map<String, dynamic> configSchema;
+
+  /// 用户在本机填的值。只进本地快照，导出/分享码不会带走（别人的配置对他没用）。
+  final Map<String, String> userConfig;
+
   /// 插件声明的权限（原样保留 code，展示时用 permissionLabelsOf 翻译）。
   /// 只作披露与审计，不做运行时拦截。
   final List<String> declaredPermissions;
@@ -788,6 +814,8 @@ class HomeCustomPluginConfig {
     this.packageTrust = '',
     this.author = '',
     this.marketStatus = '',
+    this.configSchema = const {},
+    this.userConfig = const {},
     this.declaredPermissions = const [],
     this.marketRisk = false,
     this.marketRiskNote = '',
@@ -800,6 +828,8 @@ class HomeCustomPluginConfig {
     final payload = template.payloadData.isEmpty
         ? template.payload
         : jsonEncode(template.payloadData);
+    // 投稿包可以声明可配置字段；从 payloadData 里带过来，本机回填由 plugin_tab 负责。
+    final configSchema = _asStringDynamicMap(template.payloadData['configSchema']);
     final origin =
         template.tags.contains('用户投稿') || template.author.trim().isNotEmpty
         ? 'user_market'
@@ -826,6 +856,7 @@ class HomeCustomPluginConfig {
       // 权限只做披露与审计（快照里留档），不做运行时拦截。
       declaredPermissions: template.permissions,
       marketStatus: origin == 'user_market' ? 'published' : '',
+      configSchema: configSchema,
       marketRisk: false,
       marketRiskNote: '',
     );
@@ -873,6 +904,8 @@ class HomeCustomPluginConfig {
     String? packageTrust,
     String? author,
     String? marketStatus,
+    Map<String, dynamic>? configSchema,
+    Map<String, String>? userConfig,
     List<String>? declaredPermissions,
     bool? marketRisk,
     String? marketRiskNote,
@@ -898,6 +931,8 @@ class HomeCustomPluginConfig {
       packageTrust: packageTrust ?? this.packageTrust,
       author: author ?? this.author,
       marketStatus: marketStatus ?? this.marketStatus,
+      configSchema: configSchema ?? this.configSchema,
+      userConfig: userConfig ?? this.userConfig,
       declaredPermissions: declaredPermissions ?? this.declaredPermissions,
       marketRisk: marketRisk ?? this.marketRisk,
       marketRiskNote: marketRiskNote ?? this.marketRiskNote,
@@ -926,6 +961,8 @@ class HomeCustomPluginConfig {
       'packageTrust': packageTrust,
       'author': author,
       'marketStatus': marketStatus,
+      'configSchema': configSchema,
+      'userConfig': userConfig,
       'declaredPermissions': declaredPermissions,
       'marketRisk': marketRisk,
       'marketRiskNote': marketRiskNote,
@@ -973,6 +1010,8 @@ class HomeCustomPluginConfig {
       packageTrust: _asString(json['packageTrust']),
       author: _asString(json['author']),
       marketStatus: _asString(json['marketStatus']),
+      configSchema: _asStringDynamicMap(json['configSchema']),
+      userConfig: _asStringStringMap(json['userConfig']),
       declaredPermissions: _asStringList(json['declaredPermissions']),
       marketRisk: _asBool(json['marketRisk'], false),
       marketRiskNote: _asString(json['marketRiskNote']),
@@ -1022,6 +1061,52 @@ class PluginImportResult {
   bool get hasRejects => rejected.isNotEmpty;
 }
 
+/// 可配置字段的契约 —— 投稿、导入、后端三处同口径。
+///
+/// 强制 default：这是「别人装了就能用」的底线。没有 default 的插件装上就得先配置，
+/// 跟今天 payload 写死一样没用 —— 区别在于以前是作者改 JSON，现在是用户填表单，
+/// 但都要求一步额外操作才有功能，那就没解决扩散问题。
+String? pluginConfigSchemaRejectReason(Map<String, dynamic> schema) {
+  if (schema.isEmpty) return null;
+  if (schema.length > 8) return '可配置字段最多 8 个';
+  for (final entry in schema.entries) {
+    final key = entry.key;
+    if (!RegExp(r'^[a-zA-Z][a-zA-Z0-9_]{0,23}$').hasMatch(key)) {
+      return '字段名只能用字母/数字/下划线且以字母开头：$key';
+    }
+    final def = entry.value;
+    if (def is! Map) return '字段 $key 的定义必须是对象';
+    final label = def['label'];
+    if (label is! String || label.trim().isEmpty || label.length > 40) {
+      return '字段 $key 需要一个不超过 40 字的 label';
+    }
+    final type = def['type'] ?? 'text';
+    if (type != 'text' && type != 'url') {
+      return '字段 $key 的 type 只支持 text / url';
+    }
+    final fallback = def['default'];
+    if (fallback is! String || fallback.isEmpty || fallback.length > 512) {
+      return '字段 $key 需要一个字符串 default（保证装上就能用）';
+    }
+  }
+  return null;
+}
+
+/// payload 模板 + 用户填的值 → 真正执行的 payload。
+///
+/// 没填的字段回落 default；不存在的占位符留原样（导入期会被判为无效 https）。
+String resolvePluginPayload(HomeCustomPluginConfig config) {
+  var payload = config.payload;
+  if (config.configSchema.isEmpty) return payload;
+  for (final entry in config.configSchema.entries) {
+    final def = entry.value is Map ? (entry.value as Map)['default'] : null;
+    final value = config.userConfig[entry.key] ?? (def is String ? def : '');
+    if (value.isEmpty) continue;
+    payload = payload.replaceAll('{{${entry.key}}}', value);
+  }
+  return payload;
+}
+
 /// 导入期的插件校验 —— **与投稿入口同口径**。
 ///
 /// 导入是投稿之外的第二条入口：不校验的话，一个 `navigate` + 不存在的路由码的
@@ -1030,6 +1115,10 @@ class PluginImportResult {
 ///
 /// 返回 null 表示通过，否则是给人看的原因。
 String? pluginImportRejectReason(HomeCustomPluginConfig config) {
+  final schemaReject = pluginConfigSchemaRejectReason(config.configSchema);
+  if (schemaReject != null) return schemaReject;
+  // 可配置插件按 default 解析后再校验 —— 作者给的默认值就是「装上就能用」的形态。
+  final effectivePayload = resolvePluginPayload(config);
   final known = HomePluginActionType.values.any(
     (a) => a.name == config.actionCode,
   );
@@ -1037,7 +1126,7 @@ String? pluginImportRejectReason(HomeCustomPluginConfig config) {
     return '未知动作 ${config.actionCode}';
   }
   if (config.actionCode == HomePluginActionType.navigate.name) {
-    final route = _routeCodeFromPayload(config.payload);
+    final route = _routeCodeFromPayload(effectivePayload);
     if (route.isEmpty) return 'navigate 未指定要打开的页面';
     if (!HomePluginRouteRegistry.registeredCodes().contains(route)) {
       return '目标页面不存在（$route）';
@@ -1047,7 +1136,7 @@ String? pluginImportRejectReason(HomeCustomPluginConfig config) {
   // 否则装上之后点了只会弹「网址无效」，等于把问题推给用户。
   if (config.actionCode == HomePluginActionType.openUrl.name ||
       config.actionCode == HomePluginActionType.httpProbe.name) {
-    if (_httpsUrlFromRawPayload(config.payload).isEmpty) {
+    if (_httpsUrlFromRawPayload(effectivePayload).isEmpty) {
       return '${config.actionCode} 需要一个 https 网址';
     }
   }
@@ -1681,10 +1770,18 @@ class HomePluginHost {
   Future<String> exportSnapshotJson({bool pretty = true}) async {
     await bootstrap();
     final snapshot = _buildCurrentSnapshot();
+    // 导出不带 userConfig —— 那是本机填的服务器地址，对别人无用且可能是内网地址。
+    final export = HomePluginSnapshot(
+      enabledMap: snapshot.enabledMap,
+      orderMap: snapshot.orderMap,
+      customPlugins: snapshot.customPlugins
+          .map((p) => p.copyWith(userConfig: const <String, String>{}))
+          .toList(),
+    );
     if (pretty) {
-      return const JsonEncoder.withIndent('  ').convert(snapshot.toJson());
+      return const JsonEncoder.withIndent('  ').convert(export.toJson());
     }
-    return jsonEncode(snapshot.toJson());
+    return jsonEncode(export.toJson());
   }
 
   /// 只导出一个自定义插件（分享给别人的最小载荷）。
@@ -1706,7 +1803,7 @@ class HomePluginHost {
     final snapshot = HomePluginSnapshot(
       enabledMap: {plugin.id: plugin.enabled},
       orderMap: {plugin.id: plugin.sort},
-      customPlugins: [plugin],
+      customPlugins: [plugin.copyWith(userConfig: const <String, String>{})],
     );
     return pretty
         ? const JsonEncoder.withIndent('  ').convert(snapshot.toJson())
@@ -1979,7 +2076,7 @@ class HomePluginHost {
           HomePluginActionContext(
             pluginId: config.id,
             title: (latest ?? config).title,
-            payload: (latest ?? config).payload,
+            payload: resolvePluginPayload(latest ?? config),
           ),
         );
         if (!ran && context.mounted) {

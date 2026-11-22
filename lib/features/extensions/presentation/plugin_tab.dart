@@ -1007,6 +1007,12 @@ class _PluginTabState extends State<PluginTab>
 
   Future<void> _runPlugin(BuildContext context, HomePlugin plugin) async {
     try {
+      // 可配置插件：每次点都弹表单（预填上次的值），保存后再真正执行。
+      // 放在所有闸门前 —— 用户填完却被告知"插件已下架"最让人困惑。
+      final cfg = plugin.customConfig;
+      if (cfg != null && cfg.configSchema.isNotEmpty) {
+        if (!await _configurePlugin(context, cfg)) return;
+      }
       // 远程策略：内置题库三插件统一闸
       if (plugin.id == PluginIds.quizAnswer ||
           plugin.id == PluginIds.quizEntry ||
@@ -1025,6 +1031,75 @@ class _PluginTabState extends State<PluginTab>
       if (!context.mounted) return;
       _showSnack(context, '插件执行失败：${pluginMarketFriendlyError(e)}');
     }
+  }
+
+  /// 可配置插件的表单：schema 自动生成字段，用户值按插件 id 存本机快照。
+  /// 每次点击都弹（预填上次值），这样配置随时可改，不用找隐藏入口。
+  Future<bool> _configurePlugin(
+    BuildContext context,
+    HomeCustomPluginConfig cfg,
+  ) async {
+    final controllers = <String, TextEditingController>{};
+    for (final entry in cfg.configSchema.entries) {
+      final def = entry.value is Map ? (entry.value as Map)['default'] : null;
+      controllers[entry.key] = TextEditingController(
+        text: cfg.userConfig[entry.key] ?? (def is String ? def : ''),
+      );
+    }
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('${cfg.title} · 配置'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                '填上你自己的值再运行。别人装的是同一个插件，填的不一样，互不干扰。',
+              ),
+              const SizedBox(height: 12),
+              for (final entry in cfg.configSchema.entries)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: TextField(
+                    controller: controllers[entry.key],
+                    decoration: InputDecoration(
+                      labelText:
+                          (entry.value as Map)['label']?.toString() ?? entry.key,
+                      helperText: (entry.value as Map)['type'] == 'url'
+                          ? '需 https 网址'
+                          : null,
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final values = <String, String>{};
+              for (final e in controllers.entries) {
+                values[e.key] = e.value.text.trim();
+              }
+              _pluginHost.addCustomPlugin(cfg.copyWith(userConfig: values));
+              Navigator.pop(ctx, true);
+            },
+            child: const Text('保存并运行'),
+          ),
+        ],
+      ),
+    );
+    for (final c in controllers.values) {
+      c.dispose();
+    }
+    return saved ?? false;
   }
 
   /// 切换单个插件的启用状态。
