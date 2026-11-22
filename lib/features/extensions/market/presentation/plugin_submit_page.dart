@@ -73,14 +73,36 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
   /// URL，装上点开就是音乐页，能立刻验证整条链路。
   void _fillExample() {
     setState(() {
-      _titleCtrl.text = '音乐入口（示例）';
-      _subtitleCtrl.text = '点开直达音乐播放页';
-      _slugCtrl.text = 'music-entry';
-      _actionCode = 'navigate';
-      _areaCode = 'music';
-      _navigateRouteCode = 'openMusic';
-      _payloadCtrl.text = jsonEncode({'route': 'openMusic'});
-      _tagsCtrl.text = '示例,音乐';
+      // 按当前选中的动作给对应示例：给「打开网址」填一段音乐示例只会让人困惑。
+      switch (_actionCode) {
+        case 'openUrl':
+          _titleCtrl.text = '打开我的站点（示例）';
+          _subtitleCtrl.text = '在浏览器里打开一个网址';
+          _slugCtrl.text = 'my-site';
+          _areaCode = 'recommend';
+          _payloadCtrl.text = jsonEncode({'url': 'https://box.hpa888.top'});
+          _tagsCtrl.text = '示例,网址';
+          break;
+        case 'httpProbe':
+          _titleCtrl.text = '我的服务器（示例）';
+          _subtitleCtrl.text = '点一下看能不能连上';
+          _slugCtrl.text = 'my-server';
+          _areaCode = 'recommend';
+          _payloadCtrl.text = jsonEncode({
+            'url': 'https://box.hpa888.top/updates/box/android/release/version.json',
+            'label': '我的服务器',
+          });
+          _tagsCtrl.text = '示例,监控';
+          break;
+        default:
+          _titleCtrl.text = '音乐入口（示例）';
+          _subtitleCtrl.text = '点开直达音乐播放页';
+          _slugCtrl.text = 'music-entry';
+          _areaCode = 'music';
+          _navigateRouteCode = 'openMusic';
+          _payloadCtrl.text = jsonEncode({'route': 'openMusic'});
+          _tagsCtrl.text = '示例,音乐';
+      }
       _permissions
         ..clear()
         ..add('none');
@@ -402,11 +424,23 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
               controller: _payloadCtrl,
               minLines: 2,
               maxLines: 4,
-              decoration: const InputDecoration(
-                labelText: 'payload（toast 文案 / openMusic 音频地址）',
-                helperText: 'openMusic 支持纯 URL，或 '
-                    '{"url":"https://…","title":"名称","autoplay":true,"loop":true}',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: switch (_actionCode) {
+                  'openUrl' => '要打开的网址（必须 https）',
+                  'httpProbe' => '网址与名称（JSON）',
+                  _ => 'payload（toast 文案 / openMusic 音频地址）',
+                },
+                helperText: switch (_actionCode) {
+                  'openUrl' =>
+                    '打开前会弹确认框显示域名；只接受 https，http 与 intent:/tel: 一律拒绝。',
+                  'httpProbe' =>
+                    '写成 {"url":"https://…","label":"我的服务器"}。'
+                        '点击时检查状态码与耗时，不下载内容。',
+                  _ =>
+                    'openMusic 支持纯 URL，或 '
+                        '{"url":"https://…","title":"名称","autoplay":true,"loop":true}',
+                },
+                border: const OutlineInputBorder(),
               ),
             ),
           Align(

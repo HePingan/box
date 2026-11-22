@@ -4067,6 +4067,12 @@ class PlatformQuotaServer {
     'openWatchLater',
     // 2026-10-30：动漫壁纸图库（自托管静态资源 + 清单 JSON）。
     'openWallpaperGallery',
+    // 2026-11-22：通用动作。此前 12 个动作里 11 个都是「跳某个内置页面」，
+    // 自定义插件实质是快捷方式 —— 第三方造不出一件新功能。
+    // openUrl：打开一个 https 网址（App 侧会先弹确认框显示域名）。
+    'openUrl',
+    // httpProbe：探活一个 https 网址，状态码与耗时显示在 App 里。
+    'httpProbe',
   };
 
   /// `navigate` 动作可打开的内置页面 code。
@@ -4126,6 +4132,30 @@ class PlatformQuotaServer {
       }
     }
     return text;
+  }
+
+  /// 从插件 payload 取 https 网址（`openUrl` / `httpProbe` 用）；取不到返回空。
+  ///
+  /// 与 App 端 `_httpsUrlFromRawPayload` 同口径：只认 https + 有主机名。
+  /// 不同口径的后果是「服务端放行、App 端导入被拒」，用户只看到「导入失败」。
+  static String pluginPayloadHttpsUrl(String payload) {
+    final text = payload.trim();
+    if (text.isEmpty) return '';
+    var candidate = text;
+    if (text.startsWith('{')) {
+      try {
+        final decoded = jsonDecode(text);
+        if (decoded is! Map) return '';
+        candidate = (decoded['url'] ?? decoded['link'] ?? '').toString().trim();
+      } catch (_) {
+        return '';
+      }
+    }
+    final uri = Uri.tryParse(candidate);
+    if (uri == null) return '';
+    if (uri.scheme != 'https') return '';
+    if (uri.host.isEmpty) return '';
+    return candidate;
   }
 
   static const _allowedPluginAreas = {
@@ -4377,6 +4407,23 @@ class PlatformQuotaServer {
           'error': {
             'message': 'payload 里的路由码不在白名单：$routeCode',
             'allowed': sortedRoutes,
+          },
+        });
+        return;
+      }
+    }
+
+    // 会真的让用户跳出 App / 对外发请求的动作：payload 必须是 https 网址。
+    // 不校验的话，装上去点一下只会弹「网址无效」—— 等于把作者的错误推给用户。
+    if (actionCode == 'openUrl' || actionCode == 'httpProbe') {
+      final urlSource = payloadText.isNotEmpty
+          ? payloadText
+          : (payloadData.isEmpty ? '' : jsonEncode(payloadData));
+      if (pluginPayloadHttpsUrl(urlSource).isEmpty) {
+        await jsonResponse(request.response, HttpStatus.badRequest, {
+          'error': {
+            'message': '$actionCode 需要一个 https 网址'
+                '（payload 形如 {"url":"https://…"}）',
           },
         });
         return;
@@ -5337,6 +5384,12 @@ class PlatformQuotaServer {
         if (routeCode.isEmpty) return 'navigate 未指定要打开的页面';
         if (!_allowedPluginRoutes.contains(routeCode)) {
           return '目标页面不存在（$routeCode）';
+        }
+      }
+      // 与投稿入口同口径：会对外发请求的动作必须有可用 https 网址。
+      if (actionCode == 'openUrl' || actionCode == 'httpProbe') {
+        if (pluginPayloadHttpsUrl((item['payload'] ?? '').toString()).isEmpty) {
+          return '$actionCode 需要一个 https 网址';
         }
       }
     }

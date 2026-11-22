@@ -2,14 +2,17 @@
 
 import 'package:box/utils/app_logger.dart';
 import 'package:box/utils/log_channels.dart';
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import 'package:box/core/storage/cache_store.dart';
 import 'package:box/features/extensions/core/builtin_plugin_catalog.dart';
 import 'package:box/features/extensions/core/builtin_plugin_pages.dart';
+import 'package:box/features/extensions/core/external_link_bridge.dart';
 import 'package:box/features/extensions/market/domain/plugin_market_manifest.dart';
 
 String _asString(dynamic value, [String fallback = '']) {
@@ -142,7 +145,19 @@ enum HomePluginActionType {
   openWatchLater,
 
   /// 打开动漫壁纸图库（壁纸自托管在 box.hpa888.top，清单 JSON 下发）。
-  openWallpaperGallery;
+  openWallpaperGallery,
+
+  /// 打开一个 https 网址（插件 openUrl）。
+  ///
+  /// 为什么加它：在此之前 12 个动作里 11 个都是「跳某个内置页面」，
+  /// 自定义插件实质上是**快捷方式**而不是插件 —— 任何第三方作者都造不出
+  /// 一件新功能，这也是远程市场长期只有 1 个插件的结构性原因。
+  openUrl,
+
+  /// 探活一个 https 网址，结果（状态码 / 耗时 / 不可达）显示在 SnackBar。
+  ///
+  /// 不需要作者写代码就能做「我的服务器状态」这类插件：配好 url 和名字即可。
+  httpProbe;
 
   /// 中文标签（单一事实源）。此前散落在市场页与投稿页各一份且已漂移
   /// （toast：提示动作 vs 弹出提示）。
@@ -172,24 +187,24 @@ enum HomePluginActionType {
         return '打开稍后看';
       case HomePluginActionType.openWallpaperGallery:
         return '打开壁纸图库';
+      case HomePluginActionType.openUrl:
+        return '打开网址';
+      case HomePluginActionType.httpProbe:
+        return '网址探活';
     }
   }
 
   /// 顺序即 UI 下拉展示顺序（供投稿页复用）。
-  /// 附录 A-1：补齐遗漏的 openGithubAccel（投稿页下拉此前选不到「打开加速」）。
+  ///
+  /// **只列作者该选的动作。** 那批 `openXxx` 专用动作与
+  /// `navigate + {"route":"xxx"}` 落到同一个 `lookup`、同一个页面，
+  /// 在投稿页同时给两个等价选项只会让作者选错（选错了也不报错）。
+  /// 它们仍保留在枚举与后端白名单里 —— 已装插件继续可用，只是不再出现在下拉中。
   static const List<HomePluginActionType> displayOrder = [
-    HomePluginActionType.toast,
     HomePluginActionType.navigate,
-    HomePluginActionType.openDailyNews,
-    HomePluginActionType.openNovelList,
-    HomePluginActionType.openVideoList,
-    HomePluginActionType.openImageGenerator,
-    HomePluginActionType.openGithubAccel,
-    HomePluginActionType.openRemoteStorage,
-    HomePluginActionType.openMusic,
-    HomePluginActionType.openQuickNote,
-    HomePluginActionType.openWatchLater,
-    HomePluginActionType.openWallpaperGallery,
+    HomePluginActionType.toast,
+    HomePluginActionType.openUrl,
+    HomePluginActionType.httpProbe,
   ];
 }
 
@@ -371,6 +386,58 @@ String _payloadUrl(HomePluginActionContext actionContext) {
   return _allowedAccelUrlOrEmpty(payload, source: 'payload');
 }
 
+/// 从裸 payload 文本里取一个可打开的 https 网址；取不到返回空。
+///
+/// 支持裸链接与 `{"url":"https://…"}` 两种写法（`link` 也认）。
+String _httpsUrlFromRawPayload(String payload) {
+  final text = payload.trim();
+  if (text.isEmpty) return '';
+  var candidate = text;
+  if (text.startsWith('{')) {
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is! Map) return '';
+      candidate = (decoded['url'] ?? decoded['link'] ?? '').toString().trim();
+    } catch (_) {
+      return '';
+    }
+  }
+  if (!ExternalLinkBridge.isOpenable(candidate)) return '';
+  return candidate;
+}
+
+/// 从 payload 取一个可打开的 https 网址（`openUrl` / `httpProbe` 用）。
+///
+/// 与 [_payloadUrl] 的区别：那个是给 GitHub 加速动作用的，套了加速域名白名单；
+/// 这里只要求 https + 有主机名 —— 插件可以让用户打开任意站点，但必须是 https
+/// （http 明文、`intent:`、`tel:` 一律挡下，理由见 ExternalLinkBridge）。
+String _httpsUrlFromPayload(HomePluginActionContext actionContext) {
+  final direct = _httpsUrlFromRawPayload(actionContext.payload);
+  if (direct.isNotEmpty) return direct;
+  final extra = actionContext.extra['url']?.toString().trim() ?? '';
+  return ExternalLinkBridge.isOpenable(extra) ? extra : '';
+}
+
+/// 探活提示里显示的名字：payload 的 label/title，退化成主机名，再退化成插件名。
+String _probeLabel(HomePluginActionContext actionContext, String url) {
+  final payload = actionContext.payload.trim();
+  if (payload.startsWith('{')) {
+    try {
+      final decoded = jsonDecode(payload);
+      if (decoded is Map) {
+        final label =
+            (decoded['label'] ?? decoded['title'] ?? '').toString().trim();
+        if (label.isNotEmpty) return label;
+      }
+    } catch (_) {
+      // 解析失败就走主机名兜底。
+    }
+  }
+  final host = Uri.tryParse(url)?.host ?? '';
+  if (host.isNotEmpty) return host;
+  return actionContext.title;
+}
+
 class HomePluginActionRegistry {
   HomePluginActionRegistry._();
 
@@ -415,6 +482,92 @@ class HomePluginActionRegistry {
         return;
       }
       await Navigator.push(context, MaterialPageRoute(builder: builder));
+    });
+    // ── 通用动作：让插件第一次能"做事"，而不只是跳内置页面 ──
+    register(HomePluginActionType.openUrl.name, (
+      context,
+      actionContext,
+    ) async {
+      if (context == null) return;
+      final url = _httpsUrlFromPayload(actionContext);
+      if (url.isEmpty) {
+        await _showSnack(context, '插件配置的网址无效（必须是 https 链接）');
+        return;
+      }
+      final host = Uri.parse(url).host;
+      // 别人写的插件要让本机打开一个网址 —— 先让用户看清去哪，再开。
+      // 没有这一步，一个 payload 就能把用户带到任意页面。
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: const Text('打开外部链接'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('插件「${actionContext.title}」要打开的地址：'),
+              const SizedBox(height: 8),
+              SelectableText(url, style: const TextStyle(fontSize: 12)),
+              const SizedBox(height: 8),
+              Text('域名：$host', style: const TextStyle(fontSize: 12)),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              child: const Text('打开'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      final opened = await ExternalLinkBridge.open(url);
+      if (!opened && context.mounted) {
+        await _showSnack(context, '没有可用的浏览器，或系统拦住了这个链接');
+      }
+    });
+    register(HomePluginActionType.httpProbe.name, (
+      context,
+      actionContext,
+    ) async {
+      if (context == null) return;
+      final url = _httpsUrlFromPayload(actionContext);
+      if (url.isEmpty) {
+        await _showSnack(context, '插件配置的网址无效（必须是 https 链接）');
+        return;
+      }
+      final label = _probeLabel(actionContext, url);
+      final watch = Stopwatch()..start();
+      final client = http.Client();
+      try {
+        // 用 HEAD：探活只需要状态码，不该为了看一眼把整个响应体拉下来。
+        final res = await client
+            .head(Uri.parse(url))
+            .timeout(const Duration(seconds: 10));
+        watch.stop();
+        if (!context.mounted) return;
+        await _showSnack(
+          context,
+          '$label：HTTP ${res.statusCode} · ${watch.elapsedMilliseconds}ms',
+        );
+      } on TimeoutException {
+        watch.stop();
+        if (!context.mounted) return;
+        await _showSnack(context, '$label：超时（超过 10 秒）');
+      } catch (_) {
+        watch.stop();
+        if (!context.mounted) return;
+        await _showSnack(
+          context,
+          '$label：不可达 · ${watch.elapsedMilliseconds}ms',
+        );
+      } finally {
+        client.close();
+      }
     });
     register(HomePluginActionType.openDailyNews.name, (
       context,
@@ -888,6 +1041,14 @@ String? pluginImportRejectReason(HomeCustomPluginConfig config) {
     if (route.isEmpty) return 'navigate 未指定要打开的页面';
     if (!HomePluginRouteRegistry.registeredCodes().contains(route)) {
       return '目标页面不存在（$route）';
+    }
+  }
+  // 会真的对外发请求/打开浏览器的动作，payload 必须是可用的 https 网址 ——
+  // 否则装上之后点了只会弹「网址无效」，等于把问题推给用户。
+  if (config.actionCode == HomePluginActionType.openUrl.name ||
+      config.actionCode == HomePluginActionType.httpProbe.name) {
+    if (_httpsUrlFromRawPayload(config.payload).isEmpty) {
+      return '${config.actionCode} 需要一个 https 网址';
     }
   }
   return null;

@@ -493,6 +493,9 @@ class MainActivity : FlutterActivity() {
         DeepLinkReceiver.register(flutterEngine.dartExecutor.binaryMessenger, this)
         DeepLinkReceiver.handleIntent(intent)
 
+        // ── 插件 openUrl：打开 https 链接 ──
+        ExternalLinkBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
+
         // ── 远程存储：视频首帧抽取（284 D8）──
         // 为什么在原生：Flutter 没有视频解码器，video_player 只能播不能抽帧；
         // MediaMetadataRetriever 能对 http(s) URL 直接取关键帧（按需 Range），
@@ -710,6 +713,8 @@ class MainActivity : FlutterActivity() {
         ShareInboxReceiver.detach()
         // 深链通道同理：不解绑的话重建后码会投向失效 channel。
         DeepLinkReceiver.detach()
+        // 打开链接通道同理。
+        ExternalLinkBridge.detach()
         // 关键：只清掉 Activity 持有的普通悬浮窗/区域选择器。
         // 无障碍答案窗（TYPE_ACCESSIBILITY_OVERLAY）必须跨 Activity 存活——
         // 用户切到驾考/考试 App 时 MainActivity 常被 destroy，若这里 hide 全部，
