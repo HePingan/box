@@ -63,10 +63,14 @@ void main() {
       isTrue,
       reason: '动作没进枚举的话，注册表那条 handler 就成了枚举外的孤儿',
     );
+    // 2026-11-22：openMusic 不再单独出现在投稿页下拉里。
+    // 那批 openXxx 与 navigate + {"route":"xxx"} 落到同一个 lookup、同一个页面，
+    // 下拉里同时给两个等价选项只会让作者选错；displayOrder 只留通用动作。
+    // 意图不变 —— 这里改成断言「走 navigate 仍然到得了音乐页」，见下面的 lookup。
     expect(
-      HomePluginActionType.displayOrder.contains(HomePluginActionType.openMusic),
+      HomePluginActionType.displayOrder.contains(HomePluginActionType.navigate),
       isTrue,
-      reason: '不在 displayOrder 里，投稿页下拉就选不到它',
+      reason: 'navigate 必须在 displayOrder 里，否则投稿页连路由跳转都选不到',
     );
 
     HomePluginRouteRegistry.registerDefaults();
