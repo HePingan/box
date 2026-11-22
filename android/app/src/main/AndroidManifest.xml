@@ -135,6 +135,20 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="boxapp" android:host="plugin"/>
             </intent-filter>
+            <!-- https 深链（App Links）。
+                 为什么不只用 boxapp://：扫码器把自建 scheme 当地址打开，
+                 微信/QQ/系统浏览器一律白屏 —— 用户实测就是这样。
+                 这里声明 https 并 autoVerify：系统安装后拉
+                 https://box.hpa888.top/.well-known/assetlinks.json 校验签名指纹，
+                 通过后 https 链接直接进 App，不弹选择器、不白屏。
+                 校验没过也不致命：链接退化成打开落地页 /p/<CODE>，
+                 页面上有「在 App 里打开」和 6 位码可供手输。 -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="box.hpa888.top" android:pathPrefix="/p/"/>
+            </intent-filter>
         </activity>
 
         <!-- 伪装成计算器的桌面入口（activity-alias）。

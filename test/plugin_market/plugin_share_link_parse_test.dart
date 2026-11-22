@@ -57,6 +57,25 @@ void main() {
       expect(PluginShareLinkChannel.parseShareCode('boxapp://other?c=7K2M9Q'), '');
     });
 
+    test('https 落地页地址（App Links 扫码直进时就长这样）', () {
+      expect(
+        PluginShareLinkChannel.parseShareCode('https://box.hpa888.top/p/7K2M9Q'),
+        '7K2M9Q',
+      );
+      // 带查询参数/尾斜杠也认
+      expect(
+        PluginShareLinkChannel.parseShareCode('https://box.hpa888.top/p/7K2M9Q?from=qr'),
+        '7K2M9Q',
+      );
+    });
+
+    test('别的域名 /p/ 路径不认（只认自己的域名）', () {
+      expect(
+        PluginShareLinkChannel.parseShareCode('https://evil.test/p/7K2M9Q'),
+        '',
+      );
+    });
+
     test('常见中文句子不会被当成码', () {
       expect(PluginShareLinkChannel.parseShareCode('这是一个插件分享'), '');
     });
@@ -72,17 +91,24 @@ void main() {
   });
 
   group('深链生成', () {
-    test('buildLink 与 parseShareCode 互为逆运算', () {
+    test('buildLink 出的是 https 网址（二维码用），且能解析回码', () {
       const code = '7K2M9Q';
       final link = PluginShareLinkChannel.buildLink(code);
-      expect(link, 'boxapp://plugin?c=7K2M9Q');
+      expect(link, 'https://box.hpa888.top/p/7K2M9Q');
       expect(PluginShareLinkChannel.parseShareCode(link), code);
+    });
+
+    test('schemeLink 出的是自建 scheme（落地页按钮用）', () {
+      expect(
+        PluginShareLinkChannel.schemeLink('7K2M9Q'),
+        'boxapp://plugin?c=7K2M9Q',
+      );
     });
 
     test('小写码生成时也被规范', () {
       expect(
         PluginShareLinkChannel.buildLink('7k2m9q'),
-        'boxapp://plugin?c=7K2M9Q',
+        'https://box.hpa888.top/p/7K2M9Q',
       );
     });
   });

@@ -23,6 +23,11 @@ class PluginShareLinkChannel {
   static const String scheme = 'boxapp';
   static const String host = 'plugin';
 
+  /// 网址形式（二维码用）：`https://box.hpa888.top/p/CODE`。
+  /// 与服务端 nginx 的 `location ^~ /p/` 和 `.well-known/assetlinks.json` 对齐。
+  static const String webHost = 'box.hpa888.top';
+  static const String webPath = '/p/';
+
   /// 码长度上限，与服务端 6 位留余量。超长的一律当无效。
   static const int maxCodeLength = 32;
 
@@ -47,14 +52,22 @@ class PluginShareLinkChannel {
     final text = raw?.trim() ?? '';
     if (text.isEmpty) return '';
 
-    // 1) 整串就是深链或其中一段
+    // 1) 自建 scheme：boxapp://plugin?c=CODE
     final match = RegExp(
       r'boxapp://plugin\?[^\s]*?\bc=([0-9A-Za-z]{4,32})',
       caseSensitive: false,
     ).firstMatch(text);
     if (match != null) return _normalize(match.group(1)!);
 
-    // 2) 整串就是裸码（中间带空格的"7K2M 9Q"也认：分享码被排版折断是常事）
+    // 2) https 落地页地址：https://box.hpa888.top/p/CODE
+    //    二维码扫出来就是这个 —— 扫码器不认自建 scheme，只有 https 能被正常处理。
+    final web = RegExp(
+      r'https?://box\.hpa888\.top/p/([0-9A-Za-z]{4,32})',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (web != null) return _normalize(web.group(1)!);
+
+    // 3) 整串就是裸码（中间带空格的"7K2M 9Q"也认：分享码被排版折断是常事）
     final compact = text.replaceAll(RegExp(r'\s+'), '');
     if (compact.length <= maxCodeLength &&
         RegExp(r'^[0-9A-Za-z]+$').hasMatch(compact)) {
@@ -63,8 +76,18 @@ class PluginShareLinkChannel {
     return '';
   }
 
-  /// 生成给二维码用的深链。
-  static String buildLink(String code) => '$scheme://$host?c=${_normalize(code)}';
+  /// 二维码用的网址链接。
+  ///
+  /// 为什么不是 `boxapp://`：扫码器把它当地址丢给浏览器 → 未知协议 → 白屏
+  /// （用户实测，微信/QQ/系统浏览器都一样）。https 才能被所有扫码器正常处理：
+  /// App Links 校验通过时系统直接进 App，没通过就落到落地页，页面里有
+  /// 「在 App 里打开」按钮和 6 位码可以手输。
+  static String buildLink(String code) =>
+      'https://$webHost${webPath}${_normalize(code)}';
+
+  /// 自建 scheme 形式，落地页的「在 App 里打开」按钮用它。
+  static String schemeLink(String code) =>
+      '$scheme://$host?c=${_normalize(code)}';
 
   static String _normalize(String code) => code.trim().toUpperCase();
 

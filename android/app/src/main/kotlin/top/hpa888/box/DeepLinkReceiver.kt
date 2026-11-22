@@ -79,13 +79,26 @@ object DeepLinkReceiver {
         }
     }
 
-    /** `boxapp://plugin?c=CODE` → CODE；不是这个形状一律返回 null。 */
+    /**
+     * 两种深链都认：
+     *   * `boxapp://plugin?c=CODE` —— 自建 scheme（落地页按钮、手点链接）
+     *   * `https://box.hpa888.top/p/CODE` —— App Links（扫码/系统打开，已验证域名时直接进 App）
+     *
+     * 为什么非要两条：扫码器把 `boxapp://` 当地址丢给浏览器时，
+     * 微信/QQ/Chrome 都当未知协议 → 白屏（用户实测）。https 才能被所有扫码器正常处理。
+     */
     private fun codeFromIntent(intent: Intent?): String? {
         if (intent == null || intent.action != Intent.ACTION_VIEW) return null
         val uri = intent.data ?: return null
-        if (!"boxapp".equals(uri.scheme, ignoreCase = true)) return null
-        if (!"plugin".equals(uri.host, ignoreCase = true)) return null
-        val raw = uri.getQueryParameter("c")?.trim().orEmpty()
+        val scheme = uri.scheme?.lowercase() ?: return null
+        val host = uri.host?.lowercase() ?: return null
+        val candidate: String? = when {
+            scheme == "boxapp" && host == "plugin" -> uri.getQueryParameter("c")
+            scheme == "https" && host == "box.hpa888.top" &&
+                (uri.path ?: "").startsWith("/p/") -> uri.lastPathSegment
+            else -> null
+        }
+        val raw = candidate?.trim().orEmpty()
         if (raw.isEmpty() || raw.length > MAX_CODE_LEN) return null
         // 码表只有 [0-9A-Z]（服务端 _pluginShareAlphabet）；其它字符说明链接被改过。
         if (!raw.all { it.isLetterOrDigit() }) return null
