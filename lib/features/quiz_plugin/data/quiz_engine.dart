@@ -848,11 +848,13 @@ class QuizEngine {
           // 题干只要被 OCR 噪声污染一点就跌破 0.70，唯一正确答案也被打回
           // 「请人工确认」（真机：匝道开什么灯，唯一候选「左转向灯」仍要人工确认）。
           final exactUniqueMatch = hasExactCompleteVariant && selected.length == 1;
-          var adjustedScore = exactUniqueMatch
-              ? 95
-              : useOptions
+          var adjustedScore = useOptions
               ? (entry.score * alignment.confidenceFactor).round().clamp(0, 100)
               : entry.score;
+          // 完全命中且唯一时抬到确定性分数，但不要压低本来已满分的匹配。
+          if (exactUniqueMatch && adjustedScore < 95) {
+            adjustedScore = 95;
+          }
           // 答案仍是「图N」且卷面是文字题：强制降置信
           if (_isImageLikeAnswer(alignment.displayAnswer) && probeTextLike) {
             adjustedScore = min(adjustedScore, 40);
