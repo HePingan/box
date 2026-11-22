@@ -513,6 +513,15 @@ class _PluginTabState extends State<PluginTab>
         ? _pluginHost.exportSnapshotJson(pretty: true)
         : _pluginHost.exportSinglePluginJson(id, pretty: true);
 
+    /// 发给别人时用的名字：优先标题，退化成 id。
+    String shareTitleFor(String id) {
+      if (id.isEmpty) return 'Box 插件配置';
+      final picked = custom.where((p) => p.id == id).toList();
+      if (picked.isEmpty) return 'Box 插件配置';
+      final p = picked.first;
+      return p.title.isEmpty ? p.id : p.title;
+    }
+
     await showDialog<void>(
       context: context,
       builder: (dialogCtx) => StatefulBuilder(
@@ -594,23 +603,29 @@ class _PluginTabState extends State<PluginTab>
               child: const Text('关闭'),
             ),
             OutlinedButton.icon(
-              onPressed: () {
-                final picked = selectedId.isEmpty
-                    ? null
-                    : custom.where((p) => p.id == selectedId).toList();
-                final shareTitle = picked != null && picked.isNotEmpty
-                    ? (picked.first.title.isEmpty
-                          ? picked.first.id
-                          : picked.first.title)
-                    : 'Box 插件配置';
-                _showShareCodeDialog(jsonText, shareTitle);
-              },
+              onPressed: () =>
+                  _showShareCodeDialog(jsonText, shareTitleFor(selectedId)),
               icon: const Icon(Icons.qr_code_2),
               label: const Text('分享码'),
             ),
             OutlinedButton.icon(
               onPressed: () async {
-                await SharePlus.instance.share(ShareParams(text: jsonText));
+                // 分享链接，不是 JSON 全文。
+                // 2KB JSON 在聊天窗里会被折行、插表情、截断，对方还得自己复制
+                // 粘贴到「导入 → 粘贴 JSON」才会用 —— 现实中没人这么干，
+                // 这也是远程市场一直只有 1 个插件的根子。
+                // 链接一点就进 App（App Links 已验证时），没装 App 也会落到
+                // 落地页，页面上还有 6 位码可以手输。
+                final title = shareTitleFor(selectedId);
+                final code = await _createShareCode(jsonText, title);
+                if (code == null) return;
+                final link = PluginShareLinkChannel.buildLink(code);
+                await SharePlus.instance.share(
+                  ShareParams(
+                    text: '极客匣插件「$title」\n$link\n（也可以在 App 里输入分享码 $code）',
+                    subject: '极客匣插件：$title',
+                  ),
+                );
               },
               icon: const Icon(Icons.ios_share),
               label: const Text('分享'),
@@ -619,17 +634,33 @@ class _PluginTabState extends State<PluginTab>
               onPressed: () async {
                 await Clipboard.setData(ClipboardData(text: jsonText));
                 if (!dialogCtx.mounted) return;
-                ScaffoldMessenger.of(
-                  dialogCtx,
-                ).showSnackBar(const SnackBar(content: Text('已复制到剪贴板')));
+                ScaffoldMessenger.of(dialogCtx).showSnackBar(
+                  const SnackBar(
+                    content: Text('已复制 JSON（对方在导入里选「粘贴 JSON」）'),
+                  ),
+                );
               },
               icon: const Icon(Icons.copy),
-              label: const Text('复制'),
+              label: const Text('复制 JSON'),
             ),
           ],
         ),
       ),
     );
+  }
+
+  /// 生成分享码；失败就 SnackBar 报错并返回 null（调用方据此中止分享）。
+  Future<String?> _createShareCode(String payload, String title) async {
+    try {
+      return await _shareApi.createShareCode(payload: payload, title: title);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('生成分享码失败：$e')),
+        );
+      }
+      return null;
+    }
   }
 
   /// 生成并展示分享码：6 个字符 + 二维码。

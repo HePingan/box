@@ -32,6 +32,12 @@ object DeepLinkReceiver {
     /** 原生 → Dart：有一个码要处理。 */
     private const val METHOD_ON_CODE = "onPluginCode"
 
+    /** Dart → 原生：深链自检（App Links 是否已验证、scheme 能不能解析）。 */
+    private const val METHOD_DIAGNOSE = "diagnose"
+
+    /** 分享链接所在的域名，必须与 manifest 里的 https filter 一致。 */
+    private const val WEB_HOST = "box.hpa888.top"
+
     /**
      * 码长度上限：服务端现在是 6 位，留余量给以后加长。
      * 超长的不解析 —— 免得把一段奇怪字符串当码去请求。
@@ -41,8 +47,10 @@ object DeepLinkReceiver {
     private var channel: MethodChannel? = null
     private var dartReady = false
     private var pendingCode: String? = null
+    private var appContext: android.content.Context? = null
 
-    fun register(messenger: BinaryMessenger) {
+    fun register(messenger: BinaryMessenger, context: android.content.Context) {
+        appContext = context.applicationContext
         val ch = MethodChannel(messenger, CHANNEL)
         channel = ch
         ch.setMethodCallHandler { call, result ->
@@ -58,9 +66,67 @@ object DeepLinkReceiver {
                     pendingCode = null
                     result.success(code)
                 }
+                METHOD_DIAGNOSE -> result.success(diagnose())
                 else -> result.notImplemented()
             }
         }
+    }
+
+    /**
+     * 深链自检。
+     *
+     * 为什么需要它：App Links 校验是系统行为（装机后异步拉 assetlinks.json），
+     * 失败时没有任何用户可见的报错 —— 链接只是悄悄变成"打开浏览器"。
+     * 这里把系统的域名验证状态读出来，省得靠猜。
+     */
+    private fun diagnose(): Map<String, Any?> {
+        val ctx = appContext
+        val out = mutableMapOf<String, Any?>(
+            "host" to WEB_HOST,
+            "scheme" to "boxapp",
+            "sdkInt" to android.os.Build.VERSION.SDK_INT,
+            "webLinkState" to "unknown",
+            "webLinkVerified" to false,
+            "schemeResolvable" to false,
+        )
+        if (ctx == null) {
+            out["error"] = "没有 context（通道未注册？）"
+            return out
+        }
+        val pm = ctx.packageManager
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            try {
+                // getDomainVerificationUserState 是 API 31+；更低的系统只能靠行为观察。
+                val state = pm.getDomainVerificationUserState(ctx.packageName)
+                val st = state?.hostToStateMap?.get(WEB_HOST)
+                out["webLinkState"] = when (st) {
+                    android.content.pm.PackageManager.DOMAIN_STATE_VERIFIED -> "verified"
+                    android.content.pm.PackageManager.DOMAIN_STATE_SELECTED -> "selected"
+                    android.content.pm.PackageManager.DOMAIN_STATE_NONE -> "none"
+                    null -> "unlisted"
+                    else -> "unknown"
+                }
+                out["webLinkVerified"] =
+                    st == android.content.pm.PackageManager.DOMAIN_STATE_VERIFIED
+            } catch (e: Throwable) {
+                out["webLinkState"] = "error"
+                out["error"] = e.message
+            }
+        } else {
+            out["webLinkState"] = "apiBelow31"
+        }
+        // 查自己包的 scheme 能否解析：限定 packageName，不涉及其它应用的可见性。
+        try {
+            val probe = android.content.Intent(
+                android.content.Intent.ACTION_VIEW,
+                android.net.Uri.parse("boxapp://plugin?c=TEST"),
+            )
+            probe.setPackage(ctx.packageName)
+            out["schemeResolvable"] = probe.resolveActivity(pm) != null
+        } catch (e: Throwable) {
+            out["error"] = (out["error"] as? String ?: "") + " scheme:${e.message}"
+        }
+        return out
     }
 
     /** Activity 销毁时解绑：否则重建后事件会投向失效 channel。 */

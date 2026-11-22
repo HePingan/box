@@ -490,7 +490,7 @@ class MainActivity : FlutterActivity() {
 
         // ── 插件分享码深链（boxapp://plugin?c=CODE）──
         // 与分享同一条"冷启动攒着 / 热启动直接推"的路子，见 DeepLinkReceiver。
-        DeepLinkReceiver.register(flutterEngine.dartExecutor.binaryMessenger)
+        DeepLinkReceiver.register(flutterEngine.dartExecutor.binaryMessenger, this)
         DeepLinkReceiver.handleIntent(intent)
 
         // ── 远程存储：视频首帧抽取（284 D8）──

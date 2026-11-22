@@ -6,6 +6,7 @@ import '../../../app/app_routes.dart';
 import '../../../design_system/app_theme_controller.dart';
 import '../../../design_system/app_tokens.dart';
 import '../../../design_system/settings_list.dart';
+import '../../extensions/market/data/plugin_share_link_channel.dart';
 
 /// 独立设置页。
 ///
@@ -73,6 +74,77 @@ class SettingsPage extends StatelessWidget {
             const SizedBox(height: 8),
           ],
         ),
+      ),
+    );
+  }
+
+  /// 深链自检：App Links 是否已被系统校验通过。
+  ///
+  /// 这是唯一能看见「链接为什么不进 App」的地方 —— 校验失败时系统不给用户
+  /// 任何提示，链接只是悄悄变成"打开浏览器"，看起来跟没做这个功能一样。
+  Future<void> _showShareLinkDiagnosis(BuildContext context) async {
+    final diag = await PluginShareLinkChannel.diagnose();
+    if (!context.mounted) return;
+
+    final state = (diag['webLinkState'] ?? 'unknown').toString();
+    final schemeOk = diag['schemeResolvable'] == true;
+
+    final (String title, String body) = switch (state) {
+      'verified' => (
+        '已认领',
+        '系统已验证 box.hpa888.top。分享链接会直接打开 App，不经过浏览器。',
+      ),
+      'selected' => (
+        '部分认领',
+        '系统允许打开这个域名，但没完全验证（可能弹过选择器）。等系统重新校验，或卸载重装一次。',
+      ),
+      'none' => (
+        '未验证',
+        '系统读到了域名声明但校验没通过。常见原因：装机时没联网、assetlinks.json 取不到、或签名指纹不一致。卸载重装一次会重新触发校验。',
+      ),
+      'unlisted' => (
+        '未声明',
+        '系统里没有这个域名的记录，多半是当前版本还没有 https 声明（低于 1.21.50）。',
+      ),
+      'apiBelow31' => (
+        '系统版本过低',
+        'Android 11 以下查不到验证状态，只能看实际行为：点分享链接若停在落地页，就是还没认领。',
+      ),
+      _ => ('未知', '查不到验证状态（非 Android，或通道不可用）。'),
+    };
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: Text('分享链接：$title'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(body),
+            const SizedBox(height: 12),
+            Text('域名：${diag['host'] ?? 'box.hpa888.top'}'),
+            Text('自建 scheme：${schemeOk ? 'boxapp:// 可解析' : '不可解析'}'),
+            if (diag['error'] != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                '诊断信息：${diag['error']}',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ],
+            const SizedBox(height: 12),
+            const Text(
+              '不管这里显示什么，这条路永远可用：在「插件 → 导入 → 分享码」里手输那 6 位。',
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('知道了'),
+          ),
+        ],
       ),
     );
   }
@@ -157,6 +229,12 @@ class SettingsPage extends StatelessWidget {
                 subtitle: '片源健康、线路记忆、更新通道、网络诊断',
                 onTap: () =>
                     Navigator.of(context).pushNamed(AppRoutes.selfCheck),
+              ),
+              SettingsTile(
+                icon: Icons.link,
+                title: '分享链接状态',
+                subtitle: '检查系统是否已认领 box.hpa888.top（App Links）',
+                onTap: () => _showShareLinkDiagnosis(context),
               ),
             ],
           ),

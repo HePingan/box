@@ -140,4 +140,24 @@ class PluginShareLinkChannel {
     _channel.setMethodCallHandler(null);
     await _incoming.close();
   }
+
+  /// 深链自检：系统是否已认领 [webHost]（App Links）、`boxapp://` 能否解析。
+  ///
+  /// **静态**：只发一次 method call，不碰任何 handler 状态 —— 从设置页随手调
+  /// 不会把 gate 上挂着的 onCode 监听解绑（那样热启动的码就丢了）。
+  ///
+  /// 非 Android / 通道不可用时返回空 Map —— 调用方按「未知」显示，
+  /// 不要把"查不到"误报成"没验证"。
+  static Future<Map<String, Object?>> diagnose({MethodChannel? channel}) async {
+    final ch = channel ?? const MethodChannel(channelName);
+    try {
+      final raw = await ch.invokeMethod<Map<Object?, Object?>>('diagnose');
+      if (raw == null) return const <String, Object?>{};
+      return raw.map((k, v) => MapEntry(k.toString(), v as Object?));
+    } on MissingPluginException {
+      return const <String, Object?>{};
+    } catch (e) {
+      return <String, Object?>{'error': '$e'};
+    }
+  }
 }
