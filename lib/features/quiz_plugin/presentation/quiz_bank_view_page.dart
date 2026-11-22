@@ -1450,6 +1450,7 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
   int? _correctIndex;
   QuizQuestionImage? _questionImage;
   bool _imageBusy = false;
+  bool _isNewRule = false;
 
   @override
   void initState() {
@@ -1458,6 +1459,7 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
     _q = TextEditingController(text: item.question);
     _analysis = TextEditingController(text: item.analysis ?? '');
     _type = item.type;
+    _isNewRule = item.isNewRule;
     final opts = List<String>.from(item.options);
     while (opts.length < 2) {
       opts.add('');
@@ -1563,6 +1565,7 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
       lastSubmitAt: widget.item.lastSubmitAt,
       lastSubmitError: widget.item.lastSubmitError,
       remoteSubmissionId: widget.item.remoteSubmissionId,
+      isNewRule: _isNewRule,
     );
     final edited = _questionImage == null
         ? result
@@ -1612,6 +1615,15 @@ class _QuizBankEditSheetState extends State<_QuizBankEditSheet> {
                   }
                 });
               },
+            ),
+            const SizedBox(height: 8),
+            CheckboxListTile(
+              value: _isNewRule,
+              onChanged: (v) => setState(() => _isNewRule = v ?? false),
+              title: const Text('新规题（旧题可手动补标）'),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
             ),
             const SizedBox(height: 12),
             TextField(
