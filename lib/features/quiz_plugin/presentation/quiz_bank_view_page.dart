@@ -15,6 +15,7 @@ import '../data/quiz_cloud_push.dart';
 import '../data/quiz_cloud_sync.dart';
 import 'quiz_question_image_store.dart';
 import 'quiz_vision_candidates_page.dart';
+import 'quiz_ambiguous_groups_page.dart';
 import '../../../globals.dart';
 import '../../../utils/app_logger.dart';
 import '../../../utils/log_channels.dart';
@@ -358,6 +359,14 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
       MaterialPageRoute(
         builder: (_) => QuizVisionCandidatesPage(),
       ),
+    );
+    if (!mounted) return;
+    await _load();
+  }
+
+  Future<void> _openAmbiguousGroups() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const QuizAmbiguousGroupsPage()),
     );
     if (!mounted) return;
     await _load();
@@ -895,6 +904,9 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
                   case 'visionCandidates':
                     _openVisionCandidates();
                     break;
+                  case 'ambiguous':
+                    _openAmbiguousGroups();
+                    break;
                 }
               },
               itemBuilder: (ctx) => [
@@ -950,6 +962,15 @@ class _QuizBankViewPageState extends State<QuizBankViewPage>
                     dense: true,
                     leading: Icon(Icons.refresh_rounded),
                     title: Text('刷新'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'ambiguous',
+                  child: ListTile(
+                    dense: true,
+                    leading: Icon(Icons.help_outline_rounded),
+                    title: Text('歧义题批量补标'),
                     contentPadding: EdgeInsets.zero,
                   ),
                 ),

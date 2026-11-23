@@ -18,6 +18,84 @@ class PluginSubmitPage extends StatefulWidget {
   State<PluginSubmitPage> createState() => _PluginSubmitPageState();
 }
 
+/// 投稿模板库：一键填出「别人也想装」的插件。
+///
+/// 关键不是把字段填满，而是带 configSchema —— payload 写死的插件只对作者有用，
+/// 装上后弹表单填自己地址的插件才有扩散价值。三个模板都自带合法的 https default，
+/// 可直接通过投稿页/服务端的双重校验。
+class SubmitTemplate {
+  const SubmitTemplate({
+    required this.key,
+    required this.label,
+    required this.description,
+    required this.actionCode,
+    required this.areaCode,
+    required this.title,
+    required this.subtitle,
+    required this.slug,
+    required this.payload,
+    required this.schema,
+    required this.tags,
+  });
+
+  final String key;
+  final String label;
+  final String description;
+  final String actionCode;
+  final String areaCode;
+  final String title;
+  final String subtitle;
+  final String slug;
+  final String payload;
+  final String schema;
+  final String tags;
+}
+
+const kSubmitTemplates = <SubmitTemplate>[
+  SubmitTemplate(
+    key: 'health',
+    label: '服务器健康检查',
+    description: '装上后弹表单填自己的地址，点一下看连通性（httpProbe + configSchema）',
+    actionCode: 'httpProbe',
+    areaCode: 'recommend',
+    title: '服务器健康检查',
+    subtitle: '填上你自己的地址，随时探测',
+    slug: 'health-check',
+    payload: '{"url":"{{url}}","label":"{{label}}"}',
+    schema:
+        '{"url":{"label":"探测地址","type":"url","default":"https://box.hpa888.top/updates/box/android/release/version.json"},'
+        '"label":{"label":"按钮名称","type":"text","default":"我的服务器"}}',
+    tags: '实用,监控,可配置',
+  ),
+  SubmitTemplate(
+    key: 'site',
+    label: '打开我的站点',
+    description: '别人装上后填自己的网址，确认后跳转（openUrl + configSchema）',
+    actionCode: 'openUrl',
+    areaCode: 'recommend',
+    title: '打开我的站点',
+    subtitle: '填自己的网址，点一下在浏览器打开',
+    slug: 'my-site',
+    payload: '{"url":"{{url}}"}',
+    schema:
+        '{"url":{"label":"网址（必须 https）","type":"url","default":"https://box.hpa888.top"}}',
+    tags: '网址,可配置',
+  ),
+  SubmitTemplate(
+    key: 'shortcut',
+    label: '页面快捷入口',
+    description: 'navigate 到内置页面，路由可从下拉里选；换成 {{route}} 就是可配置的',
+    actionCode: 'navigate',
+    areaCode: 'recommend',
+    title: '页面快捷入口',
+    subtitle: '一键直达常用页面',
+    slug: 'quick-entry',
+    payload: '{"route":"openMusic"}',
+    schema: '',
+    tags: '快捷方式',
+  ),
+];
+
 class _PluginSubmitPageState extends State<PluginSubmitPage> {
   final _api = PluginMarketApi();
   final _titleCtrl = TextEditingController();
@@ -72,6 +150,58 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
   /// 既不知道该填什么动作、也不知道 payload 长什么样，于是要么放弃、要么
   /// 提交一个必然 400 的配置。示例选 `navigate → openMusic`：不依赖任何外部
   /// URL，装上点开就是音乐页，能立刻验证整条链路。
+  Future<void> _showTemplateLibrary() async {
+    final picked = await showModalBottomSheet<SubmitTemplate>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+              child: Text(
+                '挑一个模板',
+                style: Theme.of(ctx).textTheme.titleMedium,
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                '模板都带可配置字段：别人装上后会弹表单填自己的值，'
+                '而不是只能看你写死的地址。',
+              ),
+            ),
+            const SizedBox(height: 8),
+            for (final template in kSubmitTemplates)
+              ListTile(
+                title: Text(template.label),
+                subtitle: Text(template.description),
+                onTap: () => Navigator.of(ctx).pop(template),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked != null) _applyTemplate(picked);
+  }
+
+  void _applyTemplate(SubmitTemplate template) {
+    setState(() {
+      _actionCode = template.actionCode;
+      _areaCode = template.areaCode;
+      _navigateRouteCode = template.actionCode == 'navigate' ? 'openMusic' : '';
+      _titleCtrl.text = template.title;
+      _subtitleCtrl.text = template.subtitle;
+      _slugCtrl.text = template.slug;
+      _payloadCtrl.text = template.payload;
+      _schemaCtrl.text = template.schema;
+      _tagsCtrl.text = template.tags;
+      _permissions.clear();
+    });
+  }
+
   void _fillExample() {
     setState(() {
       // 按当前选中的动作给对应示例：给「打开网址」填一段音乐示例只会让人困惑。
@@ -502,10 +632,20 @@ class _PluginSubmitPageState extends State<PluginSubmitPage> {
           ),
           Align(
             alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: _fillExample,
-              icon: const Icon(Icons.auto_fix_high, size: 16),
-              label: const Text('填入一个可用的示例'),
+            child: Wrap(
+              spacing: 8,
+              children: [
+                TextButton.icon(
+                  onPressed: _fillExample,
+                  icon: const Icon(Icons.auto_fix_high, size: 16),
+                  label: const Text('填入一个可用的示例'),
+                ),
+                TextButton.icon(
+                  onPressed: _showTemplateLibrary,
+                  icon: const Icon(Icons.library_books_outlined, size: 16),
+                  label: const Text('挑一个模板（推荐）'),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 10),
