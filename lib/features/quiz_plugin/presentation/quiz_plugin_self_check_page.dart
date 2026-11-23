@@ -18,6 +18,8 @@ import 'package:flutter/services.dart';
 import '../../../design_system/app_tokens.dart';
 import '../data/quiz_vision_credentials.dart';
 import '../data/quiz_vision_server_config.dart';
+import '../domain/quiz_bank.dart';
+import '../domain/quiz_bank_quality.dart';
 import '../domain/quiz_diag.dart';
 import '../domain/quiz_vision_timeouts.dart';
 import '../domain/quiz_vision_usage.dart';
@@ -34,12 +36,16 @@ class QuizPluginSelfCheckPage extends StatefulWidget {
     required String probe,
     required List<String> recent,
     required List<String> important,
+    String? bankQuality,
   }) {
     final buffer = StringBuffer()
       ..writeln('【答题助手自检】')
       ..writeln('时间：${DateTime.now().toIso8601String().substring(0, 19)}');
     for (final entry in status.entries) {
       buffer.writeln('· ${entry.key}：${entry.value}');
+    }
+    if (bankQuality != null && bankQuality.isNotEmpty) {
+      buffer.writeln('· $bankQuality');
     }
     buffer
       ..writeln('· 截图自测：$probe')
@@ -91,6 +97,7 @@ class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
       _lastProbe ?? '未测试（点上面的「截图自测」当场验一次）';
   bool _probing = false;
   bool _credentialChecking = false;
+  QuizBankQualitySummary? _quality;
 
   @override
   void initState() {
@@ -162,6 +169,15 @@ class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
     // 查不到再看响应头里捡到的值。
     status['读屏额度'] = serverConfig?.describeQuota() ?? QuizVisionUsage.describe();
 
+    // 题库质量是报障的高频背景：同题干异答案/缺图/新规标记。
+    // 加载失败不能把自检页整页带崩，留空即可。
+    QuizBankQualitySummary? quality;
+    try {
+      quality = QuizBankQualitySummary.summarize(
+        await QuizBankStorage.loadAll(),
+      );
+    } catch (_) {}
+
     final recent = QuizDiag.recent(limit: 20);
     final important = await QuizDiag.important(limit: 20);
     if (!mounted) return;
@@ -169,6 +185,7 @@ class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
       _status = status;
       _recent = recent;
       _important = important;
+      _quality = quality;
       _loading = false;
     });
   }
@@ -231,6 +248,7 @@ class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
     probe: _probe,
     recent: _recent,
     important: _important,
+    bankQuality: _quality?.describe(),
   );
 
   Future<void> _copyReport() async {
@@ -324,6 +342,20 @@ class _QuizPluginSelfCheckPageState extends State<QuizPluginSelfCheckPage> {
                             : const Icon(Icons.key_outlined, size: 18),
                         label: Text(_credentialChecking ? '正在检测…' : '检测凭证'),
                       ),
+                    ),
+                  ],
+                ),
+                _card(
+                  title: '题库质量（匹配不了时先看这里）',
+                  children: [
+                    Text(
+                      _quality?.describe() ??
+                          '题库统计读取失败（不影响读屏，可在题库页查看）',
+                    ),
+                    const SizedBox(height: AppTokens.spaceXs),
+                    const Text(
+                      '同题干异答案：仅凭文字无法区分，图形题请直接看题图作答。'
+                      '带题图的数量远小于题目总数时，dHash 消歧基本无用，只能靠 AI 读屏。',
                     ),
                   ],
                 ),
